@@ -1,0 +1,91 @@
+[project]
+name = "pymacaw"
+version = "0.1.0-alpha"
+description = "Multimodal Automated Coding and Analysis Workbench"
+readme = "README.md"
+# mediapipe and py-feat wheels lag new CPython releases; keep the ceiling honest
+requires-python = ">=3.10,<3.13"
+
+dependencies = [
+  # --- core ---
+  "typer>=0.12",
+  "rich>=13.0",
+  "pydantic>=2.7",
+  "PyYAML>=6.0",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyarrow>=16.0",
+  "scipy>=1.11",
+
+  # --- audio: prosody ---
+  "praat-parselmouth>=0.4.3",
+  "librosa>=0.10",
+  "soundfile>=0.12",
+  "opensmile>=2.5",
+
+  # --- audio: content ---
+  "whisperx>=3.1",
+  "faster-whisper>=1.0",
+  "pyannote.audio>=3.1",
+
+  # --- text ---
+  "sentence-transformers>=3.0",
+
+  # --- vision ---
+  "opencv-python>=4.9",
+  "mediapipe>=0.10",
+  "py-feat>=0.6",
+
+  # --- interop ---
+  "pympi-ling>=1.70",
+
+  # --- gui ---
+  "dash>=3.0",
+  "dash-bootstrap-components>=2.0",
+  "plotly>=5.22",
+  "pywebview>=5.0",
+
+  # --- llm ---
+  "anthropic>=0.34",
+  "openai>=1.40",
+  "ollama>=0.3",
+]
+
+# ultralytics (AGPL-3.0) and OpenFace (C++, needs compiling) are deliberately not
+# declared here -- both are invoked via subprocess and checked for at runtime.
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-cov",
+]
+
+[project.scripts]
+macaw = "macaw.cli.main:entrypoint"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["macaw*"]
+
+[tool.setuptools.package-data]
+"macaw" = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+
+[tool.coverage.run]
+source = ["macaw"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]

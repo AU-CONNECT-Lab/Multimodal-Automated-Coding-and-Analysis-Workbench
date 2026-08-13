@@ -1,0 +1,119 @@
+# MACAW packaged defaults. Do not edit -- override in your project.yaml.
+# Every key carries its unit and what changing it affects.
+
+project:
+  n_subjects: 2                      # people per session; N-person is supported, 2 is tested
+  roles: [parent, child]             # role labels; length must equal n_subjects
+  excluded_sessions: []              # session ids skipped by every command
+
+align:
+  method: gcc_phat                   # gcc_phat | manual | none
+  search_window_s: 30.0              # s; max offset searched between two sources
+  min_confidence: 0.6                # 0-1; correlation peak sharpness below this is flagged red
+  drift_check: true                  # detect linear clock drift by segment-wise offset
+  drift_segment_s: 60.0              # s; segment length used for the drift regression
+  max_drift_ppm: 200.0               # parts per million; above this the session fails QC
+  apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
+
+segment:
+  task_start_s: null                 # s; trims the researcher's intro. null = keep from 0
+  task_end_s: null                   # s; null = keep to end of media
+  researcher_exit_marker: null       # transcript phrase marking the researcher leaving
+
+prosody:
+  backend: parselmouth               # parselmouth | librosa | builtin
+  fallback_chain: [parselmouth, librosa, builtin]   # tried in order when one fails
+  frame_step_s: 0.01                 # s; frame-scale sampling period for f0/intensity/HNR
+  f0_min_hz: 75.0                    # Hz; too low invites octave halving
+  f0_max_hz: 500.0                   # Hz; too high invites octave doubling. Raise for children
+  f0_range_by_role: {}               # per-role override, e.g. {child: [100, 600]}
+  standard_sets: [eGeMAPSv02]        # eGeMAPSv02 (88 dims) and/or ComParE_2016 (6373 dims)
+  min_voiced_fraction: 0.1           # 0-1; turns below this get a QC warning, not a value
+
+text:
+  asr_backend: whisperx              # whisperx | faster_whisper
+  asr_model: large-v3                # smaller models are much faster and much worse on children
+  language: null                     # ISO code; null = autodetect per session
+  compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback
+  diarization: per_track             # per_track is more accurate when each person has a mic
+  word_timestamps: true              # needed for gesture-speech alignment and MLU
+  embedding_model: null              # sentence-transformers name; null disables text embeddings
+  kinship_anchors: {}                # role -> address terms, e.g. {child: [mommy, mama]}
+
+pose:
+  backend: rtmpose                   # rtmpose | mediapipe | yolo (AGPL, not bundled) | dwpose
+  model: null                        # backend-specific checkpoint; null = backend default
+  device: auto                       # auto | cpu | cuda
+  min_confidence: 0.3                # 0-1; keypoints below this become NaN
+  track_repair: true                 # fix body_id swapping mid-recording
+  track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
+  identity_anchors: {}               # subject_id -> initial x position (0-1 of frame width)
+
+face:
+  backend: pyfeat                    # pyfeat | openface (not bundled) | mediapipe
+  action_units: true                 # 17 AU intensities per frame
+  landmarks: true                    # 68 (pyfeat/openface) or 478 (mediapipe) points
+  gaze: false                        # true requires the openface backend
+  mutual_gaze_angle_deg: 15.0        # deg; angular tolerance for calling two gazes mutual
+  cross_backend_check: null          # second backend name; runs the AU agreement QC only
+
+motion:
+  enabled: true                      # frame-differencing MEA, the fallback when pose fails
+  rois: {}                           # subject_id -> [x, y, w, h] in pixels; required if enabled
+  threshold: 10                      # 0-255; per-pixel difference counted as motion
+  smoothing_s: 0.0                   # s; moving-average window. 0 = raw
+
+turns:
+  max_gap_s: 2.0                     # s; longer silence ends a turn instead of continuing it
+  lookback: 3                        # turns considered when attributing a transition
+  interruption_overlap_s: 0.5        # s; overlap above this is an interruption, below a backchannel
+  smooth_transfer_gap_s: 0.2         # s; |gap| under this counts as a fluent transfer
+  silence_min_s: 1.0                 # s; joint silence longer than this is logged as a pause
+  window_s: null                     # s; null = derived from task duration
+  window_hop_s: null                 # s; null = half of window_s
+  permutation_entropy_order: 3       # embedding order; 3 needs far shorter series than 5
+
+coding:
+  layers: [A]                        # A physical facts | B speech acts (LLM) | C constructs
+  codebook: null                     # path to the codebook YAML; required for layer B
+  backchannel_lexicon: []            # short acknowledgement tokens, language-specific
+  backchannel_max_s: 1.0             # s; longer utterances cannot be backchannels
+  llm:
+    provider: ollama                 # local by default -- some IRBs forbid uploading audio
+    model: llama3.1:8b
+    base_url: null                   # null = provider default endpoint
+    temperature: 0.0                 # 0 for reproducible coding
+    max_tokens: 1024
+    allow_abstain: true              # the model may answer "cannot tell"
+    review_threshold: 0.7            # 0-1; below this the utterance enters the human review queue
+    batch_size: 20                   # utterances per request
+
+qc:
+  checks:
+    - alignment_confidence
+    - clock_drift
+    - transcript_match
+    - track_quality
+    - octave_error
+  fail_fast: false                   # true aborts the run on the first failed check
+  report_downsample_px: 2000         # px; min-max downsampling target for report curves
+
+exec:
+  backend: local                     # local | slurm | pbs
+  n_workers: 4                       # local only; parallel sessions, not threads per session
+  cache: true                        # content-addressed cache for resumable runs
+  cache_dir: null                    # null = <output_dir>/.cache
+  partition: null                    # HPC only
+  account: null                      # HPC only
+  time: null                         # HPC only, e.g. "04:00:00"
+  mem: null                          # HPC only, e.g. "32G"
+  gpu: null                          # HPC only, e.g. "gpu:1"
+  module_load: []                    # HPC only; lines prepended to the job script
+  env_activate: []                   # HPC only; environment activation lines
+
+gui:
+  mode: window                       # window (pywebview) | browser | server
+  host: 127.0.0.1                    # set to 0.0.0.0 only with mode: server
+  port: 8050
+
+primary: []                          # feature names registered as primary, purely for bookkeeping
