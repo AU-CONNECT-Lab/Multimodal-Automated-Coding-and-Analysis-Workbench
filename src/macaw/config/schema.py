@@ -149,7 +149,7 @@ class ResourceSpec(_Section):
     account: str | None = None
 
 
-class ExecSection(_Section):
+class ExecutionSection(_Section):
     backend: Literal["local", "slurm", "pbs"] = "local"
     n_workers: int = 4
     cache: bool = True
@@ -184,19 +184,28 @@ class MacawConfig(_Section):
     turns: TurnsSection = Field(default_factory=TurnsSection)
     coding: CodingSection = Field(default_factory=CodingSection)
     qc: QCSection = Field(default_factory=QCSection)
-    exec: ExecSection = Field(default_factory=ExecSection)
+    execution: ExecutionSection = Field(default_factory=ExecutionSection)
     gui: GUISection = Field(default_factory=GUISection)
     primary: list[str] = Field(default_factory=list)
 
 
-# Sections whose hash gates cache invalidation for a given extractor.
-CACHE_SECTIONS: dict[str, tuple[str, ...]] = {
-    "align": ("align",),
-    "prosody": ("prosody", "segment"),
-    "text": ("text", "segment"),
-    "pose": ("pose",),
-    "face": ("face",),
-    "motion": ("motion",),
-    "turns": ("turns", "text"),
-    "coding": ("coding", "turns"),
-}
+# Which sections a sessions/<id>.yaml file may touch. Everything else is a hard error:
+# a session must never be able to redirect output_dir or change the scheduler.
+SESSION_OVERRIDABLE: tuple[str, ...] = (
+    "segment",
+    "prosody",
+    "text",
+    "pose",
+    "face",
+    "motion",
+    "turns",
+    "coding",
+)
+
+# Which config keys hold a path whose *contents* belong in the hash. Hashing the path
+# instead would let a changed codebook reuse a stale cache entry.
+CONTENT_HASHED_PATHS: tuple[str, ...] = (
+    "coding.codebook",
+    "pose.model",
+    "execution.output_rules",
+)

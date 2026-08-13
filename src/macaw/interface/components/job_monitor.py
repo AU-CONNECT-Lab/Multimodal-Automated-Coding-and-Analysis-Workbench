@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from macaw.exec.job_db import JobRecord
+from macaw.execution.job_db import JobRecord
 
 
 def layout() -> object:

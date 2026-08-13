@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from macaw.config.schema import MacawConfig
-from macaw.exec.backends.base import ExecBackend, JobSpec
-from macaw.exec.script import ArrayJob, SubmitScript
+from macaw.execution.backends.base import ExecBackend, JobSpec
+from macaw.execution.script import ArrayJob, SubmitScript
 
 
 class SlurmBackend(ExecBackend):

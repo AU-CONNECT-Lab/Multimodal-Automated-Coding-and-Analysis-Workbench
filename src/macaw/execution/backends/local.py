@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from macaw.exec.backends.base import ExecBackend, JobSpec
+from macaw.execution.backends.base import ExecBackend, JobSpec
 
 
 class LocalBackend(ExecBackend):

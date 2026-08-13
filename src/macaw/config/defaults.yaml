@@ -102,7 +102,7 @@ qc:
   fail_fast: false                   # true aborts the run on the first failed check
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
 
-exec:
+execution:
   backend: local                     # local | slurm | pbs
   n_workers: 4                       # local only; parallel sessions, not threads per session
   cache: true                        # content-addressed cache for resumable runs

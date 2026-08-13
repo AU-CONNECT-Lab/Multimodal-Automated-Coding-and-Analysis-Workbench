@@ -1,20 +1,21 @@
-from macaw.config.hashing import hash_full, hash_section, hash_sections
+from macaw.config.hashing import hash_extractor_config, hash_full, hash_section
 from macaw.config.loader import (
     archive_resolved,
     load_config,
     resolve_config,
     scaffold_project_config,
 )
-from macaw.config.schema import CACHE_SECTIONS, MacawConfig
+from macaw.config.schema import CONTENT_HASHED_PATHS, SESSION_OVERRIDABLE, MacawConfig
 
 __all__ = [
     "MacawConfig",
-    "CACHE_SECTIONS",
+    "SESSION_OVERRIDABLE",
+    "CONTENT_HASHED_PATHS",
     "resolve_config",
     "load_config",
     "archive_resolved",
     "scaffold_project_config",
     "hash_section",
-    "hash_sections",
+    "hash_extractor_config",
     "hash_full",
 ]
