@@ -1,4 +1,4 @@
-"""Two-way ELAN interchange, annotation layer only. Signals are not annotations."""
+"""Two-way .eaf interchange, annotation layer only. Signals are not annotations."""
 
 from __future__ import annotations
 

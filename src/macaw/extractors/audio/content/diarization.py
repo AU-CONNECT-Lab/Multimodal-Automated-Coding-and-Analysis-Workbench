@@ -17,7 +17,7 @@ class PyannoteBackend(DiarizationBackend):
     name = "pyannote"
 
     def check_available(self) -> None:
-        """Model weights need HuggingFace terms accepted -- say so in the error."""
+        """Model weights need HuggingFace terms accepted; say so in the error."""
         raise NotImplementedError
 
 

@@ -16,5 +16,5 @@ def extractor_checklist(names: list[str]) -> object:
 
 
 def dag_graph(elements: dict) -> object:
-    """cytoscape view of the task graph."""
+    """Graph view of the task DAG."""
     raise NotImplementedError

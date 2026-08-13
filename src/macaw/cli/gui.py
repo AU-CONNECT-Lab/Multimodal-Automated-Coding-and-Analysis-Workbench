@@ -16,5 +16,5 @@ def gui(
     port: int = typer.Option(None, "--port"),
     debug: bool = typer.Option(False, "--debug"),
 ) -> None:
-    """Launch the workbench. Default is a native pywebview window."""
+    """Launch the workbench. Default is a native window."""
     raise NotImplementedError

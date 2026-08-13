@@ -36,7 +36,7 @@ def code_backchannels(turns: pd.DataFrame, cfg: CodingSection) -> pd.DataFrame:
 
 
 def code_pause_types(turns: pd.DataFrame, cfg) -> pd.DataFrame:
-    """turn-internal vs switching pause -- well established and highly reliable."""
+    """turn-internal vs switching pause; well established and highly reliable."""
     raise NotImplementedError
 
 

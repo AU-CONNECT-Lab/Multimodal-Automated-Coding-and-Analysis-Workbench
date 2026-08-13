@@ -1,4 +1,4 @@
-"""Adapted from neuroimage-pipe hpc_utils.HPCBackend (Apache-2.0), generalised to local runs."""
+"""Scheduler abstraction. Local runs and cluster submission share this interface."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class Resources:
 
 @dataclass
 class JobSpec:
-    task_id: str                       # "<session_id>:<extractor>" -- macaw's unit of work
+    task_id: str                       # "<session_id>:<extractor>", macaw's unit of work
     session_id: str
     extractor: str
     command: list[str]

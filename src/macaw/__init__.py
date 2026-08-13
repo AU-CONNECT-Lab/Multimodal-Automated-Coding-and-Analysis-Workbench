@@ -1,4 +1,4 @@
-"""MACAW -- Multimodal Automated Coding and Analysis Workbench."""
+"""MACAW. Multimodal Automated Coding and Analysis Workbench."""
 
 from macaw.config.loader import load_config, resolve_config
 from macaw.config.schema import MacawConfig

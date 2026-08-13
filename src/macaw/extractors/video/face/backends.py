@@ -45,5 +45,5 @@ class MediaPipeFaceBackend(FaceBackend):
         raise NotImplementedError
 
     def approximate_gaze(self, landmarks: pd.DataFrame) -> pd.DataFrame:
-        """Iris landmarks give a coarse gaze direction -- the degraded fallback for mutual gaze."""
+        """Iris landmarks give a coarse gaze direction; the degraded fallback for mutual gaze."""
         raise NotImplementedError

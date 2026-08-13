@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from macaw.config.schema import MacawConfig
 from macaw.exec.backends.base import ExecBackend, JobSpec
+from macaw.exec.script import ArrayJob, SubmitScript
 
 
 class PBSBackend(ExecBackend):
@@ -25,5 +27,21 @@ class PBSBackend(ExecBackend):
         raise NotImplementedError
 
 
-def generate_array_script(specs: list[JobSpec], cfg, out_path: Path) -> Path:
+def build_jobs(config: MacawConfig, extractors: list[str], array_spec: str) -> list[ArrayJob]:
+    raise NotImplementedError
+
+
+def generate(
+    config: MacawConfig,
+    config_path: Path,
+    session_ids: list[str],
+    extractors: list[str],
+    out_path: Path,
+) -> SubmitScript:
+    """No element-wise dependency exists here, so each array waits for the previous one in
+    full. Sessions no longer advance independently; the generator warns about this."""
+    raise NotImplementedError
+
+
+def dependency_flag(job_ids: list[str], kind: str = "afterokarray") -> str:
     raise NotImplementedError

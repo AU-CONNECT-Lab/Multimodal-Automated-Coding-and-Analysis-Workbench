@@ -108,5 +108,5 @@ def resolve_llm_backend(cfg: LLMSection) -> LLMBackend:
 
 
 def warn_on_first_cloud_use(cfg: LLMSection) -> None:
-    """Notify once that data leaves the machine. Do not block -- that call is the user's IRB's."""
+    """Notify once that data leaves the machine. Do not block; that call is the user's IRB's."""
     raise NotImplementedError

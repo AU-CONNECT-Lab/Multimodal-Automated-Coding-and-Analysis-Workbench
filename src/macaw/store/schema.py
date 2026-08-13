@@ -19,7 +19,7 @@ LONG_TABLE_SCHEMA: dict[str, str] = {
     "session_id": "string",
     "subject_id": "string",
     "subject_id_b": "string",
-    "source": "string",       # extractor name, e.g. "prosody.parselmouth"
+    "source": "string",       # extractor name, e.g. "prosody.frame"
     "scale": "string",        # one of Scale
     "t_start": "float64",     # seconds, session clock
     "t_end": "float64",

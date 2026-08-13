@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command("run")
 def run(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    session: list[str] = typer.Option(None, "--session", "-s"),
+    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Defaults to all enabled."),
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     workers: int = typer.Option(None, "--workers", "-j"),
@@ -18,6 +18,17 @@ def run(
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
     """Run the extraction pipeline. Archives the resolved config into the output directory."""
+    raise NotImplementedError
+
+
+@app.command("run-task")
+def run_task(
+    config: Path = typer.Option(..., "--config", "-c"),
+    session: str = typer.Option(..., "--session", "-s"),
+    extractor: str = typer.Option(..., "--extractor", "-e"),
+    run_id: str = typer.Option(..., "--run-id"),
+) -> None:
+    """Run one extractor for one session. This is what a cluster array element calls."""
     raise NotImplementedError
 
 

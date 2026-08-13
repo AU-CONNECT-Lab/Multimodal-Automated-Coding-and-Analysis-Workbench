@@ -36,5 +36,5 @@ def mouth_opening(landmarks: pd.DataFrame) -> pd.Series:
 
 
 def cross_backend_agreement(au_a: pd.DataFrame, au_b: pd.DataFrame) -> pd.DataFrame:
-    """QC only. AU values are never merged across backends -- different intensity calibration."""
+    """QC only. AU values are never merged across backends; different intensity calibration."""
     raise NotImplementedError

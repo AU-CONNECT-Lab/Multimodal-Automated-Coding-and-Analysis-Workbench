@@ -45,5 +45,5 @@ def speaker_entropy(talk_time: dict[str, float]) -> float:
 
 
 def conditional_entropy(x: np.ndarray, y: np.ndarray) -> float:
-    """H(partner response | my utterance) -- quantifies direction of influence."""
+    """H(partner response | my utterance); quantifies direction of influence."""
     raise NotImplementedError

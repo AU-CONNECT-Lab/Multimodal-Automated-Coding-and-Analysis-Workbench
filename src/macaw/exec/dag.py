@@ -1,19 +1,21 @@
 """Dependency graph built from Extractor.requires, not from hard-coded pipeline stages.
-This is the part of neuroimage-pipe's dag.py that had to be rewritten rather than forked."""
+
+Every session is independent, so the real graph is the extractor graph applied to each
+session. The extractor graph is therefore what gets scheduled; sessions become array
+indices inside it."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from macaw.config.schema import MacawConfig
-from macaw.project.session import Session
+from macaw.extractors.base import Phase
 
 
 @dataclass
 class TaskNode:
-    task_id: str
-    session_id: str
     extractor: str
+    phase: Phase
     depends_on: set[str] = field(default_factory=set)
 
 
@@ -22,10 +24,10 @@ class DAG:
         self.config = config
         self.nodes: dict[str, TaskNode] = {}
 
-    def add(self, session_id: str, extractor: str) -> TaskNode:
+    def add(self, extractor: str) -> TaskNode:
         raise NotImplementedError
 
-    def expand(self, sessions: list[Session], requested: list[str]) -> None:
+    def expand(self, requested: list[str]) -> None:
         """Pull in each requested extractor plus everything it requires, transitively."""
         raise NotImplementedError
 
@@ -33,9 +35,31 @@ class DAG:
         """Raises DependencyCycleError on a cycle."""
         raise NotImplementedError
 
-    def ready_tasks(self, completed: set[str]) -> list[str]:
+    def layers(self) -> list[list[str]]:
+        """Topological layers. Useful for reporting; not how jobs are grouped."""
+        raise NotImplementedError
+
+    def dependencies(self, extractor: str) -> set[str]:
+        """Direct predecessors, which become the aftercorr edges between job arrays."""
+        raise NotImplementedError
+
+    def by_phase(self, phase: Phase) -> list[str]:
+        raise NotImplementedError
+
+    def interactive_gates(self) -> list[str]:
+        """Nodes a human must clear. Cluster scripts stop before these and resume after."""
+        raise NotImplementedError
+
+    def batch_segments(self) -> list[list[str]]:
+        """Runs of automatic work split at each interactive gate, in order."""
+        raise NotImplementedError
+
+    def ready(self, completed: set[str]) -> list[str]:
         raise NotImplementedError
 
     def to_cytoscape(self) -> dict:
-        """Feeds the GUI's DAG view."""
         raise NotImplementedError
+
+
+def build_dag(config: MacawConfig, requested: list[str] | None = None) -> DAG:
+    raise NotImplementedError

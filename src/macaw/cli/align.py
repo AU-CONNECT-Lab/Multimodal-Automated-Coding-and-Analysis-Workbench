@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command("align")
 def align(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    session: list[str] = typer.Option(None, "--session", "-s"),
+    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
     recut: bool = typer.Option(False, "--recut", help="Physically re-encode instead of storing offsets."),
     drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check"),
     set_: list[str] = typer.Option(None, "--set"),

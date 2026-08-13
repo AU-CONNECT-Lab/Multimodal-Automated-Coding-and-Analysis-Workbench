@@ -31,7 +31,7 @@ def f0_contour(audio_path: Path, cfg, *, f0_min: float, f0_max: float) -> pd.Dat
 
 
 def intensity_contour(audio_path: Path, cfg) -> pd.DataFrame:
-    """Intensity is not comparable across speakers -- the manifest must say so."""
+    """Intensity is not comparable across speakers; the manifest must say so."""
     raise NotImplementedError
 
 

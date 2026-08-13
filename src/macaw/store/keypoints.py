@@ -26,5 +26,5 @@ def to_array(df: pd.DataFrame, joint_order: list[str]):
 
 
 def has_depth(df: pd.DataFrame) -> bool:
-    """False when z is entirely NaN -- feature code takes the 2D degenerate branch."""
+    """False when z is entirely NaN; feature code takes the 2D degenerate branch."""
     raise NotImplementedError

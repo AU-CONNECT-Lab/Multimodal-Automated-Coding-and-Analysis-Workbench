@@ -44,7 +44,7 @@ def check_voiced_fraction(session: Session, config: MacawConfig, results) -> lis
 
 
 def check_au_child_reliability(session: Session, config: MacawConfig, results) -> list[QCWarning]:
-    """AU models degrade badly on children -- always warn, never silently pass."""
+    """AU models degrade badly on children; always warn, never silently pass."""
     raise NotImplementedError
 
 

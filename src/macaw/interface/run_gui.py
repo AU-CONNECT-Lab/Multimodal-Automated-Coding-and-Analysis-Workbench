@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def launch_window(config_path: Path, *, port: int = 8050, debug: bool = False) -> None:
-    """pywebview over the system WebView -- the user never sees an address bar."""
+    """pywebview over the system WebView; the user never sees an address bar."""
     raise NotImplementedError
 
 

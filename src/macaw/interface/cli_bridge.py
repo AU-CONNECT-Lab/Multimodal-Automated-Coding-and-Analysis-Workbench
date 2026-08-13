@@ -26,7 +26,7 @@ def build_command(
     overrides: dict[str, str] | None = None,
     extra_flags: list[str] | None = None,
 ) -> list[str]:
-    """Assemble the exact argv a user could paste into a terminal -- show it in the UI."""
+    """Assemble the exact argv a user could paste into a terminal; show it in the UI."""
     raise NotImplementedError
 
 
@@ -47,5 +47,5 @@ def tail_log(log_path: Path, *, n_lines: int = 200) -> list[str]:
 
 
 def poll_status(config_path: Path, run_id: str) -> dict[str, int]:
-    """Counts by status, straight out of job_db -- the same source `macaw status` reads."""
+    """Counts by status, straight out of job_db; the same source `macaw status` reads."""
     raise NotImplementedError

@@ -1,5 +1,5 @@
 """SQLite job state. Adapted from neuroimage-pipe job_db, keyed by task_id rather than
-subject/session columns -- macaw's unit of work is session x extractor."""
+subject/session columns; macaw's unit of work is session x extractor."""
 
 from __future__ import annotations
 

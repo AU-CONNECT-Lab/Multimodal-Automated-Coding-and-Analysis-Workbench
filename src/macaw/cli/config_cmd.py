@@ -13,7 +13,7 @@ def show(
     section: str = typer.Option(None, "--section"),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
-    """Print the fully merged configuration -- what is actually in effect."""
+    """Print the fully merged configuration; what is actually in effect."""
     raise NotImplementedError
 
 

@@ -1,7 +1,9 @@
-# MACAW packaged defaults. Do not edit -- override in your project.yaml.
+# MACAW packaged defaults. Do not edit; override in your project.yaml.
 # Every key carries its unit and what changing it affects.
 
 project:
+  session_prefix: ""                 # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
+  session_config_dir: sessions       # dir of <session_id>.yaml files overriding this config
   n_subjects: 2                      # people per session; N-person is supported, 2 is tested
   roles: [parent, child]             # role labels; length must equal n_subjects
   excluded_sessions: []              # session ids skipped by every command
@@ -79,7 +81,7 @@ coding:
   backchannel_lexicon: []            # short acknowledgement tokens, language-specific
   backchannel_max_s: 1.0             # s; longer utterances cannot be backchannels
   llm:
-    provider: ollama                 # local by default -- some IRBs forbid uploading audio
+    provider: ollama                 # local by default; some IRBs forbid uploading audio
     model: llama3.1:8b
     base_url: null                   # null = provider default endpoint
     temperature: 0.0                 # 0 for reproducible coding
@@ -87,6 +89,8 @@ coding:
     allow_abstain: true              # the model may answer "cannot tell"
     review_threshold: 0.7            # 0-1; below this the utterance enters the human review queue
     batch_size: 20                   # utterances per request
+    launch: []                       # lines starting a local server inside a cluster job
+    ready_timeout_s: 300             # s; how long to wait for that server to answer
 
 qc:
   checks:
@@ -103,13 +107,21 @@ exec:
   n_workers: 4                       # local only; parallel sessions, not threads per session
   cache: true                        # content-addressed cache for resumable runs
   cache_dir: null                    # null = <output_dir>/.cache
-  partition: null                    # HPC only
-  account: null                      # HPC only
-  time: null                         # HPC only, e.g. "04:00:00"
-  mem: null                          # HPC only, e.g. "32G"
-  gpu: null                          # HPC only, e.g. "gpu:1"
-  module_load: []                    # HPC only; lines prepended to the job script
-  env_activate: []                   # HPC only; environment activation lines
+  check_outputs: true                # validate declared outputs after a task reports success
+  output_rules: null                 # path to results_check.yaml; null = packaged rules
+  default_resources:                 # cluster request used when an extractor has no override
+    cpus: null                       # cores per task
+    mem: null                        # e.g. "32G"
+    time: null                       # e.g. "04:00:00"
+    gpu: null                        # e.g. "gpu:1"
+    partition: null
+    account: null
+  resources: {}                      # extractor name -> same fields, e.g. {pose.keypoints: {gpu: "gpu:1"}}
+  module_load: []                    # cluster only; module load lines prepended to the job script
+  env_activate: []                   # cluster only; environment activation lines
+  hf_home: null                      # shared model cache; compute nodes often have no internet
+  max_concurrent: null               # cap on simultaneous array elements, the %N in --array
+  job_name_prefix: macaw             # prefix for submitted job names
 
 gui:
   mode: window                       # window (pywebview) | browser | server

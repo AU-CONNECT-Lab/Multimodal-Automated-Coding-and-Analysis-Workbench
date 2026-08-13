@@ -11,7 +11,7 @@ an analysable multimodal feature time series.
 | import | `macaw` |
 | CLI | `macaw` |
 
-Status: pre-alpha. Framework scaffold only -- no working implementation yet.
+Status: pre-alpha. Framework scaffold only, no working implementation yet.
 
 ## What it covers
 

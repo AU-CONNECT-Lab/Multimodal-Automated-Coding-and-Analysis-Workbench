@@ -1,4 +1,4 @@
-"""Who is who -- three-source vote, then a human confirms. Never trust an Adult/Child label."""
+"""Who is who: three-source vote, then a human confirms. Never trust an Adult/Child label."""
 
 from __future__ import annotations
 

@@ -55,7 +55,7 @@ def nod_events(head: pd.DataFrame) -> pd.DataFrame:
 
 
 def interpersonal_distance(kp_a: pd.DataFrame, kp_b: pd.DataFrame) -> pd.Series:
-    """Metres with depth, pixels without -- the unit goes into the manifest either way."""
+    """Metres with depth, pixels without; the unit goes into the manifest either way."""
     raise NotImplementedError
 
 

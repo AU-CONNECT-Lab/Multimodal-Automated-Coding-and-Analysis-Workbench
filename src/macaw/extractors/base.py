@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +13,15 @@ from macaw.config.schema import MacawConfig
 from macaw.project.manifest import FeatureSpec
 from macaw.project.session import Session
 from macaw.store.schema import Scale
+
+
+class Phase(str, Enum):
+    PREP = "prep"                # media probing, segmentation, track extraction
+    INTERACTIVE = "interactive"  # needs a human; never goes into a job array
+    EXTRACT = "extract"          # the expensive per-session work
+    DERIVE = "derive"            # cheap quantities computed from extract output
+    QC = "qc"
+    AGGREGATE = "aggregate"      # cross-session; one job after every session finishes
 
 
 @dataclass
@@ -41,6 +51,7 @@ class Extractor(ABC):
     version: str
     scale: Scale
     group: str
+    phase: Phase = Phase.EXTRACT
     config_sections: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()                  # other extractor names -> DAG edges
 

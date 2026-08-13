@@ -39,5 +39,5 @@ def clean_transcript(segments: pd.DataFrame, backend, cfg) -> pd.DataFrame:
 
 
 def refine_codebook(codebook: Codebook, examples: pd.DataFrame, backend, cfg) -> Codebook:
-    """Pure assistance -- output never enters the data tables."""
+    """Pure assistance; output never enters the data tables."""
     raise NotImplementedError

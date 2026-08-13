@@ -30,7 +30,7 @@ class MediaPipeBackend(PoseBackend):
 
 
 class YOLOPoseBackend(PoseBackend):
-    """Ultralytics is AGPL-3.0, so it is invoked as a subprocess and never imported."""
+    """AGPL licensed, so it is invoked as a subprocess and never imported."""
 
     name = "yolo"
 

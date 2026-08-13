@@ -1,4 +1,4 @@
-"""Expected outputs declared in YAML (glob + min_size + count). Adapted from neuroimage-pipe."""
+"""Expected outputs declared in YAML: glob, minimum size, minimum count."""
 
 from __future__ import annotations
 

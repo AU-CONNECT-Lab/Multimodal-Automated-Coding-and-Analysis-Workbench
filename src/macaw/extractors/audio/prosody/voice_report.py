@@ -1,4 +1,4 @@
-"""Praat voice report per turn: jitter, shimmer, HNR, CPPS, spectral measures."""
+"""Voice report per turn: jitter, shimmer, HNR, CPPS, spectral measures."""
 
 from __future__ import annotations
 

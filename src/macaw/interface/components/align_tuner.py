@@ -14,7 +14,7 @@ def correlation_plot(lags: list[float], values: list[float]) -> object:
 
 
 def waveform_overlay(t: list[float], a: list[float], b: list[float], offset_s: float) -> object:
-    """Downsampled before plotting -- raw audio at 100 Hz over an hour stalls Plotly."""
+    """Downsampled before plotting; raw audio at 100 Hz over an hour stalls the browser."""
     raise NotImplementedError
 
 

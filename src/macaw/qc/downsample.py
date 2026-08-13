@@ -1,4 +1,4 @@
-"""Plotly stalls past a few hundred thousand points. Min-max keeps the envelope shape."""
+"""Plots stall past a few hundred thousand points. Min-max keeps the envelope shape."""
 
 from __future__ import annotations
 

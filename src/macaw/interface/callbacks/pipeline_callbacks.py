@@ -8,5 +8,5 @@ from macaw.config.schema import MacawConfig
 
 
 def register(app: Dash, config: MacawConfig, config_path: Path) -> None:
-    """Run/QC/code buttons build a `macaw ...` argv and launch it -- see cli_bridge."""
+    """Run/QC/code buttons build a `macaw ...` argv and launch it; see cli_bridge."""
     raise NotImplementedError

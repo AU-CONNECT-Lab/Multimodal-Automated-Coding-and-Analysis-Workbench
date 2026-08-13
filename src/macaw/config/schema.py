@@ -1,4 +1,4 @@
-"""Config schema. extra="forbid" everywhere -- a typo'd key must fail loudly."""
+"""Config schema. extra="forbid" everywhere; a typo'd key must fail loudly."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ class ProjectSection(_Section):
     raw_dir: Path
     output_dir: Path
     scratch_dir: Path | None = None
+    session_prefix: str = ""
+    session_config_dir: Path = Path("sessions")
     excluded_sessions: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
@@ -108,6 +110,12 @@ class LLMSection(_Section):
     allow_abstain: bool = True
     review_threshold: float = 0.7
     batch_size: int = 20
+    # lines that bring a local server up inside a cluster job, plus how long to wait for it
+    launch: list[str] = Field(default_factory=list)
+    ready_timeout_s: int = 300
+
+    def is_local(self) -> bool:
+        raise NotImplementedError
 
 
 class CodingSection(_Section):
@@ -132,18 +140,30 @@ class QCSection(_Section):
     report_downsample_px: int = 2000
 
 
+class ResourceSpec(_Section):
+    cpus: int | None = None
+    mem: str | None = None
+    time: str | None = None
+    gpu: str | None = None
+    partition: str | None = None
+    account: str | None = None
+
+
 class ExecSection(_Section):
     backend: Literal["local", "slurm", "pbs"] = "local"
     n_workers: int = 4
     cache: bool = True
     cache_dir: Path | None = None
-    partition: str | None = None
-    account: str | None = None
-    time: str | None = None
-    mem: str | None = None
-    gpu: str | None = None
+    check_outputs: bool = True
+    output_rules: Path | None = None
+    default_resources: ResourceSpec = Field(default_factory=ResourceSpec)
+    # per-extractor overrides; a GPU pose job and a CPU prosody job cannot share one request
+    resources: dict[str, ResourceSpec] = Field(default_factory=dict)
     module_load: list[str] = Field(default_factory=list)
     env_activate: list[str] = Field(default_factory=list)
+    hf_home: Path | None = None
+    max_concurrent: int | None = None
+    job_name_prefix: str = "macaw"
 
 
 class GUISection(_Section):

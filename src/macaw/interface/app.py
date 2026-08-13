@@ -1,4 +1,4 @@
-"""Dash app. Batch work goes through cli_bridge; interactive editors use the store layer.
+"""Web app. Batch work goes through cli_bridge; interactive editors use the store layer.
 No pipeline logic lives in this package."""
 
 from __future__ import annotations

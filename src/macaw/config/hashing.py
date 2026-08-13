@@ -10,7 +10,7 @@ def hash_section(config: MacawConfig, section: str) -> str:
 
 
 def hash_sections(config: MacawConfig, sections: Sequence[str]) -> str:
-    """Combined hash for an extractor -- changing f0 params must not invalidate pose."""
+    """Combined hash for an extractor; changing f0 params must not invalidate pose."""
     raise NotImplementedError
 
 

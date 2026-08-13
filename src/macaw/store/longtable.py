@@ -22,7 +22,7 @@ def read_long_table(
     features: Sequence[str] | None = None,
     t_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
-    """Predicate pushdown at the parquet level -- never load the whole table."""
+    """Predicate pushdown at the parquet level; never load the whole table."""
     raise NotImplementedError
 
 

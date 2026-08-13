@@ -1,4 +1,4 @@
-"""One prompt set for every backend -- switching provider must not change coding logic."""
+"""One prompt set for every backend; switching provider must not change coding logic."""
 
 from __future__ import annotations
 

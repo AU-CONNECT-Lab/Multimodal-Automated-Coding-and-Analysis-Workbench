@@ -30,7 +30,7 @@ def probe(path: Path) -> MediaInfo:
 
 
 def frame_timestamps(path: Path, stream_index: int = 0) -> list[float]:
-    """Exact presentation timestamps -- currentTime += 1/fps drifts on VFR video."""
+    """Exact presentation timestamps; currentTime += 1/fps drifts on VFR video."""
     raise NotImplementedError
 
 

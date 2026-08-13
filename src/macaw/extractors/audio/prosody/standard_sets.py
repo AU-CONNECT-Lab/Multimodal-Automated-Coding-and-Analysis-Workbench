@@ -1,4 +1,4 @@
-"""eGeMAPSv02 and ComParE_2016 via openSMILE -- citeable, reviewers accept them, near-free."""
+"""eGeMAPSv02 and ComParE_2016 via openSMILE; citeable, reviewers accept them, near-free."""
 
 from __future__ import annotations
 

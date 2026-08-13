@@ -61,14 +61,20 @@ class Session:
         raise NotImplementedError
 
 
-def discover_sessions(config: MacawConfig) -> list[Session]:
-    """Scan raw_dir and build Session objects. Excluded ids are dropped here, once."""
+def detect_sessions(raw_dir: Path, prefix: str = "") -> list[str]:
+    """Directory names under raw_dir, sorted. The prefix is stripped from the returned ids."""
     raise NotImplementedError
 
 
-def load_session(path: Path) -> Session:
+def parse_sessions_input(value: str) -> list[str]:
+    """A comma-separated list, or a path to a file holding one id per line."""
     raise NotImplementedError
 
 
-def save_session(session: Session, path: Path) -> Path:
+def build_session(session_id: str, config: MacawConfig) -> Session:
+    """Resolve one session on demand from directory convention plus its optional override file."""
+    raise NotImplementedError
+
+
+def session_override_path(session_id: str, config: MacawConfig) -> Path | None:
     raise NotImplementedError

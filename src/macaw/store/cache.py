@@ -19,7 +19,7 @@ class CacheKey:
 
 
 def hash_file(path: Path, *, chunk_size: int = 1 << 20) -> str:
-    """Hash size + mtime + head/tail bytes -- full hashing of multi-GB video is too slow."""
+    """Hash size + mtime + head/tail bytes; full hashing of multi-GB video is too slow."""
     raise NotImplementedError
 
 
