@@ -16,6 +16,7 @@ ENTRY_POINT_GROUP = "macaw.extractors"
 BUILTIN_MODULES = (
     "macaw.extractors.prep",
     "macaw.extractors.audio.prosody.frame",
+    "macaw.extractors.audio.content.asr",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}

@@ -41,6 +41,14 @@ def read_file(path: Path, schema: dict[str, str], name: str) -> pd.DataFrame:
     return coerce_frame(pq.read_table(path).to_pandas(), schema, name)
 
 
+def write_file(df: pd.DataFrame, path: Path, schema: dict[str, str], name: str) -> Path:
+    """A single-writer table that is not one of the three partitioned ones, e.g. a transcript."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(coerce_frame(df, schema, name), path)
+    return path
+
+
 def write_partitioned(
     df: pd.DataFrame,
     directory: Path,

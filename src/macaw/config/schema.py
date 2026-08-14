@@ -62,8 +62,10 @@ class TextSection(_Section):
     asr_backend: Literal["whisperx", "faster_whisper"] = "whisperx"
     asr_model: str = "large-v3"
     language: str | None = None
+    device: str = "auto"
     compute_type: str = "float16"
     diarization: Literal["pyannote", "per_track", "none"] = "per_track"
+    crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
     embedding_model: str | None = None
     kinship_anchors: dict[str, list[str]] = Field(default_factory=dict)
