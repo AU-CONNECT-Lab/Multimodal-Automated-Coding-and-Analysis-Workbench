@@ -76,6 +76,7 @@ include = ["macaw*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "tests"]
 addopts = "--strict-markers --strict-config"
 
 [tool.coverage.run]

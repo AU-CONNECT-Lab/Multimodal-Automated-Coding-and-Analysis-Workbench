@@ -194,7 +194,7 @@ _SUBJECT_SPECS = {
 
 _RECORDING_SPECS = {
     "n_turns_total": ("Turns taken by everyone.", "count"),
-    "n_joint_silences": ("Stretches longer than silence_min_s where nobody talked.", "count"),
+    "n_joint_silences": ("Stretches of at least silence_min_s where nobody talked.", "count"),
     "joint_silence_total_s": ("Total time nobody was talking.", "s"),
     "joint_silence_fraction": ("Share of the task window with nobody talking.", None),
 }
