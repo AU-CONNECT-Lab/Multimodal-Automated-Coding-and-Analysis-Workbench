@@ -12,10 +12,10 @@ def generate(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e"),
-    scheduler: str = typer.Option("slurm", "--scheduler", help="slurm | pbs"),
+    hpc_config: Path = typer.Option(None, "--hpc-config", help="Defaults to $MACAW_HPC_CONFIG, then ./hpc.yaml, then the packaged file."),
     out: Path = typer.Option(Path("submit_macaw.sh"), "--out"),
 ) -> None:
-    """Write a chained job-array script. Run it yourself with sbatch or qsub.
+    """Write a chained job-array script. Run it yourself with sbatch.
 
     Stops at any step needing a human and prints which command to run locally before
     submitting the next segment. Cloud LLM providers are excluded with a warning, since

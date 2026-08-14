@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from macaw.config.schema import MacawConfig, ResourceSpec
+from macaw.config.hpc import HPCConfig, ResourceProfile
 
 
-def resolve(config: MacawConfig, extractor: str) -> ResourceSpec:
-    """Per-extractor override on top of default_resources. A GPU pose job and a CPU
-    prosody job must not share one request."""
+def resolve(hpc: HPCConfig, extractor: str) -> ResourceProfile:
+    """Looks up Extractor.resource_profile, then the tier by that name in hpc.yaml."""
     raise NotImplementedError
 
 
-def needs_gpu(config: MacawConfig, extractor: str) -> bool:
+def needs_gpu(hpc: HPCConfig, extractor: str) -> bool:
     raise NotImplementedError
 
 
-def validate(config: MacawConfig, extractors: list[str]) -> list[str]:
+def validate(hpc: HPCConfig, extractors: list[str]) -> list[str]:
     """Warnings for requests a scheduler will reject, checked before anything is submitted."""
     raise NotImplementedError

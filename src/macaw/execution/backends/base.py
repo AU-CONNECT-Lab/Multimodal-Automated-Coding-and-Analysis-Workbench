@@ -6,13 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-
-@dataclass
-class Resources:
-    cpus: int = 1
-    mem: str | None = None
-    time: str | None = None
-    gpu: str | None = None
+from macaw.config.hpc import ResourceProfile
 
 
 @dataclass
@@ -21,7 +15,7 @@ class JobSpec:
     session_id: str
     extractor: str
     command: list[str]
-    resources: Resources
+    resources: ResourceProfile
     log_path: Path
     depends_on: list[str] = None
 
@@ -42,5 +36,6 @@ class ExecBackend(ABC):
     def status(self, job_ids: list[str]) -> dict[str, str]: ...
 
 
-def get_backend(name: str, cfg) -> ExecBackend:
+def get_backend(name: str, cfg, hpc=None) -> ExecBackend:
+    """hpc is only consulted by cluster backends; the local one ignores it."""
     raise NotImplementedError

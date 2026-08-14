@@ -1,0 +1,64 @@
+# Cluster settings. This file describes the machine, not the study, so it is loaded
+# separately from project.yaml and never enters the config hash. A cache built on a
+# laptop therefore still hits after moving the project to a cluster.
+#
+# Override with --hpc-config, $MACAW_HPC_CONFIG, or an hpc.yaml next to project.yaml.
+
+# Applied to every profile below unless the profile sets the same key.
+defaults:
+  partition: batch                   # queue name; differs per cluster
+  account: null                      # set if your scheduler requires -A / --account
+  nodes: 1
+  ntasks: 1
+
+# Named resource tiers. Extractors reference a tier by name through
+# Extractor.resource_profile, so adding an extractor never means editing this file.
+#
+# array_limit caps how many sessions of one array run at once. It is the %N in
+# --array=1-50%15. Set it per tier so heavy work stays inside node memory while light
+# work runs wide. Omit it to leave the array unthrottled.
+resource_profiles:
+  data_manage:                       # probing, muxing, anything mostly waiting on disk
+    memory: 2gb
+    time: "00:20:00"
+    cpus_per_task: 16
+    array_limit: 15
+
+  light_short:
+    memory: 16gb
+    time: "04:00:00"
+    cpus_per_task: 16
+    array_limit: 15
+
+  standard:
+    memory: 32gb
+    time: "20:00:00"
+    cpus_per_task: 16
+    array_limit: 15
+
+  standard_short:
+    memory: 32gb
+    time: "08:00:00"
+    cpus_per_task: 16
+    array_limit: 15
+
+  heavy_long:
+    memory: 64gb
+    time: "24:00:00"
+    cpus_per_task: 16
+    array_limit: 15
+
+  gpu_standard:                      # pose, face and ASR backends
+    memory: 32gb
+    time: "12:00:00"
+    cpus_per_task: 8
+    gres: "gpu:1"
+    array_limit: 4                   # GPUs are the scarce resource, not cores
+
+# Lines prepended to every generated job script, in this order.
+module_load: []                      # environment module lines your cluster needs
+env_activate: []                     # lines that activate the Python environment
+
+# Shared model cache. Compute nodes usually have no outbound network, so weights must
+# already be here before submission; see `macaw hpc prefetch-models`.
+hf_home: null

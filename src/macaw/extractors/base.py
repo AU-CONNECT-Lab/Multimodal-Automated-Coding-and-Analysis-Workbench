@@ -54,6 +54,7 @@ class Extractor(ABC):
     phase: Phase = Phase.EXTRACT
     config_sections: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()                  # other extractor names -> DAG edges
+    resource_profile: str = "standard"              # tier name defined in hpc.yaml
 
     def __init__(self, config: MacawConfig):
         self.config = config

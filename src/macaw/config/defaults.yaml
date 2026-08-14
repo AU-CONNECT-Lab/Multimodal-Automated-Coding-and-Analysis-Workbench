@@ -102,25 +102,15 @@ qc:
   fail_fast: false                   # true aborts the run on the first failed check
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
 
+# Cluster resources are not configured here. They describe the machine rather than the
+# study, so they live in a separate hpc.yaml that never enters the config hash.
 execution:
-  backend: local                     # local | slurm | pbs
+  backend: local                     # local | slurm
   n_workers: 4                       # local only; parallel sessions, not threads per session
   cache: true                        # content-addressed cache for resumable runs
   cache_dir: null                    # null = <output_dir>/.cache
   check_outputs: true                # validate declared outputs after a task reports success
   output_rules: null                 # path to results_check.yaml; null = packaged rules
-  default_resources:                 # cluster request used when an extractor has no override
-    cpus: null                       # cores per task
-    mem: null                        # e.g. "32G"
-    time: null                       # e.g. "04:00:00"
-    gpu: null                        # e.g. "gpu:1"
-    partition: null
-    account: null
-  resources: {}                      # extractor name -> same fields, e.g. {pose.keypoints: {gpu: "gpu:1"}}
-  module_load: []                    # cluster only; module load lines prepended to the job script
-  env_activate: []                   # cluster only; environment activation lines
-  hf_home: null                      # shared model cache; compute nodes often have no internet
-  max_concurrent: null               # cap on simultaneous array elements, the %N in --array
   job_name_prefix: macaw             # prefix for submitted job names
 
 gui:

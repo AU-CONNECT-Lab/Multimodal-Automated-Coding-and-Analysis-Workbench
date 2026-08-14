@@ -5,14 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from macaw.config.schema import MacawConfig, ResourceSpec
+from macaw.config.hpc import HPCConfig, ResourceProfile
+from macaw.config.schema import MacawConfig
 
 
 @dataclass
 class ArrayJob:
     extractor: str
     array_spec: str
-    resources: ResourceSpec
+    resources: ResourceProfile
     depends_on: list[str] = field(default_factory=list)   # extractor names, resolved to job ids
     dependency_kind: str = "aftercorr"
 
@@ -24,7 +25,7 @@ class SubmitScript:
     map_path: Path
 
 
-def preamble(config: MacawConfig) -> list[str]:
+def preamble(config: MacawConfig, hpc: HPCConfig) -> list[str]:
     """Module loads, environment activation, HF_HOME, scratch. Runs before every task."""
     raise NotImplementedError
 
@@ -42,10 +43,9 @@ def llm_server_lines(config: MacawConfig) -> list[str]:
 def render(
     jobs: list[ArrayJob],
     config: MacawConfig,
+    hpc: HPCConfig,
     config_path: Path,
     map_path: Path,
-    *,
-    scheduler: str,
 ) -> str:
     raise NotImplementedError
 

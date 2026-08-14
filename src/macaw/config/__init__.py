@@ -1,4 +1,5 @@
 from macaw.config.hashing import hash_extractor_config, hash_full, hash_section
+from macaw.config.hpc import HPCConfig, ResourceProfile, load_hpc_config, resolve_profile
 from macaw.config.loader import (
     archive_resolved,
     load_config,
@@ -18,4 +19,8 @@ __all__ = [
     "hash_section",
     "hash_extractor_config",
     "hash_full",
+    "HPCConfig",
+    "ResourceProfile",
+    "load_hpc_config",
+    "resolve_profile",
 ]

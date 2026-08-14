@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from macaw.config.hpc import HPCConfig
 from macaw.config.schema import MacawConfig
 from macaw.execution.backends.base import ExecBackend, JobSpec
 from macaw.execution.script import ArrayJob, SubmitScript
@@ -12,8 +13,9 @@ from macaw.execution.script import ArrayJob, SubmitScript
 class SlurmBackend(ExecBackend):
     name = "slurm"
 
-    def __init__(self, cfg, job_db=None):
+    def __init__(self, cfg, hpc: HPCConfig, job_db=None):
         self.cfg = cfg
+        self.hpc = hpc
         self.job_db = job_db
 
     def submit(self, specs: list[JobSpec]) -> list[str]:
@@ -29,14 +31,18 @@ class SlurmBackend(ExecBackend):
         raise NotImplementedError
 
 
-def build_jobs(config: MacawConfig, extractors: list[str], array_spec: str) -> list[ArrayJob]:
+def build_jobs(
+    config: MacawConfig, hpc: HPCConfig, extractors: list[str], n_sessions: int
+) -> list[ArrayJob]:
     """One array per extractor. Grouping by topological layer instead would force a whole
-    layer to request GPUs because one member needs them."""
+    layer to request GPUs because one member needs them. The %N throttle comes from the
+    extractor's own resource profile, so a GPU tier can run narrower than a CPU one."""
     raise NotImplementedError
 
 
 def generate(
     config: MacawConfig,
+    hpc: HPCConfig,
     config_path: Path,
     session_ids: list[str],
     extractors: list[str],

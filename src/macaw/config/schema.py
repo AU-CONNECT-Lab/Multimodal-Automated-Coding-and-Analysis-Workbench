@@ -140,29 +140,13 @@ class QCSection(_Section):
     report_downsample_px: int = 2000
 
 
-class ResourceSpec(_Section):
-    cpus: int | None = None
-    mem: str | None = None
-    time: str | None = None
-    gpu: str | None = None
-    partition: str | None = None
-    account: str | None = None
-
-
 class ExecutionSection(_Section):
-    backend: Literal["local", "slurm", "pbs"] = "local"
+    backend: Literal["local", "slurm"] = "local"
     n_workers: int = 4
     cache: bool = True
     cache_dir: Path | None = None
     check_outputs: bool = True
     output_rules: Path | None = None
-    default_resources: ResourceSpec = Field(default_factory=ResourceSpec)
-    # per-extractor overrides; a GPU pose job and a CPU prosody job cannot share one request
-    resources: dict[str, ResourceSpec] = Field(default_factory=dict)
-    module_load: list[str] = Field(default_factory=list)
-    env_activate: list[str] = Field(default_factory=list)
-    hf_home: Path | None = None
-    max_concurrent: int | None = None
     job_name_prefix: str = "macaw"
 
 
