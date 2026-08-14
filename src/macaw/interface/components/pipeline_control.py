@@ -7,7 +7,7 @@ def layout(config: MacawConfig) -> object:
     raise NotImplementedError
 
 
-def session_selector(session_ids: list[str]) -> object:
+def recording_selector(recording_ids: list[str]) -> object:
     raise NotImplementedError
 
 

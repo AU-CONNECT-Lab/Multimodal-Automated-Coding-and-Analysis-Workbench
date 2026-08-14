@@ -1,4 +1,4 @@
-"""Layered merge: packaged defaults, then project.yaml, then sessions/<id>.yaml, then --set."""
+"""Layered merge: packaged defaults, then project.yaml, then recordings/<id>.yaml, then --set."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 from yaml.constructor import SafeConstructor
 
-from macaw.config.schema import SESSION_OVERRIDABLE, MacawConfig
+from macaw.config.schema import RECORDING_OVERRIDABLE, MacawConfig
 from macaw.exceptions import (
     ConfigError,
     ConfigValidationError,
@@ -29,9 +29,12 @@ PROJECT_TEMPLATE = """\
 
 project:
   name:                    # short project name, used in report titles
-  raw_dir:                 # directory holding one subdirectory per session
+  raw_dir:                 # directory holding the recordings
   output_dir:              # everything MACAW writes goes here
-  session_prefix: ""       # e.g. "dyad-" to only pick up dyad-001, dyad-002, ...
+  # "{group_id}" is one directory per recording. Longitudinal datasets want
+  # "sub-{group_id}/ses-{session_id}"; add "/task-{task}_run-{run}" for several per visit.
+  recording_pattern: "{group_id}"
+  recording_prefix: ""     # e.g. "dyad-" to only pick up dyad-001, dyad-002, ...
   n_subjects: 2
   roles: [parent, child]
 
@@ -46,7 +49,7 @@ execution:
 class KeySource:
     """Where a value came from, so an error can point at a file and a line."""
 
-    layer: str                  # defaults | project | session | cli
+    layer: str                  # defaults | project | recording | cli
     path: Path | None = None
     line: int | None = None
 
@@ -136,14 +139,14 @@ def parse_cli_overrides(pairs: Sequence[str]) -> dict[str, Any]:
     return out
 
 
-def check_session_overridable(data: dict[str, Any], path: Path) -> None:
-    """Raises when a session file touches a section outside SESSION_OVERRIDABLE."""
-    illegal = [key for key in data if key not in SESSION_OVERRIDABLE]
+def check_recording_overridable(data: dict[str, Any], path: Path) -> None:
+    """Raises when a recording file touches a section outside RECORDING_OVERRIDABLE."""
+    illegal = [key for key in data if key not in RECORDING_OVERRIDABLE]
     if illegal:
-        allowed = ", ".join(SESSION_OVERRIDABLE)
+        allowed = ", ".join(RECORDING_OVERRIDABLE)
         raise ConfigError(
-            f"{path}: a session file may not set {', '.join(sorted(illegal))}. "
-            f"Sections a session may override: {allowed}."
+            f"{path}: a recording file may not set {', '.join(sorted(illegal))}. "
+            f"Sections a recording may override: {allowed}."
         )
 
 
@@ -189,10 +192,10 @@ def _dotted_keys(data: dict[str, Any], prefix: str = "") -> Iterator[str]:
 def resolve_config(
     project_yaml: Path,
     *,
-    session_id: str | None = None,
+    recording_id: str | None = None,
     cli_overrides: Sequence[str] = (),
 ) -> MacawConfig:
-    """Without session_id this is the project baseline; with one it is what that session runs."""
+    """Without recording_id this is the project baseline; with one it is what that recording runs."""
     merged = load_defaults()
     sources: dict[str, KeySource] = {
         key: KeySource("defaults", DEFAULTS_PATH) for key in _dotted_keys(merged)
@@ -202,13 +205,13 @@ def resolve_config(
     merged = deep_merge(merged, project_data)
     sources.update(project_sources)
 
-    if session_id is not None:
-        session_yaml = session_override_path(project_yaml, session_id)
-        if session_yaml is not None:
-            session_data, session_sources = load_yaml(session_yaml, layer="session")
-            check_session_overridable(session_data, session_yaml)
-            merged = deep_merge(merged, session_data)
-            sources.update(session_sources)
+    if recording_id is not None:
+        recording_yaml = recording_override_path(project_yaml, recording_id)
+        if recording_yaml is not None:
+            recording_data, recording_sources = load_yaml(recording_yaml, layer="recording")
+            check_recording_overridable(recording_data, recording_yaml)
+            merged = deep_merge(merged, recording_data)
+            sources.update(recording_sources)
 
     overrides = parse_cli_overrides(cli_overrides)
     if overrides:
@@ -279,16 +282,16 @@ def load_config(path: Path) -> MacawConfig:
     return _validate(values, sources)
 
 
-def session_override_path(project_yaml: Path, session_id: str) -> Path | None:
+def recording_override_path(project_yaml: Path, recording_id: str) -> Path | None:
     project_yaml = project_yaml.resolve()
     with open(project_yaml, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
-    configured = (data.get("project") or {}).get("session_config_dir", "sessions")
+    configured = (data.get("project") or {}).get("recording_config_dir", "recordings")
 
     directory = Path(configured)
     if not directory.is_absolute():
         directory = project_yaml.parent / directory
-    candidate = directory / f"{session_id}.yaml"
+    candidate = directory / f"{recording_id}.yaml"
     return candidate if candidate.is_file() else None
 
 
@@ -299,12 +302,12 @@ def archive_resolved(config: MacawConfig, output_dir: Path) -> Path:
     return _dump_config(config, make_layout(output_dir).resolved_config_path)
 
 
-def archive_session_resolved(config: MacawConfig, output_dir: Path, session_id: str) -> Path:
-    """The per-session copy is the one that explains a given session's numbers."""
+def archive_recording_resolved(config: MacawConfig, output_dir: Path, recording_id: str) -> Path:
+    """The per-recording copy is the one that explains a given recording's numbers."""
     from macaw.project.layout import make_layout
 
     layout = make_layout(output_dir)
-    return _dump_config(config, layout.session_dir(session_id) / RESOLVED_FILENAME)
+    return _dump_config(config, layout.recording_dir(recording_id) / RESOLVED_FILENAME)
 
 
 def _dump_config(config: MacawConfig, path: Path) -> Path:

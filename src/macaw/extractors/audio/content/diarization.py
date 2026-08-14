@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.extractors.base import Backend
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 
 
 class DiarizationBackend(Backend):
@@ -34,5 +34,5 @@ def assign_speakers(segments: pd.DataFrame, diarization: pd.DataFrame) -> pd.Dat
     raise NotImplementedError
 
 
-def resolve_diarization(session: Session, mode: str) -> DiarizationBackend:
+def resolve_diarization(recording: Recording, mode: str) -> DiarizationBackend:
     raise NotImplementedError

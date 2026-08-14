@@ -11,8 +11,8 @@ from macaw.config.hpc import ResourceProfile
 
 @dataclass
 class JobSpec:
-    task_id: str                       # "<session_id>:<extractor>", macaw's unit of work
-    session_id: str
+    task_id: str                       # "<recording_id>:<extractor>", macaw's unit of work
+    recording_id: str
     extractor: str
     command: list[str]
     resources: ResourceProfile

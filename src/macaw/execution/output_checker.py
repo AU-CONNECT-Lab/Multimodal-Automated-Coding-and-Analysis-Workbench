@@ -27,7 +27,7 @@ def load_rules(path: Path) -> list[OutputRule]:
     raise NotImplementedError
 
 
-def check_task(session_dir: Path, extractor: str, rules: list[OutputRule], task_id: str) -> CheckResult:
+def check_task(recording_dir: Path, extractor: str, rules: list[OutputRule], task_id: str) -> CheckResult:
     raise NotImplementedError
 
 

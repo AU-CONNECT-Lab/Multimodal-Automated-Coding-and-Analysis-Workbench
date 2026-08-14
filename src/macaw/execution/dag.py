@@ -1,7 +1,7 @@
 """Dependency graph built from Extractor.requires, not from hard-coded pipeline stages.
 
-Every session is independent, so the real graph is the extractor graph applied to each
-session. The extractor graph is therefore what gets scheduled; sessions become array
+Every recording is independent, so the real graph is the extractor graph applied to each
+recording. The extractor graph is therefore what gets scheduled; recordings become array
 indices inside it."""
 
 from __future__ import annotations

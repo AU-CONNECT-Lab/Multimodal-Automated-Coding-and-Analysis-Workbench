@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import typer
 
-from macaw.cli import align, code, config_cmd, export, gui, hpc, init, qc, run, sessions
+from macaw.cli import align, code, config_cmd, export, gui, hpc, init, qc, run, recordings
 
 app = typer.Typer(
     name="macaw",
@@ -11,7 +11,7 @@ app = typer.Typer(
 )
 
 app.add_typer(init.app)
-app.add_typer(sessions.app)
+app.add_typer(recordings.app)
 app.add_typer(align.app)
 app.add_typer(run.app)
 app.add_typer(qc.app)

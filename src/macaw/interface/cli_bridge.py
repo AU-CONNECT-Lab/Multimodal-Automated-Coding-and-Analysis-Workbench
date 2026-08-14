@@ -12,7 +12,7 @@ from pathlib import Path
 class LaunchedCommand:
     argv: list[str]
     pid: int
-    run_id: str | None
+    execution_id: str | None
     log_path: Path
     started_at: str
 
@@ -21,7 +21,7 @@ def build_command(
     subcommand: list[str],
     *,
     config_path: Path,
-    sessions: list[str] | None = None,
+    recordings: list[str] | None = None,
     extractors: list[str] | None = None,
     overrides: dict[str, str] | None = None,
     extra_flags: list[str] | None = None,
@@ -46,6 +46,6 @@ def tail_log(log_path: Path, *, n_lines: int = 200) -> list[str]:
     raise NotImplementedError
 
 
-def poll_status(config_path: Path, run_id: str) -> dict[str, int]:
+def poll_status(config_path: Path, execution_id: str) -> dict[str, int]:
     """Counts by status, straight out of job_db; the same source `macaw status` reads."""
     raise NotImplementedError

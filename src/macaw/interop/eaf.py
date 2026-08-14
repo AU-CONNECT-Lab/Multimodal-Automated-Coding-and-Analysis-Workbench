@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 
 
 def export_eaf(
     annotations: pd.DataFrame,
-    session: Session,
+    recording: Recording,
     out_path: Path,
     *,
     tiers: list[str] | None = None,
@@ -20,11 +20,11 @@ def export_eaf(
     raise NotImplementedError
 
 
-def import_eaf(path: Path, *, session_id: str) -> pd.DataFrame:
+def import_eaf(path: Path, *, recording_id: str) -> pd.DataFrame:
     raise NotImplementedError
 
 
-def roundtrip_check(annotations: pd.DataFrame, session: Session, tmp_dir: Path) -> list[str]:
+def roundtrip_check(annotations: pd.DataFrame, recording: Recording, tmp_dir: Path) -> list[str]:
     """Export then re-import must reproduce every annotation exactly."""
     raise NotImplementedError
 

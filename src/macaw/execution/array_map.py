@@ -1,7 +1,7 @@
-"""Stable session to array-index mapping.
+"""Stable recording to array-index mapping.
 
 aftercorr pairs element N of one array with element N of the next, so the mapping must be
-identical across every array in a run. Cached sessions still occupy their index and run a
+identical across every array in a run. Cached recordings still occupy their index and run a
 task that exits immediately; indices are never compacted."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def build_map(session_ids: list[str]) -> dict[str, int]:
+def build_map(recording_ids: list[str]) -> dict[str, int]:
     raise NotImplementedError
 
 
@@ -21,7 +21,7 @@ def read_map(path: Path) -> dict[str, int]:
     raise NotImplementedError
 
 
-def session_for_index(mapping: dict[str, int], index: int) -> str:
+def recording_for_index(mapping: dict[str, int], index: int) -> str:
     raise NotImplementedError
 
 

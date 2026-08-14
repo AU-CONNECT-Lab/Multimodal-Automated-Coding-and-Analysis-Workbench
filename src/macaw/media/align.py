@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from macaw.config.schema import AlignSection
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 
 
 @dataclass
@@ -35,8 +35,8 @@ def align_pair(
     raise NotImplementedError
 
 
-def align_session(session: Session, cfg: AlignSection) -> list[AlignResult]:
-    """Aligns every media file to session.reference_media()."""
+def align_recording(recording: Recording, cfg: AlignSection) -> list[AlignResult]:
+    """Aligns every media file to recording.reference_media()."""
     raise NotImplementedError
 
 
@@ -48,5 +48,5 @@ def read_offset_table(path: Path) -> list[AlignResult]:
     raise NotImplementedError
 
 
-def apply_alignment(session: Session, results: list[AlignResult], *, recut: bool = False) -> Session:
+def apply_alignment(recording: Recording, results: list[AlignResult], *, recut: bool = False) -> Recording:
     raise NotImplementedError

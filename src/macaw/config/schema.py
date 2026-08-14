@@ -17,9 +17,11 @@ class ProjectSection(_Section):
     raw_dir: Path
     output_dir: Path
     scratch_dir: Path | None = None
-    session_prefix: str = ""
-    session_config_dir: Path = Path("sessions")
-    excluded_sessions: list[str] = Field(default_factory=list)
+    # how a path under raw_dir maps to BIDS entities; "{group_id}" is the flat case
+    recording_pattern: str = "{group_id}"
+    recording_prefix: str = ""
+    recording_config_dir: Path = Path("recordings")
+    excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
 
@@ -173,9 +175,9 @@ class MacawConfig(_Section):
     primary: list[str] = Field(default_factory=list)
 
 
-# Which sections a sessions/<id>.yaml file may touch. Everything else is a hard error:
-# a session must never be able to redirect output_dir or change the scheduler.
-SESSION_OVERRIDABLE: tuple[str, ...] = (
+# Which sections a recordings/<id>.yaml file may touch. Everything else is a hard error:
+# a recording must never be able to redirect output_dir or change the scheduler.
+RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "segment",
     "prosody",
     "text",

@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command("align")
 def align(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     recut: bool = typer.Option(False, "--recut", help="Physically re-encode instead of storing offsets."),
     drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check"),
     set_: list[str] = typer.Option(None, "--set"),
@@ -22,7 +22,7 @@ def align(
 @app.command("set-offset")
 def set_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    session: str = typer.Option(..., "--session", "-s"),
+    recording: str = typer.Option(..., "--recording", "-r"),
     media: str = typer.Option(..., "--media", help="Media file name to adjust."),
     offset: float = typer.Option(..., "--offset", help="Seconds."),
 ) -> None:

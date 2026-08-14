@@ -10,7 +10,7 @@ app = typer.Typer(help="Generate cluster job scripts. Submission stays manual.")
 @app.command("generate")
 def generate(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e"),
     hpc_config: Path = typer.Option(None, "--hpc-config", help="Defaults to $MACAW_HPC_CONFIG, then ./hpc.yaml, then the packaged file."),
     out: Path = typer.Option(Path("submit_macaw.sh"), "--out"),
@@ -27,7 +27,7 @@ def generate(
 @app.command("rerun-script")
 def rerun_script(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    run_id: str = typer.Option(..., "--run-id"),
+    execution_id: str = typer.Option(..., "--execution-id"),
     out: Path = typer.Option(Path("rerun_macaw.sh"), "--out"),
 ) -> None:
     """Generate a script covering only the failed array indices."""
@@ -48,7 +48,7 @@ def prefetch_models(
 @app.command("preflight")
 def preflight(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
 ) -> None:
     """Check resource requests, model availability and interactive gates before submitting."""
     raise NotImplementedError

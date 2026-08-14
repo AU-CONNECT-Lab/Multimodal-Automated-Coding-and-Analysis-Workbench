@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command("run")
 def run(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Defaults to all enabled."),
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     workers: int = typer.Option(None, "--workers", "-j"),
@@ -24,18 +24,18 @@ def run(
 @app.command("run-task")
 def run_task(
     config: Path = typer.Option(..., "--config", "-c"),
-    session: str = typer.Option(..., "--session", "-s"),
+    recording: str = typer.Option(..., "--recording", "-r"),
     extractor: str = typer.Option(..., "--extractor", "-e"),
-    run_id: str = typer.Option(..., "--run-id"),
+    execution_id: str = typer.Option(..., "--execution-id"),
 ) -> None:
-    """Run one extractor for one session. This is what a cluster array element calls."""
+    """Run one extractor for one recording. This is what a cluster array element calls."""
     raise NotImplementedError
 
 
 @app.command("status")
 def status(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    run_id: str = typer.Option(None, "--run-id"),
+    execution_id: str = typer.Option(None, "--execution-id"),
     failed_only: bool = typer.Option(False, "--failed"),
 ) -> None:
     """Show task states from the job database."""

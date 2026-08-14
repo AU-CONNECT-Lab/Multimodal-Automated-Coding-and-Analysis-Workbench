@@ -12,7 +12,7 @@ def write_keypoints(df: pd.DataFrame, path: Path, *, append: bool = False) -> Pa
 def read_keypoints(
     path: Path,
     *,
-    session_id: str | None = None,
+    recording_id: str | None = None,
     subject_id: str | None = None,
     joints: list[str] | None = None,
     t_range: tuple[float, float] | None = None,

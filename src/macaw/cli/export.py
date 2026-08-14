@@ -10,9 +10,9 @@ app = typer.Typer()
 @app.command("export")
 def export(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf"),
-    scale: str = typer.Option(None, "--scale", help="frame | event | window | session"),
+    scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
     wide: bool = typer.Option(True, "--wide/--long"),
     out: Path = typer.Option(None, "--out"),
     rmd: bool = typer.Option(False, "--rmd", help="Also write an .Rmd starter script."),
@@ -24,7 +24,7 @@ def export(
 @app.command("import-eaf")
 def import_eaf(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    session: str = typer.Option(..., "--session", "-s"),
+    recording: str = typer.Option(..., "--recording", "-r"),
     path: Path = typer.Argument(..., help="The .eaf file to import."),
     replace: bool = typer.Option(False, "--replace", help="Replace existing tiers instead of merging."),
 ) -> None:

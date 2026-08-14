@@ -11,23 +11,23 @@ import pandas as pd
 
 from macaw.config.schema import MacawConfig
 from macaw.project.manifest import FeatureSpec
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 from macaw.store.schema import Scale
 
 
 class Phase(str, Enum):
     PREP = "prep"                # media probing, segmentation, track extraction
     INTERACTIVE = "interactive"  # needs a human; never goes into a job array
-    EXTRACT = "extract"          # the expensive per-session work
+    EXTRACT = "extract"          # the expensive per-recording work
     DERIVE = "derive"            # cheap quantities computed from extract output
     QC = "qc"
-    AGGREGATE = "aggregate"      # cross-session; one job after every session finishes
+    AGGREGATE = "aggregate"      # cross-recording; one job after every recording finishes
 
 
 @dataclass
 class QCWarning:
     check: str
-    session_id: str
+    recording_id: str
     subject_id: str | None
     severity: str                      # info | warn | fail
     message: str
@@ -64,11 +64,11 @@ class Extractor(ABC):
         """Raise BackendNotAvailableError with install instructions if deps are missing."""
 
     @abstractmethod
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         """Files whose hashes go into the cache key."""
 
     @abstractmethod
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         ...
 
     def backend_info(self) -> tuple[str | None, str | None]:

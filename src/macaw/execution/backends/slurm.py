@@ -32,7 +32,7 @@ class SlurmBackend(ExecBackend):
 
 
 def build_jobs(
-    config: MacawConfig, hpc: HPCConfig, extractors: list[str], n_sessions: int
+    config: MacawConfig, hpc: HPCConfig, extractors: list[str], n_recordings: int
 ) -> list[ArrayJob]:
     """One array per extractor. Grouping by topological layer instead would force a whole
     layer to request GPUs because one member needs them. The %N throttle comes from the
@@ -44,7 +44,7 @@ def generate(
     config: MacawConfig,
     hpc: HPCConfig,
     config_path: Path,
-    session_ids: list[str],
+    recording_ids: list[str],
     extractors: list[str],
     out_path: Path,
 ) -> SubmitScript:
@@ -53,15 +53,15 @@ def generate(
 
 
 def dependency_flag(job_ids: list[str], kind: str = "aftercorr") -> str:
-    """aftercorr pairs element N with element N, so each session advances independently.
-    afterok would make the slowest session hold up every other one."""
+    """aftercorr pairs element N with element N, so each recording advances independently.
+    afterok would make the slowest recording hold up every other one."""
     raise NotImplementedError
 
 
 def generate_rerun(
     config: MacawConfig,
     config_path: Path,
-    run_id: str,
+    execution_id: str,
     out_path: Path,
 ) -> SubmitScript:
     raise NotImplementedError

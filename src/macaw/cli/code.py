@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command("code")
 def code(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    sessions: str = typer.Option(None, "--sessions", "-s", help="Comma-separated ids or a txt file path."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     layer: list[str] = typer.Option(None, "--layer", "-l", help="A, B, or C."),
     codebook: Path = typer.Option(None, "--codebook", help="Required for layer B."),
     set_: list[str] = typer.Option(None, "--set"),

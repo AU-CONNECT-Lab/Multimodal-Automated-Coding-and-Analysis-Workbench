@@ -14,7 +14,7 @@ defaults:
 # Named resource tiers. Extractors reference a tier by name through
 # Extractor.resource_profile, so adding an extractor never means editing this file.
 #
-# array_limit caps how many sessions of one array run at once. It is the %N in
+# array_limit caps how many recordings of one array run at once. It is the %N in
 # --array=1-50%15. Set it per tier so heavy work stays inside node memory while light
 # work runs wide. Omit it to leave the array unthrottled.
 resource_profiles:

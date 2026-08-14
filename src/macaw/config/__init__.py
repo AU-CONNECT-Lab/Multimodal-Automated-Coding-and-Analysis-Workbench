@@ -6,11 +6,11 @@ from macaw.config.loader import (
     resolve_config,
     scaffold_project_config,
 )
-from macaw.config.schema import CONTENT_HASHED_PATHS, SESSION_OVERRIDABLE, MacawConfig
+from macaw.config.schema import CONTENT_HASHED_PATHS, RECORDING_OVERRIDABLE, MacawConfig
 
 __all__ = [
     "MacawConfig",
-    "SESSION_OVERRIDABLE",
+    "RECORDING_OVERRIDABLE",
     "CONTENT_HASHED_PATHS",
     "resolve_config",
     "load_config",

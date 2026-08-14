@@ -38,25 +38,25 @@ class Layout:
     def job_db_path(self) -> Path:
         return self.output_dir / "jobs.sqlite"
 
-    def session_dir(self, session_id: str) -> Path:
-        return self.output_dir / "sessions" / session_id
+    def recording_dir(self, recording_id: str) -> Path:
+        return self.output_dir / "recordings" / recording_id
 
-    def long_table_path(self, session_id: str) -> Path:
-        return self.session_dir(session_id) / "features.parquet"
+    def long_table_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "features.parquet"
 
-    def keypoints_path(self, session_id: str) -> Path:
-        return self.session_dir(session_id) / "keypoints.parquet"
+    def keypoints_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "keypoints.parquet"
 
-    def annotations_path(self, session_id: str) -> Path:
-        return self.session_dir(session_id) / "annotations.parquet"
+    def annotations_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "annotations.parquet"
 
-    def artifacts_dir(self, session_id: str, extractor: str) -> Path:
-        return self.session_dir(session_id) / "artifacts" / extractor
+    def artifacts_dir(self, recording_id: str, extractor: str) -> Path:
+        return self.recording_dir(recording_id) / "artifacts" / extractor
 
-    def qc_report_path(self, session_id: str | None = None) -> Path:
-        if session_id is None:
+    def qc_report_path(self, recording_id: str | None = None) -> Path:
+        if recording_id is None:
             return self.reports_dir / "qc_project.html"
-        return self.reports_dir / f"qc_{session_id}.html"
+        return self.reports_dir / f"qc_{recording_id}.html"
 
     def review_queue_path(self) -> Path:
         return self.output_dir / "review_queue.parquet"
@@ -70,5 +70,5 @@ def make_layout(output_dir: Path, *, create: bool = True) -> Layout:
     return layout
 
 
-def new_run_id() -> str:
+def new_execution_id() -> str:
     return f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"

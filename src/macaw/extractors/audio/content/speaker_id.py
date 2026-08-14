@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from macaw.config.schema import TextSection
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 
 
 @dataclass
@@ -34,7 +34,7 @@ def vote_by_kinship_anchor(transcript: pd.DataFrame, cfg: TextSection) -> dict[s
     raise NotImplementedError
 
 
-def combine_votes(session: Session, transcript: pd.DataFrame, prosody: pd.DataFrame, cfg: TextSection) -> list[IdentityVote]:
+def combine_votes(recording: Recording, transcript: pd.DataFrame, prosody: pd.DataFrame, cfg: TextSection) -> list[IdentityVote]:
     raise NotImplementedError
 
 

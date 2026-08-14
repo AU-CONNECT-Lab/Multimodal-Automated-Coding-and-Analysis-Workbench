@@ -21,7 +21,7 @@ class FeatureSpec:
     backend_version: str | None = None
     params: dict = field(default_factory=dict)
     interpolation: str | None = None    # how to fill gaps at frame scale
-    aggregation: str | None = None      # how to roll up to window/session scale
+    aggregation: str | None = None      # how to roll up to window/recording scale
     comparable_across_subjects: bool = True   # False for intensity; mic distance confounds it
     comparable_across_backends: bool = True   # False for AU; never merge across backends
     validation: str = "none"            # none | synthetic | against_reference | published

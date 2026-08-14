@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from macaw.extractors.base import Extractor, ExtractorResult, Phase
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 from macaw.store.schema import Scale
 
 
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
     version = "0.1.0"
-    scale = Scale.SESSION
+    scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
     config_sections = ("segment", "align")
@@ -20,10 +20,10 @@ class MediaPrepExtractor(Extractor):
     def check_available(self) -> None:
         raise NotImplementedError
 
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         raise NotImplementedError
 
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         """Reads the offset table produced by `macaw align`; it does not estimate offsets."""
         raise NotImplementedError
 
@@ -33,7 +33,7 @@ class AlignReviewGate(Extractor):
 
     name = "align.review"
     version = "0.1.0"
-    scale = Scale.SESSION
+    scale = Scale.RECORDING
     group = "prep"
     phase = Phase.INTERACTIVE
     config_sections = ("align",)
@@ -41,10 +41,10 @@ class AlignReviewGate(Extractor):
     def check_available(self) -> None:
         raise NotImplementedError
 
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         raise NotImplementedError
 
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         """Fails with a clear message when run non-interactively and confirmation is missing."""
         raise NotImplementedError
 
@@ -54,7 +54,7 @@ class IdentityConfirmGate(Extractor):
 
     name = "identity.confirm"
     version = "0.1.0"
-    scale = Scale.SESSION
+    scale = Scale.RECORDING
     group = "prep"
     phase = Phase.INTERACTIVE
     config_sections = ("text",)
@@ -63,8 +63,8 @@ class IdentityConfirmGate(Extractor):
     def check_available(self) -> None:
         raise NotImplementedError
 
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         raise NotImplementedError
 
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         raise NotImplementedError

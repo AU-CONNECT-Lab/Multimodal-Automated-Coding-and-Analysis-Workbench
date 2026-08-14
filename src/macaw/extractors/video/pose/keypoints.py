@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from macaw.extractors.base import Extractor, ExtractorResult
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 from macaw.store.schema import Scale
 
 
@@ -17,9 +17,9 @@ class PoseExtractor(Extractor):
     def check_available(self) -> None:
         raise NotImplementedError
 
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         raise NotImplementedError
 
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         """Writes keypoints to the keypoint table; only track-quality metrics go to rows."""
         raise NotImplementedError

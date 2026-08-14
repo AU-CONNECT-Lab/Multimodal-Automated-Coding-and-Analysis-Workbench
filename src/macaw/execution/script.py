@@ -31,7 +31,7 @@ def preamble(config: MacawConfig, hpc: HPCConfig) -> list[str]:
 
 
 def task_command(config_path: Path, extractor: str, map_path: Path) -> str:
-    """The one line an array element runs: look up its session id, then `macaw run-task`."""
+    """The one line an array element runs: look up its recording id, then `macaw run-task`."""
     raise NotImplementedError
 
 

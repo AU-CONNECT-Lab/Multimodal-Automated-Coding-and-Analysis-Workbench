@@ -6,7 +6,7 @@ from macaw.exceptions import MacawError
 from macaw.extractors import get_extractor, list_extractors, register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult
 from macaw.project.manifest import FeatureSpec, FeatureManifest
-from macaw.project.session import MediaFile, Session, Subject
+from macaw.project.recording import MediaFile, Recording, Subject
 from macaw.store.longtable import read_long_table, write_long_table
 from macaw.store.schema import Scale
 
@@ -20,7 +20,7 @@ __all__ = [
     "load_config",
     "resolve_config",
     # project
-    "Session",
+    "Recording",
     "Subject",
     "MediaFile",
     "FeatureSpec",

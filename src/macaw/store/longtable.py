@@ -15,7 +15,7 @@ def write_long_table(df: pd.DataFrame, path: Path, *, append: bool = False) -> P
 def read_long_table(
     path: Path,
     *,
-    session_id: str | None = None,
+    recording_id: str | None = None,
     subject_id: str | None = None,
     source: str | None = None,
     scale: Scale | None = None,
@@ -32,13 +32,13 @@ def concat_long_tables(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
 
 def build_long_rows(
     *,
-    session_id: str,
+    recording_id: str,
     source: str,
     scale: Scale,
     values: pd.DataFrame,
     subject_id: str | None = None,
     subject_id_b: str | None = None,
-    run_id: str | None = None,
+    execution_id: str | None = None,
     config_hash: str | None = None,
 ) -> pd.DataFrame:
     """Melt an extractor's wide (time x feature) output into long-table rows."""
@@ -56,7 +56,7 @@ def aggregate_to_window(
     raise NotImplementedError
 
 
-def aggregate_to_session(df: pd.DataFrame, how: str | dict[str, str] = "mean") -> pd.DataFrame:
+def aggregate_to_recording(df: pd.DataFrame, how: str | dict[str, str] = "mean") -> pd.DataFrame:
     raise NotImplementedError
 
 

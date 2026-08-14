@@ -6,7 +6,7 @@ import pandas as pd
 
 from macaw.config.schema import TurnsSection
 from macaw.extractors.base import Extractor, ExtractorResult
-from macaw.project.session import Session
+from macaw.project.recording import Recording
 from macaw.store.schema import Scale
 
 
@@ -21,10 +21,10 @@ class TransitionExtractor(Extractor):
     def check_available(self) -> None:
         raise NotImplementedError
 
-    def inputs_for(self, session: Session) -> list[Path]:
+    def inputs_for(self, recording: Recording) -> list[Path]:
         raise NotImplementedError
 
-    def run(self, session: Session, workspace: Path) -> ExtractorResult:
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         raise NotImplementedError
 
 
