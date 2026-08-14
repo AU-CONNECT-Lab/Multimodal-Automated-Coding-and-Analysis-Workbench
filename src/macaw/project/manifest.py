@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from macaw.exceptions import MacawError
 from macaw.store.schema import Scale
+
+# frame and event both sit below window; anything finer than the target scale rolls up
+_SCALE_RANK = {Scale.FRAME: 0, Scale.EVENT: 0, Scale.WINDOW: 1, Scale.RECORDING: 2}
+
+DEFAULT_AGGREGATION = "mean"
 
 
 @dataclass
@@ -28,38 +35,84 @@ class FeatureSpec:
     primary: bool = False
     notes: str | None = None
 
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["scale"] = Scale(self.scale).value
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FeatureSpec":
+        known = {f.name for f in fields(cls)}
+        unexpected = set(data) - known
+        if unexpected:
+            raise MacawError(f"Manifest entry has unknown keys: {', '.join(sorted(unexpected))}")
+        return cls(**{**data, "scale": Scale(data["scale"])})
+
 
 @dataclass
 class FeatureManifest:
     specs: dict[str, FeatureSpec] = field(default_factory=dict)
 
     def add(self, spec: FeatureSpec) -> None:
-        raise NotImplementedError
+        existing = self.specs.get(spec.name)
+        # the same extractor rerun over another recording produces an identical spec; two
+        # different extractors claiming one name is a bug that must not resolve silently
+        if existing is not None and existing.to_dict() != spec.to_dict():
+            raise MacawError(
+                f"Feature '{spec.name}' is described differently by "
+                f"{existing.extractor} and {spec.extractor}"
+            )
+        self.specs[spec.name] = spec
 
     def extend(self, specs: list[FeatureSpec]) -> None:
-        raise NotImplementedError
+        for spec in specs:
+            self.add(spec)
 
     def get(self, name: str) -> FeatureSpec:
-        raise NotImplementedError
+        try:
+            return self.specs[name]
+        except KeyError:
+            raise MacawError(f"No manifest entry for feature '{name}'") from None
 
     def by_group(self, group: str) -> list[FeatureSpec]:
-        raise NotImplementedError
+        return sorted(
+            (spec for spec in self.specs.values() if spec.group == group), key=lambda s: s.name
+        )
 
     def aggregation_map(self, scale: Scale) -> dict[str, str]:
         """Feeds aggregate_to_window so each feature rolls up the way its spec says."""
-        raise NotImplementedError
+        target = _SCALE_RANK[Scale(scale)]
+        return {
+            name: spec.aggregation or DEFAULT_AGGREGATION
+            for name, spec in self.specs.items()
+            if _SCALE_RANK[Scale(spec.scale)] < target
+        }
 
     def mark_primary(self, names: list[str]) -> None:
-        raise NotImplementedError
+        for name in names:
+            self.get(name).primary = True
 
 
 def read_manifest(path: Path) -> FeatureManifest:
-    raise NotImplementedError
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return FeatureManifest(
+        specs={entry["name"]: FeatureSpec.from_dict(entry) for entry in payload["features"]}
+    )
 
 
 def write_manifest(manifest: FeatureManifest, path: Path) -> Path:
-    raise NotImplementedError
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "features": [manifest.specs[name].to_dict() for name in sorted(manifest.specs)],
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 def merge_manifests(manifests: list[FeatureManifest]) -> FeatureManifest:
-    raise NotImplementedError
+    merged = FeatureManifest()
+    for manifest in manifests:
+        merged.extend(list(manifest.specs.values()))
+    return merged

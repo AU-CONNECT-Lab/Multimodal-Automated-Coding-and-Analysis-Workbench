@@ -7,6 +7,9 @@ project:
   # Longitudinal:  "sub-{group_id}/ses-{session_id}"
   # Several tasks per visit: "sub-{group_id}/ses-{session_id}/task-{task}_run-{run}"
   recording_pattern: "{group_id}"
+  # Which media file belongs to which person. A capture that is not one of the recording's
+  # subject ids means the file is shared, e.g. "room_camera.mp4" with subjects parent/child.
+  media_pattern: "*_{subject_id}.*"
   recording_prefix: ""               # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
   recording_config_dir: recordings   # dir of <recording_id>.yaml files overriding this config
   n_subjects: 2                      # people per recording; N-person is supported, 2 is tested

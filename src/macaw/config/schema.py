@@ -19,6 +19,9 @@ class ProjectSection(_Section):
     scratch_dir: Path | None = None
     # how a path under raw_dir maps to BIDS entities; "{group_id}" is the flat case
     recording_pattern: str = "{group_id}"
+    # which media file belongs to which person; a capture that is not a known subject id
+    # means the file is shared, e.g. a room camera
+    media_pattern: str = "*_{subject_id}.*"
     recording_prefix: str = ""
     recording_config_dir: Path = Path("recordings")
     excluded_recordings: list[str] = Field(default_factory=list)
