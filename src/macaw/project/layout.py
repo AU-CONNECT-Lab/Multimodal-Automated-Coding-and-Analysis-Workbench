@@ -41,14 +41,16 @@ class Layout:
     def recording_dir(self, recording_id: str) -> Path:
         return self.output_dir / "recordings" / recording_id
 
+    # the three tables are directories of parquet files, one per writer; store/_io.py
+    # explains why a single file cannot survive concurrent extractors
     def long_table_path(self, recording_id: str) -> Path:
-        return self.recording_dir(recording_id) / "features.parquet"
+        return self.recording_dir(recording_id) / "features"
 
     def keypoints_path(self, recording_id: str) -> Path:
-        return self.recording_dir(recording_id) / "keypoints.parquet"
+        return self.recording_dir(recording_id) / "keypoints"
 
     def annotations_path(self, recording_id: str) -> Path:
-        return self.recording_dir(recording_id) / "annotations.parquet"
+        return self.recording_dir(recording_id) / "annotations"
 
     def artifacts_dir(self, recording_id: str, extractor: str) -> Path:
         return self.recording_dir(recording_id) / "artifacts" / extractor
