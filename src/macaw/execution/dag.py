@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from macaw.config.schema import MacawConfig
+from macaw.exceptions import DependencyCycleError
+from macaw.extractors import get_extractor, list_extractors
 from macaw.extractors.base import Phase
+
+PHASE_ORDER = (Phase.PREP, Phase.INTERACTIVE, Phase.EXTRACT, Phase.DERIVE, Phase.QC, Phase.AGGREGATE)
 
 
 @dataclass
@@ -25,41 +29,92 @@ class DAG:
         self.nodes: dict[str, TaskNode] = {}
 
     def add(self, extractor: str) -> TaskNode:
-        raise NotImplementedError
+        existing = self.nodes.get(extractor)
+        if existing is not None:
+            return existing
+        cls = get_extractor(extractor)
+        node = TaskNode(extractor=extractor, phase=cls.phase, depends_on=set(cls.requires))
+        self.nodes[extractor] = node
+        return node
 
     def expand(self, requested: list[str]) -> None:
         """Pull in each requested extractor plus everything it requires, transitively."""
-        raise NotImplementedError
+        queue = list(requested)
+        while queue:
+            name = queue.pop()
+            if name in self.nodes:
+                continue
+            queue.extend(self.add(name).depends_on)
 
     def topological_order(self) -> list[str]:
         """Raises DependencyCycleError on a cycle."""
-        raise NotImplementedError
+        return [name for level in self.layers() for name in level]
 
     def layers(self) -> list[list[str]]:
         """Topological layers. Useful for reporting; not how jobs are grouped."""
-        raise NotImplementedError
+        remaining = {name: set(node.depends_on) & set(self.nodes) for name, node in self.nodes.items()}
+        levels: list[list[str]] = []
+        while remaining:
+            ready = sorted(name for name, deps in remaining.items() if not deps)
+            if not ready:
+                stuck = ", ".join(sorted(remaining))
+                raise DependencyCycleError(f"Extractor dependencies form a cycle among: {stuck}")
+            levels.append(ready)
+            for name in ready:
+                remaining.pop(name)
+            for deps in remaining.values():
+                deps.difference_update(ready)
+        return levels
 
     def dependencies(self, extractor: str) -> set[str]:
         """Direct predecessors, which become the aftercorr edges between job arrays."""
-        raise NotImplementedError
+        return set(self.nodes[extractor].depends_on) & set(self.nodes)
 
     def by_phase(self, phase: Phase) -> list[str]:
-        raise NotImplementedError
+        order = self.topological_order()
+        return [name for name in order if self.nodes[name].phase == phase]
 
     def interactive_gates(self) -> list[str]:
         """Nodes a human must clear. Cluster scripts stop before these and resume after."""
-        raise NotImplementedError
+        return self.by_phase(Phase.INTERACTIVE)
 
     def batch_segments(self) -> list[list[str]]:
         """Runs of automatic work split at each interactive gate, in order."""
-        raise NotImplementedError
+        segments: list[list[str]] = []
+        current: list[str] = []
+        for name in self.topological_order():
+            if self.nodes[name].phase == Phase.INTERACTIVE:
+                if current:
+                    segments.append(current)
+                    current = []
+                continue
+            current.append(name)
+        if current:
+            segments.append(current)
+        return segments
 
     def ready(self, completed: set[str]) -> list[str]:
-        raise NotImplementedError
+        return sorted(
+            name
+            for name in self.nodes
+            if name not in completed and self.dependencies(name) <= completed
+        )
 
     def to_cytoscape(self) -> dict:
-        raise NotImplementedError
+        elements = [
+            {"data": {"id": name, "label": name, "phase": node.phase.value}}
+            for name, node in sorted(self.nodes.items())
+        ]
+        elements += [
+            {"data": {"source": dependency, "target": name}}
+            for name in sorted(self.nodes)
+            for dependency in sorted(self.dependencies(name))
+        ]
+        return {"elements": elements}
 
 
 def build_dag(config: MacawConfig, requested: list[str] | None = None) -> DAG:
-    raise NotImplementedError
+    """Without a request this is every registered extractor, which is every one installed."""
+    dag = DAG(config)
+    dag.expand(requested if requested is not None else list_extractors())
+    return dag

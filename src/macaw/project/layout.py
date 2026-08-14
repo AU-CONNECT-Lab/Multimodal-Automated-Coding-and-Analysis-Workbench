@@ -38,6 +38,18 @@ class Layout:
     def job_db_path(self) -> Path:
         return self.output_dir / "jobs.sqlite"
 
+    @property
+    def array_map_path(self) -> Path:
+        return self.output_dir / "array_map.tsv"
+
+    # manifest entries and QC warnings arrive from concurrent extractors just like feature
+    # rows do, so they are written as fragments and merged by whoever reads them
+    def manifest_fragment_path(self, recording_id: str, extractor: str) -> Path:
+        return self.recording_dir(recording_id) / "manifest" / f"{extractor}.json"
+
+    def warnings_path(self, recording_id: str, extractor: str) -> Path:
+        return self.recording_dir(recording_id) / "warnings" / f"{extractor}.json"
+
     def recording_dir(self, recording_id: str) -> Path:
         return self.output_dir / "recordings" / recording_id
 

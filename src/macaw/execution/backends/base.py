@@ -36,6 +36,14 @@ class ExecBackend(ABC):
     def status(self, job_ids: list[str]) -> dict[str, str]: ...
 
 
-def get_backend(name: str, cfg, hpc=None) -> ExecBackend:
+def get_backend(name: str, cfg, hpc=None, job_db=None) -> ExecBackend:
     """hpc is only consulted by cluster backends; the local one ignores it."""
-    raise NotImplementedError
+    from macaw.exceptions import BackendNotAvailableError
+    from macaw.execution.backends.local import LocalBackend
+    from macaw.execution.backends.slurm import SlurmBackend
+
+    if name == "local":
+        return LocalBackend(n_workers=getattr(cfg, "n_workers", 4), job_db=job_db)
+    if name == "slurm":
+        return SlurmBackend(cfg, hpc, job_db=job_db)
+    raise BackendNotAvailableError(f"Unknown execution backend '{name}'. Available: local, slurm")
