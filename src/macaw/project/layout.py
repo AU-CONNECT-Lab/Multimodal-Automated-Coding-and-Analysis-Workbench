@@ -36,7 +36,8 @@ class Layout:
 
     @property
     def job_db_path(self) -> Path:
-        return self.output_dir / "jobs.sqlite"
+        # a directory of per-task files, not a database file; see execution/job_db.py
+        return self.output_dir / "jobs"
 
     @property
     def array_map_path(self) -> Path:
