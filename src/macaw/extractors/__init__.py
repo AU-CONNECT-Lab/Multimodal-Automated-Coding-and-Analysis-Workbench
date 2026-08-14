@@ -17,6 +17,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.prep",
     "macaw.extractors.audio.prosody.frame",
     "macaw.extractors.audio.content.asr",
+    "macaw.turns.segmentation",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}
