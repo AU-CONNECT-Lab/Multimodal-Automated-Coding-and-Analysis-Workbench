@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from importlib.metadata import entry_points
 from typing import Callable, Type
 
@@ -10,8 +11,16 @@ from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 
 ENTRY_POINT_GROUP = "macaw.extractors"
 
+# Modules holding extractors that ship with the package. A name appears here only once its
+# extractor is implemented, so the registry always describes what can actually run.
+BUILTIN_MODULES = (
+    "macaw.extractors.prep",
+    "macaw.extractors.audio.prosody.frame",
+)
+
 _REGISTRY: dict[str, Type[Extractor]] = {}
 _BACKENDS: dict[str, dict[str, Type[Backend]]] = {}
+_builtins_loaded = False
 
 
 def register_extractor(cls: Type[Extractor]) -> Type[Extractor]:
@@ -30,7 +39,19 @@ def register_backend(group: str) -> Callable[[Type[Backend]], Type[Backend]]:
     return decorator
 
 
+def load_builtin_extractors() -> None:
+    """Import the modules that ship with the package so their classes register themselves.
+    Lazy rather than at package import: each of those modules imports this one back."""
+    global _builtins_loaded
+    if _builtins_loaded:
+        return
+    _builtins_loaded = True          # set before importing, the imports re-enter here
+    for module in BUILTIN_MODULES:
+        import_module(module)
+
+
 def get_extractor(name: str) -> Type[Extractor]:
+    load_builtin_extractors()
     try:
         return _REGISTRY[name]
     except KeyError:
@@ -39,6 +60,7 @@ def get_extractor(name: str) -> Type[Extractor]:
 
 
 def get_backend(group: str, name: str) -> Type[Backend]:
+    load_builtin_extractors()
     try:
         return _BACKENDS[group][name]
     except KeyError:
@@ -49,11 +71,13 @@ def get_backend(group: str, name: str) -> Type[Backend]:
 
 
 def list_extractors(group: str | None = None) -> list[str]:
+    load_builtin_extractors()
     names = [n for n, cls in _REGISTRY.items() if group is None or cls.group == group]
     return sorted(names)
 
 
 def list_backends(group: str) -> list[str]:
+    load_builtin_extractors()
     return sorted(_BACKENDS.get(group, {}))
 
 
@@ -76,6 +100,7 @@ __all__ = [
     "QCWarning",
     "register_extractor",
     "register_backend",
+    "load_builtin_extractors",
     "get_extractor",
     "get_backend",
     "list_extractors",

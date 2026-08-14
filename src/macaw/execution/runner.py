@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import traceback
@@ -235,7 +236,11 @@ def run_task(
 
 def _write_result(layout, recording_id, extractor, result, execution_id, config_hash) -> None:
     if result.rows is not None and not result.rows.empty:
-        longtable_store.write_long_table(result.rows, layout.long_table_path(recording_id))
+        # provenance is stamped here so no extractor has to be told which execution it is in
+        rows = result.rows.copy()
+        rows["execution_id"] = rows["execution_id"].fillna(execution_id)
+        rows["config_hash"] = rows["config_hash"].fillna(config_hash)
+        longtable_store.write_long_table(rows, layout.long_table_path(recording_id))
     if result.keypoints is not None and not result.keypoints.empty:
         keypoints_store.write_keypoints(result.keypoints, layout.keypoints_path(recording_id))
     if result.annotations is not None and not result.annotations.empty:
@@ -257,14 +262,14 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
     for name, source in result.artifacts.items():
         destination = layout.artifacts_dir(recording_id, extractor) / name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        Path(source).replace(destination)
+        # shutil.move, not os.replace: the workspace sits in scratch_dir, which on a cluster
+        # is a different filesystem from output_dir and a rename across those fails
+        shutil.move(str(source), str(destination))
 
 
 def _stage_payload(layout, recording_id: str, extractor: str, payload: Path) -> None:
     """Copy exactly what this extractor produced into a cache payload, so a later hit can be
     replayed and look identical to a real run."""
-    import shutil
-
     payload.mkdir(parents=True, exist_ok=True)
     pieces = {
         "features": layout.long_table_path(recording_id) / f"{extractor}.parquet",
@@ -280,7 +285,8 @@ def _stage_payload(layout, recording_id: str, extractor: str, payload: Path) -> 
 
     artifacts = layout.artifacts_dir(recording_id, extractor)
     if artifacts.is_dir():
-        shutil.copytree(artifacts, payload / "artifacts", dirs_exist_ok=True)
+        # keep the per-extractor level, otherwise a restored hit lands one directory too high
+        shutil.copytree(artifacts, payload / "artifacts" / extractor, dirs_exist_ok=True)
 
 
 def _merge_manifest_fragments(layout, recording_ids: list[str]) -> None:

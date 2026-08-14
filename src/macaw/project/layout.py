@@ -54,6 +54,9 @@ class Layout:
     def recording_dir(self, recording_id: str) -> Path:
         return self.output_dir / "recordings" / recording_id
 
+    def offset_table_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "offsets.json"
+
     # the three tables are directories of parquet files, one per writer; store/_io.py
     # explains why a single file cannot survive concurrent extractors
     def long_table_path(self, recording_id: str) -> Path:
