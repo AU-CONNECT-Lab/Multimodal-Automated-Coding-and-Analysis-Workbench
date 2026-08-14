@@ -6,8 +6,9 @@ readme = "README.md"
 # mediapipe and py-feat wheels lag new CPython releases; keep the ceiling honest
 requires-python = ">=3.10,<3.13"
 
+# Config, store, project, media and execution. Enough to run the pipeline and read its
+# output; every extractor group is an extra on top.
 dependencies = [
-  # core
   "typer>=0.12",
   "rich>=13.0",
   "pydantic>=2.7",
@@ -16,45 +17,58 @@ dependencies = [
   "pandas>=2.2",
   "pyarrow>=16.0",
   "scipy>=1.11",
+  "pympi-ling>=1.70",       # .eaf round trip; pure python and tiny
+]
 
-  # audio: prosody
+# ultralytics (AGPL-3.0) and OpenFace (C++, needs compiling) are deliberately not
+# declared here; both are invoked via subprocess and checked for at runtime. ffmpeg is a
+# system binary and is found at runtime for the same reason.
+
+[project.optional-dependencies]
+audio = [
   "praat-parselmouth>=0.4.3",
   "librosa>=0.10",
   "soundfile>=0.12",
   "opensmile>=2.5",
+]
 
-  # audio: content
+# Install PyTorch from the index matching your CUDA version *before* this group. These
+# packages pin torch against each other, and letting pip resolve it lands a CPU-only build.
+asr = [
   "whisperx>=3.1",
   "faster-whisper>=1.0",
   "pyannote.audio>=3.1",
+]
 
-  # text
+text = [
   "sentence-transformers>=3.0",
+]
 
-  # vision
+# mediapipe and py-feat are what hold requires-python below 3.13
+vision = [
   "opencv-python>=4.9",
   "mediapipe>=0.10",
   "py-feat>=0.6",
+]
 
-  # interop
-  "pympi-ling>=1.70",
-
-  # gui
+gui = [
   "dash>=3.0",
   "dash-bootstrap-components>=2.0",
   "plotly>=5.22",
   "pywebview>=5.0",
+]
 
-  # llm
+llm = [
   "anthropic>=0.34",
   "openai>=1.40",
   "ollama>=0.3",
 ]
 
-# ultralytics (AGPL-3.0) and OpenFace (C++, needs compiling) are deliberately not
-# declared here; both are invoked via subprocess and checked for at runtime.
+# roughly 6 GB of wheels, and it resolves torch itself; prefer the groups above
+all = [
+  "pymacaw[audio,asr,text,vision,gui,llm]",
+]
 
-[project.optional-dependencies]
 dev = [
   "pytest",
   "pytest-cov",

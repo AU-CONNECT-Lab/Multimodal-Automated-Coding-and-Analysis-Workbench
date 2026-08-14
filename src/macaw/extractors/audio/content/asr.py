@@ -109,7 +109,7 @@ class WhisperXBackend(ASRBackend):
         except ImportError:
             raise BackendNotAvailableError(
                 "whisperx is not installed. Install PyTorch for your CUDA version first, "
-                "then `pip install whisperx`."
+                'then `pip install "pymacaw[asr]"`.'
             ) from None
 
     def _load(self):
@@ -194,7 +194,7 @@ class FasterWhisperBackend(ASRBackend):
         except ImportError:
             raise BackendNotAvailableError(
                 "faster-whisper is not installed. Install PyTorch for your CUDA version "
-                "first, then `pip install faster-whisper`."
+                'first, then `pip install "pymacaw[asr]"`.'
             ) from None
 
     def _load(self):

@@ -102,7 +102,8 @@ class ParselmouthBackend(ProsodyBackend):
             import parselmouth  # noqa: F401
         except ImportError as error:
             raise BackendNotAvailableError(
-                "The 'parselmouth' backend needs praat-parselmouth: pip install praat-parselmouth"
+                "The 'parselmouth' backend needs praat-parselmouth: "
+                'pip install "pymacaw[audio]"'
             ) from error
 
     def _sound(self, audio: np.ndarray, sr: float):
@@ -159,7 +160,7 @@ class LibrosaBackend(ProsodyBackend):
             import librosa  # noqa: F401
         except ImportError as error:
             raise BackendNotAvailableError(
-                "The 'librosa' backend needs librosa: pip install librosa"
+                'The \'librosa\' backend needs librosa: pip install "pymacaw[audio]"'
             ) from error
 
     def f0(self, audio, sr, f0_min, f0_max, step_s):

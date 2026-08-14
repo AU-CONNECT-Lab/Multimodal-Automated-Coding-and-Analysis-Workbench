@@ -44,7 +44,7 @@ class PyannoteBackend(DiarizationBackend):
         except ImportError:
             raise BackendNotAvailableError(
                 "pyannote.audio is not installed. Install it with "
-                "`pip install pyannote.audio`, accept the terms for "
+                '`pip install "pymacaw[asr]"`, accept the terms for '
                 "pyannote/speaker-diarization-3.1 on HuggingFace, and log in with "
                 "`huggingface-cli login`."
             ) from None
