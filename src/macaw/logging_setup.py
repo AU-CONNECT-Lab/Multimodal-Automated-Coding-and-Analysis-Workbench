@@ -14,10 +14,13 @@ def setup_logging(*, verbose: bool = False, quiet: bool = False) -> logging.Logg
     """--verbose wins over --quiet: asking for more is the more specific request."""
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO if verbose else logging.ERROR if quiet else logging.WARNING)
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter(_FORMAT))
-        logger.addHandler(handler)
+    # replace rather than add: this runs once per command, and a handler kept from an earlier
+    # call still points at the stderr that was current back then
+    for existing in list(logger.handlers):
+        logger.removeHandler(existing)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(_FORMAT))
+    logger.addHandler(handler)
     # the root logger belongs to whoever imports macaw, not to us
     logger.propagate = False
     return logger

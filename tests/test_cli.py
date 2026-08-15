@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from macaw.cli.main import app, entrypoint
 from macaw.config.loader import resolve_config, scaffold_project_config
+from macaw.config.schema import MacawConfig
 from macaw.execution.job_db import JobDB, JobRecord
 from macaw.logging_setup import LOGGER_NAME, setup_logging
 from macaw.project.layout import make_layout
@@ -17,6 +18,13 @@ from macaw.project.layout import make_layout
 runner = CliRunner()
 
 EXECUTION = "20260815-120000-abc123"
+
+# Every command below resolves a config, which the conftest pydantic stub cannot do: it only
+# reads section defaults. Skipping beats 20 failures that all say the same thing.
+needs_pydantic = pytest.mark.skipif(
+    not hasattr(MacawConfig, "model_validate"),
+    reason="real pydantic required; the conftest stub cannot validate a config",
+)
 
 
 @pytest.fixture
@@ -44,6 +52,7 @@ class TestInit:
         assert (tmp_path / "derivatives").is_dir()
         assert (tmp_path / "recordings").is_dir()
 
+    @needs_pydantic
     def test_the_written_config_resolves(self, tmp_path):
         """A scaffold that its own loader rejects is worse than no scaffold."""
         raw = tmp_path / "raw"
@@ -53,6 +62,7 @@ class TestInit:
         assert resolved.project.name == "demo"
         assert resolved.project.raw_dir == raw.resolve()
 
+    @needs_pydantic
     def test_a_path_with_spaces_survives_the_round_trip(self, tmp_path):
         """Windows paths carry backslashes and spaces; unquoted YAML mangles them."""
         raw = tmp_path / "my data dir"
@@ -60,6 +70,7 @@ class TestInit:
         invoke("init", str(tmp_path), "--name", "demo", "--raw-dir", str(raw))
         assert resolve_config(tmp_path / "project.yaml").project.raw_dir == raw.resolve()
 
+    @needs_pydantic
     def test_existing_config_is_not_overwritten(self, tmp_path):
         raw = tmp_path / "raw"
         raw.mkdir()
@@ -68,6 +79,7 @@ class TestInit:
         assert again.exit_code != 0
         assert resolve_config(tmp_path / "project.yaml").project.name == "demo"
 
+    @needs_pydantic
     def test_force_overwrites(self, tmp_path):
         raw = tmp_path / "raw"
         raw.mkdir()
@@ -91,6 +103,7 @@ class TestInit:
         assert "parent" not in text
 
 
+@needs_pydantic
 class TestRecordings:
     def test_lists_detected_ids(self, project):
         result = invoke("recordings", "-c", str(project.config))
@@ -119,6 +132,7 @@ class TestRecordings:
         assert result.output.split() == ["003", "004"]
 
 
+@needs_pydantic
 class TestConfigShow:
     def test_prints_the_merged_result(self, project):
         result = invoke("config", "show", "-c", str(project.config))
@@ -141,6 +155,7 @@ class TestConfigShow:
         assert yaml.safe_load(result.output)["execution"]["n_workers"] == 9
 
 
+@needs_pydantic
 class TestConfigValidate:
     def test_a_good_config_passes(self, project):
         result = invoke("config", "validate", "-c", str(project.config))
@@ -188,6 +203,7 @@ class TestConfigDiff:
         assert invoke("config", "diff", str(a), str(tmp_path / "nope.yaml")).exit_code != 0
 
 
+@needs_pydantic
 class TestRunDryRun:
     def test_dependencies_are_pulled_in_and_ordered_first(self, project):
         """prosody.frame never appears without prep.media in front of it."""
@@ -210,6 +226,7 @@ class TestRunDryRun:
         assert result.exit_code != 0
 
 
+@needs_pydantic
 class TestStatus:
     def record(self, project, status, task_id="003:prep.media"):
         database = JobDB(make_layout(project.output, create=False).job_db_path)
@@ -259,6 +276,7 @@ class TestListExtractors:
     def test_backends_are_listed_on_request(self, project):
         assert "prosody" in invoke("list-extractors", "--backends").output
 
+    @needs_pydantic
     def test_a_config_adds_an_availability_column(self, project):
         """Registered and installed are different questions; only a config answers the second."""
         plain = invoke("list-extractors").output.strip().splitlines()
@@ -266,11 +284,13 @@ class TestListExtractors:
         assert all(len(line.split("\t")) == 4 for line in plain)
         assert all(len(line.split("\t")) == 5 for line in checked)
 
+    @needs_pydantic
     def test_pure_pandas_extractors_report_ok_without_any_environment(self, project):
         checked = invoke("list-extractors", "-c", str(project.config), "--group", "turns").output
         assert all(line.endswith("\tok") for line in checked.strip().splitlines())
 
 
+@needs_pydantic
 class TestClean:
     def test_an_empty_cache_removes_nothing(self, project):
         result = invoke("clean", "-c", str(project.config))
@@ -327,6 +347,7 @@ class TestEntrypoint:
         assert "error:" in captured.err
         assert "Traceback" not in captured.err
 
+    @needs_pydantic
     def test_success_still_exits_zero(self, monkeypatch, project):
         monkeypatch.setattr(sys, "argv", ["macaw", "config", "validate", "-c", str(project.config)])
         with pytest.raises(SystemExit) as exit_info:
@@ -357,6 +378,7 @@ class TestExportArguments:
     def test_an_unknown_scale_is_rejected(self, project):
         assert invoke("export", "-c", str(project.config), "--scale", "hourly").exit_code != 0
 
+    @needs_pydantic
     def test_exporting_before_running_says_so(self, project):
         result = invoke("export", "-c", str(project.config))
         assert result.exit_code != 0
