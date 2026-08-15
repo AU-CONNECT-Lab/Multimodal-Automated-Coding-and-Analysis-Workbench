@@ -77,9 +77,20 @@ class TestKeypointSchemaAdditions:
 
     def test_metric_scale_valid_is_nullable(self):
         """On the 2D path it is neither true nor false but not applicable."""
-        frame = empty_frame(KEYPOINT_SCHEMA)
-        frame.loc[0, :] = None
-        frame = coerce_frame(frame, KEYPOINT_SCHEMA, "keypoints")
+        frame = coerce_frame(
+            pd.DataFrame(
+                {
+                    "recording_id": ["sub-003"], "subject_id": ["child"],
+                    "source": ["pose.mediapipe"], "frame": [0], "t": [0.0],
+                    "joint": ["nose"], "x": [640.0], "y": [360.0], "z": [np.nan],
+                    "confidence": [0.9], "track_id": [0],
+                    "units": [UNITS_PIXEL], "metric_scale_valid": [None],
+                }
+            ),
+            KEYPOINT_SCHEMA,
+            "keypoints",
+        )
+        validate_frame(frame, KEYPOINT_SCHEMA, "keypoints")
         assert pd.isna(frame.loc[0, "metric_scale_valid"])
 
     def test_unit_vocabulary(self):
