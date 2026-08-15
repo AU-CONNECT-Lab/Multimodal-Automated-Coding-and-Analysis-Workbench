@@ -41,6 +41,7 @@ class ExtractorResult:
     rows: pd.DataFrame                              # LONG_TABLE_SCHEMA
     specs: list[FeatureSpec] = field(default_factory=list)
     keypoints: pd.DataFrame | None = None           # KEYPOINT_SCHEMA, pose backends only
+    body_model: pd.DataFrame | None = None          # BODY_MODEL_SCHEMA, 3D backends only
     annotations: pd.DataFrame | None = None         # ANNOTATION_SCHEMA, coding only
     artifacts: dict[str, Path] = field(default_factory=dict)
     warnings: list[QCWarning] = field(default_factory=list)

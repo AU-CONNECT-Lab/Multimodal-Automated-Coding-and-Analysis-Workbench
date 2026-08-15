@@ -69,7 +69,32 @@ KEYPOINT_SCHEMA: dict[str, str] = {
     "z": "float64",           # NaN when input is 2D
     "confidence": "float64",
     "track_id": "int64",      # raw backend track before repair
+    # pixels and metres are a dimensional difference, not something "is z NaN" can express
+    "units": "string",              # pixel | metre
+    "metric_scale_valid": "bool",   # null on the 2D path, where it does not apply
 }
+
+UNITS_PIXEL = "pixel"
+UNITS_METRE = "metre"
+
+
+# Body model parameters are one row per person per frame, an order of magnitude fewer
+# rows than the keypoints they generate, so they get their own table rather than being
+# repeated on every joint. Storing parameters and not mesh vertices keeps a person-frame
+# at 88 floats instead of SMPL's 6890 points; the mesh is derived when a feature needs it.
+BODY_MODEL_SCHEMA: dict[str, str] = {
+    "recording_id": "string",
+    "subject_id": "string",
+    "source": "string",       # pose backend, same vocabulary as KEYPOINT_SCHEMA
+    "frame": "int64",
+    "t": "float64",
+    "body_model": "string",   # one of BODY_MODELS
+    **{f"shape_{index}": "float64" for index in range(10)},
+    **{f"pose_{index}": "float64" for index in range(72)},   # axis-angle joint rotations
+    **{f"camera_{index}": "float64" for index in range(6)},
+}
+
+BODY_MODELS = ("smpl", "smil", "none")
 
 
 # The annotation layer. Discrete labelled intervals, losslessly mappable to .eaf.

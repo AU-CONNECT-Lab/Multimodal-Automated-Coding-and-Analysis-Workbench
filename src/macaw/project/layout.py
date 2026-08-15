@@ -69,6 +69,9 @@ class Layout:
     def keypoints_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "keypoints"
 
+    def body_model_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "body_model"
+
     def annotations_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "annotations"
 

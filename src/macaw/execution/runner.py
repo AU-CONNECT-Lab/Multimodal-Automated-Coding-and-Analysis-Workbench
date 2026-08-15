@@ -23,6 +23,7 @@ from macaw.project.layout import make_layout, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
 from macaw.store import annotations as annotations_store
+from macaw.store import body_model as body_model_store
 from macaw.store import cache as cache_store
 from macaw.store import keypoints as keypoints_store
 from macaw.store import longtable as longtable_store
@@ -221,7 +222,7 @@ def run_task(
             result = extractor.run(recording, Path(workspace))
             payload = Path(workspace) / "_payload"
             _write_result(layout, recording_id, extractor_name, result, execution_id, config_hash)
-            _stage_payload(layout, recording_id, extractor_name, payload)
+            _stage_payload(layout, recording_id, extractor_name, result, payload)
             if config.execution.cache:
                 cache_store.store(cache_root, key, payload)
 
@@ -243,6 +244,8 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         longtable_store.write_long_table(rows, layout.long_table_path(recording_id))
     if result.keypoints is not None and not result.keypoints.empty:
         keypoints_store.write_keypoints(result.keypoints, layout.keypoints_path(recording_id))
+    if result.body_model is not None and not result.body_model.empty:
+        body_model_store.write_body_model(result.body_model, layout.body_model_path(recording_id))
     if result.annotations is not None and not result.annotations.empty:
         annotations_store.write_annotations(
             result.annotations, layout.annotations_path(recording_id)
@@ -267,17 +270,26 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         shutil.move(str(source), str(destination))
 
 
-def _stage_payload(layout, recording_id: str, extractor: str, payload: Path) -> None:
+def _stage_payload(layout, recording_id: str, extractor: str, result, payload: Path) -> None:
     """Copy exactly what this extractor produced into a cache payload, so a later hit can be
     replayed and look identical to a real run."""
     payload.mkdir(parents=True, exist_ok=True)
-    pieces = {
-        "features": layout.long_table_path(recording_id) / f"{extractor}.parquet",
-        "keypoints": layout.keypoints_path(recording_id) / f"{extractor}.parquet",
-        "manifest": layout.manifest_fragment_path(recording_id, extractor),
-        "warnings": layout.warnings_path(recording_id, extractor),
-    }
-    for group, source in pieces.items():
+    pieces = [
+        ("features", layout.long_table_path(recording_id) / f"{extractor}.parquet"),
+        ("keypoints", layout.keypoints_path(recording_id) / f"{extractor}.parquet"),
+        ("body_model", layout.body_model_path(recording_id) / f"{extractor}.parquet"),
+        ("manifest", layout.manifest_fragment_path(recording_id, extractor)),
+        ("warnings", layout.warnings_path(recording_id, extractor)),
+    ]
+    # annotations are partitioned by layer, not by extractor, so the file name cannot be
+    # derived from the extractor name the way the others can
+    if result.annotations is not None and not result.annotations.empty:
+        for layer in result.annotations["layer"].dropna().unique():
+            pieces.append(
+                ("annotations", layout.annotations_path(recording_id) / f"{layer}.parquet")
+            )
+
+    for group, source in pieces:
         if source.is_file():
             target = payload / group / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
