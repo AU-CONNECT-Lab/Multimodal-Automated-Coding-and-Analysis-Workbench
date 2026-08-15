@@ -55,7 +55,15 @@ def _extractors_using(sections: list[str]) -> dict[str, list[str]]:
     """A changed section only matters through the extractors that hash it."""
     affected: dict[str, list[str]] = {}
     for name in list_extractors():
-        used = sorted(set(get_extractor(name).config_sections) & set(sections))
+        # a declared section may be dotted, and a change to the parent still reaches it
+        used = sorted(
+            {
+                declared
+                for declared in get_extractor(name).config_sections
+                for section in sections
+                if declared == section or declared.startswith(f"{section}.")
+            }
+        )
         if used:
             affected[name] = used
     return affected

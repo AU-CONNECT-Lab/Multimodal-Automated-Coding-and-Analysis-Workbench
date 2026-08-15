@@ -72,13 +72,24 @@ def _substitute_content(data: dict[str, Any], dotted: str) -> None:
     cursor[parts[-1]] = hash_referenced_file(path) if path.is_file() else str(value)
 
 
+def _section_value(data: dict[str, Any], name: str) -> Any:
+    """A dotted name reaches a subsection, so two extractors sharing a config section can still
+    have different cache keys: one that only reads coding.llm is not invalidated by a codebook."""
+    cursor: Any = data
+    for part in name.split("."):
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
 def hash_section(config: MacawConfig, section: str) -> str:
-    return _digest(canonical(_prepared(config).get(section)))
+    return _digest(canonical(_section_value(_prepared(config), section)))
 
 
 def hash_sections(config: MacawConfig, sections: Sequence[str]) -> str:
     data = _prepared(config)
-    parts = [f"{name}:{canonical(data.get(name))}" for name in sorted(set(sections))]
+    parts = [f"{name}:{canonical(_section_value(data, name))}" for name in sorted(set(sections))]
     return _digest("|".join(parts))
 
 

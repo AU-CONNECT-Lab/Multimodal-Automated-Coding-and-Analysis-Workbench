@@ -10,6 +10,10 @@ def parse_annotation_response(text: str, codebook: Codebook, expected_ids: list[
     raise NotImplementedError
 
 
+def parse_observation_response(text: str, expected_ids: list[str]) -> pd.DataFrame:
+    raise NotImplementedError
+
+
 def parse_cleanup_response(text: str, expected_ids: list[str]) -> pd.DataFrame:
     raise NotImplementedError
 

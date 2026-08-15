@@ -15,6 +15,11 @@ from macaw.store.schema import (
     empty_frame,
     validate_frame,
 )
+from macaw.store.sequence import (
+    export_state_sequence,
+    to_joint_sequence,
+    to_state_sequence,
+)
 from macaw.store.wide import export_csv, to_wide
 
 __all__ = [
@@ -41,6 +46,9 @@ __all__ = [
     "build_annotations",
     "to_wide",
     "export_csv",
+    "to_state_sequence",
+    "to_joint_sequence",
+    "export_state_sequence",
     "CacheKey",
     "make_key",
     "lookup",
