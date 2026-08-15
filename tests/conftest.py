@@ -108,6 +108,27 @@ def make_transcript():
 
 
 @pytest.fixture
+def make_turns():
+    def build(rows):
+        return pd.DataFrame(
+            [
+                {
+                    "subject_id": speaker,
+                    "turn_index": index,
+                    "t_start": float(start),
+                    "t_end": float(end),
+                    "n_utterances": 1,
+                    "n_words": 1,
+                    "text": "",
+                }
+                for index, (speaker, start, end) in enumerate(rows)
+            ]
+        )
+
+    return build
+
+
+@pytest.fixture
 def make_recording():
     def build(subject_ids, entities=None):
         return SimpleNamespace(

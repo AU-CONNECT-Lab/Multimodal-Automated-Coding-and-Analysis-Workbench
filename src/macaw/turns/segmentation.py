@@ -169,6 +169,18 @@ def silences(turns: pd.DataFrame, *, min_s: float) -> pd.DataFrame:
     )
 
 
+def read_turns(path: Path) -> pd.DataFrame:
+    return _io.read_file(Path(path), TURN_SCHEMA, "turns")
+
+
+def load_turns(config, recording_id: str) -> pd.DataFrame:
+    """Where every downstream turn extractor starts, the way audio ones start at load_prep."""
+    root = make_layout(config.project.output_dir, create=False).artifacts_dir(
+        recording_id, TurnStructureExtractor.name
+    )
+    return read_turns(root / TURNS_NAME)
+
+
 _TURN_SPECS = {
     "turn_duration_s": ("Length of one turn, from its first word to its last.", "s"),
     "n_utterances_in_turn": ("Utterances merged into this turn.", "count"),
