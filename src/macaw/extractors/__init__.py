@@ -20,6 +20,7 @@ BUILTIN_MODULES = (
     "macaw.turns.segmentation",
     "macaw.turns.transitions",
     "macaw.turns.entropy",
+    "macaw.coding.layer_a",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}
