@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass
 from pathlib import Path
+from string import Template
 from typing import Any, Iterator, Sequence
 
 import yaml
@@ -28,15 +29,15 @@ PROJECT_TEMPLATE = """\
 # the full resolved result, and `macaw config diff` to see what you actually changed.
 
 project:
-  name:                    # short project name, used in report titles
-  raw_dir:                 # directory holding the recordings
-  output_dir:              # everything MACAW writes goes here
+  name: $name              # short project name, used in report titles
+  raw_dir: $raw_dir        # directory holding the recordings
+  output_dir: $output_dir  # everything MACAW writes goes here
   # "{group_id}" is one directory per recording. Longitudinal datasets want
   # "sub-{group_id}/ses-{session_id}"; add "/task-{task}_run-{run}" for several per visit.
   recording_pattern: "{group_id}"
   recording_prefix: ""     # e.g. "dyad-" to only pick up dyad-001, dyad-002, ...
-  n_subjects: 2
-  roles: [parent, child]
+  n_subjects: $n_subjects
+  roles: $roles
 
 # Cluster resources are configured separately; see hpc.yaml.
 execution:
@@ -317,9 +318,35 @@ def _dump_config(config: MacawConfig, path: Path) -> Path:
     return path
 
 
-def scaffold_project_config(dest: Path, *, force: bool = False) -> Path:
+def _yaml_scalar(value: Any) -> str:
+    """Single quotes, so a Windows path's backslashes stay literal."""
+    text = "" if value is None else str(value)
+    return f"'{text.replace(chr(39), chr(39) * 2)}'" if text else ""
+
+
+def scaffold_project_config(
+    dest: Path,
+    *,
+    force: bool = False,
+    name: str | None = None,
+    raw_dir: Path | str | None = None,
+    output_dir: Path | str | None = None,
+    n_subjects: int = 2,
+) -> Path:
     if dest.exists() and not force:
         raise ConfigError(f"{dest} already exists. Pass --force to overwrite it.")
+    roles = (
+        ["parent", "child"]
+        if n_subjects == 2
+        else [f"subject_{position}" for position in range(1, n_subjects + 1)]
+    )
+    text = Template(PROJECT_TEMPLATE).substitute(
+        name=_yaml_scalar(name),
+        raw_dir=_yaml_scalar(raw_dir),
+        output_dir=_yaml_scalar(output_dir),
+        n_subjects=n_subjects,
+        roles="[" + ", ".join(roles) + "]",
+    )
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(PROJECT_TEMPLATE, encoding="utf-8")
+    dest.write_text(text, encoding="utf-8")
     return dest

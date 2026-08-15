@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
+
 import typer
 
 from macaw.cli import align, code, config_cmd, export, gui, hpc, init, qc, run, recordings
+from macaw.exceptions import MacawError
+from macaw.logging_setup import setup_logging
 
 app = typer.Typer(
     name="macaw",
@@ -27,9 +31,13 @@ def main(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     quiet: bool = typer.Option(False, "--quiet", "-q"),
 ) -> None:
-    raise NotImplementedError
+    setup_logging(verbose=verbose, quiet=quiet)
 
 
 def entrypoint() -> None:
     """Wraps app() so MacawError prints as a clean message instead of a traceback."""
-    raise NotImplementedError
+    try:
+        app()
+    except MacawError as error:
+        typer.secho(f"error: {error}", fg=typer.colors.RED, err=True)
+        sys.exit(1)

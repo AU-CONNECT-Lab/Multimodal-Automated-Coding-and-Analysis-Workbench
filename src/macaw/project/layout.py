@@ -51,8 +51,12 @@ class Layout:
     def warnings_path(self, recording_id: str, extractor: str) -> Path:
         return self.recording_dir(recording_id) / "warnings" / f"{extractor}.json"
 
+    @property
+    def recordings_dir(self) -> Path:
+        return self.output_dir / "recordings"
+
     def recording_dir(self, recording_id: str) -> Path:
-        return self.output_dir / "recordings" / recording_id
+        return self.recordings_dir / recording_id
 
     def offset_table_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "offsets.json"

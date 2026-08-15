@@ -86,6 +86,11 @@ def list_backends(group: str) -> list[str]:
     return sorted(_BACKENDS.get(group, {}))
 
 
+def list_backend_groups() -> list[str]:
+    load_builtin_extractors()
+    return sorted(_BACKENDS)
+
+
 def load_entry_point_extractors() -> int:
     """Discover extractors published by other packages under the macaw.extractors group."""
     before = len(_REGISTRY)
@@ -110,4 +115,5 @@ __all__ = [
     "get_backend",
     "list_extractors",
     "list_backends",
+    "list_backend_groups",
 ]

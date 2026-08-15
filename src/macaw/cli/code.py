@@ -12,23 +12,9 @@ from macaw.coding.agreement import (
     report_to_json,
 )
 from macaw.config.loader import resolve_config
-from macaw.project.recording import detect_recordings, parse_recordings_input
+from macaw.execution.runner import resolve_recordings
 
 app = typer.Typer()
-
-
-def _select_recordings(config, recordings: str | None) -> list[str]:
-    ids = (
-        parse_recordings_input(recordings)
-        if recordings
-        else detect_recordings(
-            config.project.raw_dir,
-            config.project.recording_pattern,
-            config.project.recording_prefix,
-        )
-    )
-    excluded = set(config.project.excluded_recordings)
-    return [recording_id for recording_id in ids if recording_id not in excluded]
 
 
 @app.command("code")
@@ -65,7 +51,7 @@ def agreement(
 ) -> None:
     """Inter-annotator agreement over the annotations table: Krippendorff alpha and Cohen kappa."""
     resolved = resolve_config(config, cli_overrides=set_ or ())
-    annotations = load_annotations(resolved, _select_recordings(resolved, recordings))
+    annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
     report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s)
     typer.echo(format_report(report))
     if out is not None:
