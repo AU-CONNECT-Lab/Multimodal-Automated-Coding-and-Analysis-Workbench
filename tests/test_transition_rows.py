@@ -9,10 +9,12 @@ from macaw.config.schema import TurnsSection
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame
 from macaw.turns.transitions import TransitionExtractor, classify_overlaps, detect_transitions
 
+# the smooth transfer sits inside smooth_transfer_gap_s rather than on it, because
+# subtracting these times lands an ulp either side of the threshold
 TURNS = [
     ("parent", 10.0, 13.0),
-    ("child", 12.8, 13.0),    # short overlap, parent carries on -> backchannel
-    ("parent", 13.2, 15.0),   # +0.2 gap, smooth
+    ("child", 12.9, 13.0),    # short overlap, parent carries on -> backchannel
+    ("parent", 13.1, 15.0),   # +0.1 gap, smooth
     ("child", 14.2, 16.0),    # -0.8 overlap -> interruption
     ("parent", 17.0, 18.0),   # +1.0 gap
     ("parent", 20.5, 21.0),   # +2.5 hold
@@ -87,20 +89,20 @@ def test_manifest_and_rows_agree(extractor, rows):
 class TestEventRows:
     def test_the_responder_owns_the_row(self, rows):
         taken = select(rows, "fto_s", "child", "parent")
-        assert sorted(taken.value.round(2)) == [-0.8, -0.2]
+        assert sorted(taken.value.round(2)) == [-0.8, -0.1]
 
     def test_an_overlap_spans_the_crossing_forwards(self, rows):
         """t_end below t_start would slip past every time filter; the sign lives in the value."""
         events = select(rows, "fto_s", "child", "parent")
         assert (events.t_end >= events.t_start).all()
-        assert sorted((events.t_end - events.t_start).round(2)) == [0.2, 0.8]
+        assert sorted((events.t_end - events.t_start).round(2)) == [0.1, 0.8]
 
     def test_latency_is_absent_on_overlaps(self, rows):
         assert select(rows, "response_latency_s", "child", "parent").value.isna().all()
 
     def test_latency_is_present_on_gaps(self, rows):
         waits = select(rows, "response_latency_s", "parent", "child")
-        assert sorted(waits.value.round(2)) == [0.2, 1.0]
+        assert sorted(waits.value.round(2)) == [0.1, 1.0]
 
 
 class TestSubjectRows:
@@ -111,9 +113,9 @@ class TestSubjectRows:
         assert value(rows, "n_interruptions_made", "parent") == 0
 
     def test_latency_summary_skips_overlaps(self, rows):
-        assert value(rows, "median_response_latency_s", "parent") == pytest.approx(0.6)
+        assert value(rows, "median_response_latency_s", "parent") == pytest.approx(0.55)
         assert pd.isna(value(rows, "median_response_latency_s", "child"))
-        assert value(rows, "mean_fto_s", "child") == pytest.approx(-0.5)
+        assert value(rows, "mean_fto_s", "child") == pytest.approx(-0.45)
 
     def test_rate_uses_the_task_window(self, rows):
         assert value(rows, "interruptions_per_minute", "child") == pytest.approx(1.0)
@@ -130,8 +132,8 @@ class TestPairRows:
         assert value(rows, "transition_count", "child", "child") == 0
 
     def test_pair_median_follows_the_same_direction(self, rows):
-        assert value(rows, "pair_median_fto_s", "parent", "child") == pytest.approx(-0.5)
-        assert value(rows, "pair_median_fto_s", "child", "parent") == pytest.approx(0.6)
+        assert value(rows, "pair_median_fto_s", "parent", "child") == pytest.approx(-0.45)
+        assert value(rows, "pair_median_fto_s", "child", "parent") == pytest.approx(0.55)
 
     def test_counts_sum_to_the_number_of_transitions(self, rows):
         cells = rows[(rows.feature == "transition_count") & rows.subject_id_b.notna()]

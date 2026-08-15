@@ -104,11 +104,13 @@ class TestClassifyOverlaps:
 class TestFloorTransferEfficiency:
     @pytest.fixture
     def summary(self, make_turns, cfg):
+        # the two smooth transfers sit inside smooth_transfer_gap_s, not on it: subtracting
+        # these times lands an ulp either side of the threshold
         turns = make_turns(
             [
                 ("A", 0.0, 3.0),
-                ("B", 2.8, 3.0),
-                ("A", 3.2, 5.0),
+                ("B", 2.9, 3.0),
+                ("A", 3.1, 5.0),
                 ("B", 4.2, 6.0),
                 ("A", 7.0, 8.0),
                 ("A", 10.5, 11.0),
@@ -127,14 +129,14 @@ class TestFloorTransferEfficiency:
 
     def test_median_and_spread_over_switches(self, summary):
         assert summary["median_fto_s"] == pytest.approx(0.0)
-        assert summary["sd_fto_s"] == pytest.approx(np.std([-0.2, 0.2, -0.8, 1.0], ddof=1))
+        assert summary["sd_fto_s"] == pytest.approx(np.std([-0.1, 0.1, -0.8, 1.0], ddof=1))
 
     def test_smooth_transfers(self, summary):
         assert summary["smooth_transfer_ratio"] == pytest.approx(0.5)
 
     def test_gap_cv_ignores_overlaps(self, summary):
         """Overlaps drag the mean towards zero and the ratio blows up; only gaps go in."""
-        assert summary["gap_cv"] == pytest.approx(np.std([0.2, 1.0], ddof=1) / 0.6)
+        assert summary["gap_cv"] == pytest.approx(np.std([0.1, 1.0], ddof=1) / 0.55)
 
     def test_hold_pause(self, summary):
         assert summary["median_hold_s"] == pytest.approx(2.5)
