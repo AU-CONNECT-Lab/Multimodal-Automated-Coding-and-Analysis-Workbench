@@ -369,6 +369,7 @@ class TestBlockedCommandsStayHonest:
         monkeypatch.chdir(project.root)
         assert invoke(*args).exit_code != 0
 
+    @needs_pydantic
     def test_eaf_export_says_there_is_nothing_to_export(self, project, monkeypatch):
         # it is implemented now, so it has to fail on the missing annotations and say so, rather
         # than on the format being unknown
