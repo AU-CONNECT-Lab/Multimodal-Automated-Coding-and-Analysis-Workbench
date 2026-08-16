@@ -338,3 +338,13 @@ class DWPoseBackend(PoseBackend):
 
     def check_available(self) -> None:
         raise NotImplementedError
+
+
+def resolve_backend(name: str) -> PoseBackend:
+    """Exactly the named backend, no fallback chain. Prosody has one because it has a pure
+    python last resort; here a silent downgrade would change the joint set under the user."""
+    from macaw.extractors import get_backend
+
+    backend = get_backend(BACKEND_GROUP, name)()
+    backend.check_available()
+    return backend
