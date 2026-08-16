@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -23,6 +24,11 @@ from macaw.exceptions import (
 DEFAULTS_PATH = Path(__file__).parent / "defaults.yaml"
 RESOLVED_FILENAME = "resolved_config.yaml"
 
+# where the output goes is a machine fact, like the hpc.yaml path and the ffmpeg binary,
+# so it can be answered from the environment instead of by editing a config that is in git
+OUTPUT_DIR_ENV_VAR = "MACAW_OUTPUT_DIR"
+WORK_DIR_ENV_VAR = "MACAW_WORK_DIR"
+
 PROJECT_TEMPLATE = """\
 # MACAW project configuration. Only the keys you change need to appear here;
 # everything else comes from the packaged defaults. Run `macaw config show` to see
@@ -31,7 +37,10 @@ PROJECT_TEMPLATE = """\
 project:
   name: $name              # short project name, used in report titles
   raw_dir: $raw_dir        # directory holding the recordings
-  output_dir: $output_dir  # everything MACAW writes goes here
+  output_dir: $output_dir  # tables, artifacts, reports, manifest, archived config
+  # Logs, job records and cache. Empty means they sit under output_dir; on a cluster point
+  # this at scratch. Deleting it costs recomputation and no result.
+  work_dir: $work_dir
   # "{group_id}" is one directory per recording. Longitudinal datasets want
   # "sub-{group_id}/ses-{session_id}"; add "/task-{task}_run-{run}" for several per visit.
   recording_pattern: "{group_id}"
@@ -190,11 +199,20 @@ def _dotted_keys(data: dict[str, Any], prefix: str = "") -> Iterator[str]:
             yield from _dotted_keys(value, dotted)
 
 
+def _directory_override(explicit: Path | str | None, env_var: str) -> Path | None:
+    """A shell flag or an exported variable is read relative to the shell, unlike a path
+    written in project.yaml, which follows the file so the project stays portable."""
+    value = explicit if explicit is not None else os.environ.get(env_var)
+    return Path(value).expanduser().resolve() if value else None
+
+
 def resolve_config(
     project_yaml: Path,
     *,
     recording_id: str | None = None,
     cli_overrides: Sequence[str] = (),
+    output_dir: Path | str | None = None,
+    work_dir: Path | str | None = None,
 ) -> MacawConfig:
     """Without recording_id this is the project baseline; with one it is what that recording runs."""
     merged = load_defaults()
@@ -223,6 +241,14 @@ def resolve_config(
     # relative paths follow project.yaml, not the shell's cwd, so a project directory
     # keeps working after being copied to another machine
     _absolutise(config, project_yaml.resolve().parent)
+
+    for field, explicit, env_var in (
+        ("output_dir", output_dir, OUTPUT_DIR_ENV_VAR),
+        ("work_dir", work_dir, WORK_DIR_ENV_VAR),
+    ):
+        override = _directory_override(explicit, env_var)
+        if override is not None:
+            setattr(config.project, field, override)
     return config
 
 
@@ -331,6 +357,7 @@ def scaffold_project_config(
     name: str | None = None,
     raw_dir: Path | str | None = None,
     output_dir: Path | str | None = None,
+    work_dir: Path | str | None = None,
     n_subjects: int = 2,
 ) -> Path:
     if dest.exists() and not force:
@@ -344,6 +371,7 @@ def scaffold_project_config(
         name=_yaml_scalar(name),
         raw_dir=_yaml_scalar(raw_dir),
         output_dir=_yaml_scalar(output_dir),
+        work_dir=_yaml_scalar(work_dir),
         n_subjects=n_subjects,
         roles="[" + ", ".join(roles) + "]",
     )

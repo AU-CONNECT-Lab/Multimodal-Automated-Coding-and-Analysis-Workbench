@@ -19,7 +19,7 @@ from macaw.execution.job_db import JobDB, JobRecord, now
 from macaw.execution.output_checker import completed_tasks, load_rules
 from macaw.extractors import get_extractor
 from macaw.extractors.base import QCWarning
-from macaw.project.layout import make_layout, new_execution_id
+from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
 from macaw.store import annotations as annotations_store
@@ -81,7 +81,7 @@ def run(
     resume: bool = True,
     dry_run: bool = False,
 ) -> RunSummary:
-    layout = make_layout(config.project.output_dir)
+    layout = layout_for(config)
     execution_id = new_execution_id()
 
     recording_ids = recordings if recordings is not None else resolve_recordings(config, None)
@@ -168,7 +168,7 @@ def _task_command(
     return [
         sys.executable, "-m", "macaw",
         "run-task",
-        "--config", str(make_layout(config.project.output_dir, create=False).resolved_config_path),
+        "--config", str(layout_for(config, create=False).resolved_config_path),
         "--recording", recording_id,
         "--extractor", extractor,
         "--execution-id", execution_id,
@@ -179,7 +179,7 @@ def run_task(
     config: MacawConfig, recording_id: str, extractor_name: str, execution_id: str
 ) -> None:
     """The single-task entry point cluster array elements call back into."""
-    layout = make_layout(config.project.output_dir)
+    layout = layout_for(config)
     database = JobDB(layout.job_db_path)
     database.initialise()
     task_id = task_id_for(recording_id, extractor_name)

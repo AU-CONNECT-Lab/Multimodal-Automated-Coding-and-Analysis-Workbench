@@ -1,4 +1,4 @@
-from macaw.project.layout import Layout, make_layout, new_execution_id
+from macaw.project.layout import Layout, layout_for, make_layout, new_execution_id
 from macaw.project.manifest import (
     FeatureManifest,
     FeatureSpec,
@@ -28,6 +28,7 @@ __all__ = [
     "build_recording",
     "Layout",
     "make_layout",
+    "layout_for",
     "new_execution_id",
     "FeatureSpec",
     "FeatureManifest",

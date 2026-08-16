@@ -2,6 +2,9 @@
 # Every key carries its unit and what changing it affects.
 
 project:
+  # Logs, job records and cache. null puts them under output_dir; a cluster wants them on
+  # scratch. Nothing in here is a result, so it can be deleted to reclaim space.
+  work_dir: null
   # How a path under raw_dir maps to BIDS entities. Anything the pattern omits stays null.
   # Flat dataset:  "{group_id}"
   # Longitudinal:  "sub-{group_id}/ses-{session_id}"

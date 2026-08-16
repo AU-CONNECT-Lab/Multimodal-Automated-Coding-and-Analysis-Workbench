@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.exceptions import InputNotFoundError
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.store.annotations import read_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame, empty_frame
 
@@ -378,7 +378,7 @@ def load_annotations(config, recording_ids: Sequence[str]) -> pd.DataFrame:
 
     Reliability is usually measured on a sample, so a recording nobody has coded yet is skipped
     rather than fatal; a request where none of them exists is still an error."""
-    layout = make_layout(config.project.output_dir, create=False)
+    layout = layout_for(config, create=False)
     paths = [layout.annotations_path(recording_id) for recording_id in recording_ids]
     present = [path for path in paths if path.exists()]
     if paths and not present:

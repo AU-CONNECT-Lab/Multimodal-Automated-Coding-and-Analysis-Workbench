@@ -11,7 +11,7 @@ from macaw.execution import runner
 from macaw.execution.job_db import JobDB
 from macaw.extractors import get_extractor, list_backend_groups, list_backends, list_extractors
 from macaw.logging_setup import get_logger
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.store import cache
 
 app = typer.Typer()
@@ -25,6 +25,12 @@ def run(
     extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Defaults to all enabled."),
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     workers: int = typer.Option(None, "--workers", "-j"),
+    output_dir: Path = typer.Option(
+        None, "--output", "-o", help="Overrides project.output_dir. Also read from $MACAW_OUTPUT_DIR."
+    ),
+    work_dir: Path = typer.Option(
+        None, "--work", "-w", help="Logs, job records and cache. Also read from $MACAW_WORK_DIR."
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and exit."),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
@@ -35,7 +41,11 @@ def run(
     if workers is not None:
         overrides.append(f"execution.n_workers={workers}")
 
-    resolved = resolve_config(config, cli_overrides=overrides)
+    # the two directories bypass --set: a Windows path is not always a valid YAML scalar,
+    # and paths never enter a config hash anyway
+    resolved = resolve_config(
+        config, cli_overrides=overrides, output_dir=output_dir, work_dir=work_dir
+    )
     recording_ids = runner.resolve_recordings(resolved, recordings)
     if not recording_ids:
         raise MacawError(f"No recordings found under {resolved.project.raw_dir}")
@@ -84,10 +94,13 @@ def status(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     execution_id: str = typer.Option(None, "--execution-id"),
     failed_only: bool = typer.Option(False, "--failed"),
+    work_dir: Path = typer.Option(
+        None, "--work", "-w", help="Where the job records are. Also read from $MACAW_WORK_DIR."
+    ),
 ) -> None:
     """Show task states from the job database."""
-    resolved = resolve_config(config)
-    layout = make_layout(resolved.project.output_dir, create=False)
+    resolved = resolve_config(config, work_dir=work_dir)
+    layout = layout_for(resolved, create=False)
     database = JobDB(layout.job_db_path)
 
     known = database.executions()
@@ -137,10 +150,14 @@ def clean(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     extractor: str = typer.Option(None, "--extractor", "-e"),
     cache_only: bool = typer.Option(True, "--cache-only/--all"),
+    output_dir: Path = typer.Option(None, "--output", "-o", help="Also read from $MACAW_OUTPUT_DIR."),
+    work_dir: Path = typer.Option(
+        None, "--work", "-w", help="Where the cache is. Also read from $MACAW_WORK_DIR."
+    ),
 ) -> None:
     """Invalidate cached results."""
-    resolved = resolve_config(config)
-    layout = make_layout(resolved.project.output_dir, create=False)
+    resolved = resolve_config(config, output_dir=output_dir, work_dir=work_dir)
+    layout = layout_for(resolved, create=False)
     cache_root = (
         Path(resolved.execution.cache_dir) if resolved.execution.cache_dir else layout.cache_dir
     )

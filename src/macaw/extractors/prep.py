@@ -14,7 +14,7 @@ from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
 from macaw.media.align import apply_alignment, read_offset_table
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
@@ -60,7 +60,7 @@ class PrepInfo:
 
 def load_prep(config, recording_id: str) -> PrepInfo:
     """Read what prep.media wrote for this recording. Every audio extractor starts here."""
-    root = make_layout(config.project.output_dir, create=False).artifacts_dir(
+    root = layout_for(config, create=False).artifacts_dir(
         recording_id, MediaPrepExtractor.name
     )
     path = root / PREP_INFO_NAME
@@ -158,7 +158,7 @@ class MediaPrepExtractor(Extractor):
         return paths
 
     def _offset_table(self, recording: Recording) -> Path | None:
-        path = make_layout(self.config.project.output_dir, create=False).offset_table_path(
+        path = layout_for(self.config, create=False).offset_table_path(
             recording.recording_id
         )
         return path if path.is_file() else None

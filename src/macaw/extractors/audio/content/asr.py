@@ -589,9 +589,9 @@ def read_words(path: Path) -> pd.DataFrame:
 
 def load_transcript(config, recording_id: str) -> pd.DataFrame:
     """Where every downstream text extractor starts, the way audio ones start at load_prep."""
-    from macaw.project.layout import make_layout
+    from macaw.project.layout import layout_for
 
-    root = make_layout(config.project.output_dir, create=False).artifacts_dir(
+    root = layout_for(config, create=False).artifacts_dir(
         recording_id, ASRExtractor.name
     )
     return read_transcript(root / TRANSCRIPT_NAME)

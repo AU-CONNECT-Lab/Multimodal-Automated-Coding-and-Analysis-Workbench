@@ -11,7 +11,7 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interop.eaf import export_eaf
 from macaw.logging_setup import get_logger
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import concat_long_tables, read_long_table
@@ -44,7 +44,7 @@ def export(
         raise MacawError(f"Unknown scale '{scale}'. Choose one of: {known}")
 
     resolved = resolve_config(config)
-    layout = make_layout(resolved.project.output_dir, create=False)
+    layout = layout_for(resolved, create=False)
     recording_ids = resolve_recordings(resolved, recordings)
 
     if format_ == "eaf":

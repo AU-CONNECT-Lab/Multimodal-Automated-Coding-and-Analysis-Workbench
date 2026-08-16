@@ -11,7 +11,7 @@ import pandas as pd
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
@@ -173,7 +173,7 @@ class EntropyExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        layout = make_layout(self.config.project.output_dir, create=False)
+        layout = layout_for(self.config, create=False)
         return [
             layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME,
             layout.artifacts_dir(recording.recording_id, TransitionExtractor.name)

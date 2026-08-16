@@ -1,4 +1,10 @@
-"""Output directory conventions. Every path in the package comes from here."""
+"""Output directory conventions. Every path in the package comes from here.
+
+Two roots. output_dir holds what the science is: the three tables, artifacts, reports,
+manifest and the archived config. work_dir holds what only the machine cares about: logs,
+job records, cache, the array map. Deleting work_dir entirely costs time and no result,
+which is what makes it safe to put on a cluster scratch filesystem.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +12,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from macaw.config.schema import MacawConfig
 
 RESOLVED_FILENAME = "resolved_config.yaml"
 
@@ -13,14 +23,20 @@ RESOLVED_FILENAME = "resolved_config.yaml"
 @dataclass(frozen=True)
 class Layout:
     output_dir: Path
+    work_dir: Path
 
     @property
     def cache_dir(self) -> Path:
-        return self.output_dir / ".cache"
+        return self.work_dir / ".cache"
 
     @property
     def logs_dir(self) -> Path:
-        return self.output_dir / "logs"
+        return self.work_dir / "logs"
+
+    @property
+    def slurm_logs_dir(self) -> Path:
+        # what a job script points --output at, so scheduler output lands next to task logs
+        return self.logs_dir / "slurm"
 
     @property
     def reports_dir(self) -> Path:
@@ -37,11 +53,11 @@ class Layout:
     @property
     def job_db_path(self) -> Path:
         # a directory of per-task files, not a database file; see execution/job_db.py
-        return self.output_dir / "jobs"
+        return self.work_dir / "jobs"
 
     @property
     def array_map_path(self) -> Path:
-        return self.output_dir / "array_map.tsv"
+        return self.work_dir / "array_map.tsv"
 
     # manifest entries and QC warnings arrive from concurrent extractors just like feature
     # rows do, so they are written as fragments and merged by whoever reads them
@@ -87,12 +103,24 @@ class Layout:
         return self.output_dir / "review_queue.parquet"
 
 
-def make_layout(output_dir: Path, *, create: bool = True) -> Layout:
-    layout = Layout(Path(output_dir))
+def make_layout(
+    output_dir: Path, work_dir: Path | None = None, *, create: bool = True
+) -> Layout:
+    output_dir = Path(output_dir)
+    layout = Layout(output_dir, Path(work_dir) if work_dir else output_dir)
     if create:
-        for directory in (layout.output_dir, layout.logs_dir, layout.reports_dir):
+        for directory in (
+            layout.output_dir,
+            layout.work_dir,
+            layout.logs_dir,
+            layout.reports_dir,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
     return layout
+
+
+def layout_for(config: "MacawConfig", *, create: bool = True) -> Layout:
+    return make_layout(config.project.output_dir, config.project.work_dir, create=create)
 
 
 def new_execution_id() -> str:

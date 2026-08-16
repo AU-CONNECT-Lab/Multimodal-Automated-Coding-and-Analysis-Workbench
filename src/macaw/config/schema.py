@@ -16,6 +16,9 @@ class ProjectSection(_Section):
     name: str
     raw_dir: Path
     output_dir: Path
+    # bookkeeping that can be deleted without losing a result: logs, job records, cache.
+    # null means it lives under output_dir; on a cluster point it at scratch
+    work_dir: Path | None = None
     scratch_dir: Path | None = None
     # how a path under raw_dir maps to BIDS entities; "{group_id}" is the flat case
     recording_pattern: str = "{group_id}"

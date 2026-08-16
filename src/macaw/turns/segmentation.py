@@ -16,7 +16,7 @@ from macaw.extractors.audio.content.asr import (
 )
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -175,7 +175,7 @@ def read_turns(path: Path) -> pd.DataFrame:
 
 def load_turns(config, recording_id: str) -> pd.DataFrame:
     """Where every downstream turn extractor starts, the way audio ones start at load_prep."""
-    root = make_layout(config.project.output_dir, create=False).artifacts_dir(
+    root = layout_for(config, create=False).artifacts_dir(
         recording_id, TurnStructureExtractor.name
     )
     return read_turns(root / TURNS_NAME)
@@ -225,7 +225,7 @@ class TurnStructureExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        root = make_layout(self.config.project.output_dir, create=False).artifacts_dir(
+        root = layout_for(self.config, create=False).artifacts_dir(
             recording.recording_id, ASRExtractor.name
         )
         return [root / TRANSCRIPT_NAME]

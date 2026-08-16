@@ -11,7 +11,7 @@ from macaw.config.schema import TurnsSection
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -195,7 +195,7 @@ def read_transitions(path: Path) -> pd.DataFrame:
 
 
 def load_transitions(config, recording_id: str) -> pd.DataFrame:
-    root = make_layout(config.project.output_dir, create=False).artifacts_dir(
+    root = layout_for(config, create=False).artifacts_dir(
         recording_id, TransitionExtractor.name
     )
     return read_transitions(root / TRANSITIONS_NAME)
@@ -292,7 +292,7 @@ class TransitionExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        root = make_layout(self.config.project.output_dir, create=False).artifacts_dir(
+        root = layout_for(self.config, create=False).artifacts_dir(
             recording.recording_id, TurnStructureExtractor.name
         )
         return [root / TURNS_NAME]
