@@ -137,13 +137,16 @@ def export_eaf(
     for key, group in grouped:
         subject_id, tier, layer, annotator = (_text(part) for part in key)
         name = names[(subject_id, tier, layer, annotator)]
+        vocabulary = (controlled_vocabulary or {}).get(tier)
+        # ELAN hangs a vocabulary off the linguistic type, not the tier, so a tier with its own
+        # code list needs its own type or it would inherit whichever tier was written first
         linguistic_type = f"{LINGUISTIC_TYPE_PREFIX}{layer or DEFAULT_LAYER}"
+        if vocabulary:
+            linguistic_type = f"{linguistic_type}-{tier}"
         if linguistic_type not in eaf.linguistic_types:
             eaf.add_linguistic_type(linguistic_type)
-            if controlled_vocabulary and tier in controlled_vocabulary:
-                _attach_vocabulary(
-                    eaf, linguistic_type, f"cv-{tier}", list(controlled_vocabulary[tier])
-                )
+            if vocabulary:
+                _attach_vocabulary(eaf, linguistic_type, f"cv-{tier}", list(vocabulary))
         eaf.add_tier(name, ling=linguistic_type, part=subject_id or None, ann=annotator or None)
 
         for row in group.itertuples(index=False):
@@ -189,8 +192,9 @@ def import_eaf(
         subject_id = attributes.get("PARTICIPANT") or None
         annotator = attributes.get("ANNOTATOR") or default_annotator
         reference = attributes.get("LINGUISTIC_TYPE_REF", "") or ""
+        # the type is macaw-<layer>, or macaw-<layer>-<tier> when that tier carries a vocabulary
         layer = (
-            reference[len(LINGUISTIC_TYPE_PREFIX) :]
+            reference[len(LINGUISTIC_TYPE_PREFIX) :].split("-", 1)[0]
             if reference.startswith(LINGUISTIC_TYPE_PREFIX)
             else default_layer
         )
