@@ -164,7 +164,13 @@ def assign_subjects(
         return out
 
     anchors = identity_anchors or {}
-    ranked = sorted(subject_ids, key=lambda subject: (anchors.get(subject, 0.0), subject))
+    # without anchors the configured subject order is the only stated intent there is, and
+    # inventing an alphabetical one would silently disagree with it
+    ranked = (
+        sorted(subject_ids, key=lambda subject: (anchors.get(subject, 0.0), subject_ids.index(subject)))
+        if anchors
+        else list(subject_ids)
+    )
     # more tracks than people means the extras are spurious detections; the longest-lived
     # ones are the people, and what is left over stays unassigned rather than being forced
     kept = order.head(len(ranked)).sort_values("first_x")
