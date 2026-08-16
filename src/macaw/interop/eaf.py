@@ -17,6 +17,8 @@ logger = get_logger("interop.eaf")
 # ELAN stores whole milliseconds, so a round trip is exact only down to that
 TIME_TOLERANCE_S = 5e-4
 LINGUISTIC_TYPE_PREFIX = "macaw-"
+CV_LANGUAGE = "und"
+CV_LANGUAGE_DEF = "http://cdb.iso.org/lg/CDB-00130975-001"
 DEFAULT_LAYER = "C"
 DEFAULT_ANNOTATOR = "human"
 
@@ -81,9 +83,12 @@ def _attach_vocabulary(eaf, linguistic_type: str, cv_id: str, labels: list[str])
     # the vocabulary API has moved between library versions; a failure here is worth reporting
     # rather than silently producing a file without the dropdown the caller asked for
     try:
+        # a fresh Eaf has no languages at all, and add_cv_entry rejects any lang_ref it
+        # does not already know; "und" is ISO 639-3 for undetermined
+        eaf.add_language(CV_LANGUAGE, CV_LANGUAGE_DEF, "undetermined")
         eaf.add_controlled_vocabulary(cv_id)
         for index, label in enumerate(labels):
-            eaf.add_cv_entry(cv_id, f"cveid{index}", [(str(label), "und", "")])
+            eaf.add_cv_entry(cv_id, f"cveid{index}", [(str(label), CV_LANGUAGE, "")])
         eaf.linguistic_types[linguistic_type]["CONTROLLED_VOCABULARY_REF"] = cv_id
     except Exception as error:
         raise EafError(f"could not build the ELAN controlled vocabulary '{cv_id}': {error}") from error

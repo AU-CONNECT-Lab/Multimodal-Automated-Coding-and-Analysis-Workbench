@@ -376,7 +376,9 @@ class TestBlockedCommandsStayHonest:
         monkeypatch.chdir(project.root)
         result = invoke("export", "-c", "project.yaml", "-f", "eaf")
         assert result.exit_code != 0
-        assert "annotations" in result.output.lower()
+        # MacawError is caught by entrypoint(), not by app(), so the runner sees the exception
+        # itself rather than a printed message
+        assert "annotations" in str(result.exception).lower()
 
 
 class TestExportArguments:

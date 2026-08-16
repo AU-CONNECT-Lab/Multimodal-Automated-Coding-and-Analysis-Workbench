@@ -68,7 +68,9 @@ KEYPOINT_SCHEMA: dict[str, str] = {
     "y": "float64",
     "z": "float64",           # NaN when input is 2D
     "confidence": "float64",
-    "track_id": "int64",      # raw backend track before repair
+    # raw backend track before repair; null when the backend does no tracking at all, which
+    # a sentinel like 0 or -1 would hide from detect_swaps
+    "track_id": "int64_nullable",
     # pixels and metres are a dimensional difference, not something "is z NaN" can express
     "units": "string",              # pixel | metre
     "metric_scale_valid": "bool",   # null on the 2D path, where it does not apply
@@ -125,6 +127,7 @@ _PANDAS_DTYPES: dict[str, str] = {
     "string": "string[pyarrow]",
     "float64": "float64",
     "int64": "int64",
+    "int64_nullable": "Int64",
     "bool": "boolean",
 }
 

@@ -24,7 +24,9 @@ def _normalise(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return _normalise(value.model_dump(mode="python"))
     if isinstance(value, dict):
-        return {k: _normalise(v) for k, v in value.items() if not isinstance(v, Path)}
+        # a path collapses to None rather than dropping its key: work_dir is Path | None, and
+        # dropping would make "configured" and "left empty" two different shapes of dict
+        return {k: (None if isinstance(v, Path) else _normalise(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_normalise(v) for v in value if not isinstance(v, Path)]
     if isinstance(value, float):
