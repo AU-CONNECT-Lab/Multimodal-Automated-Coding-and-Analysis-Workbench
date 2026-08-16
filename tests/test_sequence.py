@@ -132,7 +132,7 @@ class TestJointSequence:
             ]
         )
         joint = to_joint_sequence(to_state_sequence(frame, step_s=1.0))
-        assert list(joint["state"]) == ["AB", "nonB", "Anone"]
+        assert list(joint["state"]) == ["AB", f"{EMPTY_STATE}B", f"A{EMPTY_STATE}"]
 
     def test_the_series_order_is_the_same_at_every_step(self, make_intervals):
         frame = make_intervals(
