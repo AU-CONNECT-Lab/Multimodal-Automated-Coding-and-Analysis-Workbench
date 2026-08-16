@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from macaw.exceptions import CacheCorruptError, InputNotFoundError
+from macaw.execution import runner
 from macaw.execution.runner import _stage_payload
 from macaw.project.layout import make_layout
 from macaw.store import cache as cache_store
@@ -91,6 +92,74 @@ class TestStaging:
         tree = _tree(target)
         assert f"features/{EXTRACTOR}.parquet" in tree
         assert not any(item.startswith("annotations/") for item in tree)
+
+
+class TestProvenanceStamping:
+    """Which execution and which config produced a row is stamped by the runner, because an
+    extractor cannot know its execution id. The annotations table was left out of that and
+    shipped a whole AMI run with both columns null."""
+
+    @pytest.fixture
+    def written(self, tmp_path, monkeypatch):
+        layout = make_layout(tmp_path / "derivatives")
+        captured = {}
+
+        def _capture(name):
+            def record(frame, path):
+                captured[name] = frame
+            return record
+
+        monkeypatch.setattr(runner.longtable_store, "write_long_table", _capture("rows"))
+        monkeypatch.setattr(runner.annotations_store, "write_annotations", _capture("annotations"))
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+
+        blank = [pd.NA, pd.NA]
+        result = SimpleNamespace(
+            rows=pd.DataFrame({"feature": ["a", "b"], "execution_id": blank, "config_hash": blank}),
+            annotations=pd.DataFrame({"layer": ["A", "A"], "execution_id": blank, "config_hash": blank}),
+            keypoints=None,
+            body_model=None,
+            specs=[],
+            warnings=[],
+            artifacts={},
+        )
+        runner._write_result(layout, RECORDING, EXTRACTOR, result, "exec-1", "cfg-1")
+        return captured, result
+
+    @pytest.mark.parametrize("table", ("rows", "annotations"))
+    @pytest.mark.parametrize("column", ("execution_id", "config_hash"))
+    def test_every_table_is_stamped(self, written, table, column):
+        captured, _ = written
+        assert captured[table][column].notna().all()
+
+    def test_the_extractors_own_frame_is_not_mutated(self, written):
+        """A cached replay stages what the extractor produced; stamping in place would make
+        the payload and the written table disagree."""
+        _, result = written
+        assert result.annotations["execution_id"].isna().all()
+
+    def test_a_value_the_extractor_set_is_kept(self, tmp_path, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            runner.annotations_store, "write_annotations", lambda frame, path: captured.update(f=frame)
+        )
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        result = SimpleNamespace(
+            rows=None,
+            annotations=pd.DataFrame(
+                {"layer": ["A"], "execution_id": ["from-extractor"], "config_hash": [pd.NA]}
+            ),
+            keypoints=None,
+            body_model=None,
+            specs=[],
+            warnings=[],
+            artifacts={},
+        )
+        runner._write_result(
+            make_layout(tmp_path / "d"), RECORDING, EXTRACTOR, result, "exec-1", "cfg-1"
+        )
+        assert captured["f"]["execution_id"].tolist() == ["from-extractor"]
+        assert captured["f"]["config_hash"].tolist() == ["cfg-1"]
 
 
 class TestReplay:

@@ -235,20 +235,28 @@ def run_task(
         raise
 
 
+def _stamp(frame, execution_id: str, config_hash: str):
+    """Provenance is stamped here so no extractor has to be told which execution it is in.
+    Every table that carries the two columns gets it, not just the long table."""
+    stamped = frame.copy()
+    stamped["execution_id"] = stamped["execution_id"].fillna(execution_id)
+    stamped["config_hash"] = stamped["config_hash"].fillna(config_hash)
+    return stamped
+
+
 def _write_result(layout, recording_id, extractor, result, execution_id, config_hash) -> None:
     if result.rows is not None and not result.rows.empty:
-        # provenance is stamped here so no extractor has to be told which execution it is in
-        rows = result.rows.copy()
-        rows["execution_id"] = rows["execution_id"].fillna(execution_id)
-        rows["config_hash"] = rows["config_hash"].fillna(config_hash)
-        longtable_store.write_long_table(rows, layout.long_table_path(recording_id))
+        longtable_store.write_long_table(
+            _stamp(result.rows, execution_id, config_hash), layout.long_table_path(recording_id)
+        )
     if result.keypoints is not None and not result.keypoints.empty:
         keypoints_store.write_keypoints(result.keypoints, layout.keypoints_path(recording_id))
     if result.body_model is not None and not result.body_model.empty:
         body_model_store.write_body_model(result.body_model, layout.body_model_path(recording_id))
     if result.annotations is not None and not result.annotations.empty:
         annotations_store.write_annotations(
-            result.annotations, layout.annotations_path(recording_id)
+            _stamp(result.annotations, execution_id, config_hash),
+            layout.annotations_path(recording_id),
         )
 
     manifest = FeatureManifest()
