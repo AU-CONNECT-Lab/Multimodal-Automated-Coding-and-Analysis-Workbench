@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from macaw.exceptions import DependencyCycleError
+from macaw.config.schema import PipelineSection
+from macaw.exceptions import ConfigError, DependencyCycleError, ExtractorNotFoundError
 from macaw.execution.dag import DAG, build_dag
 from macaw.extractors.base import Phase
 
@@ -12,7 +15,7 @@ def graph(monkeypatch):
     """Throwaway extractors, so the graph tests do not move every time the pipeline does."""
     import macaw.extractors as registry
 
-    def build(spec, *, requested=None):
+    def build(spec, *, requested=None, pipeline=None):
         table = {
             name: type(
                 "FakeExtractor",
@@ -28,7 +31,7 @@ def graph(monkeypatch):
         }
         monkeypatch.setattr(registry, "_REGISTRY", table)
         monkeypatch.setattr(registry, "_builtins_loaded", True)
-        return build_dag(None, requested)
+        return build_dag(SimpleNamespace(pipeline=pipeline or PipelineSection()), requested)
 
     return build
 
@@ -136,3 +139,38 @@ class TestExport:
             ("prep", "turns"),
             ("asr", "turns"),
         }
+
+
+class TestSelection:
+    """Which extractors run is the user's call, and so is how they group them."""
+
+    def test_pipeline_run_is_the_default_request(self, graph):
+        dag = graph(LINE, pipeline=PipelineSection(run=["asr"]))
+        assert set(dag.nodes) == {"prep", "asr"}
+
+    def test_a_command_line_request_wins_over_pipeline_run(self, graph):
+        dag = graph(LINE, requested=["prep"], pipeline=PipelineSection(run=["turns"]))
+        assert set(dag.nodes) == {"prep"}
+
+    def test_a_group_name_expands_to_its_members(self, graph):
+        pipeline = PipelineSection(run=["speech"], groups={"speech": ["asr"]})
+        assert set(graph(LINE, pipeline=pipeline).nodes) == {"prep", "asr"}
+
+    def test_groups_work_from_the_command_line_too(self, graph):
+        pipeline = PipelineSection(groups={"everything_spoken": ["turns"]})
+        dag = graph(LINE, requested=["everything_spoken"], pipeline=pipeline)
+        assert set(dag.nodes) == {"prep", "asr", "turns"}
+
+    def test_groups_and_names_mix_and_overlap_without_duplicates(self, graph):
+        pipeline = PipelineSection(run=["a", "asr", "b"], groups={"a": ["asr"], "b": ["prep", "asr"]})
+        assert set(graph(LINE, pipeline=pipeline).nodes) == {"prep", "asr"}
+
+    def test_an_unknown_member_names_its_group(self, graph):
+        pipeline = PipelineSection(run=["speech"], groups={"speech": ["asr", "prosdy"]})
+        with pytest.raises(ExtractorNotFoundError, match="prosdy.*group 'speech'"):
+            graph(LINE, pipeline=pipeline)
+
+    def test_a_group_may_not_shadow_an_extractor(self, graph):
+        """Otherwise -e asr would mean something different in each project."""
+        with pytest.raises(ConfigError, match="asr"):
+            graph(LINE, pipeline=PipelineSection(groups={"asr": ["prep"]}))

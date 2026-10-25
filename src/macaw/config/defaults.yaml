@@ -137,4 +137,12 @@ gui:
   host: 127.0.0.1                    # set to 0.0.0.0 only with mode: server
   port: 8050
 
+# What `macaw run` runs when no -e is given. Entries are extractor names or names from groups;
+# dependencies are pulled in automatically, so listing the last step of a chain is enough.
+pipeline:
+  run: []                            # empty = every installed extractor
+  groups: {}                         # your own grouping, e.g. {vocal: [prosody.frame, text.asr]}
+
+plugins: {}                          # extractor name -> its parameters, for extractors from other packages
+
 primary: []                          # feature names registered as primary, purely for bookkeeping

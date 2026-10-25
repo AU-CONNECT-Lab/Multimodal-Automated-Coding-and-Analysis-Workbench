@@ -22,7 +22,12 @@ logger = get_logger("run")
 def run(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Defaults to all enabled."),
+    extractor: list[str] = typer.Option(
+        None,
+        "--extractor",
+        "-e",
+        help="Extractor or group name, repeatable. Defaults to pipeline.run, else everything installed.",
+    ),
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     workers: int = typer.Option(None, "--workers", "-j"),
     output_dir: Path = typer.Option(

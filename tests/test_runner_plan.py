@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from macaw.config.schema import PipelineSection
 from macaw.execution.runner import plan, resolve_recordings, task_id_for
 from macaw.extractors.base import Phase
 
@@ -28,7 +29,9 @@ def registry(monkeypatch):
 
 
 def _config(excluded=()):
-    return SimpleNamespace(project=SimpleNamespace(excluded_recordings=list(excluded)))
+    return SimpleNamespace(
+        project=SimpleNamespace(excluded_recordings=list(excluded)), pipeline=PipelineSection()
+    )
 
 
 LINE = {

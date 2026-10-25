@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from macaw.config.schema import MacawConfig
-from macaw.exceptions import DependencyCycleError
+from macaw.exceptions import ConfigError, DependencyCycleError, ExtractorNotFoundError
 from macaw.extractors import get_extractor, list_extractors
 from macaw.extractors.base import Phase
 
@@ -113,8 +113,32 @@ class DAG:
         return {"elements": elements}
 
 
+def resolve_selection(config: MacawConfig, names: list[str]) -> list[str]:
+    """Group names expand to their members. Groups are the user's own; the package does not
+    decide how extractors divide into modalities."""
+    groups = config.pipeline.groups
+    known = set(list_extractors())
+    clashing = sorted(set(groups) & known)
+    if clashing:
+        raise ConfigError(f"pipeline.groups reuses extractor names: {', '.join(clashing)}")
+
+    selected: list[str] = []
+    for name in names:
+        for member in groups.get(name, [name]):
+            if member not in known:
+                where = f" (in group '{name}')" if name in groups else ""
+                available = ", ".join(sorted(known | set(groups)))
+                raise ExtractorNotFoundError(
+                    f"Unknown extractor or group '{member}'{where}. Available: {available}"
+                )
+            if member not in selected:
+                selected.append(member)
+    return selected
+
+
 def build_dag(config: MacawConfig, requested: list[str] | None = None) -> DAG:
-    """Without a request this is every registered extractor, which is every one installed."""
+    """Without a request, pipeline.run; without that, every installed extractor."""
     dag = DAG(config)
-    dag.expand(requested if requested is not None else list_extractors())
+    names = requested or config.pipeline.run or list_extractors()
+    dag.expand(resolve_selection(config, names))
     return dag

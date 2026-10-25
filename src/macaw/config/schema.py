@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -167,6 +167,13 @@ class ExecutionSection(_Section):
     job_name_prefix: str = "macaw"
 
 
+class PipelineSection(_Section):
+    # extractor or group names; empty means every installed extractor
+    run: list[str] = Field(default_factory=list)
+    # the user's own grouping; the package imposes no division into modalities
+    groups: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class GUISection(_Section):
     mode: Literal["window", "browser", "server"] = "window"
     host: str = "127.0.0.1"
@@ -188,6 +195,9 @@ class MacawConfig(_Section):
     qc: QCSection = Field(default_factory=QCSection)
     execution: ExecutionSection = Field(default_factory=ExecutionSection)
     gui: GUISection = Field(default_factory=GUISection)
+    pipeline: PipelineSection = Field(default_factory=PipelineSection)
+    # parameters for extractors installed from other packages, keyed by extractor name
+    plugins: dict[str, dict[str, Any]] = Field(default_factory=dict)
     primary: list[str] = Field(default_factory=list)
 
 
@@ -203,6 +213,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "motion",
     "turns",
     "coding",
+    "plugins",
 )
 
 # Which config keys hold a path whose *contents* belong in the hash. Hashing the path
