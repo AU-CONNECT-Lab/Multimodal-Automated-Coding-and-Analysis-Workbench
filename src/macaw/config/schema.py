@@ -152,6 +152,9 @@ class QCSection(_Section):
     )
     fail_fast: bool = False
     report_downsample_px: int = 2000
+    review_max_candidates: int = 40
+    review_baseline: int = 25
+    review_seed: int = 0
 
 
 class ExecutionSection(_Section):

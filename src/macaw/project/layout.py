@@ -99,6 +99,13 @@ class Layout:
             return self.reports_dir / "qc_project.html"
         return self.reports_dir / f"qc_{recording_id}.html"
 
+    def qc_dir(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "qc"
+
+    # rendered frames are something to look at, not a result, so they stay out of output_dir
+    def renders_dir(self, recording_id: str) -> Path:
+        return self.work_dir / "renders" / recording_id
+
     def review_queue_path(self) -> Path:
         return self.output_dir / "review_queue.parquet"
 

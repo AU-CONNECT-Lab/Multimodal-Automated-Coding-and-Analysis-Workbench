@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from types import SimpleNamespace
@@ -355,13 +356,34 @@ class TestEntrypoint:
         assert exit_info.value.code == 0
 
 
+@needs_pydantic
+class TestQC:
+    def test_a_project_with_no_results_says_every_check_was_not_run(self, project):
+        result = invoke("qc", "-c", str(project.config))
+        assert result.exit_code == 0, result.output
+        written = sorted(project.output.glob("recordings/*/qc/warnings.json"))
+        assert len(written) == 2
+        messages = {item["message"] for item in json.loads(written[0].read_text(encoding="utf-8"))}
+        assert "not run: no pose.keypoints output" in messages
+        assert all((path.parent / "candidates.parquet").is_file() for path in written)
+
+    def test_check_narrows_what_runs(self, project):
+        invoke("qc", "-c", str(project.config), "--check", "octave_error")
+        written = next(project.output.glob("recordings/*/qc/warnings.json"))
+        assert {item["check"] for item in json.loads(written.read_text(encoding="utf-8"))} == {"octave_error"}
+
+    def test_an_unknown_check_fails(self, project):
+        result = invoke("qc", "-c", str(project.config), "--check", "nope")
+        assert result.exit_code != 0
+
+
 class TestBlockedCommandsStayHonest:
     """Commands whose layer is still a skeleton must fail, not pretend."""
 
     @pytest.mark.parametrize(
         "args",
         [
-            ["qc", "-c", "project.yaml"],
+            ["qc", "-c", "project.yaml", "--report"],
             ["hpc", "generate", "-c", "project.yaml"],
         ],
     )

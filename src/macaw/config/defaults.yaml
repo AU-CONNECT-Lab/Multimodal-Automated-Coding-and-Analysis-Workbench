@@ -117,6 +117,9 @@ qc:
     - octave_error
   fail_fast: false                   # true aborts the run on the first failed check
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
+  review_max_candidates: 40          # frames the checks pointed at, spread across reasons
+  review_baseline: 25                # frames drawn uniformly at random; never filtered by any check
+  review_seed: 0                     # fixes the random baseline so a rerun shows the same frames
 
 # Cluster resources are not configured here. They describe the machine rather than the
 # study, so they live in a separate hpc.yaml that never enters the config hash.
