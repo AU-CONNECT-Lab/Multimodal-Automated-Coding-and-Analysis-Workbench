@@ -76,12 +76,22 @@ def _substitute_content(data: dict[str, Any], dotted: str) -> None:
 
 def _section_value(data: dict[str, Any], name: str) -> Any:
     """A dotted name reaches a subsection, so two extractors sharing a config section can still
-    have different cache keys: one that only reads coding.llm is not invalidated by a codebook."""
+    have different cache keys: one that only reads coding.llm is not invalidated by a codebook.
+    Keys may hold dots themselves (plugins are keyed by extractor name), so at each level the
+    longest key matching the rest of the path wins."""
     cursor: Any = data
-    for part in name.split("."):
+    parts = name.split(".")
+    index = 0
+    while index < len(parts):
         if not isinstance(cursor, dict):
             return None
-        cursor = cursor.get(part)
+        for end in range(len(parts), index, -1):
+            key = ".".join(parts[index:end])
+            if key in cursor:
+                cursor, index = cursor[key], end
+                break
+        else:
+            return None
     return cursor
 
 

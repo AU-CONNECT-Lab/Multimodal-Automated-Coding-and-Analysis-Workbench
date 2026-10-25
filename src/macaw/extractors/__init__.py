@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from importlib import import_module
 from importlib.metadata import entry_points
 from typing import Callable, Type
@@ -55,6 +56,7 @@ def load_builtin_extractors() -> None:
     _builtins_loaded = True          # set before importing, the imports re-enter here
     for module in BUILTIN_MODULES:
         import_module(module)
+    load_entry_point_extractors()
 
 
 def get_extractor(name: str) -> Type[Extractor]:
@@ -97,7 +99,12 @@ def load_entry_point_extractors() -> int:
     """Discover extractors published by other packages under the macaw.extractors group."""
     before = len(_REGISTRY)
     for entry in entry_points(group=ENTRY_POINT_GROUP):
-        loaded = entry.load()
+        # one broken plugin must not take every macaw command down with it
+        try:
+            loaded = entry.load()
+        except Exception as error:
+            logging.getLogger("macaw").warning("extractor plugin %s failed to load: %s", entry.name, error)
+            continue
         if isinstance(loaded, type) and issubclass(loaded, Extractor):
             register_extractor(loaded)
         elif callable(loaded):
