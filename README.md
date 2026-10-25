@@ -11,7 +11,11 @@ an analysable multimodal feature time series.
 | import | `macaw` |
 | CLI | `macaw` |
 
-Status: pre-alpha. Framework scaffold only, no working implementation yet.
+Status: pre-alpha. The audio and pose chains run end to end; the rest is in progress.
+
+![MACAW workflow](docs/workflow.drawio.png)
+
+The figure is a draw.io file with the diagram embedded in the PNG: open `docs/workflow.drawio.png` in draw.io (desktop, web, or the VS Code extension) to edit it, and save it as PNG with the diagram included.
 
 ## What it covers
 
