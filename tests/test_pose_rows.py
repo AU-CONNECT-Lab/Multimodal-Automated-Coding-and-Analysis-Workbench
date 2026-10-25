@@ -197,6 +197,35 @@ class TestPerSubjectCameras:
         assert any("shared" in warning.message for warning in result.warnings)
 
 
+class TestOneViewPerPerson:
+    """A second view of the same person would put two rows on one frame and joint, numbered on
+    another file's clock."""
+
+    def test_a_second_shared_camera_is_skipped_with_a_warning(self, extractor, recording, tmp_path):
+        instance = extractor()
+        result = instance.run(recording([media("room_b.mp4"), media("room_a.mp4")]), tmp_path)
+        assert [call["path"].name for call in instance.fake.calls] == ["room_a.mp4"]
+        assert any(
+            w.severity == "warn" and "room_b.mp4" in w.message for w in result.warnings
+        )
+
+    def test_a_second_camera_on_one_person_is_skipped(self, extractor, recording, tmp_path):
+        instance = extractor(FakeBackend(backend_frame([100.0])))
+        files = [
+            media("a1.mp4", subject_id="parent"),
+            media("a2.mp4", subject_id="parent"),
+            media("b.mp4", subject_id="child"),
+        ]
+        result = instance.run(recording(files), tmp_path)
+        assert sorted(call["path"].name for call in instance.fake.calls) == ["a1.mp4", "b.mp4"]
+        assert not result.keypoints.duplicated(["subject_id", "frame", "joint"]).any()
+        assert any("a2.mp4" in warning.message for warning in result.warnings)
+
+    def test_the_cache_key_covers_only_what_is_read(self, extractor, recording):
+        files = [media("a.mp4", subject_id="parent"), media("room.mp4")]
+        assert extractor().inputs_for(recording(files)) == [Path("a.mp4")]
+
+
 class TestWindowAndClock:
     def test_frames_outside_the_task_window_are_dropped(self, extractor, recording, tmp_path):
         instance = extractor()

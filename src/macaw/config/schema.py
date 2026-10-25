@@ -75,13 +75,17 @@ class TextSection(_Section):
 
 
 class PoseSection(_Section):
-    backend: Literal["rtmpose", "mediapipe", "yolo", "dwpose"] = "rtmpose"
+    backend: Literal["rtmpose", "mediapipe", "yolo", "dwpose"] = "mediapipe"
     model: str | None = None
     device: str = "auto"
     min_confidence: float = 0.3
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
     identity_anchors: dict[str, float] = Field(default_factory=dict)
+
+
+class KinematicsSection(_Section):
+    smoothing_s: float = 0.3
 
 
 class FaceSection(_Section):
@@ -173,6 +177,7 @@ class MacawConfig(_Section):
     prosody: ProsodySection = Field(default_factory=ProsodySection)
     text: TextSection = Field(default_factory=TextSection)
     pose: PoseSection = Field(default_factory=PoseSection)
+    kinematics: KinematicsSection = Field(default_factory=KinematicsSection)
     face: FaceSection = Field(default_factory=FaceSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
@@ -190,6 +195,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "prosody",
     "text",
     "pose",
+    "kinematics",
     "face",
     "motion",
     "turns",

@@ -38,6 +38,23 @@ def _video_files(recording: Recording) -> list:
     return [item for item in recording.media if item.kind == "video"]
 
 
+def select_videos(recording: Recording) -> tuple[list, list]:
+    """(read, skipped). Per-person cameras answer the identity question by themselves, so they
+    win over a shared one, the same preference as per_track over a shared mic. Only one view is
+    read per person or per room: a second would put two rows on one frame and joint, numbered
+    on another file's clock."""
+    videos = sorted(_video_files(recording), key=lambda item: str(item.path))
+    per_subject = [item for item in videos if item.subject_id is not None]
+    if per_subject:
+        chosen: dict[str, object] = {}
+        for item in per_subject:
+            chosen.setdefault(item.subject_id, item)
+        read = list(chosen.values())
+    else:
+        read = videos[:1]
+    return read, [item for item in videos if item not in read]
+
+
 @register_extractor
 class PoseExtractor(Extractor):
     name = "pose.keypoints"
@@ -58,12 +75,11 @@ class PoseExtractor(Extractor):
         self.backend().check_available()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return sorted(item.path for item in _video_files(recording))
+        return sorted(item.path for item in select_videos(recording)[0])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.pose
-        videos = _video_files(recording)
-        if not videos:
+        if not _video_files(recording):
             raise UnreadableMediaError(f"{recording.recording_id}: no video to read")
 
         backend = self.backend()
@@ -71,16 +87,24 @@ class PoseExtractor(Extractor):
         subjects = [subject.subject_id for subject in recording.subjects]
         warnings: list[QCWarning] = []
 
-        # per-person cameras answer the identity question by themselves, so they are used
-        # whenever they exist; this is the same preference as per_track over a shared mic
-        per_subject = [item for item in videos if item.subject_id is not None]
-        sources = per_subject or [item for item in videos if item.subject_id is None]
-        if per_subject and len(per_subject) < len(videos):
+        sources, skipped = select_videos(recording)
+        per_subject = any(item.subject_id is not None for item in sources)
+        if per_subject and any(item.subject_id is None for item in skipped):
             warnings.append(
                 self._warning(
                     recording, None, "info",
                     "both per-subject and shared cameras are present; the shared ones were "
                     "not read",
+                )
+            )
+        repeated = [
+            item.path.name for item in skipped if item.subject_id is not None or not per_subject
+        ]
+        if repeated:
+            warnings.append(
+                self._warning(
+                    recording, None, "warn",
+                    f"only one camera per person or per room is read; skipped {', '.join(repeated)}",
                 )
             )
 

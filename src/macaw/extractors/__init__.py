@@ -21,6 +21,8 @@ BUILTIN_MODULES = (
     "macaw.turns.transitions",
     "macaw.turns.entropy",
     "macaw.coding.layer_a",
+    "macaw.extractors.video.pose.keypoints",
+    "macaw.extractors.video.pose.kinematics",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}
