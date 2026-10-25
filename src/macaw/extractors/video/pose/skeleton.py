@@ -36,6 +36,23 @@ STANDARD_JOINTS: tuple[str, ...] = (
 
 _STANDARD = frozenset(STANDARD_JOINTS)
 
+# the rigid segments between standard joints; the face points are left out as too short to draw
+# or measure reliably
+SKELETON_EDGES: tuple[tuple[str, str], ...] = (
+    ("left_shoulder", "right_shoulder"),
+    ("left_shoulder", "left_elbow"),
+    ("left_elbow", "left_wrist"),
+    ("right_shoulder", "right_elbow"),
+    ("right_elbow", "right_wrist"),
+    ("left_shoulder", "left_hip"),
+    ("right_shoulder", "right_hip"),
+    ("left_hip", "right_hip"),
+    ("left_hip", "left_knee"),
+    ("left_knee", "left_ankle"),
+    ("right_hip", "right_knee"),
+    ("right_knee", "right_ankle"),
+)
+
 EXTRA_JOINT_SEPARATOR = ":"
 
 
