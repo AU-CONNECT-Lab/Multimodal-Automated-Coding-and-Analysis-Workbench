@@ -63,12 +63,15 @@ def qc(
 
 
 def _render(resolved, layout, recording, results, candidates) -> None:
+    from macaw.extractors.prep import apply_prep_timing
     from macaw.qc.overlay import render_review, review_sample
 
     keypoints = results.keypoints()
     if keypoints.empty:
         logger.info("%s: no keypoints, nothing to render", recording.recording_id)
         return
+    # frame numbers come from the same clock pose.keypoints used
+    apply_prep_timing(resolved, recording)
     cfg = resolved.qc
     sample = review_sample(
         candidates,

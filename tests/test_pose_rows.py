@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from macaw.config.schema import PoseSection
+from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
 from macaw.extractors.video.pose.keypoints import PoseExtractor
@@ -98,11 +99,27 @@ def recording():
     return build
 
 
+def fake_prep_timing(config, recording):
+    """The fake media already carry fps and offset; prep only has to supply the window."""
+    start, end = _window(recording)
+    return SimpleNamespace(t_origin_s=start, duration_s=end - start)
+
+
 @pytest.fixture
-def extractor(monkeypatch):
+def offsets(tmp_path, monkeypatch):
+    path = tmp_path / "offsets.json"
+    monkeypatch.setattr(
+        pose_module, "layout_for", lambda config, create=False: SimpleNamespace(offset_table_path=lambda rid: path)
+    )
+    return path
+
+
+@pytest.fixture
+def extractor(monkeypatch, offsets):
     def build(backend=None):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
+        monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
         instance = PoseExtractor(SimpleNamespace(pose=PoseSection()))
         instance.fake = backend
         return instance
@@ -224,6 +241,11 @@ class TestOneViewPerPerson:
     def test_the_cache_key_covers_only_what_is_read(self, extractor, recording):
         files = [media("a.mp4", subject_id="parent"), media("room.mp4")]
         assert extractor().inputs_for(recording(files)) == [Path("a.mp4")]
+
+    def test_the_offset_table_is_part_of_the_cache_key(self, extractor, recording, offsets):
+        """Changing an offset moves every frame on the recording clock."""
+        offsets.write_text("{}")
+        assert extractor().inputs_for(recording([media("room.mp4")])) == [Path("room.mp4"), offsets]
 
 
 class TestWindowAndClock:

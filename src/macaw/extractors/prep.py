@@ -72,6 +72,25 @@ def load_prep(config, recording_id: str) -> PrepInfo:
     return PrepInfo(root=root, **payload)
 
 
+def apply_prep_timing(config, recording: Recording) -> PrepInfo:
+    """Give each media file the frame rate and offset prep.media found for it, so a later
+    process reads the same clock without probing again. Video starts here the way audio starts
+    at the prepared tracks."""
+    prep = load_prep(config, recording.recording_id)
+    entries = {entry["name"]: entry for entry in prep.media}
+    for item in recording.media:
+        entry = entries.get(item.path.name)
+        if entry is None:
+            continue
+        item.duration_s = entry["duration_s"]
+        item.sample_rate = entry["sample_rate"]
+        item.fps = entry["fps"]
+        item.offset_s = entry["offset_s"]
+        item.drift_ppm = entry["drift_ppm"]
+        item.offset_confidence = entry["offset_confidence"]
+    return prep
+
+
 def _extract_track(
     src: Path, dest: Path, *, start_s: float, duration_s: float, sample_rate: int
 ) -> Path:

@@ -8,7 +8,7 @@ import pandas as pd
 from macaw.exceptions import UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import _window
+from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing
 from macaw.extractors.video.pose.backends import resolve_backend
 from macaw.extractors.video.pose.track_repair import (
     assign_subjects,
@@ -16,6 +16,7 @@ from macaw.extractors.video.pose.track_repair import (
     repair_tracks,
     track_quality,
 )
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
@@ -62,6 +63,7 @@ class PoseExtractor(Extractor):
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "segment")
+    requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
     def backend(self):
@@ -75,7 +77,10 @@ class PoseExtractor(Extractor):
         self.backend().check_available()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return sorted(item.path for item in select_videos(recording)[0])
+        """The offset table moves every frame on the recording clock, so it is an input too."""
+        paths = sorted(item.path for item in select_videos(recording)[0])
+        offsets = layout_for(self.config, create=False).offset_table_path(recording.recording_id)
+        return paths + [offsets] if offsets.is_file() else paths
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.pose
@@ -83,7 +88,8 @@ class PoseExtractor(Extractor):
             raise UnreadableMediaError(f"{recording.recording_id}: no video to read")
 
         backend = self.backend()
-        start, end = _window(recording)
+        prep = apply_prep_timing(self.config, recording)
+        start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
         subjects = [subject.subject_id for subject in recording.subjects]
         warnings: list[QCWarning] = []
 
