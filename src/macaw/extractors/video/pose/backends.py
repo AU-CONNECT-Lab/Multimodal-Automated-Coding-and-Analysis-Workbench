@@ -99,8 +99,11 @@ class PoseBackend(Backend):
         min_confidence: float,
         model: str | Path | None = None,
         max_people: int = 1,
+        frames: tuple[int, int] | None = None,
     ) -> PoseFrames:
-        """One file in, that file's own tracks out. Four rules hold for every backend:
+        """One file in, that file's own tracks out. frames is a half-open range of the file's
+        own frame numbers, None for all of it; frame numbers stay file-absolute either way.
+        Four rules hold for every backend:
 
         joint is a name from STANDARD_JOINTS, and any extra point the backend has goes
         through skeleton.extra_joint() so it can never be read as a standard one;
@@ -247,6 +250,7 @@ class MediaPipeBackend(PoseBackend):
         min_confidence: float,
         model: str | Path | None = None,
         max_people: int = 1,
+        frames: tuple[int, int] | None = None,
     ) -> PoseFrames:
         import cv2
         import mediapipe as mp
@@ -285,10 +289,12 @@ class MediaPipeBackend(PoseBackend):
                 min_pose_detection_confidence=0.5,
             )
 
+            first, stop = frames if frames is not None else (0, None)
+            frame_index = _seek(capture, cv2, max(int(first), 0))
+
             rows: list[dict] = []
             with PoseLandmarker.create_from_options(options) as landmarker:
-                frame_index = 0
-                while True:
+                while stop is None or frame_index < stop:
                     ok, frame = capture.read()
                     if not ok:
                         break
@@ -319,6 +325,20 @@ class MediaPipeBackend(PoseBackend):
             return PoseFrames(keypoints=empty_frame(BACKEND_KEYPOINT_SCHEMA))
         frame = coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
         return PoseFrames(keypoints=frame, provides=self.provides)
+
+
+def _seek(capture, cv2, first: int) -> int:
+    """Jump to a frame, or read up to it when the container will not say where it landed."""
+    if first == 0:
+        return 0
+    capture.set(cv2.CAP_PROP_POS_FRAMES, first)
+    if int(capture.get(cv2.CAP_PROP_POS_FRAMES)) == first:
+        return first
+    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    index = 0
+    while index < first and capture.grab():
+        index += 1
+    return index
 
 
 class YOLOPoseBackend(PoseBackend):

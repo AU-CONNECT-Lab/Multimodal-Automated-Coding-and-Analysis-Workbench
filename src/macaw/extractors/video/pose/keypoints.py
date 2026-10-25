@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -117,6 +118,15 @@ class PoseExtractor(Extractor):
         pieces: list[pd.DataFrame] = []
         swaps_by_file: dict[str, list] = {}
         for item in sources:
+            fps = item.fps or 0.0
+            if fps <= 0:
+                raise UnreadableMediaError(f"{item.path}: no frame rate to convert frames to time")
+            # only the task window is decoded; a short task in a long recording would otherwise
+            # spend most of the run on frames that are thrown away
+            first = max(math.floor((start - item.offset_s) * fps), 0)
+            stop = math.ceil((end - item.offset_s) * fps) + 1
+            if stop <= first:
+                continue
             expected = 1 if item.subject_id is not None else max(len(subjects), 1)
             frames = backend.infer(
                 item.path,
@@ -124,6 +134,7 @@ class PoseExtractor(Extractor):
                 min_confidence=cfg.min_confidence,
                 model=cfg.model,
                 max_people=expected,
+                frames=(first, stop),
             )
             piece = frames.keypoints
             if piece.empty:
@@ -131,9 +142,6 @@ class PoseExtractor(Extractor):
 
             # the backend counts frames from the file's own start; offset_s is what puts it on
             # the recording clock, and it is applied once, here, exactly as prep does for audio
-            fps = item.fps or 0.0
-            if fps <= 0:
-                raise UnreadableMediaError(f"{item.path}: no frame rate to convert frames to time")
             piece = piece.copy()
             piece["t"] = piece["frame"] / fps + item.offset_s
             piece = piece[(piece["t"] >= start) & (piece["t"] <= end)]

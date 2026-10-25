@@ -63,8 +63,8 @@ class FakeBackend:
     def check_available(self):
         return None
 
-    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1):
-        self.calls.append({"path": video_path, "max_people": max_people})
+    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1, frames=None):
+        self.calls.append({"path": video_path, "max_people": max_people, "frames": frames})
         return PoseFrames(keypoints=self.frames)
 
 
@@ -254,6 +254,20 @@ class TestWindowAndClock:
         result = instance.run(recording([media()], t_task_start=0.5, t_task_end=1.0), tmp_path)
         assert result.keypoints.t.min() >= 0.5
         assert result.keypoints.t.max() <= 1.0
+
+    def test_only_the_window_is_asked_for(self, extractor, recording, tmp_path):
+        """In the file's own frames: the window 100 to 101 s at offset 99.5 is 0.5 to 1.5 s in."""
+        instance = extractor()
+        instance.run(recording([media(offset_s=99.5)], t_task_start=100.0, t_task_end=101.0), tmp_path)
+        assert instance.fake.calls[0]["frames"] == (5, 16)
+
+    def test_a_file_entirely_outside_the_window_is_not_read(self, extractor, recording, tmp_path):
+        instance = extractor()
+        result = instance.run(
+            recording([media(offset_s=50.0)], t_task_start=0.0, t_task_end=10.0), tmp_path
+        )
+        assert instance.fake.calls == []
+        assert any(warning.severity == "fail" for warning in result.warnings)
 
     def test_the_offset_is_applied_once_here(self, extractor, recording, tmp_path):
         """prep applies it once for audio; doing it again downstream would misalign the two
