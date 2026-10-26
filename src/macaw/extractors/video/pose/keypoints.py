@@ -135,6 +135,7 @@ class PoseExtractor(Extractor):
                 model=cfg.model,
                 max_people=expected,
                 frames=(first, stop),
+                input_size=cfg.input_size,
             )
             piece = frames.keypoints
             if piece.empty:

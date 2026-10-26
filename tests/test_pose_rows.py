@@ -63,7 +63,7 @@ class FakeBackend:
     def check_available(self):
         return None
 
-    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1, frames=None):
+    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1, frames=None, input_size=None):
         self.calls.append({"path": video_path, "max_people": max_people, "frames": frames})
         return PoseFrames(keypoints=self.frames)
 

@@ -65,6 +65,7 @@ pose:
   model: null                        # backend-specific checkpoint; null = backend default
   device: auto                       # auto | cpu | cuda
   min_confidence: 0.3                # 0-1; keypoints below this become NaN
+  input_size: 1280                   # px; side frames are scaled to before detection (yolo); small people need more
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
   identity_anchors: {}               # subject_id -> initial x position (0-1 of frame width)

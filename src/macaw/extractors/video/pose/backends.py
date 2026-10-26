@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +13,9 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors import register_backend
 from macaw.extractors.base import Backend
+from macaw.media.ffmpeg import run_ffmpeg
+from macaw.media.probe import probe
+from macaw.telemetry import quiet_environment
 from macaw.extractors.video.pose.skeleton import (
     JOINT_SET,
     STANDARD_JOINTS,
@@ -100,9 +108,11 @@ class PoseBackend(Backend):
         model: str | Path | None = None,
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
+        input_size: int | None = None,
     ) -> PoseFrames:
         """One file in, that file's own tracks out. frames is a half-open range of the file's
         own frame numbers, None for all of it; frame numbers stay file-absolute either way.
+        input_size is the side frames are scaled to for a backend that takes one.
         Four rules hold for every backend:
 
         joint is a name from STANDARD_JOINTS, and any extra point the backend has goes
@@ -261,6 +271,7 @@ class MediaPipeBackend(PoseBackend):
         model: str | Path | None = None,
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
+        input_size: int | None = None,
     ) -> PoseFrames:
         import cv2
         import mediapipe as mp
@@ -351,16 +362,186 @@ def _seek(capture, cv2, first: int) -> int:
     return index
 
 
+YOLO_ENV_VAR = "MACAW_YOLO"
+# the order the COCO pose models write their 17 points in
+COCO_KEYPOINT_ORDER: tuple[str, ...] = (
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist",
+    "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle",
+)
+# boxes below this never reach the label files; keypoints are thresholded on their own by min_confidence
+YOLO_DETECTION_CONFIDENCE = 0.25
+YOLO_TRACKER = "bytetrack.yaml"
+_LABEL_FRAME = re.compile(r"_(\d+)\.txt$")
+
+
+def yolo_label_rows(
+    lines: list[str], *, frame_index: int, width: int, height: int, min_confidence: float
+) -> list[dict]:
+    """One frame's label lines to BACKEND_KEYPOINT_SCHEMA rows. A line is class, box (4), then x y
+    confidence per point, all normalised, then the box confidence and, when tracking, the track id."""
+    n_values = 3 * len(COCO_KEYPOINT_ORDER)
+    rows: list[dict] = []
+    for line in lines:
+        numbers = [float(value) for value in line.split()]
+        if not numbers:
+            continue
+        tail = len(numbers) - 5 - n_values
+        if tail not in (1, 2):
+            raise ExternalToolError(
+                f"a yolo label line has {len(numbers)} values; expected a 17-point pose model with "
+                "keypoint confidences"
+            )
+        track_id = int(numbers[-1]) if tail == 2 else None
+        points = numbers[5 : 5 + n_values]
+        for index, joint in enumerate(COCO_KEYPOINT_ORDER):
+            x, y, confidence = points[3 * index : 3 * index + 3]
+            # some versions write a point they do not trust at the image corner
+            below = not (confidence >= min_confidence) or (x == 0.0 and y == 0.0)
+            rows.append(
+                {
+                    "frame": frame_index,
+                    "joint": joint,
+                    "x": float("nan") if below else x * width,
+                    "y": float("nan") if below else y * height,
+                    "z": float("nan"),
+                    "confidence": confidence,
+                    "track_id": track_id,
+                    "units": UNITS_PIXEL,
+                    "metric_scale_valid": None,
+                }
+            )
+    return rows
+
+
+def yolo_device(device: str) -> str | None:
+    """The config's device in the form the yolo command takes; None lets it choose."""
+    name = str(device).lower()
+    if name == "auto":
+        return None
+    if name.startswith("cuda"):
+        return name.partition(":")[2] or "0"
+    return name
+
+
+@register_backend(BACKEND_GROUP)
 class YOLOPoseBackend(PoseBackend):
-    """AGPL licensed, so it is invoked as a subprocess and never imported."""
+    """Runs the ultralytics `yolo` command from its own environment and reads the label files it
+    writes. The package never imports it, so its AGPL licence stays with the user's own install."""
 
     name = "yolo"
 
-    def check_available(self) -> None:
-        raise NotImplementedError
+    @property
+    def version(self) -> str:
+        result = subprocess.run(
+            [self._executable(), "version"], capture_output=True, text=True, env=quiet_environment()
+        )
+        lines = result.stdout.strip().splitlines()
+        return lines[-1].strip() if result.returncode == 0 and lines else "unknown"
 
-    def _run_subprocess(self, video_path: Path, out_path: Path) -> Path:
-        raise NotImplementedError
+    def _executable(self) -> str:
+        configured = os.environ.get(YOLO_ENV_VAR)
+        found = configured if configured and Path(configured).is_file() else shutil.which("yolo")
+        if not found:
+            raise BackendNotAvailableError(
+                "The 'yolo' backend runs the `yolo` command from ultralytics, which pymacaw does not "
+                "install. Create a separate environment, `pip install ultralytics lap` there, and point "
+                f"${YOLO_ENV_VAR} at its yolo executable, or put it on PATH. pymacaw runs it offline: it "
+                "reports no usage and installs nothing by itself"
+            )
+        return found
+
+    def check_available(self) -> None:
+        self._executable()
+
+    def infer(
+        self,
+        video_path: Path,
+        *,
+        device: str,
+        min_confidence: float,
+        model: str | Path | None = None,
+        max_people: int = 1,
+        frames: tuple[int, int] | None = None,
+        input_size: int | None = None,
+    ) -> PoseFrames:
+        """Everyone in the frame comes back with the tracker's ids; picking max_people is left to assignment."""
+        if model is None or not Path(model).is_file():
+            raise ExternalToolError(
+                "The 'yolo' backend needs pose.model to point at a pose weights file you have downloaded, "
+                f"such as yolo11x-pose.pt; nothing is fetched while it runs (got {model})"
+            )
+        info = probe(video_path)
+        stream = next(iter(info.video_streams()), None)
+        if stream is None or not stream.width or not stream.height:
+            raise ExternalToolError(f"no video stream with a frame size in {video_path}")
+
+        first, stop = frames if frames is not None else (0, None)
+        first = max(int(first), 0)
+        n_frames = round((stream.duration_s or info.duration_s) * (stream.fps or 0.0))
+        whole = first == 0 and (stop is None or stop >= n_frames > 0)
+        rows: list[dict] = []
+        with tempfile.TemporaryDirectory(prefix="macaw_yolo_") as scratch:
+            scratch = Path(scratch)
+            source = video_path if whole else _window_clip(video_path, first, stop, scratch)
+            labels = self._run_subprocess(
+                source, scratch / "out", model=model, input_size=input_size, device=device
+            )
+            for path in sorted(labels.glob("*.txt")):
+                match = _LABEL_FRAME.search(path.name)
+                if match is None:
+                    continue
+                # label files count the frames of the clip they came from, from 1
+                frame_index = first + int(match.group(1)) - 1
+                if stop is not None and frame_index >= stop:
+                    continue
+                rows.extend(
+                    yolo_label_rows(
+                        path.read_text(encoding="utf-8").splitlines(),
+                        frame_index=frame_index,
+                        width=stream.width,
+                        height=stream.height,
+                        min_confidence=min_confidence,
+                    )
+                )
+
+        if not rows:
+            return PoseFrames(keypoints=empty_frame(BACKEND_KEYPOINT_SCHEMA))
+        frame = coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+        return PoseFrames(keypoints=frame, provides=self.provides)
+
+    def _run_subprocess(
+        self, video_path: Path, out_path: Path, *, model, input_size: int | None, device: str
+    ) -> Path:
+        """Returns the directory of per-frame label files."""
+        command = [
+            self._executable(), "pose", "track",
+            f"model={model}", f"source={video_path}",
+            f"imgsz={input_size or 640}", f"conf={YOLO_DETECTION_CONFIDENCE}", f"tracker={YOLO_TRACKER}",
+            "save=False", "save_txt=True", "save_conf=True",
+            f"project={out_path}", "name=run", "exist_ok=True", "verbose=False",
+        ]
+        chosen = yolo_device(device)
+        if chosen is not None:
+            command.append(f"device={chosen}")
+        result = subprocess.run(command, capture_output=True, text=True, env=quiet_environment())
+        if result.returncode != 0:
+            tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-15:])
+            raise ExternalToolError(f"yolo failed on {Path(video_path).name}:\n{tail}")
+        return out_path / "run" / "labels"
+
+
+def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) -> Path:
+    """Frames [first, stop) as a clip of their own, chosen by frame number so none is gained or lost."""
+    chosen = f"gte(n\\,{first})" if stop is None else f"between(n\\,{first}\\,{stop - 1})"
+    clip = scratch / "window.mp4"
+    # an encoder every ffmpeg build has, at a quality the detector cannot tell from the source
+    run_ffmpeg([
+        "-i", str(video_path), "-an",
+        "-vf", f"select={chosen},setpts=PTS-STARTPTS", "-fps_mode", "passthrough",
+        "-c:v", "mpeg4", "-q:v", "2", str(clip),
+    ])
+    return clip
 
 
 class DWPoseBackend(PoseBackend):
