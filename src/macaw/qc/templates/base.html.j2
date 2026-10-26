@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{{ title }}</title>
+<style>
+{{ css }}
+</style>
+</head>
+<body>
+<nav id="topbar">
+  {%- for id, name in sections %}
+  <a href="#{{ id }}">{{ name }}</a>
+  {%- endfor %}
+  <span class="chip">{{ chip }}</span>
+</nav>
+<main>
+<div class="page-header">
+  <h1>{{ heading }}</h1>
+  <span class="subtitle">pymacaw {{ version }} &bull; {{ created }}</span>
+</div>
+{% block content %}{% endblock %}
+</main>
+<script>
+const navLinks = new Map([...document.querySelectorAll('#topbar a')].map(a => [a.getAttribute('href').slice(1), a]));
+const spy = new IntersectionObserver(entries => entries.forEach(e => {
+  if (!e.isIntersecting) return;
+  navLinks.forEach(a => a.classList.remove('active'));
+  navLinks.get(e.target.id)?.classList.add('active');
+}), {rootMargin: '-10% 0px -80% 0px'});
+document.querySelectorAll('h2[id]').forEach(h => spy.observe(h));
+</script>
+</body>
+</html>

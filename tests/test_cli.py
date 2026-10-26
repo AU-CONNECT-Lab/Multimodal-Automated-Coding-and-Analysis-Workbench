@@ -395,6 +395,16 @@ class TestQC:
         written = next(project.output.glob("recordings/*/qc/warnings.json"))
         assert {item["check"] for item in json.loads(written.read_text(encoding="utf-8"))} == {"octave_error"}
 
+    def test_report_writes_a_page_per_recording_and_one_for_the_project(self, project):
+        result = invoke("qc", "-c", str(project.config), "--report")
+        assert result.exit_code == 0, result.output
+        pages = sorted(path.name for path in project.output.glob("reports/*.html"))
+        assert len(pages) == 3 and "qc_project.html" in pages
+        project_page = (project.output / "reports" / "qc_project.html").read_text(encoding="utf-8")
+        assert all(f'href="{name}"' in project_page for name in pages if name != "qc_project.html")
+        recording_page = (project.output / "reports" / pages[0]).read_text(encoding="utf-8")
+        assert "Quality review" in recording_page and "not run: no pose.keypoints output" in recording_page
+
     def test_an_unknown_check_fails(self, project):
         result = invoke("qc", "-c", str(project.config), "--check", "nope")
         assert result.exit_code != 0
@@ -406,7 +416,6 @@ class TestBlockedCommandsStayHonest:
     @pytest.mark.parametrize(
         "args",
         [
-            ["qc", "-c", "project.yaml", "--report"],
             ["hpc", "generate", "-c", "project.yaml"],
         ],
     )

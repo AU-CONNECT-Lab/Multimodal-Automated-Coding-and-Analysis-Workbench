@@ -1,0 +1,17 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<h2 id="Recordings">Recordings</h2>
+<p class="desc">One line per recording; open one for its alignment, who is on camera, measures, review frames and warnings.</p>
+<table class="flat">
+  <thead><tr><th>Recording</th><th class="num">Fail</th><th class="num">Warn</th><th class="num">Info</th><th>Waiting for a person</th></tr></thead>
+  <tbody>
+  {%- for row in recordings %}
+  <tr><td><a href="{{ row.href }}">{{ row.recording_id }}</a></td>
+    <td class="num">{% if row.counts.fail %}<span class="bad">{{ row.counts.fail }}</span>{% else %}<span class="na">0</span>{% endif %}</td>
+    <td class="num">{% if row.counts.warn %}<span class="warn">{{ row.counts.warn }}</span>{% else %}<span class="na">0</span>{% endif %}</td>
+    <td class="num">{{ row.counts.info }}</td>
+    <td>{{ row.waiting | join(", ") }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% endblock %}

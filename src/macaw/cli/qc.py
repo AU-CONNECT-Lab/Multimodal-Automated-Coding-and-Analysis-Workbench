@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import webbrowser
 from datetime import datetime
 from collections import Counter
 from dataclasses import asdict
@@ -18,6 +19,7 @@ from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
+from macaw.qc.report import write_project_report, write_recording_report
 
 app = typer.Typer()
 logger = get_logger("qc")
@@ -31,18 +33,14 @@ def qc(
     render: bool = typer.Option(
         False, "--render/--no-render", help="Draw the frames worth reviewing into work_dir/renders."
     ),
-    report: bool = typer.Option(False, "--report/--no-report"),
-    open_report: bool = typer.Option(False, "--open"),
+    report: bool = typer.Option(False, "--report/--no-report", help="Write an HTML page per recording and one for the project."),
+    open_report: bool = typer.Option(False, "--open", help="Write the pages and open the project page."),
 ) -> None:
     """Run quality checks; write warnings and the moments worth reviewing, optionally rendered."""
-    if report or open_report:
-        raise MacawError(
-            "The HTML report is not implemented yet; run without --report, the warnings and "
-            "candidates are written either way"
-        )
 
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
+    pages = {}
     for recording_id in resolve_recordings(resolved, recordings):
         recording = build_recording(recording_id, resolved)
         results = RecordingResults(layout, recording_id)
@@ -64,6 +62,14 @@ def qc(
 
         if render:
             _render(resolved, layout, recording, results, outcome.candidates)
+        if report or open_report:
+            pages[recording_id] = write_recording_report(resolved, recording_id)
+
+    if pages:
+        project_page = write_project_report(resolved, pages)
+        typer.echo(str(project_page))
+        if open_report:
+            webbrowser.open(project_page.resolve().as_uri())
 
 
 def _render(resolved, layout, recording, results, candidates) -> None:

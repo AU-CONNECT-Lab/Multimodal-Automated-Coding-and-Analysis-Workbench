@@ -1,44 +1,293 @@
-"""Self-contained single-file HTML: mailable, archivable, usable as supplementary material."""
+"""HTML pages to read a run top to bottom, one per recording and one for the project. Pictures
+stay files the page links to, so a long recording does not make a heavy page."""
 
 from __future__ import annotations
 
+import json
+import os
+from collections import Counter
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 from macaw.config.schema import MacawConfig
-from macaw.extractors.base import QCWarning
-from macaw.project.recording import Recording
+from macaw.extractors.base import Gate, QCWarning
+from macaw.media.align import describe_drift, drift_flagged, read_offset_table, review_reason
+from macaw.project.layout import layout_for
+from macaw.project.recording import build_recording
+from macaw.qc.checks import RecordingResults
+from macaw.store.schema import Scale
+
+TEMPLATES = Path(__file__).parent / "templates"
+SEVERITY_ORDER = {"fail": 0, "warn": 1, "info": 2}
 
 
-def build_recording_report(
-    recording: Recording,
-    config: MacawConfig,
-    warnings: list[QCWarning],
-    out_path: Path,
-) -> Path:
-    raise NotImplementedError
+def _environment():
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    return Environment(loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html", "j2"]))
 
 
-def build_project_report(
-    recording_ids: list[str],
-    config: MacawConfig,
-    warnings: list[QCWarning],
-    out_path: Path,
-) -> Path:
-    """The only cross-recording step; on a cluster it is one job after the whole array."""
-    raise NotImplementedError
+def _href(target: Path, page: Path) -> str:
+    """Relative where it can be, so the folder can move; a file URI across Windows drives."""
+    try:
+        return Path(os.path.relpath(target, page.parent)).as_posix()
+    except ValueError:
+        return target.resolve().as_uri()
 
 
-def alignment_panel(recording: Recording) -> str:
-    raise NotImplementedError
+def _number(value, digits: int = 3):
+    if value is None or pd.isna(value):
+        return None
+    return f"{float(value):.{digits}g}" if abs(float(value)) < 1e4 else f"{float(value):.0f}"
 
 
-def prosody_panel(recording: Recording) -> str:
-    raise NotImplementedError
+def _waiting(config: MacawConfig, recording) -> list[tuple[str, str]]:
+    from macaw.extractors import get_extractor, list_extractors
+
+    waiting = []
+    for name in list_extractors():
+        cls = get_extractor(name)
+        if not (isinstance(cls, type) and issubclass(cls, Gate)):
+            continue
+        try:
+            message = cls(config).pending(recording)
+        except Exception as error:   # a gate that cannot read its inputs still says so on the page
+            message = f"could not be checked: {error}"
+        if message:
+            waiting.append((name, message))
+    return waiting
 
 
-def track_panel(recording: Recording) -> str:
-    raise NotImplementedError
+def _media(config: MacawConfig, recording) -> list[dict]:
+    from macaw.extractors.prep import apply_prep_timing
+
+    try:
+        apply_prep_timing(config, recording)
+    except Exception:
+        pass   # before prep.media has run the files are still worth listing
+    rows = []
+    for item in sorted(recording.media, key=lambda media: media.path.name):
+        detail = []
+        if item.kind == "video" and item.fps:
+            detail.append(f"{item.fps:g} fps")
+        if item.duration_s:
+            detail.append(f"{item.duration_s:.0f} s")
+        if item.offset_s:
+            detail.append(f"starts at {item.offset_s:+.3f} s")
+        rows.append(
+            {"name": item.path.name, "owner": item.subject_id or f"shared {item.kind}", "detail": ", ".join(detail)}
+        )
+    return rows
 
 
-def warning_table(warnings: list[QCWarning]) -> str:
-    raise NotImplementedError
+def _alignment(config: MacawConfig, layout, recording_id: str, page: Path) -> tuple[list[dict], list[dict]]:
+    path = layout.offset_table_path(recording_id)
+    if not path.is_file():
+        return [], []
+    rows = []
+    for result in read_offset_table(path):
+        if result.target == result.reference:
+            continue
+        rows.append(
+            {
+                "target": result.target,
+                "reference": result.reference,
+                "offset": f"{result.offset_s:+.3f}" if result.offset_s is not None else "-",
+                "confidence": _number(result.confidence, 2) or "-",
+                "agreement": (
+                    f"{round(result.agreement * len(result.segment_offsets or ()))} of {len(result.segment_offsets or ())}"
+                    if result.agreement is not None
+                    else "-"
+                ),
+                "drift": describe_drift(result) if result.drift_ppm is not None and drift_flagged(result) else "",
+                "method": result.method,
+                "flag": review_reason(result, config.align) if not result.accepted else None,
+                "accepted": result.accepted,
+            }
+        )
+    figures = sorted((layout.renders_dir(recording_id) / "align").glob("*.png"))
+    return rows, [{"name": figure.name, "href": _href(figure, page)} for figure in figures]
+
+
+def _cameras(layout, results: RecordingResults, recording_id: str) -> list[dict]:
+    from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file
+
+    owners_path = results.artifact(PoseExtractor.name, "owners")
+    if owners_path is None:
+        return []
+    owners = read_owner_file(owners_path)
+    accepted = read_owner_file(layout.camera_owners_accepted_path(recording_id))
+    cameras = []
+    for file_name, owner in sorted(owners.items()):
+        kept = accepted.get(file_name, {})
+        cameras.append(
+            {
+                "file": file_name,
+                "people": [
+                    {
+                        "subject": subject,
+                        "tracks": ", ".join(str(track) for track in tracks[:10])
+                        + (f" and {len(tracks) - 10} more" if len(tracks) > 10 else "")
+                        or "none",
+                        "all_tracks": ", ".join(str(track) for track in tracks),
+                        "chosen_by": owner["chosen_by"].get(subject, ""),
+                    }
+                    for subject, tracks in owner["people"].items()
+                ],
+                "doubt": owner["doubt"],
+                "accepted": kept.get("by") if kept.get("people") == owner["people"] else None,
+            }
+        )
+    return cameras
+
+
+def _feature_notes(layout, recording_id: str) -> tuple[dict[str, dict], list[dict]]:
+    """Descriptions and units by feature name, and one version row per step, from the manifest."""
+    notes: dict[str, dict] = {}
+    versions: dict[str, dict] = {}
+    for path in sorted(layout.manifest_fragment_path(recording_id, "x").parent.glob("*.json")):
+        for spec in json.loads(path.read_text(encoding="utf-8")).get("features", []):
+            notes[spec["name"]] = spec
+            versions[spec["extractor"]] = {
+                key: spec.get(key) for key in ("extractor", "extractor_version", "backend", "backend_version")
+            }
+    return notes, list(versions.values())
+
+
+def _measures(layout, results: RecordingResults, recording_id: str, notes: dict) -> list[dict]:
+    tables = []
+    for path in sorted(layout.long_table_path(recording_id).glob("*.parquet")):
+        rows = results.long_table(path.stem)
+        rows = rows[rows["scale"].astype(str) == Scale.RECORDING.value]
+        if rows.empty:
+            continue
+        who = rows["subject_id"].astype(object).where(rows["subject_id"].notna(), "everyone")
+        pair = rows["subject_id_b"].notna()
+        who[pair] = rows.loc[pair, "subject_id"].astype(str) + " & " + rows.loc[pair, "subject_id_b"].astype(str)
+        values = rows.assign(who=who).pivot_table(index="feature", columns="who", values="value", aggfunc="first")
+        columns = [column for column in values.columns if column != "everyone"]
+        columns += ["everyone"] if "everyone" in values.columns else []
+        tables.append(
+            {
+                "source": path.stem,
+                "columns": columns,
+                "features": [
+                    {
+                        "name": feature,
+                        "description": notes.get(feature, {}).get("description", ""),
+                        "unit": notes.get(feature, {}).get("unit"),
+                        "cells": [_number(values.at[feature, column]) for column in columns],
+                    }
+                    for feature in values.index
+                ],
+            }
+        )
+    return tables
+
+
+def _frames(layout, recording_id: str, page: Path) -> list[dict]:
+    directory = layout.renders_dir(recording_id)
+    index = directory / "index.csv"
+    if not index.is_file():
+        return []
+    table = pd.read_csv(index)
+    groups = []
+    for reason, rows in table.groupby("reason", sort=False):
+        items = []
+        for row in rows.itertuples():
+            who = row.subject_id if isinstance(row.subject_id, str) else "anyone"
+            items.append(
+                {
+                    "href": _href(directory / row.file, page),
+                    "caption": f"{row.t:.1f} s, {who}, {row.video}",
+                }
+            )
+        groups.append({"reason": str(reason).replace("_", " "), "shots": items})
+    # the baseline is the sample to compare against, so it reads last
+    return sorted(groups, key=lambda group: group["reason"] == "baseline")
+
+
+def _warnings(layout, results: RecordingResults, recording_id: str) -> list[QCWarning]:
+    found = results.extractor_warnings()
+    qc_file = layout.qc_dir(recording_id) / "warnings.json"
+    if qc_file.is_file():
+        found += [QCWarning(**item) for item in json.loads(qc_file.read_text(encoding="utf-8"))]
+    unique = {(w.check, w.subject_id, w.severity, w.message): w for w in found}
+    return sorted(unique.values(), key=lambda w: (SEVERITY_ORDER.get(w.severity, 3), w.check, w.subject_id or ""))
+
+
+def _base(title: str, heading: str, chip: str, sections: list[tuple[str, str]]) -> dict:
+    from macaw import __version__
+
+    return {
+        "title": title,
+        "heading": heading,
+        "chip": chip,
+        "sections": sections,
+        "version": __version__,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "css": (TEMPLATES / "report.css").read_text(encoding="utf-8"),
+    }
+
+
+def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path, dict]:
+    """The page, and the counts and waiting gates the project page lists for it."""
+    layout = layout_for(config, create=False)
+    page = layout.qc_report_path(recording_id)
+    recording = build_recording(recording_id, config)
+    results = RecordingResults(layout, recording_id)
+
+    notes, versions = _feature_notes(layout, recording_id)
+    alignment, alignment_figures = _alignment(config, layout, recording_id, page)
+    warnings = _warnings(layout, results, recording_id)
+    counts = Counter(warning.severity for warning in warnings)
+    waiting = _waiting(config, recording)
+    context = {
+        "recording_id": recording_id,
+        "subjects": [subject.subject_id for subject in recording.subjects],
+        "steps": [row["extractor"] for row in versions],
+        "media": _media(config, recording),
+        "waiting": waiting,
+        "counts": counts,
+        "alignment": alignment,
+        "alignment_figures": alignment_figures,
+        "cameras": _cameras(layout, results, recording_id),
+        "measures": _measures(layout, results, recording_id, notes),
+        "frames": _frames(layout, recording_id, page),
+        "warnings": [
+            {**asdict(warning), "when": f"{warning.t_start:.1f}" if warning.t_start is not None else ""}
+            for warning in warnings
+        ],
+        "versions": versions,
+    }
+    sections = [("Summary", "Summary")]
+    sections += [("Alignment", "Alignment")] if alignment else []
+    sections += [("Camera", "On camera")] if context["cameras"] else []
+    sections += [("Measures", "Measures")] if context["measures"] else []
+    sections += [("Frames", "Review frames")] if context["frames"] else []
+    sections += [("Warnings", "Warnings"), ("Versions", "Versions")]
+    context.update(_base(f"QC {recording_id}", f"Quality review: {recording_id}", config.project.name, sections))
+
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(_environment().get_template("recording.html.j2").render(**context), encoding="utf-8")
+    return page, {"counts": counts, "waiting": [gate for gate, _ in waiting]}
+
+
+def write_project_report(config: MacawConfig, pages: dict[str, tuple[Path, dict]]) -> Path:
+    layout = layout_for(config, create=False)
+    page = layout.qc_report_path()
+    rows = [
+        {"recording_id": recording_id, "href": _href(path, page), **summary}
+        for recording_id, (path, summary) in sorted(pages.items())
+    ]
+    context = _base(
+        f"QC {config.project.name}", f"Quality review: {config.project.name}", f"{len(rows)} recording(s)",
+        [("Recordings", "Recordings")],
+    )
+    context["recordings"] = rows
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(_environment().get_template("project.html.j2").render(**context), encoding="utf-8")
+    return page

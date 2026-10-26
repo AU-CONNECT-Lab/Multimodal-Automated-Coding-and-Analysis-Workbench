@@ -1,0 +1,135 @@
+{% extends "base.html.j2" %}
+{% macro pill(severity) -%}
+<span class="{{ {'fail': 'bad', 'warn': 'warn', 'info': 'info', 'ok': 'ok'}[severity] }}">{{ severity }}</span>
+{%- endmacro %}
+{% block content %}
+<h2 id="Summary">Summary</h2>
+<div class="summary-grid">
+  <table>
+    <tr><th>Recording</th><td>{{ recording_id }}</td></tr>
+    <tr><th>People</th><td>{{ subjects | join(", ") or "none configured" }}</td></tr>
+    <tr><th>Steps run</th><td>{{ steps | join(", ") or "none yet" }}</td></tr>
+    <tr><th>Warnings</th><td>
+      {%- if counts.fail %}<span class="bad">{{ counts.fail }} fail</span> {% endif %}
+      {%- if counts.warn %}<span class="warn">{{ counts.warn }} warn</span> {% endif %}
+      {%- if counts.info %}<span class="info">{{ counts.info }} info</span>{% endif %}
+      {%- if not (counts.fail or counts.warn or counts.info) %}<span class="ok">none</span>{% endif %}</td></tr>
+  </table>
+  <table>
+    {%- for file in media %}
+    <tr><th>{{ file.name }}</th><td>{{ file.owner }}{% if file.detail %} <span class="hint">{{ file.detail }}</span>{% endif %}</td></tr>
+    {%- endfor %}
+  </table>
+</div>
+{% if waiting %}
+<div class="waiting">
+  {%- for gate, message in waiting %}
+  <p><span class="warn">waiting</span> <b>{{ gate }}</b>: {{ message }}</p>
+  {%- endfor %}
+</div>
+{% endif %}
+
+{% if alignment %}
+<h2 id="Alignment">Alignment</h2>
+<p class="desc">Each file's start on the recording clock, against the reference. A flagged file holds the run back at align.review until a person keeps it or sets the offset by hand.</p>
+<table class="flat">
+  <thead><tr><th>File</th><th>Against</th><th class="num">Offset (s)</th><th class="num">Confidence</th><th>Segments agreeing</th><th>Drift</th><th>Method</th><th>Status</th></tr></thead>
+  <tbody>
+  {%- for row in alignment %}
+  <tr><td>{{ row.target }}</td><td>{{ row.reference }}</td><td class="num">{{ row.offset }}</td><td class="num">{{ row.confidence }}</td>
+    <td>{{ row.agreement }}</td><td>{{ row.drift }}</td><td>{{ row.method }}</td>
+    <td>{% if row.flag %}<span class="warn">{{ row.flag }}</span>{% else %}<span class="ok">ok</span>{% endif %}{% if row.accepted %} <span class="hint">kept by {{ row.accepted }}</span>{% endif %}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% if alignment_figures %}
+<details>
+  <summary>Alignment figures <span class="hint">peak against its rival, the two loudness curves, and the offset of each segment</span></summary>
+  <div class="details-body figures">
+    {%- for figure in alignment_figures %}<a href="{{ figure.href }}"><img src="{{ figure.href }}" alt="{{ figure.name }}" loading="lazy"/></a>{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endif %}
+
+{% if cameras %}
+<h2 id="Camera">Who is on camera</h2>
+<p class="desc">Which tracker ids were taken to be which person, on every camera where more than one person was in view. Track ids are the ones drawn in the review frames.</p>
+<table class="flat">
+  <thead><tr><th>File</th><th>Person</th><th>Tracks</th><th>Chosen by</th><th>Status</th></tr></thead>
+  <tbody>
+  {%- for camera in cameras %}
+  {%- for person in camera.people %}
+  <tr><td>{% if loop.first %}{{ camera.file }}{% endif %}</td><td>{{ person.subject }}</td><td title="{{ person.all_tracks }}">{{ person.tracks }}</td><td>{{ person.chosen_by }}</td>
+    <td>{% if loop.first %}{% if camera.doubt %}<span class="warn">in doubt</span> {{ camera.doubt }}{% if camera.accepted %} <span class="hint">kept by {{ camera.accepted }}</span>{% endif %}{% else %}<span class="ok">ok</span>{% endif %}{% endif %}</td></tr>
+  {%- endfor %}
+  {%- endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if measures %}
+<h2 id="Measures">Measures per person</h2>
+<p class="desc">Every recording-level value the steps wrote, one table per step. Hover a name for what it measures.</p>
+{% for table in measures %}
+<details{% if loop.first %} open{% endif %}>
+  <summary>{{ table.source }} <span class="hint">{{ table.features | length }} measure(s)</span></summary>
+  <div class="details-body">
+  <table class="flat">
+    <thead><tr><th>Measure</th>{% for who in table.columns %}<th class="num">{{ who }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {%- for feature in table.features %}
+    <tr><td title="{{ feature.description }}">{{ feature.name }}{% if feature.unit %} <span class="hint">{{ feature.unit }}</span>{% endif %}</td>
+      {%- for value in feature.cells %}<td class="num{% if value is none %} na{% endif %}">{{ value if value is not none else "-" }}</td>{% endfor %}</tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
+{% endfor %}
+{% endif %}
+
+{% if frames %}
+<h2 id="Frames">Review frames</h2>
+<p class="desc">Frames drawn by <code>macaw qc --render</code>: where a check found something worth a look, and a baseline sample from the whole task. Each box is labelled with the person it was given to and its track id. Click a frame for full size.</p>
+{% for group in frames %}
+<details{% if loop.index <= 2 %} open{% endif %}>
+  <summary>{{ group.reason }} <span class="hint">{{ group.shots | length }} frame(s)</span></summary>
+  <div class="details-body thumbs">
+    {%- for item in group.shots %}
+    <figure><a href="{{ item.href }}"><img src="{{ item.href }}" alt="{{ item.caption }}" loading="lazy"/></a><figcaption>{{ item.caption }}</figcaption></figure>
+    {%- endfor %}
+  </div>
+</details>
+{% endfor %}
+{% endif %}
+
+<h2 id="Warnings">Warnings</h2>
+{% if warnings %}
+<table class="flat">
+  <thead><tr><th></th><th>Step or check</th><th>Person</th><th class="num">Time (s)</th><th>Message</th></tr></thead>
+  <tbody>
+  {%- for warning in warnings %}
+  <tr><td>{{ pill(warning.severity) }}</td><td>{{ warning.check }}</td><td>{{ warning.subject_id or "" }}</td>
+    <td class="num">{{ warning.when }}</td><td class="message">{{ warning.message }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="none">No warnings.</p>
+{% endif %}
+
+<h2 id="Versions">Versions</h2>
+{% if versions %}
+<table class="flat">
+  <thead><tr><th>Step</th><th>Version</th><th>Backend</th><th>Backend version</th></tr></thead>
+  <tbody>
+  {%- for row in versions %}
+  <tr><td>{{ row.extractor }}</td><td>{{ row.extractor_version }}</td><td>{{ row.backend or "" }}</td><td>{{ row.backend_version or "" }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="none">No step has written its manifest yet.</p>
+{% endif %}
+{% endblock %}

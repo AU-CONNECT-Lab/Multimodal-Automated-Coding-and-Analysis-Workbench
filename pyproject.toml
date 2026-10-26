@@ -18,6 +18,7 @@ dependencies = [
   "pyarrow>=16.0",
   "scipy>=1.11",
   "pympi-ling>=1.70",       # .eaf round trip; pure python and tiny
+  "jinja2>=3.1",            # QC report pages
 ]
 
 # ultralytics (AGPL-3.0) and OpenFace (C++, needs compiling) are deliberately not
@@ -91,7 +92,7 @@ where = ["src"]
 include = ["macaw*"]
 
 [tool.setuptools.package-data]
-"macaw" = ["config/*.yaml"]
+"macaw" = ["config/*.yaml", "qc/templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

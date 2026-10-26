@@ -281,3 +281,13 @@ class TestCorrectingAChoice:
         invoke("accept-owner", "-c", str(project.config), "-r", "003")
         assert project.pending() is None
 
+
+class TestReportPage:
+    def test_the_page_shows_who_is_on_camera_and_what_is_in_doubt(self, project):
+        from macaw.qc.report import write_recording_report
+
+        project.owners({"003_room.mp4": owner({"parent": [1, 3], "child": [2]}, "who is who is not yet checked")})
+        page, summary = write_recording_report(project.resolved(), "003")
+        text = page.read_text(encoding="utf-8")
+        assert "003_room.mp4" in text and "1, 3" in text and "who is who is not yet checked" in text
+        assert "pose.review" in summary["waiting"]
