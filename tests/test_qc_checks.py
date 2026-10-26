@@ -53,7 +53,7 @@ def person(subject_id, *, centre=300.0, frames=range(60), confidence=None, overr
             rows.append(
                 {
                     "recording_id": RID, "subject_id": subject_id, "source": "pose.keypoints",
-                    "frame": frame, "t": frame / FPS, "joint": joint, "x": x, "y": y,
+                    "video": "room.mp4", "frame": frame, "t": frame / FPS, "joint": joint, "x": x, "y": y,
                     "z": float("nan"),
                     # alternating, so the person's own spread is not zero
                     "confidence": (confidence or {}).get(frame, 0.88 if frame % 2 else 0.92),

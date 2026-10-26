@@ -34,6 +34,8 @@ class GateWait:
     recording_id: str
     gate: str
     message: str
+    # waiting for steps of this run rather than for a person
+    deferred: bool = False
 
 
 @dataclass
@@ -66,11 +68,16 @@ def resolve_recordings(config: MacawConfig, requested: str | None) -> list[str]:
     return [recording_id for recording_id in found if recording_id not in excluded]
 
 
-def plan(config: MacawConfig, recording_ids: list[str], extractors: list[str]) -> list[str]:
+def plan(
+    config: MacawConfig,
+    recording_ids: list[str],
+    extractors: list[str],
+    finished: set[str] | None = None,
+) -> list[str]:
     """What would run, in order, without running it. Gates are checked, not listed."""
     dag = build_dag(config, extractors or None)
     gates = _gates(dag)
-    _, blocked, _ = check_gates(config, dag, recording_ids)
+    _, blocked, _ = check_gates(config, dag, recording_ids, finished)
     return [
         task_id_for(recording_id, name)
         for name in dag.topological_order()
@@ -93,13 +100,15 @@ def _gates(dag) -> list[str]:
 
 
 def check_gates(
-    config: MacawConfig, dag, recording_ids: list[str]
+    config: MacawConfig, dag, recording_ids: list[str], finished: set[str] | None = None
 ) -> tuple[list[GateWait], set[str], dict[tuple[str, str], list[QCWarning]]]:
-    """Gates are checked here, in-process; one not yet cleared holds back everything after it for that recording."""
+    """Gates are checked here, in-process; one not yet cleared holds back everything after it for that recording.
+    With finished given, a gate whose upstream tasks are not all in it is deferred until they are."""
     waiting: list[GateWait] = []
     blocked: set[str] = set()
     notes: dict[tuple[str, str], list[QCWarning]] = {}
     gates = _gates(dag)
+    upstream = {gate: sorted(dag.ancestors(gate) - set(gates)) for gate in gates}
     for recording_id in recording_ids if gates else ():
         recording, unreadable = None, None
         try:
@@ -107,18 +116,36 @@ def check_gates(
         except MacawError as error:
             unreadable = str(error)
         for gate in gates:
+            missing = [
+                name for name in upstream[gate] if task_id_for(recording_id, name) not in finished
+            ] if finished is not None else []
             extractor = get_extractor(gate)(config)
             try:
-                reason = unreadable if recording is None else extractor.pending(recording)
+                reason = (
+                    unreadable if recording is None
+                    else f"checked once {', '.join(missing)} has run" if missing
+                    else extractor.pending(recording)
+                )
             except MacawError as error:
                 reason = str(error)
             if reason is None:
                 notes[(recording_id, gate)] = extractor.notes(recording)
                 continue
-            waiting.append(GateWait(recording_id=recording_id, gate=gate, message=reason))
+            waiting.append(
+                GateWait(
+                    recording_id=recording_id,
+                    gate=gate,
+                    message=reason,
+                    deferred=bool(missing) and recording is not None,
+                )
+            )
             blocked.add(task_id_for(recording_id, gate))
             blocked.update(task_id_for(recording_id, name) for name in dag.descendants(gate))
     return waiting, blocked, notes
+
+
+def completed_on_disk(config: MacawConfig) -> set[str]:
+    return completed_tasks(layout_for(config, create=False).output_dir, _output_rules(config))
 
 
 def _cache_root(config: MacawConfig, layout) -> Path:
@@ -144,16 +171,90 @@ def run(
     dag = build_dag(config, extractors or None)
     order = dag.topological_order()
     gates = set(_gates(dag))
-    waiting, blocked, notes = check_gates(config, dag, recording_ids)
 
-    already = completed_tasks(layout.output_dir, _output_rules(config)) if resume else set()
+    in_scope = {task_id_for(r, name) for r in recording_ids for name in order if name not in gates}
+    already = completed_tasks(layout.output_dir, _output_rules(config)) & in_scope if resume else set()
+    finished = set(already)
+    attempted: set[str] = set()
+    n_tasks = 0
+    database = None
+    # a gate that reads what this run produces is checked between waves, once that is there
+    while True:
+        waiting, blocked, notes = check_gates(config, dag, recording_ids, finished)
+        specs = _wave(config, layout, dag, order, gates, recording_ids, execution_id,
+                      finished | attempted | blocked, finished, attempted)
+        if dry_run:
+            return RunSummary(
+                execution_id=execution_id,
+                n_tasks=len(specs),
+                n_done=0,
+                n_cached=len(already),
+                n_failed=0,
+                warnings=[],
+                output_dir=layout.output_dir,
+                waiting=waiting,
+            )
+        if database is None:
+            from macaw.config.loader import archive_resolved
+
+            archive_resolved(config, layout.output_dir)
+            database = JobDB(layout.job_db_path)
+            database.initialise()
+        for (recording_id, gate), gate_notes in notes.items():
+            _write_warnings(layout, recording_id, gate, gate_notes)
+        if not specs:
+            break
+
+        for spec in specs:
+            database.upsert(
+                JobRecord(
+                    task_id=spec.task_id,
+                    recording_id=spec.recording_id,
+                    extractor=spec.extractor,
+                    execution_id=execution_id,
+                    status="pending",
+                    log_path=str(spec.log_path),
+                )
+            )
+        backend = get_backend(config.execution.backend, config.execution, job_db=database)
+        backend.wait(backend.submit(specs))
+        n_tasks += len(specs)
+        attempted |= {spec.task_id for spec in specs}
+        finished |= {
+            record.task_id
+            for record in database.query(execution_id=execution_id)
+            if record.status in ("done", "cached")
+        }
+
+    counts = database.summary(execution_id)
+    _merge_manifest_fragments(layout, recording_ids)
+    return RunSummary(
+        execution_id=execution_id,
+        n_tasks=n_tasks,
+        n_done=counts.get("done", 0),
+        n_cached=counts.get("cached", 0) + len(already),
+        n_failed=counts.get("failed", 0) + counts.get("cancelled", 0),
+        warnings=_collect_warnings(layout, recording_ids),
+        output_dir=layout.output_dir,
+        waiting=[wait for wait in waiting if not wait.deferred],
+    )
+
+
+def _wave(config, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):
+    """Tasks that can run now; one whose upstream already failed in this run is left out."""
     specs: list[JobSpec] = []
     for name in order:
         if name in gates:
             continue
         for recording_id in recording_ids:
             task_id = task_id_for(recording_id, name)
-            if task_id in already or task_id in blocked:
+            if task_id in skip:
+                continue
+            needed = [
+                task_id_for(recording_id, dependency)
+                for dependency in sorted(_job_dependencies(dag, name, gates))
+            ]
+            if any(task in attempted and task not in finished for task in needed):
                 continue
             specs.append(
                 JobSpec(
@@ -163,61 +264,10 @@ def run(
                     command=_task_command(config, recording_id, name, execution_id),
                     resources=None,
                     log_path=layout.logs_dir / execution_id / f"{_slug(task_id)}.log",
-                    depends_on=[
-                        task_id_for(recording_id, dependency)
-                        for dependency in sorted(_job_dependencies(dag, name, gates))
-                        if task_id_for(recording_id, dependency) not in already
-                    ],
+                    depends_on=[task for task in needed if task not in finished],
                 )
             )
-
-    if dry_run:
-        return RunSummary(
-            execution_id=execution_id,
-            n_tasks=len(specs),
-            n_done=0,
-            n_cached=len(already),
-            n_failed=0,
-            warnings=[],
-            output_dir=layout.output_dir,
-            waiting=waiting,
-        )
-
-    from macaw.config.loader import archive_resolved
-
-    archive_resolved(config, layout.output_dir)
-    for (recording_id, gate), gate_notes in notes.items():
-        _write_warnings(layout, recording_id, gate, gate_notes)
-
-    database = JobDB(layout.job_db_path)
-    database.initialise()
-    for spec in specs:
-        database.upsert(
-            JobRecord(
-                task_id=spec.task_id,
-                recording_id=spec.recording_id,
-                extractor=spec.extractor,
-                execution_id=execution_id,
-                status="pending",
-                log_path=str(spec.log_path),
-            )
-        )
-
-    backend = get_backend(config.execution.backend, config.execution, job_db=database)
-    backend.wait(backend.submit(specs))
-
-    counts = database.summary(execution_id)
-    _merge_manifest_fragments(layout, recording_ids)
-    return RunSummary(
-        execution_id=execution_id,
-        n_tasks=len(specs),
-        n_done=counts.get("done", 0),
-        n_cached=counts.get("cached", 0) + len(already),
-        n_failed=counts.get("failed", 0) + counts.get("cancelled", 0),
-        warnings=_collect_warnings(layout, recording_ids),
-        output_dir=layout.output_dir,
-        waiting=waiting,
-    )
+    return specs
 
 
 def _slug(task_id: str) -> str:
@@ -276,6 +326,7 @@ def run_task(
         cache_root = _cache_root(config, layout)
         entry = cache_store.lookup(cache_root, key) if config.execution.cache else None
         if entry is not None:
+            shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
             database.set_status(task_id, "cached", finished_at=now())
             return
@@ -331,6 +382,8 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
 
     _write_warnings(layout, recording_id, extractor, result.warnings)
 
+    # an artifact an earlier run left would otherwise pass for this run's
+    shutil.rmtree(layout.artifacts_dir(recording_id, extractor), ignore_errors=True)
     for name, source in result.artifacts.items():
         destination = layout.artifacts_dir(recording_id, extractor) / name
         destination.parent.mkdir(parents=True, exist_ok=True)

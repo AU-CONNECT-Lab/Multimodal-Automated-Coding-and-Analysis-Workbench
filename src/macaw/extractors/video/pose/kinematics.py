@@ -13,7 +13,7 @@ from scipy.signal import savgol_filter
 from macaw.exceptions import SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.extractors.video.pose.keypoints import PoseExtractor, select_videos
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, select_videos
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -98,7 +98,7 @@ class KinematicsExtractor(Extractor):
     group = "pose"
     phase = Phase.DERIVE
     config_sections = ("kinematics",)
-    requires = (PoseExtractor.name,)
+    requires = (PoseReviewGate.name,)
 
     def check_available(self) -> None:
         return None

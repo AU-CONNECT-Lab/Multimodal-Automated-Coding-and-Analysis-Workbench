@@ -216,3 +216,107 @@ def track_quality(keypoints: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=columns).sort_values("track_id").reset_index(drop=True)
+
+
+# a later fragment of the owner may overlap the chain this much at a tracker hand-over
+HANDOVER_OVERLAP = 0.1
+# and must sit within this many owner body sizes of the owner, at a similar size
+SAME_PLACE = 0.5
+SAME_SIZE = 2.0
+# the choice is in doubt when someone else is this present relative to the owner
+RIVAL_SHARE = 0.5
+MIN_OWNER_COVERAGE = 0.5
+# frames closer than this are one span when pointing a person at where to look
+SPAN_GAP_S = 1.0
+
+
+@dataclass
+class OwnerChoice:
+    tracks: list[int]
+    doubt: str | None = None
+    spans: list[tuple[float, float]] | None = None
+
+
+def several_people(keypoints: pd.DataFrame) -> bool:
+    tracked = keypoints[keypoints["track_id"].notna() & keypoints["x"].notna()]
+    return bool((tracked.groupby("frame")["track_id"].nunique() > 1).any())
+
+
+def _track_boxes(keypoints: pd.DataFrame) -> pd.DataFrame:
+    """Per track and frame: centre and diagonal of the standard joints that were seen."""
+    standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
+    standard = standard[standard["track_id"].notna() & standard["x"].notna()]
+    grouped = standard.groupby(["track_id", "frame"], observed=True)
+    boxes = grouped.agg(
+        t=("t", "first"), x0=("x", "min"), x1=("x", "max"), y0=("y", "min"), y1=("y", "max")
+    ).reset_index()
+    boxes["cx"] = (boxes["x0"] + boxes["x1"]) / 2
+    boxes["cy"] = (boxes["y0"] + boxes["y1"]) / 2
+    boxes["size"] = np.hypot(boxes["x1"] - boxes["x0"], boxes["y1"] - boxes["y0"])
+    return boxes
+
+
+def _spans(times: pd.Series) -> list[tuple[float, float]]:
+    values = np.sort(times.to_numpy(dtype=float))
+    if values.size == 0:
+        return []
+    breaks = np.flatnonzero(np.diff(values) > SPAN_GAP_S)
+    starts = np.r_[values[0], values[breaks + 1]]
+    ends = np.r_[values[breaks], values[-1]]
+    return [(round(float(a), 2), round(float(b), 2)) for a, b in zip(starts, ends)]
+
+
+def choose_camera_owner(keypoints: pd.DataFrame) -> OwnerChoice:
+    """The person a per-person camera is pointed at: the most present and largest track, plus
+    the fragments the tracker split them into after an occlusion."""
+    boxes = _track_boxes(keypoints)
+    if boxes.empty:
+        return OwnerChoice(tracks=[])
+    stats = boxes.groupby("track_id").agg(
+        n=("frame", "size"), size=("size", "median"), cx=("cx", "median"), cy=("cy", "median")
+    )
+    stats["score"] = stats["n"] * stats["size"]
+    stats = stats.sort_values("score", ascending=False)
+    frames = boxes.groupby("track_id")["frame"].apply(set)
+
+    seed = stats.iloc[0]
+    chain = [int(stats.index[0])]
+    owned = set(frames[stats.index[0]])
+    for track, row in stats.iloc[1:].iterrows():
+        mine = frames[track]
+        if len(mine & owned) > HANDOVER_OVERLAP * len(mine):
+            continue
+        if np.hypot(row["cx"] - seed["cx"], row["cy"] - seed["cy"]) > SAME_PLACE * seed["size"]:
+            continue
+        sizes = sorted([row["size"], seed["size"]])
+        if sizes[0] <= 0 or sizes[1] / sizes[0] > SAME_SIZE:
+            continue
+        chain.append(int(track))
+        owned |= mine
+
+    others = stats.drop(index=chain)
+    owner_score = float(stats.loc[chain, "score"].sum())
+    if not others.empty and others["score"].iloc[0] >= RIVAL_SHARE * owner_score:
+        rival = int(others.index[0])
+        return OwnerChoice(
+            tracks=chain,
+            doubt=f"track {rival} is in view nearly as much as the chosen tracks {chain}",
+            spans=_spans(boxes.loc[boxes["track_id"] == rival, "t"]),
+        )
+    coverage = len(owned) / boxes["frame"].nunique()
+    if coverage < MIN_OWNER_COVERAGE:
+        elsewhere = boxes[~boxes["frame"].isin(owned)].drop_duplicates("frame")
+        return OwnerChoice(
+            tracks=chain,
+            doubt=f"the chosen tracks {chain} are in only {coverage:.0%} of the frames with anyone in them",
+            spans=_spans(elsewhere["t"]),
+        )
+    return OwnerChoice(tracks=chain)
+
+
+def owner_rows(keypoints: pd.DataFrame, tracks: list[int]) -> np.ndarray:
+    """Rows of the owner, one track per frame: where two overlap at a hand-over, the earlier listed wins."""
+    rank = keypoints["track_id"].map({track: index for index, track in enumerate(tracks)})
+    rank = rank.astype("float64").to_numpy()
+    best = pd.Series(rank).groupby(keypoints["frame"].to_numpy()).transform("min").to_numpy()
+    return ~np.isnan(rank) & (rank == best)

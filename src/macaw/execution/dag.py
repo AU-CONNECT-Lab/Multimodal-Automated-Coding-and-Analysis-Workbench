@@ -82,6 +82,17 @@ class DAG:
                     queue.append(name)
         return found
 
+    def ancestors(self, extractor: str) -> set[str]:
+        """Everything this extractor needs, directly or through others."""
+        found: set[str] = set()
+        queue = [extractor]
+        while queue:
+            for name in self.dependencies(queue.pop()):
+                if name not in found:
+                    found.add(name)
+                    queue.append(name)
+        return found
+
     def by_phase(self, phase: Phase) -> list[str]:
         order = self.topological_order()
         return [name for name in order if self.nodes[name].phase == phase]

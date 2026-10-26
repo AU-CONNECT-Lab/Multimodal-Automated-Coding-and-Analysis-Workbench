@@ -67,9 +67,10 @@ def run(
     _echo_reporting(resolved, dag)
 
     if dry_run:
-        for task_id in runner.plan(resolved, recording_ids, wanted):
+        finished = runner.completed_on_disk(resolved)
+        for task_id in runner.plan(resolved, recording_ids, wanted, finished):
             typer.echo(task_id)
-        _echo_waiting(runner.check_gates(resolved, dag, recording_ids)[0])
+        _echo_waiting(runner.check_gates(resolved, dag, recording_ids, finished)[0])
         return
 
     logger.info("%d recordings, extractors: %s", len(recording_ids), ", ".join(wanted) or "all")
@@ -103,6 +104,12 @@ def _echo_reporting(config, dag) -> None:
 
 
 def _echo_waiting(waiting) -> None:
+    later = [wait for wait in waiting if wait.deferred]
+    if later:
+        typer.echo("decided during the run, once what they read exists:")
+        for wait in later:
+            typer.echo(f"  {wait.recording_id}  {wait.gate}: {wait.message}")
+    waiting = [wait for wait in waiting if not wait.deferred]
     if not waiting:
         return
     typer.echo(f"waiting for a person ({len({wait.recording_id for wait in waiting})} recording(s)):")

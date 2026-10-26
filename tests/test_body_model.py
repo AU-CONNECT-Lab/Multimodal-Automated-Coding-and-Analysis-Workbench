@@ -81,7 +81,7 @@ class TestKeypointSchemaAdditions:
             pd.DataFrame(
                 {
                     "recording_id": ["sub-003"], "subject_id": ["child"],
-                    "source": ["pose.mediapipe"], "frame": [0], "t": [0.0],
+                    "source": ["pose.mediapipe"], "video": ["room.mp4"], "frame": [0], "t": [0.0],
                     "joint": ["nose"], "x": [640.0], "y": [360.0], "z": [np.nan],
                     "confidence": [0.9], "track_id": [0],
                     "units": [UNITS_PIXEL], "metric_scale_valid": [None],

@@ -77,6 +77,14 @@ class Layout:
     def offset_table_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "offsets.json"
 
+    # tracks a person named as a camera's owner; an input to pose.keypoints
+    def camera_owners_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "camera_owners.json"
+
+    # automatic owner choices a person looked at and kept; read only by the review gate
+    def camera_owners_accepted_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "camera_owners_accepted.json"
+
     # a person's decision about who is who feeds the results, so it lives with them
     @property
     def identity_path(self) -> Path:

@@ -178,9 +178,7 @@ def render_review(
                 ok, image = capture.read()
                 if not ok:
                     continue
-                people = keypoints[keypoints["frame"] == frame]
-                if item.subject_id is not None:
-                    people = people[(people["subject_id"] == item.subject_id).fillna(False)]
+                people = keypoints[(keypoints["frame"] == frame) & (keypoints["video"] == Path(path).name)]
                 header = [
                     f"{recording.recording_id}  t={row.t:.2f}s  frame {frame}  {Path(path).name}",
                     row.reason if row.reason == BASELINE else f"{row.check}: {row.reason}",

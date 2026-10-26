@@ -33,7 +33,7 @@ from macaw.store.schema import (
 )
 
 WIDTH, HEIGHT = 1920, 1080
-EXTRACTOR_OWNED = {"recording_id", "subject_id", "source", "t"}
+EXTRACTOR_OWNED = {"recording_id", "subject_id", "source", "video", "t"}
 
 
 @dataclass

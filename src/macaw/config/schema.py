@@ -86,6 +86,7 @@ class PoseSection(_Section):
     device: str = "auto"
     min_confidence: float = 0.3
     input_size: int = 1280
+    review: Literal["required", "skip"] = "required"
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
     identity_anchors: dict[str, float] = Field(default_factory=dict)

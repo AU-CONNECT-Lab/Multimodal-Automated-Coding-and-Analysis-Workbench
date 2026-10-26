@@ -72,6 +72,7 @@ def person(subject_id, *, centre=(300.0, 200.0), n_frames=20, fps=FPS, scale=1.0
                     "recording_id": "sub-003_ses-12mo",
                     "subject_id": subject_id,
                     "source": "pose.keypoints",
+                    "video": f"{subject_id}.mp4",
                     "frame": frame,
                     "t": frame / fps,
                     "joint": joint,

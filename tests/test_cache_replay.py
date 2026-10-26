@@ -188,7 +188,7 @@ class TestNobodyFound:
         directory = tmp_path / "keypoints"
         rows = coerce_frame(
             pd.DataFrame(
-                [{"recording_id": RECORDING, "subject_id": "parent", "source": "other.pose", "frame": 0, "t": 0.0,
+                [{"recording_id": RECORDING, "subject_id": "parent", "source": "other.pose", "video": "room.mp4", "frame": 0, "t": 0.0,
                   "joint": "nose", "x": 1.0, "y": 2.0, "z": float("nan"), "confidence": 0.9, "track_id": 0,
                   "units": "pixel", "metric_scale_valid": None}]
             ),
@@ -306,3 +306,18 @@ class TestInputHashing:
     def test_hashing_a_missing_file_is_reported(self, tmp_path):
         with pytest.raises(InputNotFoundError):
             cache_store.hash_file(tmp_path / "nope.wav")
+
+
+class TestStaleArtifacts:
+    def test_an_artifact_this_run_did_not_produce_is_removed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        stale = _write(layout.artifacts_dir(RECORDING, EXTRACTOR) / "owners", "{}")
+        fresh = _write(tmp_path / "workspace" / "swaps.json", "[]")
+        result = SimpleNamespace(
+            rows=None, annotations=None, keypoints=None, body_model=None, specs=[], warnings=[],
+            artifacts={"swaps": fresh},
+        )
+        runner._write_result(layout, RECORDING, EXTRACTOR, result, "exec-1", "cfg-1")
+        assert not stale.exists()
+        assert (layout.artifacts_dir(RECORDING, EXTRACTOR) / "swaps").is_file()

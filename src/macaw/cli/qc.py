@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import json
+from datetime import datetime
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
@@ -11,6 +12,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
+from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file
 from macaw.logging_setup import get_logger
 from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
@@ -124,3 +126,61 @@ def identify_speakers(
     layout = layout_for(resolved)
     path = write_confirmation(layout.identity_path, basis, pairings, by or getpass.getuser())
     typer.echo(f"confirmed for the project: {path}")
+
+
+@app.command("accept-owner")
+def accept_owner(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
+    media: list[str] = typer.Option(None, "--media", help="Camera file, repeatable. Default: every one in doubt."),
+    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of the owner, for one --media."),
+    by: str = typer.Option(None, "--by", help="Who looked. Default: the login name."),
+) -> None:
+    """Keep the automatic choice of whose camera it is, or name the owner's tracks instead."""
+    resolved = resolve_config(config)
+    layout = layout_for(resolved, create=False)
+    stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
+    recording_ids = resolve_recordings(resolved, recordings)
+    wanted = set(media or ())
+
+    if tracks is not None:
+        if len(wanted) != 1 or len(recording_ids) != 1:
+            raise MacawError("--tracks names the owner of one camera: give one -r and one --media")
+        recording_id, file_name = recording_ids[0], next(iter(wanted))
+        named = [int(track) for track in tracks.split(",") if track.strip()]
+        path = layout.camera_owners_path(recording_id)
+        entries = read_owner_file(path)
+        entries[file_name] = {"tracks": named, "by": stamp}
+        _write_json(path, entries)
+        typer.echo(
+            f"{recording_id}: {file_name} belongs to tracks {named}; apply it with "
+            f"`macaw run -r {recording_id} -e pose.kinematics --no-resume`"
+        )
+        return
+
+    matched = set()
+    for recording_id in recording_ids:
+        owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
+        chosen = {
+            name: owner for name, owner in owners.items() if (name in wanted if wanted else owner["doubt"])
+        }
+        matched.update(chosen)
+        if not chosen:
+            typer.echo(f"{recording_id}: nothing in doubt")
+            continue
+        path = layout.camera_owners_accepted_path(recording_id)
+        entries = read_owner_file(path)
+        for name, owner in chosen.items():
+            entries[name] = {"tracks": owner["tracks"], "by": stamp}
+        _write_json(path, entries)
+        typer.echo(
+            f"{recording_id}: kept " + ", ".join(f"{name} as tracks {owner['tracks']}" for name, owner in chosen.items())
+        )
+    unknown = wanted - matched
+    if unknown:
+        raise MacawError(f"no owner choice recorded for: {', '.join(sorted(unknown))}")
+
+
+def _write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

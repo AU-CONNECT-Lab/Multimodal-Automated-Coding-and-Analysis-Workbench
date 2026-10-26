@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
+from macaw.qc import overlay as overlay_module
 from macaw.qc.checks import CANDIDATE_SCHEMA
 from macaw.qc.overlay import BASELINE, REVIEW_SCHEMA, draw_overlay, render_review, review_sample
 from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame, validate_frame
@@ -75,11 +76,11 @@ PARENT = (60, 180, 255)
 UNASSIGNED = (170, 170, 170)
 
 
-def body(subject_id, *, frame=5, centre=(100, 120), track_id=0, confidence=0.9, fps=10.0):
+def body(subject_id, *, frame=5, centre=(100, 120), track_id=0, confidence=0.9, fps=10.0, video="room.avi"):
     offsets = {joint: (index % 3 * 10 - 10, index * 5 - 40) for index, joint in enumerate(STANDARD_JOINTS)}
     rows = [
         {
-            "recording_id": RID, "subject_id": subject_id, "source": "pose.keypoints", "frame": frame,
+            "recording_id": RID, "subject_id": subject_id, "source": "pose.keypoints", "video": video, "frame": frame,
             "t": frame / fps, "joint": joint, "x": float(centre[0] + dx), "y": float(centre[1] + dy),
             "z": float("nan"), "confidence": confidence, "track_id": track_id, "units": "pixel",
             "metric_scale_valid": None,
@@ -235,7 +236,7 @@ class TestRenderReview:
         a = write_video(tmp_path / "parent.avi")
         b = write_video(tmp_path / "child.avi")
         files = [media(a, "parent"), media(b, "child")]
-        keypoints = pd.concat([body("parent"), body("child")])
+        keypoints = pd.concat([body("parent", video="parent.avi"), body("child", video="child.avi")])
         index = render_review(
             recording(files), keypoints,
             moments([("child", "track_quality", "low_confidence", 0.5), (None, None, BASELINE, 0.5)]),
@@ -244,3 +245,26 @@ class TestRenderReview:
         flagged = index[index.reason == "low_confidence"]
         assert list(flagged.video) == ["child.avi"]
         assert sorted(index[index.reason == BASELINE].video) == ["child.avi", "parent.avi"]
+
+    def test_a_personal_camera_shows_everyone_it_saw_and_nobody_it_did_not(self, tmp_path, monkeypatch):
+        """Others in view carry no subject; their track ids are what a person names in a review."""
+        a = write_video(tmp_path / "parent.avi")
+        b = write_video(tmp_path / "child.avi")
+        drawn = {}
+
+        def capture(image, people, subjects, header):
+            drawn[header[0].split()[-1]] = people
+            return image
+
+        monkeypatch.setattr(overlay_module, "draw_overlay", capture)
+        keypoints = pd.concat([
+            body("parent", video="parent.avi"),
+            body(None, track_id=7, video="parent.avi"),
+            body("child", video="child.avi"),
+        ])
+        render_review(
+            recording([media(a, "parent"), media(b, "child")]), keypoints,
+            moments([(None, None, BASELINE, 0.5)]), tmp_path / "renders",
+        )
+        assert set(drawn["parent.avi"].track_id) == {0, 7}
+        assert set(drawn["child.avi"].subject_id) == {"child"}

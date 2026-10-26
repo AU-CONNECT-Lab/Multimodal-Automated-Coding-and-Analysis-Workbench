@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,7 +110,12 @@ def fake_prep_timing(config, recording):
 def offsets(tmp_path, monkeypatch):
     path = tmp_path / "offsets.json"
     monkeypatch.setattr(
-        pose_module, "layout_for", lambda config, create=False: SimpleNamespace(offset_table_path=lambda rid: path)
+        pose_module,
+        "layout_for",
+        lambda config, create=False: SimpleNamespace(
+            offset_table_path=lambda rid: path,
+            camera_owners_path=lambda rid: tmp_path / "camera_owners.json",
+        ),
     )
     return path
 
@@ -313,3 +319,61 @@ class TestQualityWarnings:
         result = instance.run(recording([media()]), tmp_path)
         assert result.keypoints.subject_id.isna().any()
         assert any("no subject_id" in warning.message for warning in result.warnings)
+
+
+def spread_frame(*people):
+    """(track, frames, cx, size) per person, joints spread so each body has a size."""
+    rows = []
+    for track, frames, cx, size in people:
+        for frame in frames:
+            for index, joint in enumerate(STANDARD_JOINTS):
+                rows.append(
+                    {
+                        "frame": frame,
+                        "joint": joint,
+                        "x": cx + size * ((index % 5) - 2) / 5,
+                        "y": 200.0 + size * ((index // 5) - 1.5) / 5,
+                        "z": float("nan"),
+                        "confidence": 0.9,
+                        "track_id": track,
+                        "units": "pixel",
+                        "metric_scale_valid": None,
+                    }
+                )
+    return coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+
+
+class TestSeveralPeopleOnAPersonalCamera:
+    """A backend that returns everyone in view, on a camera pointed at one person."""
+
+    FRAMES = spread_frame((1, range(N_FRAMES), 200.0, 100.0), (2, range(5, 9), 60.0, 160.0))
+
+    def run(self, extractor, recording, tmp_path):
+        instance = extractor(FakeBackend(self.FRAMES))
+        return instance.run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+
+    def test_only_the_owner_carries_the_subject(self, extractor, recording, tmp_path):
+        keypoints = self.run(extractor, recording, tmp_path).keypoints
+        assert not keypoints.dropna(subset=["subject_id"]).duplicated(["subject_id", "frame", "joint"]).any()
+        assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {1}
+        assert keypoints.loc[keypoints.track_id == 2, "subject_id"].isna().all()
+
+    def test_the_choice_is_written_out_for_the_review(self, extractor, recording, tmp_path):
+        result = self.run(extractor, recording, tmp_path)
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["a.mp4"]["tracks"] == [1] and owners["a.mp4"]["doubt"] is None
+
+    def test_tracks_a_person_named_win(self, extractor, recording, tmp_path):
+        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"tracks": [2], "by": "ann"}}))
+        keypoints = self.run(extractor, recording, tmp_path).keypoints
+        assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {2}
+
+    def test_named_tracks_missing_from_the_output_are_a_doubt(self, extractor, recording, tmp_path):
+        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"tracks": [9], "by": "ann"}}))
+        result = self.run(extractor, recording, tmp_path)
+        assert any("[9]" in warning.message for warning in result.warnings)
+
+    def test_named_tracks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
+        path = tmp_path / "camera_owners.json"
+        path.write_text("{}")
+        assert path in extractor().inputs_for(recording([media("a.mp4", subject_id="parent")]))

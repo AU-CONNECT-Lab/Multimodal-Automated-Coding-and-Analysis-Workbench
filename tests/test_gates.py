@@ -242,6 +242,17 @@ class TestRunnerGates:
         dag = build_dag(fake_line, ["after"])
         assert runner_module._job_dependencies(dag, "after", {"gate"}) == {"prep"}
 
+    def test_a_gate_whose_input_is_still_to_come_is_deferred_not_put_to_a_person(self, fake_line):
+        waiting, blocked, _ = check_gates(fake_line, build_dag(fake_line, ["after"]), ["rec1"], finished=set())
+        assert [(w.gate, w.deferred) for w in waiting] == [("gate", True)]
+        assert "prep" in waiting[0].message
+        assert "rec1:after" in blocked and "rec1:prep" not in blocked
+
+    def test_once_its_input_exists_the_gate_decides(self, fake_line):
+        dag = build_dag(fake_line, ["after"])
+        waiting, _, _ = check_gates(fake_line, dag, ["rec1", "rec2"], finished={"rec1:prep", "rec2:prep"})
+        assert [(w.recording_id, w.deferred) for w in waiting] == [("rec2", False)]
+
     def test_a_recording_that_cannot_be_read_waits_with_the_reason(self, fake_line, monkeypatch):
         def broken(recording_id, config):
             raise RecordingNotFoundError(f"{recording_id}: no directory")

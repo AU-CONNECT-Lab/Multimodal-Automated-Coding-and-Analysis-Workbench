@@ -61,6 +61,7 @@ KEYPOINT_SCHEMA: dict[str, str] = {
     "recording_id": "string",
     "subject_id": "string",
     "source": "string",       # pose backend, e.g. "pose.rtmpose"
+    "video": "string",        # file the frame numbers and track ids belong to
     "frame": "int64",
     "t": "float64",
     "joint": "string",
