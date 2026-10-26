@@ -22,8 +22,8 @@ from macaw.extractors.video.pose.kinematics import (
     velocity,
 )
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-from macaw.store.keypoints import write_keypoints
-from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+from macaw.store.keypoints import write_keypoints, write_no_keypoints
+from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, empty_frame, validate_frame
 
 FPS = 30.0
 
@@ -293,7 +293,10 @@ def video(name, subject_id=None):
 def run(tmp_path, monkeypatch):
     def build(keypoints, files, subjects=("parent", "child")):
         stored = tmp_path / "keypoints"
-        write_keypoints(keypoints, stored)
+        if keypoints.empty:
+            write_no_keypoints(stored, "pose.keypoints")
+        else:
+            write_keypoints(keypoints, stored)
         monkeypatch.setattr(
             kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet"
         )
@@ -362,6 +365,12 @@ class TestExtractor:
         result = run(person("parent"), [video("room.mp4")])
         assert set(result.rows.subject_id) == {"parent"}
         assert any(w.subject_id == "child" and w.severity == "warn" for w in result.warnings)
+
+    def test_a_pose_run_that_found_nobody_reports_everyone(self, run):
+        result = run(empty_frame(KEYPOINT_SCHEMA), [video("room.mp4")])
+        assert result.rows.empty
+        assert result.specs == []
+        assert {w.subject_id for w in result.warnings if w.severity == "warn"} == {"parent", "child"}
 
     def test_unassigned_tracks_are_ignored(self, run):
         stray = person("parent").assign(subject_id=pd.NA)

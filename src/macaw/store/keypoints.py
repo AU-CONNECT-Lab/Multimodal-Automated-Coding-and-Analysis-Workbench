@@ -7,13 +7,18 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from macaw.store import _io
-from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame
+from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame
 
 NAME = "keypoints"
 
 
 def write_keypoints(df: pd.DataFrame, path: Path, *, append: bool = False) -> Path:
     return _io.write_partitioned(df, path, KEYPOINT_SCHEMA, NAME, "source", append=append)
+
+
+def write_no_keypoints(path: Path, source: str) -> Path:
+    """A run that found nobody still leaves its file; a missing one would read as never run."""
+    return _io.write_file(empty_frame(KEYPOINT_SCHEMA), Path(path) / f"{source}.parquet", KEYPOINT_SCHEMA, NAME)
 
 
 def read_keypoints(

@@ -251,6 +251,8 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         )
     if result.keypoints is not None and not result.keypoints.empty:
         keypoints_store.write_keypoints(result.keypoints, layout.keypoints_path(recording_id))
+    elif result.keypoints is not None:
+        keypoints_store.write_no_keypoints(layout.keypoints_path(recording_id), extractor)
     if result.body_model is not None and not result.body_model.empty:
         body_model_store.write_body_model(result.body_model, layout.body_model_path(recording_id))
     if result.annotations is not None and not result.annotations.empty:

@@ -14,6 +14,8 @@ from macaw.execution import runner
 from macaw.execution.runner import _stage_payload
 from macaw.project.layout import make_layout
 from macaw.store import cache as cache_store
+from macaw.store.keypoints import read_keypoints, write_keypoints, write_no_keypoints
+from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame
 
 EXTRACTOR = "coding.layer_a"
 RECORDING = "sub-003_ses-12mo"
@@ -160,6 +162,44 @@ class TestProvenanceStamping:
         )
         assert captured["f"]["execution_id"].tolist() == ["from-extractor"]
         assert captured["f"]["config_hash"].tolist() == ["cfg-1"]
+
+
+class TestNobodyFound:
+    """A pose run that found nobody still has to leave its file, or the next extractor cannot
+    even build its cache key."""
+
+    def _write(self, tmp_path, monkeypatch, keypoints):
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        result = SimpleNamespace(
+            rows=None, annotations=None, keypoints=keypoints, body_model=None, specs=[], warnings=[], artifacts={}
+        )
+        runner._write_result(layout, RECORDING, "pose.keypoints", result, "exec-1", "cfg-1")
+        return layout.keypoints_path(RECORDING) / "pose.keypoints.parquet"
+
+    def test_an_empty_table_is_written_and_reads_back_empty(self, tmp_path, monkeypatch):
+        path = self._write(tmp_path, monkeypatch, empty_frame(KEYPOINT_SCHEMA))
+        assert cache_store.hash_inputs([path])
+        assert read_keypoints(path, recording_id=RECORDING).empty
+
+    def test_an_extractor_with_no_keypoints_to_give_writes_no_file(self, tmp_path, monkeypatch):
+        assert not self._write(tmp_path, monkeypatch, None).exists()
+
+    def test_the_empty_file_sits_beside_another_sources_rows(self, tmp_path):
+        """Read as a directory, the empty file must not break the schema of the whole."""
+        directory = tmp_path / "keypoints"
+        rows = coerce_frame(
+            pd.DataFrame(
+                [{"recording_id": RECORDING, "subject_id": "parent", "source": "other.pose", "frame": 0, "t": 0.0,
+                  "joint": "nose", "x": 1.0, "y": 2.0, "z": float("nan"), "confidence": 0.9, "track_id": 0,
+                  "units": "pixel", "metric_scale_valid": None}]
+            ),
+            KEYPOINT_SCHEMA,
+            "keypoints",
+        )
+        write_keypoints(rows, directory)
+        write_no_keypoints(directory, "pose.keypoints")
+        assert len(read_keypoints(directory, recording_id=RECORDING)) == 1
 
 
 class TestReplay:
