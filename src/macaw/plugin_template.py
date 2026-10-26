@@ -164,8 +164,8 @@ def test_no_voicing_is_nan_not_zero():
 def names_for(name: str) -> dict[str, str]:
     if not NAME_PATTERN.match(name):
         raise MacawError(
-            f"'{name}' is not a usable extractor name: use lowercase words joined by dots, with a "
-            "namespace first, e.g. mylab.f0_spread"
+            f"'{name}' is not a usable name: use lowercase words joined by dots, with a namespace "
+            "first, e.g. mylab.f0_spread"
         )
     module = name.replace(".", "_")
     return {

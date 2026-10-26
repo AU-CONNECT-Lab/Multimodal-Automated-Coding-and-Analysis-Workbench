@@ -55,7 +55,7 @@ class SegmentSection(_Section):
 
 
 class ProsodySection(_Section):
-    backend: Literal["parselmouth", "librosa", "builtin"] = "parselmouth"
+    backend: str = "parselmouth"
     fallback_chain: list[str] = Field(default_factory=lambda: ["parselmouth", "librosa", "builtin"])
     frame_step_s: float = 0.01
     f0_min_hz: float = 75.0
@@ -68,12 +68,12 @@ class ProsodySection(_Section):
 
 
 class TextSection(_Section):
-    asr_backend: Literal["whisperx", "faster_whisper"] = "whisperx"
+    asr_backend: str = "whisperx"
     asr_model: str = "large-v3"
     language: str | None = None
     device: str = "auto"
     compute_type: str = "float16"
-    diarization: Literal["pyannote", "per_track", "none"] = "per_track"
+    diarization: str = "per_track"
     crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
     embedding_model: str | None = None
@@ -81,7 +81,7 @@ class TextSection(_Section):
 
 
 class PoseSection(_Section):
-    backend: Literal["rtmpose", "mediapipe", "yolo", "dwpose"] | None = None
+    backend: str | None = None
     model: str | None = None
     device: str = "auto"
     min_confidence: float = 0.3
@@ -97,7 +97,7 @@ class KinematicsSection(_Section):
 
 
 class FaceSection(_Section):
-    backend: Literal["pyfeat", "openface", "mediapipe"] = "pyfeat"
+    backend: str = "pyfeat"
     action_units: bool = True
     landmarks: bool = True
     gaze: bool = False

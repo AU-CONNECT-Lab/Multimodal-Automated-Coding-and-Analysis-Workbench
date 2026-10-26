@@ -11,6 +11,7 @@ from macaw.exceptions import BackendNotAvailableError, ExtractorNotFoundError
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 
 ENTRY_POINT_GROUP = "macaw.extractors"
+BACKEND_ENTRY_POINT_GROUP = "macaw.backends"
 
 # Modules holding extractors that ship with the package. A name appears here only once its
 # extractor is implemented, so the registry always describes what can actually run.
@@ -57,6 +58,7 @@ def load_builtin_extractors() -> None:
     for module in BUILTIN_MODULES:
         import_module(module)
     load_entry_point_extractors()
+    load_entry_point_backends()
 
 
 def get_extractor(name: str) -> Type[Extractor]:
@@ -110,6 +112,18 @@ def load_entry_point_extractors() -> int:
         elif callable(loaded):
             loaded()               # a module-level hook that registers several at once
     return len(_REGISTRY) - before
+
+
+def load_entry_point_backends() -> int:
+    """Import the modules other packages publish under macaw.backends; their classes register
+    themselves with register_backend as they are imported."""
+    before = sum(len(names) for names in _BACKENDS.values())
+    for entry in entry_points(group=BACKEND_ENTRY_POINT_GROUP):
+        try:
+            entry.load()
+        except Exception as error:
+            logging.getLogger("macaw").warning("backend plugin %s failed to load: %s", entry.name, error)
+    return sum(len(names) for names in _BACKENDS.values()) - before
 
 
 __all__ = [
