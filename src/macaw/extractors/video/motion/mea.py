@@ -20,6 +20,7 @@ from macaw.store.schema import Scale
 
 # more of the whole picture than this changing at once is a light switch or a bumped camera
 WHOLE_PICTURE_CHANGE = 0.5
+PICTURE_NAME = "picture.parquet"
 
 _DESCRIPTION = (
     "Share of the region's pixels whose grey level changed by more than motion.threshold since "
@@ -30,7 +31,7 @@ _DESCRIPTION = (
 @register_extractor
 class MEAExtractor(Extractor):
     name = "motion.mea"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "motion"
     config_sections = ("motion", "segment")
@@ -83,7 +84,7 @@ class MEAExtractor(Extractor):
         for subject_id, (item, roi) in regions.items():
             by_video.setdefault(item.path, (item, {}))[1][subject_id] = roi
 
-        frames = []
+        frames, pictures = [], []
         for path, (item, rois) in by_video.items():
             fps = item.fps or 0.0
             if fps <= 0:
@@ -95,6 +96,7 @@ class MEAExtractor(Extractor):
             energy, size = frame_difference_energy(path, rois, threshold=cfg.threshold, frames=(first, stop))
             energy["t"] = energy["frame"] / fps + item.offset_s
             energy = energy[(energy["t"] >= start) & (energy["t"] <= end)]
+            pictures.append(energy[["frame", "t", "whole_picture", "identical"]].assign(video=path.name))
             warnings += self._clip_warnings(recording, path, rois, size)
             n_jumps = int((energy["whole_picture"] > WHOLE_PICTURE_CHANGE).sum())
             if n_jumps:
@@ -122,8 +124,16 @@ class MEAExtractor(Extractor):
                     )
                 )
 
+        # for the checks: what changed across the whole picture, not only inside the regions
+        directory = workspace / self.name
+        directory.mkdir(parents=True, exist_ok=True)
+        picture = pd.concat(pictures, ignore_index=True) if pictures else pd.DataFrame(
+            columns=["frame", "t", "whole_picture", "identical", "video"]
+        )
+        picture.to_parquet(directory / PICTURE_NAME, index=False)
         return ExtractorResult(
             rows=concat_long_tables(frames),
+            artifacts={PICTURE_NAME: directory / PICTURE_NAME},
             specs=[
                 FeatureSpec(
                     name="motion_energy",
@@ -169,7 +179,8 @@ def frame_difference_energy(
     frames: tuple[int, int] | None = None,
 ) -> tuple[pd.DataFrame, tuple[int, int]]:
     """(table, picture size). Per frame (file's own numbering, half-open frames range), the share of each region's pixels
-    that changed by more than threshold grey levels, and of the whole picture; NaN on the first."""
+    that changed by more than threshold grey levels, and of the whole picture, and whether the
+    picture is identical to the previous one (a stalled recording); NaN on the first."""
     import cv2
 
     from macaw.extractors.video.pose.backends import _seek
@@ -194,10 +205,12 @@ def frame_difference_energy(
             grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.int16)
             row = {"frame": index}
             if previous is None:
-                row.update({subject: np.nan for subject in boxes}, whole_picture=np.nan)
+                row.update({subject: np.nan for subject in boxes}, whole_picture=np.nan, identical=False)
             else:
-                moved = np.abs(grey - previous) > threshold
+                change = np.abs(grey - previous)
+                moved = change > threshold
                 row["whole_picture"] = float(moved.mean())
+                row["identical"] = not change.any()
                 for subject, (x0, y0, x1, y1) in boxes.items():
                     row[subject] = float(moved[y0:y1, x0:x1].mean())
             rows.append(row)
@@ -205,7 +218,7 @@ def frame_difference_energy(
             index += 1
     finally:
         capture.release()
-    return pd.DataFrame(rows, columns=["frame", "whole_picture", *boxes]), (width, height)
+    return pd.DataFrame(rows, columns=["frame", "whole_picture", "identical", *boxes]), (width, height)
 
 
 def _clip(roi: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int] | None:

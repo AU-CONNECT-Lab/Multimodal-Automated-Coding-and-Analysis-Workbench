@@ -50,6 +50,11 @@ class TestFrameDifference:
         energy, _ = frame_difference_energy(video, {"a": (0, 0, 160, 240)}, threshold=10)
         assert energy["a"].iloc[1:].median() == pytest.approx(1600 / (160 * 240), rel=0.15)
 
+    def test_a_repeated_picture_is_marked_identical(self, tmp_path):
+        video = write_video(tmp_path / "room.avi", lambda frame, image: None)
+        energy, _ = frame_difference_energy(video, {"a": (0, 0, 160, 240)}, threshold=10)
+        assert energy["identical"].iloc[1:].all() and not energy["identical"].iloc[0]
+
     def test_only_the_asked_frames_are_read_and_keep_their_numbers(self, tmp_path):
         video = write_video(tmp_path / "room.avi", blinking_left)
         energy, _ = frame_difference_energy(video, {"a": (0, 0, 160, 240)}, threshold=10, frames=(5, 9))

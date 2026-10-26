@@ -157,6 +157,7 @@ class QCSection(_Section):
             "transcript_match",
             "track_quality",
             "octave_error",
+            "motion_energy",
         ]
     )
     fail_fast: bool = False

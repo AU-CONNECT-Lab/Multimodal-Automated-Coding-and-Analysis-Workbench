@@ -16,6 +16,7 @@ from macaw.qc.checks import (
     CANDIDATE_SCHEMA,
     RecordingResults,
     candidate_spans,
+    check_motion_energy,
     check_octave_error,
     check_track_quality,
     octave_jumps,
@@ -299,3 +300,65 @@ class TestStorage:
         frame = warnings_to_frame([QCWarning("c", RID, None, "warn", "m", details={"n": 1})])
         assert frame.details.tolist() == ['{"n": 1}']
         assert list(warnings_to_frame([]).columns) == list(frame.columns)
+
+
+def motion_rows(by_subject, fps=10.0):
+    return pd.concat(
+        [
+            build_long_rows(
+                recording_id=RID, source="motion.mea", scale=Scale.FRAME, subject_id=subject_id,
+                values=pd.DataFrame({"t_start": np.arange(len(values)) / fps, "motion_energy": values}),
+            )
+            for subject_id, values in by_subject.items()
+        ],
+        ignore_index=True,
+    )
+
+
+def picture_file(tmp_path, share, identical, fps=10.0):
+    path = tmp_path / "picture.parquet"
+    pd.DataFrame({"frame": np.arange(len(share)), "t": np.arange(len(share)) / fps, "whole_picture": share,
+                  "identical": identical, "video": "room.avi"}).to_parquet(path)
+    return path
+
+
+class TestMotionCheck:
+    def run(self, tmp_path, energy, share, stalled=()):
+        identical = np.zeros(len(share), bool)
+        identical[list(stalled)] = True
+        results = SimpleNamespace(
+            long_table=lambda source, features=None: motion_rows(energy),
+            artifact=lambda extractor, name: picture_file(tmp_path, share, identical),
+        )
+        return check_motion_energy(RECORDING, None, results)
+
+    def test_a_flash_and_a_stall_are_pointed_at_for_everyone(self, tmp_path):
+        share = np.full(300, 0.02)
+        share[50] = 0.9
+        share[100:130] = 0.0
+        result = self.run(tmp_path, {"parent": np.full(300, 0.01)}, share, stalled=range(100, 130))
+        spans = result.candidates.set_index("reason")
+        assert spans.loc["picture_change", "t"] == pytest.approx(5.0)
+        assert spans.loc["frozen_video", "t_start"] == pytest.approx(10.0)
+        assert result.candidates.subject_id.isna().all()
+
+    def test_a_short_identical_stretch_is_not_a_stall(self, tmp_path):
+        share = np.full(300, 0.02)
+        share[100:105] = 0.0
+        assert self.run(tmp_path, {"parent": np.full(300, 0.01)}, share, stalled=range(100, 105)).candidates.empty
+
+    def test_a_person_still_for_a_long_time_is_pointed_at(self, tmp_path):
+        parent = np.full(300, 0.01)
+        parent[100:250] = 0.0
+        child = np.full(300, 0.01)
+        child[100:150] = 0.0
+        result = self.run(tmp_path, {"parent": parent, "child": child}, np.full(300, 0.02))
+        assert list(zip(result.candidates.subject_id, result.candidates.reason)) == [("parent", "no_motion")]
+        assert result.candidates.score.iloc[0] == pytest.approx(14.9)
+
+    def test_a_still_room_below_the_threshold_is_not_a_stall(self, tmp_path):
+        assert self.run(tmp_path, {"parent": np.full(300, 0.01)}, np.zeros(300)).candidates.empty
+
+    def test_without_motion_energy_it_is_skipped(self):
+        empty = SimpleNamespace(long_table=lambda source, features=None: pd.DataFrame(), artifact=lambda e, n: None)
+        assert check_motion_energy(RECORDING, None, empty).skipped

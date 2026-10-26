@@ -17,6 +17,7 @@ import pandas as pd
 from macaw.config.schema import MacawConfig
 from macaw.exceptions import ConfigError
 from macaw.extractors.base import QCWarning
+from macaw.extractors.video.motion.mea import PICTURE_NAME, WHOLE_PICTURE_CHANGE
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -26,6 +27,7 @@ from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame,
 
 POSE_SOURCE = "pose.keypoints"
 PROSODY_SOURCE = "prosody.frame"
+MEA_SOURCE = "motion.mea"
 
 CANDIDATE_SCHEMA: dict[str, str] = {
     "recording_id": "string",
@@ -49,6 +51,10 @@ _MISSING_GAP_S = 0.5
 # 0.8 octave between two 10 ms frames is beyond any voice, so it is the tracker jumping
 _OCTAVE_JUMP = 0.8
 _OCTAVE_WARN_FRACTION = 0.01
+# an identical picture for this long is a stalled recording, not a still room
+_FROZEN_S = 1.0
+# nothing at all moving in a person's region for this long: they left it, or it is drawn on a wall
+_STILL_S = 10.0
 
 _CHECKS: dict[str, Callable] = {}
 
@@ -379,6 +385,40 @@ def octave_jumps(t: np.ndarray, f0_hz: np.ndarray) -> tuple[list[dict], int, int
                 }
             )
     return spans, n_error, int(voiced.sum())
+
+
+@register_check("motion_energy")
+def check_motion_energy(recording: Recording, config: MacawConfig, results) -> CheckResult:
+    """Moments where frame differencing measured something other than a person moving."""
+    energy = results.long_table(MEA_SOURCE, features=["motion_energy"])
+    path = results.artifact(MEA_SOURCE, PICTURE_NAME)
+    if energy.empty and path is None:
+        return CheckResult(skipped=f"no {MEA_SOURCE} output")
+
+    rid = recording.recording_id
+    pieces = []
+    if path is not None:
+        for _, view in pd.read_parquet(path).groupby("video"):
+            view = view.sort_values("t")
+            t, share = view["t"].to_numpy(dtype=float), view["whole_picture"].to_numpy(dtype=float)
+            pieces.append(candidate_spans(rid, None, "motion_energy", "picture_change", t, share > WHOLE_PICTURE_CHANGE, share))
+            # a still room still flickers below the threshold; a stalled recording repeats the picture exactly
+            frozen = candidate_spans(rid, None, "motion_energy", "frozen_video", t, view["identical"].to_numpy(dtype=bool), np.ones(t.size))
+            pieces.append(_lasting(frozen, _FROZEN_S))
+    for subject_id, series in energy.groupby("subject_id", dropna=True, observed=True):
+        series = series.sort_values("t_start")
+        t, value = series["t_start"].to_numpy(dtype=float), series["value"].to_numpy(dtype=float)
+        still = candidate_spans(rid, str(subject_id), "motion_energy", "no_motion", t, value == 0, np.ones(t.size))
+        pieces.append(_lasting(still, _STILL_S))
+    candidates = _concat_candidates(pieces)
+    return CheckResult(warnings=_summary("motion_energy", rid, candidates), candidates=candidates)
+
+
+def _lasting(candidates: pd.DataFrame, at_least_s: float) -> pd.DataFrame:
+    """Spans at least this long, scored by how long they last."""
+    kept = candidates[candidates["t_end"] - candidates["t_start"] >= at_least_s].copy()
+    kept["score"] = kept["t_end"] - kept["t_start"]
+    return kept
 
 
 def run_checks(

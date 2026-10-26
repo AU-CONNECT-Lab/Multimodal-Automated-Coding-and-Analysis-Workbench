@@ -123,6 +123,7 @@ qc:
     - transcript_match
     - track_quality
     - octave_error
+    - motion_energy
   fail_fast: false                   # true aborts the run on the first failed check
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
   review_max_candidates: 40          # frames the checks pointed at, spread across reasons
