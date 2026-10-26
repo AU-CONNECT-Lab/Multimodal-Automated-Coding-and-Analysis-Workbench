@@ -409,6 +409,25 @@ class TestQC:
         result = invoke("qc", "-c", str(project.config), "--check", "nope")
         assert result.exit_code != 0
 
+    @pytest.mark.parametrize("fail_fast", [False, True])
+    def test_fail_fast_stops_at_the_first_failing_recording(self, project, monkeypatch, fail_fast):
+        import macaw.cli.qc as qc_module
+        from macaw.extractors.base import QCWarning
+        from macaw.qc.checks import CANDIDATE_SCHEMA
+        from macaw.store.schema import empty_frame
+
+        def failing(recording, config, results, only=None):
+            warning = QCWarning(check="x", recording_id=recording.recording_id, subject_id=None, severity="fail", message="bad")
+            return SimpleNamespace(warnings=[warning], candidates=empty_frame(CANDIDATE_SCHEMA))
+
+        monkeypatch.setattr(qc_module, "run_checks", failing)
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data.setdefault("qc", {})["fail_fast"] = fail_fast
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        result = invoke("qc", "-c", str(project.config))
+        checked = list(project.output.glob("recordings/*/qc/warnings.json"))
+        assert (result.exit_code, len(checked)) == ((1, 1) if fail_fast else (0, 2))
+
 
 class TestBlockedCommandsStayHonest:
     """Commands whose layer is still a skeleton must fail, not pretend."""

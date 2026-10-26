@@ -41,6 +41,7 @@ def qc(
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
     pages = {}
+    failed = None
     for recording_id in resolve_recordings(resolved, recordings):
         recording = build_recording(recording_id, resolved)
         results = RecordingResults(layout, recording_id)
@@ -64,12 +65,18 @@ def qc(
             _render(resolved, layout, recording, results, outcome.candidates)
         if report or open_report:
             pages[recording_id] = write_recording_report(resolved, recording_id)
+        if severities["fail"] and resolved.qc.fail_fast:
+            failed = recording_id
+            break
 
     if pages:
         project_page = write_project_report(resolved, pages)
         typer.echo(str(project_page))
         if open_report:
             webbrowser.open(project_page.resolve().as_uri())
+    if failed is not None:
+        typer.echo(f"qc.fail_fast: {failed} failed a check, the remaining recordings were not checked", err=True)
+        raise typer.Exit(code=1)
 
 
 def _render(resolved, layout, recording, results, candidates) -> None:
