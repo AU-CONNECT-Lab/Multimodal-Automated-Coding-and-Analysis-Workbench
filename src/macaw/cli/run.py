@@ -10,7 +10,14 @@ from macaw.exceptions import MacawError
 from macaw.execution import runner
 from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB
-from macaw.extractors import get_extractor, list_backend_groups, list_backends, list_extractors
+from macaw.extractors import (
+    get_backend,
+    get_extractor,
+    list_backend_groups,
+    list_backends,
+    list_extractors,
+)
+from macaw.extractors.video.pose.backends import BACKEND_GROUP as POSE_BACKENDS
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
 from macaw.store import cache
@@ -56,11 +63,12 @@ def run(
     if not recording_ids:
         raise MacawError(f"No recordings found under {resolved.project.raw_dir}")
     wanted = list(extractor or ())
+    dag = build_dag(resolved, wanted or None)
+    _echo_reporting(resolved, dag)
 
     if dry_run:
         for task_id in runner.plan(resolved, recording_ids, wanted):
             typer.echo(task_id)
-        dag = build_dag(resolved, wanted or None)
         _echo_waiting(runner.check_gates(resolved, dag, recording_ids)[0])
         return
 
@@ -84,6 +92,14 @@ def run(
         )
     if summary.n_failed:
         raise typer.Exit(code=1)
+
+
+def _echo_reporting(config, dag) -> None:
+    if "pose.keypoints" not in dag.nodes or config.pose.backend is None:
+        return
+    notice = get_backend(POSE_BACKENDS, config.pose.backend).reporting
+    if notice:
+        typer.echo(f"note: {notice}")
 
 
 def _echo_waiting(waiting) -> None:

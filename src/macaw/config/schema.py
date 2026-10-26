@@ -81,7 +81,7 @@ class TextSection(_Section):
 
 
 class PoseSection(_Section):
-    backend: Literal["rtmpose", "mediapipe", "yolo", "dwpose"] = "mediapipe"
+    backend: Literal["rtmpose", "mediapipe", "yolo", "dwpose"] | None = None
     model: str | None = None
     device: str = "auto"
     min_confidence: float = 0.3

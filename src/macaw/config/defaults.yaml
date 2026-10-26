@@ -61,7 +61,7 @@ text:
   kinship_anchors: {}                # role -> address terms, e.g. {child: [mommy, mama]}
 
 pose:
-  backend: mediapipe                 # mediapipe | yolo (AGPL, not bundled) | rtmpose | dwpose
+  backend: null                      # mediapipe (reports usage to Google, no off switch) | yolo (offline; AGPL, not bundled)
   model: null                        # backend-specific checkpoint; null = backend default
   device: auto                       # auto | cpu | cuda
   min_confidence: 0.3                # 0-1; keypoints below this become NaN

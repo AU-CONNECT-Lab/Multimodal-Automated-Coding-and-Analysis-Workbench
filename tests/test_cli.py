@@ -226,6 +226,29 @@ class TestRunDryRun:
         result = invoke("run", "-c", str(project.config), "-e", "no.such.thing", "--dry-run")
         assert result.exit_code != 0
 
+    def test_mediapipe_is_announced_before_pose_runs(self, project):
+        result = invoke(
+            "run", "-c", str(project.config), "-e", "pose.keypoints",
+            "--set", "pose.backend=mediapipe", "--dry-run",
+        )
+        assert result.exit_code == 0
+        assert "note: pose.backend mediapipe" in result.output
+
+    @pytest.mark.parametrize(
+        "extra", [[], ["--set", "pose.backend=yolo"]], ids=["no backend", "yolo"]
+    )
+    def test_other_choices_are_not_announced(self, project, extra):
+        result = invoke("run", "-c", str(project.config), "-e", "pose.keypoints", *extra, "--dry-run")
+        assert result.exit_code == 0
+        assert "note:" not in result.output
+
+    def test_mediapipe_is_not_announced_when_pose_is_not_run(self, project):
+        result = invoke(
+            "run", "-c", str(project.config), "-e", "prep.media",
+            "--set", "pose.backend=mediapipe", "--dry-run",
+        )
+        assert "note:" not in result.output
+
 
 @needs_pydantic
 class TestStatus:

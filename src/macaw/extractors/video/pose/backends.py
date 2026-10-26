@@ -98,6 +98,8 @@ class PoseBackend(Backend):
     joint_set: str = JOINT_SET
     joint_names: tuple[str, ...] = STANDARD_JOINTS
     provides: frozenset[str] = PROVIDES_2D_ONLY
+    # what the backend sends out while it runs that no setting here can stop; shown before a run
+    reporting: str | None = None
 
     def infer(
         self,
@@ -229,6 +231,11 @@ class MediaPipeBackend(PoseBackend):
     """
 
     name = "mediapipe"
+    reporting = (
+        "pose.backend mediapipe: MediaPipe sends usage and performance metrics to Google while it "
+        "runs (not the video itself), and has no switch to turn this off. "
+        "pose.backend: yolo runs offline."
+    )
 
     @property
     def version(self) -> str:
@@ -551,11 +558,21 @@ class DWPoseBackend(PoseBackend):
         raise NotImplementedError
 
 
-def resolve_backend(name: str) -> PoseBackend:
+NO_BACKEND_MESSAGE = (
+    "pose.backend is not set, and there is no default: each choice has a cost to weigh. "
+    'mediapipe: pip install "pymacaw[vision]"; it sends usage metrics to Google and cannot be told '
+    "not to. yolo: runs offline; it needs the ultralytics `yolo` command in an environment of its "
+    "own, under the AGPL-3.0 licence."
+)
+
+
+def resolve_backend(name: str | None) -> PoseBackend:
     """Exactly the named backend, no fallback chain. Prosody has one because it has a pure
     python last resort; here a silent downgrade would change the joint set under the user."""
     from macaw.extractors import get_backend
 
+    if name is None:
+        raise BackendNotAvailableError(NO_BACKEND_MESSAGE)
     backend = get_backend(BACKEND_GROUP, name)()
     backend.check_available()
     return backend

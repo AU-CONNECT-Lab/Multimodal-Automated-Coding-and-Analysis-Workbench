@@ -5,13 +5,18 @@ from dataclasses import dataclass
 import pandas as pd
 import pytest
 
+from macaw.config.schema import PoseSection
+from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors.video.pose.backends import (
     BACKEND_BODY_MODEL_SCHEMA,
     BACKEND_KEYPOINT_SCHEMA,
     MEDIAPIPE_LANDMARKS,
     PROVIDES_2D_ONLY,
+    MediaPipeBackend,
     PoseFrames,
+    YOLOPoseBackend,
     landmark_rows,
+    resolve_backend,
 )
 from macaw.extractors.video.pose.skeleton import (
     STANDARD_JOINTS,
@@ -67,6 +72,22 @@ class TestSkeleton:
         assert extra_joint("mediapipe", "left_thumb") == "mediapipe:left_thumb"
         assert is_standard("left_wrist")
         assert not is_standard("mediapipe:left_wrist")
+
+
+class TestChoosingABackend:
+    def test_there_is_no_default(self):
+        assert PoseSection().backend is None
+
+    def test_an_unset_backend_names_each_choice_and_its_cost(self):
+        with pytest.raises(BackendNotAvailableError) as raised:
+            resolve_backend(None)
+        message = str(raised.value)
+        assert "mediapipe" in message and "Google" in message
+        assert "yolo" in message and "AGPL" in message
+
+    def test_mediapipe_declares_what_it_sends(self):
+        assert "Google" in MediaPipeBackend.reporting
+        assert YOLOPoseBackend.reporting is None
 
 
 class TestBackendSchemas:
