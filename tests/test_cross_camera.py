@@ -49,6 +49,15 @@ class TestReferences:
         assert choice.people == {"a": [2], "b": [3], "c": [1]}
         assert "weak" in choice.doubt and "configured order" not in choice.doubt
 
+    def test_someone_present_a_little_less_can_still_be_the_one_matched(self):
+        """Two references, three people; the one they pair with is in view 70% of the time, the others always."""
+        rng = np.random.default_rng(5)
+        moves = {name: (rng.random(240) < 0.3).astype(float) for name in "abc"}
+        keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]])
+        keypoints = keypoints[~((keypoints.track_id == 3) & (keypoints.frame % 10 >= 7))]
+        choice = choose_people(keypoints, ["a", "b"], references={"a": moves["a"], "b": moves["b"]}, edges=bin_edges(0.0, 120.0))
+        assert choice.people == {"a": [2], "b": [3]}
+
     def test_too_little_time_leaves_it_to_a_person(self):
         moves = {"a": talking(), "b": talking(), "c": talking()}
         keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]], seconds=12.0)

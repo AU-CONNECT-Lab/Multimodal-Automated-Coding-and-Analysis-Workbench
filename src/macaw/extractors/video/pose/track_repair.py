@@ -365,19 +365,28 @@ def choose_people(
         if anchors
         else open_subjects
     )
-    found = sorted(chains[: len(ranked)], key=lambda chain: chain.x)
+    top = chains[: len(ranked)]
+    found = sorted(top, key=lambda chain: chain.x)
     placed = dict(zip(ranked, found))
     match = None
     evidence = references or voices
-    if evidence and edges is not None and not anchors and len(found) > 1:
-        motion = [head_motion(keypoints[owner_rows(keypoints, chain.tracks)], edges) for chain in found]
+    # someone in view nearly as long as the people chosen may be the one a mic or camera belongs to
+    pool = sorted(
+        top + [chain for chain in chains[len(ranked):] if top and chain.present >= RIVAL_SHARE * top[-1].present],
+        key=lambda chain: chain.x,
+    )
+    if evidence and edges is not None and not anchors and len(pool) > 1:
+        motion = [head_motion(keypoints[owner_rows(keypoints, chain.tracks)], edges) for chain in pool]
         match = match_voices({subject: evidence[subject] for subject in ranked if subject in evidence}, motion)
         # the same head seen twice has no listener confound, so even a weak pairing beats the configured order
         sure = dict(match.people) if references else {subject: match.people[subject] for subject in match.clear}
         if sure:
-            placed = {subject: found[index] for subject, index in sure.items()}
-            rest = [chain for index, chain in enumerate(found) if index not in sure.values()]
+            placed = {subject: pool[index] for subject, index in sure.items()}
+            taken = {id(chain) for chain in placed.values()}
+            rest = [chain for chain in chains if id(chain) in {id(c) for c in pool} - taken]
+            rest = sorted(rest[: len(ranked) - len(placed)], key=lambda chain: chain.x)
             placed.update(zip([subject for subject in ranked if subject not in placed], rest))
+            found = sorted(placed.values(), key=lambda chain: chain.x)
     chosen = {**named, **{subject: chain.tracks for subject, chain in placed.items()}}
     people = {subject: chosen[subject] for subject in subject_ids if subject in chosen}
 
@@ -386,8 +395,8 @@ def choose_people(
         doubts.append(f"found {len(found)} of the {len(ranked)} people to place")
     settled = bool(references) and match is not None and set(placed) <= set(match.clear)
     if len(found) > 1 and not anchors and not settled:
-        doubts.append(_who_is_who(placed, match, "head motion on their own camera" if references else "voice", found))
-    left_out = chains[len(ranked):]
+        doubts.append(_who_is_who(placed, match, "head motion on their own camera" if references else "voice", pool))
+    left_out = [chain for chain in chains if id(chain) not in {id(c) for c in found}]
     if found and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in found):
         doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people chosen")
         spans = _spans(left_out[0].t)
