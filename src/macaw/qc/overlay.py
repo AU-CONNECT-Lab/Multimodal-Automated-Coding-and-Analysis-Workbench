@@ -85,7 +85,8 @@ def _colour(subject_id, subjects: list[str]) -> tuple[int, int, int]:
 
 def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], header: list[str]) -> np.ndarray:
     """people is one frame's keypoint rows. Each person gets a box labelled with who they were
-    assigned to and their mean confidence, so a reviewer can name the box that is wrong."""
+    assigned to and the mean confidence of the joints drawn, so a reviewer can name the box
+    that is wrong."""
     cv2 = _cv2()
     out = image.copy()
     height = out.shape[0]
@@ -98,11 +99,8 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
     )
     for name, person in standard.groupby(who, sort=False):
         colour = _colour(name, subjects)
-        points = {
-            row.joint: (int(round(row.x)), int(round(row.y)))
-            for row in person.itertuples()
-            if np.isfinite(row.x) and np.isfinite(row.y)
-        }
+        drawn = person[np.isfinite(person["x"]) & np.isfinite(person["y"])]
+        points = {row.joint: (int(round(row.x)), int(round(row.y))) for row in drawn.itertuples()}
         for a, b in SKELETON_EDGES:
             if a in points and b in points:
                 cv2.line(out, points[a], points[b], colour, thickness, cv2.LINE_AA)
@@ -115,8 +113,9 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
         pad = 4 * thickness
         top_left = (min(xs) - pad, min(ys) - pad)
         cv2.rectangle(out, top_left, (max(xs) + pad, max(ys) + pad), colour, thickness)
-        label = f"{name}  conf {person['confidence'].mean():.2f}"
-        _text(cv2, out, label, (top_left[0], max(top_left[1] - 6, 12)), font_scale, colour, thickness)
+        # joints never in view, such as legs under a table, would pull every label down alike
+        label = f"{name}  conf {drawn['confidence'].mean():.2f}"
+        _text(cv2, out, label, (top_left[0], top_left[1] - 6), font_scale, colour, thickness)
 
     y = int(24 * font_scale / 0.5)
     for line in header:
@@ -126,9 +125,14 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
 
 
 def _text(cv2, image, text, origin, scale, colour, thickness) -> None:
-    """A dark outline under the text keeps it readable on any background."""
-    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thickness, cv2.LINE_AA)
+    """One pass on a dark box, kept inside the frame. A thicker outline pass gets wider glyph
+    advances, drifts off the text and garbles it on small frames."""
+    (width, height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    pad = 2
+    x = min(max(origin[0], pad), max(image.shape[1] - width - pad, pad))
+    y = max(origin[1], height + pad)
+    cv2.rectangle(image, (x - pad, y - height - pad), (x + width + pad, y + baseline + pad), (0, 0, 0), -1)
+    cv2.putText(image, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thickness, cv2.LINE_AA)
 
 
 def _targets(row, videos: list) -> list:

@@ -13,7 +13,7 @@ from macaw.execution.runner import resolve_recordings
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.qc.checks import RecordingResults, run_checks, write_candidates
+from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
 
 app = typer.Typer()
 logger = get_logger("qc")
@@ -66,16 +66,18 @@ def _render(resolved, layout, recording, results, candidates) -> None:
     from macaw.extractors.prep import apply_prep_timing
     from macaw.qc.overlay import render_review, review_sample
 
-    keypoints = results.keypoints()
-    if keypoints.empty:
-        logger.info("%s: no keypoints, nothing to render", recording.recording_id)
+    # a run that found nobody still renders: the bare frames show why
+    if not (layout.keypoints_path(recording.recording_id) / f"{POSE_SOURCE}.parquet").is_file():
+        logger.info("%s: %s has not run, nothing to render", recording.recording_id, POSE_SOURCE)
         return
+    keypoints = results.keypoints()
     # frame numbers come from the same clock pose.keypoints used
-    apply_prep_timing(resolved, recording)
+    prep = apply_prep_timing(resolved, recording)
     cfg = resolved.qc
     sample = review_sample(
         candidates,
-        (float(keypoints["t"].min()), float(keypoints["t"].max())),
+        # the whole task window, so a stretch where nobody was detected is sampled like any other
+        (prep.t_origin_s, prep.t_origin_s + prep.duration_s),
         recording_id=recording.recording_id,
         max_candidates=cfg.review_max_candidates,
         n_baseline=cfg.review_baseline,

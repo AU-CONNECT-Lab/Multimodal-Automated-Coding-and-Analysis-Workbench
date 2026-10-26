@@ -120,6 +120,35 @@ class TestDrawOverlay:
         people = body("parent").assign(x=np.nan, y=np.nan)
         assert not draw_overlay(np.zeros((240, 320, 3), np.uint8), people, ["parent"], []).any()
 
+    def test_the_header_is_light_on_dark_even_on_a_white_frame(self):
+        """A dark outline drawn as a second, thicker pass drifted off the glyphs on 352x288 video."""
+        header = ["closeup  t=3.06s  frame 76  ES2002a.Closeup1.avi"]
+        image = draw_overlay(np.full((288, 352, 3), 255, np.uint8), body("parent").iloc[:0], [], header)
+        band = image[:30].min(axis=2)
+        rows, cols = np.where(band < 128)
+        backing = band[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+        assert (backing > 200).mean() < 0.3
+
+    def test_a_label_at_the_left_edge_stays_whole(self):
+        def label_ink(centre_x):
+            people = body("parent", centre=(centre_x, 120))
+            image = draw_overlay(np.zeros((240, 320, 3), np.uint8), people, ["parent"], [])
+            return int((image[:70] > 0).any(axis=2).sum())
+
+        assert label_ink(-20) == pytest.approx(label_ink(150), rel=0.05)
+
+    def test_the_label_confidence_ignores_joints_never_seen(self):
+        """Masking joints inside the box changes the skeleton but must not change the label."""
+        seen = body("parent")
+        masked = seen.copy()
+        hidden = masked.joint.isin(STANDARD_JOINTS[1::3])
+        masked.loc[hidden, ["x", "y"]] = np.nan
+        masked.loc[hidden, "confidence"] = 0.0
+        top = int(seen.y.min()) - 4
+        a = draw_overlay(np.zeros((240, 320, 3), np.uint8), seen, ["parent"], [])
+        b = draw_overlay(np.zeros((240, 320, 3), np.uint8), masked, ["parent"], [])
+        assert np.array_equal(a[:top], b[:top])
+
 
 def write_video(path: Path, n_frames=10, fps=10.0):
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), fps, (320, 240))
@@ -193,6 +222,15 @@ class TestRenderReview:
             moments([(None, None, BASELINE, 5.0)]), tmp_path / "renders",
         )
         assert index.empty
+
+    def test_a_run_that_found_nobody_still_renders_its_frames(self, tmp_path):
+        video = write_video(tmp_path / "room.avi")
+        index = render_review(
+            recording([media(video)]), empty_frame(KEYPOINT_SCHEMA),
+            moments([(None, None, BASELINE, 0.2)]), tmp_path / "renders",
+        )
+        assert list(index.frame) == [2]
+        assert (tmp_path / "renders" / index.file.iloc[0]).is_file()
 
     def test_a_subject_is_seen_from_their_own_camera(self, tmp_path):
         a = write_video(tmp_path / "parent.avi")
