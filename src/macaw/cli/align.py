@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 from datetime import datetime
 from pathlib import Path
 
@@ -18,9 +19,11 @@ from macaw.media.align import (
     describe_agreement,
     describe_drift,
     drift_flagged,
+    keep_accepted,
     keep_manual,
     low_confidence,
     read_offset_table,
+    review_reason,
     write_offset_table,
 )
 from macaw.media.probe import probe
@@ -63,14 +66,23 @@ def align(
 
         path = layout.offset_table_path(recording_id)
         if path.is_file():
-            results, stale = keep_manual(results, read_offset_table(path))
+            previous = read_offset_table(path)
+            results, stale = keep_manual(results, previous)
             for target in stale:
                 typer.echo(f"  {target}: its manual offset was set against another reference and was replaced")
+            results, dropped = keep_accepted(results, previous)
+            for target in dropped:
+                typer.echo(f"  {target}: the result changed since it was accepted, look at it again")
         write_offset_table(results, path)
         _summarise(recording_id, results, cfg)
         typer.echo(f"  table {path}")
         if any(figures.glob("*.png")):
             typer.echo(f"  figures {figures}")
+        if cfg.review == "required" and any(review_reason(result, cfg) for result in results):
+            typer.echo(
+                f"  flagged files hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
+                "to keep them or `macaw set-offset` to change one"
+            )
 
 
 @app.command("set-offset")
@@ -107,6 +119,42 @@ def set_offset(
     results = [result for result in results if result.target != media] + [entry]
     write_offset_table(results, path)
     typer.echo(f"{recording}: {media} set to {offset:+.3f} s against {reference}")
+
+
+@app.command("accept-offset")
+def accept_offset(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
+    media: list[str] = typer.Option(None, "--media", help="File to keep, repeatable. Default: every flagged file."),
+    by: str = typer.Option(None, "--by", help="Who looked at them. Default: the login name."),
+) -> None:
+    """Keep offsets flagged for review, after looking at their figures, so the run goes on."""
+    resolved = resolve_config(config)
+    layout = layout_for(resolved, create=False)
+    wanted = set(media or ())
+    stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
+    matched = set()
+    for recording_id in resolve_recordings(resolved, recordings):
+        path = layout.offset_table_path(recording_id)
+        if not path.is_file():
+            typer.echo(f"{recording_id}: no offset table, run `macaw align` first")
+            continue
+        results = read_offset_table(path)
+        kept = [
+            result for result in results
+            if (result.target in wanted if wanted else review_reason(result, resolved.align) is not None)
+        ]
+        matched.update(result.target for result in kept)
+        if not kept:
+            typer.echo(f"{recording_id}: nothing flagged")
+            continue
+        for result in kept:
+            result.accepted = stamp
+        write_offset_table(results, path)
+        typer.echo(f"{recording_id}: kept {', '.join(result.target for result in kept)}")
+    unknown = wanted - matched
+    if unknown:
+        raise MacawError(f"not in any offset table: {', '.join(sorted(unknown))}")
 
 
 def _probe_all(recording) -> dict:
@@ -155,4 +203,6 @@ def _summarise(recording_id: str, results: list[AlignResult], cfg) -> None:
                 flags.append("LOW CONFIDENCE")
         if drift_flagged(result):
             flags.append("DRIFT")
+        if flags and result.accepted:
+            flags.append(f"(kept by {result.accepted})")
         typer.echo(f"  {result.target:<32} {line}  {' '.join(flags)}".rstrip())

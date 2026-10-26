@@ -15,7 +15,7 @@ from macaw.extractors.audio.content.asr import (
     load_transcript,
 )
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.extractors.prep import IdentityConfirmGate, MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -219,7 +219,7 @@ class TurnStructureExtractor(Extractor):
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns", "text")
-    requires = (ASRExtractor.name, MediaPrepExtractor.name)
+    requires = (ASRExtractor.name, MediaPrepExtractor.name, IdentityConfirmGate.name)
 
     def check_available(self) -> None:
         return None

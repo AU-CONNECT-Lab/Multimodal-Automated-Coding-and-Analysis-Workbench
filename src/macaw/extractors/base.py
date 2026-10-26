@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.config.schema import MacawConfig
+from macaw.exceptions import GateNotClearedError
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.schema import Scale
@@ -75,6 +76,29 @@ class Extractor(ABC):
     def backend_info(self) -> tuple[str | None, str | None]:
         """(backend name, backend version) recorded in the manifest for reproducibility."""
         return (None, None)
+
+
+class Gate(Extractor):
+    """A step a person clears by a recorded decision. The runner checks it in-process and never schedules it."""
+
+    phase = Phase.INTERACTIVE
+
+    @abstractmethod
+    def pending(self, recording: Recording) -> str | None:
+        """None once cleared; otherwise what the person has to do."""
+
+    def notes(self, recording: Recording) -> list[QCWarning]:
+        """Warnings a cleared gate leaves behind, e.g. that a person was skipped."""
+        return []
+
+    def check_available(self) -> None:
+        return None
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        reason = self.pending(recording)
+        if reason is not None:
+            raise GateNotClearedError(f"{recording.recording_id}: {reason}")
+        return ExtractorResult(rows=pd.DataFrame(), warnings=self.notes(recording))
 
 
 class Backend(ABC):

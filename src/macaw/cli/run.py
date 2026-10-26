@@ -8,6 +8,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution import runner
+from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB
 from macaw.extractors import get_extractor, list_backend_groups, list_backends, list_extractors
 from macaw.logging_setup import get_logger
@@ -59,6 +60,8 @@ def run(
     if dry_run:
         for task_id in runner.plan(resolved, recording_ids, wanted):
             typer.echo(task_id)
+        dag = build_dag(resolved, wanted or None)
+        _echo_waiting(runner.check_gates(resolved, dag, recording_ids)[0])
         return
 
     logger.info("%d recordings, extractors: %s", len(recording_ids), ", ".join(wanted) or "all")
@@ -71,6 +74,7 @@ def run(
         f"cached {summary.n_cached}  failed {summary.n_failed}"
     )
     typer.echo(f"output {summary.output_dir}")
+    _echo_waiting(summary.waiting)
     if summary.warnings:
         by_severity: dict[str, int] = {}
         for warning in summary.warnings:
@@ -80,6 +84,15 @@ def run(
         )
     if summary.n_failed:
         raise typer.Exit(code=1)
+
+
+def _echo_waiting(waiting) -> None:
+    if not waiting:
+        return
+    typer.echo(f"waiting for a person ({len({wait.recording_id for wait in waiting})} recording(s)):")
+    for wait in waiting:
+        typer.echo(f"  {wait.recording_id}  {wait.gate}: {wait.message}")
+    typer.echo("everything after these steps runs on the next `macaw run` once they are cleared")
 
 
 @app.command("run-task")

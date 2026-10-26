@@ -7,7 +7,7 @@ import shutil
 import sys
 import tempfile
 import traceback
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from macaw.config.hashing import hash_extractor_config
@@ -18,7 +18,7 @@ from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB, JobRecord, now
 from macaw.execution.output_checker import completed_tasks, load_rules
 from macaw.extractors import get_extractor
-from macaw.extractors.base import QCWarning
+from macaw.extractors.base import Phase, QCWarning
 from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
@@ -30,6 +30,13 @@ from macaw.store import longtable as longtable_store
 
 
 @dataclass
+class GateWait:
+    recording_id: str
+    gate: str
+    message: str
+
+
+@dataclass
 class RunSummary:
     execution_id: str
     n_tasks: int
@@ -38,6 +45,7 @@ class RunSummary:
     n_failed: int
     warnings: list[QCWarning]
     output_dir: Path
+    waiting: list[GateWait] = field(default_factory=list)
 
 
 def task_id_for(recording_id: str, extractor: str) -> str:
@@ -59,10 +67,58 @@ def resolve_recordings(config: MacawConfig, requested: str | None) -> list[str]:
 
 
 def plan(config: MacawConfig, recording_ids: list[str], extractors: list[str]) -> list[str]:
-    """What would run, in order, without running it."""
+    """What would run, in order, without running it. Gates are checked, not listed."""
     dag = build_dag(config, extractors or None)
-    order = dag.topological_order()
-    return [task_id_for(recording_id, name) for name in order for recording_id in recording_ids]
+    gates = _gates(dag)
+    _, blocked, _ = check_gates(config, dag, recording_ids)
+    return [
+        task_id_for(recording_id, name)
+        for name in dag.topological_order()
+        if name not in gates
+        for recording_id in recording_ids
+        if task_id_for(recording_id, name) not in blocked
+    ]
+
+
+def _job_dependencies(dag, name: str, gates: set[str]) -> set[str]:
+    """A gate is not a job, so whatever waits on it waits on what the gate itself needs."""
+    found: set[str] = set()
+    for dependency in dag.dependencies(name):
+        found |= _job_dependencies(dag, dependency, gates) if dependency in gates else {dependency}
+    return found
+
+
+def _gates(dag) -> list[str]:
+    return [name for name in dag.topological_order() if dag.nodes[name].phase == Phase.INTERACTIVE]
+
+
+def check_gates(
+    config: MacawConfig, dag, recording_ids: list[str]
+) -> tuple[list[GateWait], set[str], dict[tuple[str, str], list[QCWarning]]]:
+    """Gates are checked here, in-process; one not yet cleared holds back everything after it for that recording."""
+    waiting: list[GateWait] = []
+    blocked: set[str] = set()
+    notes: dict[tuple[str, str], list[QCWarning]] = {}
+    gates = _gates(dag)
+    for recording_id in recording_ids if gates else ():
+        recording, unreadable = None, None
+        try:
+            recording = build_recording(recording_id, config)
+        except MacawError as error:
+            unreadable = str(error)
+        for gate in gates:
+            extractor = get_extractor(gate)(config)
+            try:
+                reason = unreadable if recording is None else extractor.pending(recording)
+            except MacawError as error:
+                reason = str(error)
+            if reason is None:
+                notes[(recording_id, gate)] = extractor.notes(recording)
+                continue
+            waiting.append(GateWait(recording_id=recording_id, gate=gate, message=reason))
+            blocked.add(task_id_for(recording_id, gate))
+            blocked.update(task_id_for(recording_id, name) for name in dag.descendants(gate))
+    return waiting, blocked, notes
 
 
 def _cache_root(config: MacawConfig, layout) -> Path:
@@ -87,13 +143,17 @@ def run(
     recording_ids = recordings if recordings is not None else resolve_recordings(config, None)
     dag = build_dag(config, extractors or None)
     order = dag.topological_order()
+    gates = set(_gates(dag))
+    waiting, blocked, notes = check_gates(config, dag, recording_ids)
 
     already = completed_tasks(layout.output_dir, _output_rules(config)) if resume else set()
     specs: list[JobSpec] = []
     for name in order:
+        if name in gates:
+            continue
         for recording_id in recording_ids:
             task_id = task_id_for(recording_id, name)
-            if task_id in already:
+            if task_id in already or task_id in blocked:
                 continue
             specs.append(
                 JobSpec(
@@ -105,7 +165,7 @@ def run(
                     log_path=layout.logs_dir / execution_id / f"{_slug(task_id)}.log",
                     depends_on=[
                         task_id_for(recording_id, dependency)
-                        for dependency in sorted(dag.dependencies(name))
+                        for dependency in sorted(_job_dependencies(dag, name, gates))
                         if task_id_for(recording_id, dependency) not in already
                     ],
                 )
@@ -120,11 +180,14 @@ def run(
             n_failed=0,
             warnings=[],
             output_dir=layout.output_dir,
+            waiting=waiting,
         )
 
     from macaw.config.loader import archive_resolved
 
     archive_resolved(config, layout.output_dir)
+    for (recording_id, gate), gate_notes in notes.items():
+        _write_warnings(layout, recording_id, gate, gate_notes)
 
     database = JobDB(layout.job_db_path)
     database.initialise()
@@ -153,6 +216,7 @@ def run(
         n_failed=counts.get("failed", 0) + counts.get("cancelled", 0),
         warnings=_collect_warnings(layout, recording_ids),
         output_dir=layout.output_dir,
+        waiting=waiting,
     )
 
 
@@ -265,12 +329,7 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
     manifest.extend(list(result.specs))
     write_manifest(manifest, layout.manifest_fragment_path(recording_id, extractor))
 
-    warnings_path = layout.warnings_path(recording_id, extractor)
-    warnings_path.parent.mkdir(parents=True, exist_ok=True)
-    warnings_path.write_text(
-        json.dumps([asdict(warning) for warning in result.warnings], indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _write_warnings(layout, recording_id, extractor, result.warnings)
 
     for name, source in result.artifacts.items():
         destination = layout.artifacts_dir(recording_id, extractor) / name
@@ -278,6 +337,12 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         # shutil.move, not os.replace: the workspace sits in scratch_dir, which on a cluster
         # is a different filesystem from output_dir and a rename across those fails
         shutil.move(str(source), str(destination))
+
+
+def _write_warnings(layout, recording_id: str, extractor: str, warnings: list[QCWarning]) -> None:
+    path = layout.warnings_path(recording_id, extractor)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([asdict(warning) for warning in warnings], indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _stage_payload(layout, recording_id: str, extractor: str, result, payload: Path) -> None:

@@ -70,6 +70,18 @@ class DAG:
         """Direct predecessors, which become the aftercorr edges between job arrays."""
         return set(self.nodes[extractor].depends_on) & set(self.nodes)
 
+    def descendants(self, extractor: str) -> set[str]:
+        """Everything that needs this extractor, directly or through others."""
+        found: set[str] = set()
+        queue = [extractor]
+        while queue:
+            current = queue.pop()
+            for name in self.nodes:
+                if name not in found and current in self.dependencies(name):
+                    found.add(name)
+                    queue.append(name)
+        return found
+
     def by_phase(self, phase: Phase) -> list[str]:
         order = self.topological_order()
         return [name for name in order if self.nodes[name].phase == phase]

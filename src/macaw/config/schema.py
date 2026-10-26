@@ -41,6 +41,11 @@ class AlignSection(_Section):
     drift_segment_s: float = 60.0
     max_drift_ppm: float = 200.0
     apply: Literal["offset_table", "recut"] = "offset_table"
+    review: Literal["required", "skip"] = "required"
+
+
+class IdentitySection(_Section):
+    confirm: Literal["required", "skip"] = "required"
 
 
 class SegmentSection(_Section):
@@ -184,6 +189,7 @@ class GUISection(_Section):
 class MacawConfig(_Section):
     project: ProjectSection
     align: AlignSection = Field(default_factory=AlignSection)
+    identity: IdentitySection = Field(default_factory=IdentitySection)
     segment: SegmentSection = Field(default_factory=SegmentSection)
     prosody: ProsodySection = Field(default_factory=ProsodySection)
     text: TextSection = Field(default_factory=TextSection)

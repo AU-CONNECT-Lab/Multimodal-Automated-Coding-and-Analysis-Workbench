@@ -56,6 +56,7 @@ class AlignResult:
     method: str = GCC_PHAT
     metadata_offset_s: float | None = None
     note: str | None = None
+    accepted: str | None = None      # who kept a flagged result, and when
 
 
 def _correlate(a: np.ndarray, b: np.ndarray, rate: float, max_lag_s: float, *, phat: bool):
@@ -224,6 +225,19 @@ def low_confidence(result: AlignResult, cfg: AlignSection) -> bool:
     return result.agreement is None or result.agreement < cfg.min_agreement
 
 
+def review_reason(result: AlignResult, cfg: AlignSection) -> str | None:
+    """Why a person should look at this file before anything uses it; None for a hand-set or accepted one."""
+    if result.method == MANUAL or result.accepted or result.target == result.reference:
+        return None
+    if result.method == UNALIGNED:
+        return f"not aligned: {result.note}" if result.note else "not aligned"
+    if low_confidence(result, cfg):
+        return "low confidence"
+    if drift_flagged(result):
+        return "drift"
+    return None
+
+
 def metadata_offset(reference: str | None, target: str | None) -> float | None:
     """Start-time difference from container tags, same sign as offset_s. A hint for a person
     only: device clocks are set by hand and some devices write local time labelled as UTC."""
@@ -290,6 +304,26 @@ def keep_manual(
         for result in fresh
     ]
     return merged, stale
+
+
+def keep_accepted(
+    fresh: list[AlignResult], previous: list[AlignResult]
+) -> tuple[list[AlignResult], list[str]]:
+    """A re-run keeps a person's acceptance while it still fits; also returns the targets it no longer fits."""
+    accepted = {result.target: result for result in previous if result.accepted}
+    dropped = []
+    for result in fresh:
+        old = accepted.get(result.target)
+        if old is None or result.method == MANUAL:
+            continue
+        same = old.reference == result.reference and old.method == result.method and (
+            result.method == UNALIGNED or abs(old.offset_s - result.offset_s) <= AGREEMENT_TOLERANCE_S
+        )
+        if same:
+            result.accepted = old.accepted
+        else:
+            dropped.append(result.target)
+    return fresh, dropped
 
 
 def write_offset_table(results: list[AlignResult], path: Path) -> Path:

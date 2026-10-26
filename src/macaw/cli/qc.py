@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import json
 from collections import Counter
 from dataclasses import asdict
@@ -11,6 +12,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.logging_setup import get_logger
+from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
@@ -93,7 +95,32 @@ def _render(resolved, layout, recording, results, candidates) -> None:
 def identify_speakers(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    interactive: bool = typer.Option(True, "--interactive/--accept-votes"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Record the confirmation without asking."),
+    by: str = typer.Option(None, "--by", help="Who is confirming. Default: the login name."),
 ) -> None:
-    """Three-source speaker identity vote, then confirm each recording interactively."""
-    raise NotImplementedError
+    """Show which file belongs to whom across the project, then record that a person checked it."""
+    resolved = resolve_config(config)
+    basis = identity_basis(resolved)
+    pairings = [
+        pairing(build_recording(recording_id, resolved)) for recording_id in resolve_recordings(resolved, recordings)
+    ]
+    if not pairings:
+        raise MacawError(f"No recordings found under {resolved.project.raw_dir}")
+
+    typer.echo(f"which file belongs to whom, read from file names by media_pattern '{basis['media_pattern']}':")
+    for entry in pairings:
+        people = "   ".join(
+            f"{subject}: {', '.join(files) if files else '(none)'}" for subject, files in entry["subjects"].items()
+        )
+        shared = ", ".join(entry["shared"]) or "-"
+        typer.echo(f"  {entry['recording_id']}   {people}   shared: {shared}")
+    empty = sorted({subject for entry in pairings for subject, files in entry["subjects"].items() if not files})
+    if empty:
+        typer.echo(f"no file of their own in some recordings: {', '.join(empty)}")
+
+    if not yes and not typer.confirm("Is every file paired with the right person?", default=False):
+        typer.echo("nothing recorded; fix project.media_pattern or the file names, then run this again")
+        raise typer.Exit(code=1)
+    layout = layout_for(resolved)
+    path = write_confirmation(layout.identity_path, basis, pairings, by or getpass.getuser())
+    typer.echo(f"confirmed for the project: {path}")

@@ -10,7 +10,7 @@ import pandas as pd
 
 from macaw.exceptions import UnreadableMediaError
 from macaw.extractors import register_extractor
-from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
+from macaw.extractors.base import Extractor, ExtractorResult, Gate, Phase, QCWarning
 from macaw.media.align import (
     UNALIGNED,
     apply_alignment,
@@ -19,9 +19,11 @@ from macaw.media.align import (
     drift_flagged,
     low_confidence,
     read_offset_table,
+    review_reason,
 )
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
+from macaw.project.identity import identity_basis, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -162,6 +164,91 @@ _SPECS = {
 
 
 @register_extractor
+class AlignReviewGate(Gate):
+    """Offsets a person has to look at before anything is cut by them: flagged, missing, or a file without audio."""
+
+    name = "align.review"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "prep"
+    config_sections = ("align",)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        path = layout_for(self.config, create=False).offset_table_path(recording.recording_id)
+        return [path] if path.is_file() else []
+
+    def pending(self, recording: Recording) -> str | None:
+        cfg = self.config.align
+        if cfg.review == "skip" or cfg.method == "none" or len(recording.media) < 2:
+            return None
+        rid = recording.recording_id
+        layout = layout_for(self.config, create=False)
+        in_sync = "or set align.method: none if the files were recorded in sync"
+        table = self.inputs_for(recording)
+        if not table:
+            if cfg.method == "manual":
+                return f"no offsets yet: set each file's with `macaw set-offset`, {in_sync}"
+            return f"no offset table yet: run `macaw align -r {rid}`, {in_sync}"
+
+        by_name = {result.target: result for result in read_offset_table(table[0])}
+        missing = [item.path.name for item in recording.media if item.path.name not in by_name]
+        if missing:
+            return f"{', '.join(missing)} came after aligning: run `macaw align -r {rid}` again"
+        flagged = [
+            f"{item.path.name} ({reason})"
+            for item in recording.media
+            if (reason := review_reason(by_name[item.path.name], cfg)) is not None
+        ]
+        if not flagged:
+            return None
+        return (
+            f"{len(flagged)} file(s) to look at: {'; '.join(flagged)}. The figures are in "
+            f"{layout.renders_dir(rid) / 'align'}; keep them with `macaw accept-offset -r {rid}` "
+            "or change one with `macaw set-offset`"
+        )
+
+
+@register_extractor
+class IdentityConfirmGate(Gate):
+    """Which file belongs to whom, confirmed once per project; everything per person rests on it."""
+
+    name = "identity.confirm"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "prep"
+    config_sections = ("identity",)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        path = layout_for(self.config, create=False).identity_path
+        return [path] if path.is_file() else []
+
+    def pending(self, recording: Recording) -> str | None:
+        if self.config.identity.confirm == "skip":
+            return None
+        confirmation = read_confirmation(layout_for(self.config, create=False).identity_path)
+        if confirmation is None:
+            return "nobody has confirmed which file belongs to whom: run `macaw identify` once for the project"
+        if confirmation.get("basis") != identity_basis(self.config):
+            return (
+                "the confirmation was for another media_pattern or list of people: run `macaw identify` again"
+            )
+        return None
+
+    def notes(self, recording: Recording) -> list[QCWarning]:
+        if self.config.identity.confirm != "skip":
+            return []
+        return [
+            QCWarning(
+                check="identity_unconfirmed",
+                recording_id=recording.recording_id,
+                subject_id=None,
+                severity="warn",
+                message="identity.confirm is skip: nobody confirmed which file belongs to whom",
+            )
+        ]
+
+
+@register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
     version = "0.1.0"
@@ -169,6 +256,7 @@ class MediaPrepExtractor(Extractor):
     group = "prep"
     phase = Phase.PREP
     config_sections = ("segment", "align")
+    requires = (AlignReviewGate.name,)
     resource_profile = "data_manage"
 
     def check_available(self) -> None:
@@ -395,45 +483,3 @@ def _media_entry(item) -> dict:
         "drift_ppm": item.drift_ppm,
         "offset_confidence": item.offset_confidence,
     }
-
-
-class AlignReviewGate(Extractor):
-    """A human confirms low-confidence offsets. Present so the DAG knows the edge exists."""
-
-    name = "align.review"
-    version = "0.1.0"
-    scale = Scale.RECORDING
-    group = "prep"
-    phase = Phase.INTERACTIVE
-    config_sections = ("align",)
-
-    def check_available(self) -> None:
-        raise NotImplementedError
-
-    def inputs_for(self, recording: Recording) -> list[Path]:
-        raise NotImplementedError
-
-    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        """Fails with a clear message when run non-interactively and confirmation is missing."""
-        raise NotImplementedError
-
-
-class IdentityConfirmGate(Extractor):
-    """Three-source vote is automatic; accepting it is not."""
-
-    name = "identity.confirm"
-    version = "0.1.0"
-    scale = Scale.RECORDING
-    group = "prep"
-    phase = Phase.INTERACTIVE
-    config_sections = ("text",)
-    requires = ("text.asr", "prosody.frame")
-
-    def check_available(self) -> None:
-        raise NotImplementedError
-
-    def inputs_for(self, recording: Recording) -> list[Path]:
-        raise NotImplementedError
-
-    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        raise NotImplementedError

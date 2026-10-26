@@ -28,6 +28,10 @@ align:
   drift_segment_s: 60.0              # s; segment length for the cross-check and the drift regression
   max_drift_ppm: 200.0               # parts per million; the largest drift the segment search allows for
   apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
+  review: required                   # required: a flagged file stops the run until a person accepts or sets it | skip
+
+identity:
+  confirm: required                  # required: a person confirms once which file belongs to whom (`macaw identify`) | skip, and every run warns
 
 segment:
   task_start_s: null                 # s; trims the researcher's intro. null = keep from 0
