@@ -11,7 +11,7 @@ from macaw.config.schema import PoseSection
 from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
-from macaw.extractors.video.pose.keypoints import PoseExtractor, inside_frame
+from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtractor, inside_frame
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.store.schema import (
     KEYPOINT_SCHEMA,
@@ -115,9 +115,31 @@ def offsets(tmp_path, monkeypatch):
         lambda config, create=False: SimpleNamespace(
             offset_table_path=lambda rid: path,
             camera_owners_path=lambda rid: tmp_path / "camera_owners.json",
+            artifacts_dir=lambda rid, name: tmp_path / "artifacts" / name,
         ),
     )
     return path
+
+
+class Chain:
+    """pose.detect then pose.keypoints, the way the runner chains them."""
+
+    def __init__(self, backend):
+        config = SimpleNamespace(pose=PoseSection())
+        self.fake = backend
+        self.detect = PoseDetectExtractor(config)
+        self.identify = PoseExtractor(config)
+
+    def run(self, recording, workspace):
+        found = self.detect.run(recording, workspace / "detect")
+        artifacts = workspace / "artifacts" / PoseDetectExtractor.name
+        artifacts.mkdir(parents=True, exist_ok=True)
+        for name, source in found.artifacts.items():
+            (artifacts / name).write_bytes(source.read_bytes())
+        result = self.identify.run(recording, workspace)
+        result.warnings[:0] = found.warnings
+        result.detected = found
+        return result
 
 
 @pytest.fixture
@@ -126,9 +148,7 @@ def extractor(monkeypatch, offsets):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
-        instance = PoseExtractor(SimpleNamespace(pose=PoseSection()))
-        instance.fake = backend
-        return instance
+        return Chain(backend)
 
     return build
 
@@ -252,12 +272,12 @@ class TestOneViewPerPerson:
 
     def test_the_cache_key_covers_only_what_is_read(self, extractor, recording):
         files = [media("a.mp4", subject_id="parent"), media("room.mp4")]
-        assert extractor().inputs_for(recording(files)) == [Path("a.mp4")]
+        assert extractor().detect.inputs_for(recording(files)) == [Path("a.mp4")]
 
     def test_the_offset_table_is_part_of_the_cache_key(self, extractor, recording, offsets):
         """Changing an offset moves every frame on the recording clock."""
         offsets.write_text("{}")
-        assert extractor().inputs_for(recording([media("room.mp4")])) == [Path("room.mp4"), offsets]
+        assert extractor().detect.inputs_for(recording([media("room.mp4")])) == [Path("room.mp4"), offsets]
 
 
 class TestWindowAndClock:
@@ -404,7 +424,7 @@ class TestSeveralPeopleOnAPersonalCamera:
     def test_named_tracks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
         path = tmp_path / "camera_owners.json"
         path.write_text("{}")
-        assert path in extractor().inputs_for(recording([media("a.mp4", subject_id="parent")]))
+        assert path in extractor().identify.inputs_for(recording([media("a.mp4", subject_id="parent")]))
 
 
 class TestJoinedFragments:

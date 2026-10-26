@@ -228,7 +228,7 @@ class TestRunDryRun:
 
     def test_mediapipe_is_announced_before_pose_runs(self, project):
         result = invoke(
-            "run", "-c", str(project.config), "-e", "pose.keypoints",
+            "run", "-c", str(project.config), "-e", "pose.detect",
             "--set", "pose.backend=mediapipe", "--dry-run",
         )
         assert result.exit_code == 0

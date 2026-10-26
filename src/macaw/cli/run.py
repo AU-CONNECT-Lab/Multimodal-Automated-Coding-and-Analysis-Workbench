@@ -96,7 +96,7 @@ def run(
 
 
 def _echo_reporting(config, dag) -> None:
-    if "pose.keypoints" not in dag.nodes or config.pose.backend is None:
+    if "pose.detect" not in dag.nodes or config.pose.backend is None:
         return
     notice = get_backend(POSE_BACKENDS, config.pose.backend).reporting
     if notice:

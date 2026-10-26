@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import UnreadableMediaError
+from macaw.exceptions import InputNotFoundError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing
-from macaw.extractors.video.pose.backends import resolve_backend
+from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
 from macaw.extractors.video.pose.track_repair import (
     PeopleChoice,
     choose_camera_owner,
@@ -58,6 +58,12 @@ def inside_frame(keypoints: pd.DataFrame, frame_size: tuple[int, int] | None) ->
     return out
 
 
+def _warning(check: str, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
+    return QCWarning(
+        check=check, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message
+    )
+
+
 def _video_files(recording: Recording) -> list:
     return [item for item in recording.media if item.kind == "video"]
 
@@ -79,13 +85,35 @@ def select_videos(recording: Recording) -> tuple[list, list]:
     return read, [item for item in videos if item not in read]
 
 
+DETECTIONS_NAME = "detections.parquet"
+BACKEND_NAME = "backend.json"
+
+_DETECT_SPECS = {
+    "n_videos_read": ("Videos the pose backend was run on.", "count"),
+    "frames_with_anyone": ("Frames in which the backend found anyone, over frames processed.", None),
+}
+
+
+def load_detections(config, recording_id: str) -> tuple[pd.DataFrame, dict]:
+    directory = layout_for(config, create=False).artifacts_dir(recording_id, PoseDetectExtractor.name)
+    path = directory / DETECTIONS_NAME
+    if not path.is_file():
+        raise InputNotFoundError(f"{recording_id}: no pose detections at {path}; run pose.detect first")
+    return pd.read_parquet(path), json.loads((directory / BACKEND_NAME).read_text(encoding="utf-8"))
+
+
 @register_extractor
-class PoseExtractor(Extractor):
-    name = "pose.keypoints"
-    version = "0.2.0"
+class PoseDetectExtractor(Extractor):
+    """Who the backend sees in each frame, before anyone is named, so naming people again does
+    not run the model again."""
+
+    name = "pose.detect"
+    version = "0.1.0"
     scale = Scale.FRAME
     group = "pose"
-    config_sections = ("pose", "segment")
+    config_sections = (
+        "pose.backend", "pose.model", "pose.device", "pose.min_confidence", "pose.input_size", "segment",
+    )
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
@@ -102,12 +130,8 @@ class PoseExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         """The offset table moves every frame on the recording clock, so it is an input too."""
         paths = sorted(item.path for item in select_videos(recording)[0])
-        layout = layout_for(self.config, create=False)
-        decisions = [
-            layout.offset_table_path(recording.recording_id),
-            layout.camera_owners_path(recording.recording_id),
-        ]
-        return paths + [path for path in decisions if path.is_file()]
+        offsets = layout_for(self.config, create=False).offset_table_path(recording.recording_id)
+        return paths + ([offsets] if offsets.is_file() else [])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.pose
@@ -124,8 +148,8 @@ class PoseExtractor(Extractor):
         per_subject = any(item.subject_id is not None for item in sources)
         if per_subject and any(item.subject_id is None for item in skipped):
             warnings.append(
-                self._warning(
-                    recording, None, "info",
+                _warning(
+                    self.name, recording, None, "info",
                     "both per-subject and shared cameras are present; the shared ones were "
                     "not read",
                 )
@@ -135,18 +159,14 @@ class PoseExtractor(Extractor):
         ]
         if repeated:
             warnings.append(
-                self._warning(
-                    recording, None, "warn",
+                _warning(
+                    self.name, recording, None, "warn",
                     f"only one camera per person or per room is read; skipped {', '.join(repeated)}",
                 )
             )
 
-        named = read_owner_file(
-            layout_for(self.config, create=False).camera_owners_path(recording.recording_id)
-        )
-        owners: dict[str, dict] = {}
         pieces: list[pd.DataFrame] = []
-        swaps_by_file: dict[str, list] = {}
+        n_processed = n_with_anyone = 0
         for item in sources:
             fps = item.fps or 0.0
             if fps <= 0:
@@ -157,6 +177,7 @@ class PoseExtractor(Extractor):
             stop = math.ceil((end - item.offset_s) * fps) + 1
             if stop <= first:
                 continue
+            n_processed += math.floor((end - item.offset_s) * fps) - max(math.ceil((start - item.offset_s) * fps), 0) + 1
             expected = 1 if item.subject_id is not None else max(len(subjects), 1)
             frames = backend.infer(
                 item.path,
@@ -180,7 +201,80 @@ class PoseExtractor(Extractor):
             piece = piece[(piece["t"] >= start) & (piece["t"] <= end)]
             if piece.empty:
                 continue
+            n_with_anyone += int(piece["frame"].nunique())
+            pieces.append(piece)
 
+        detections = (
+            pd.concat(pieces, ignore_index=True) if pieces
+            else empty_frame(BACKEND_KEYPOINT_SCHEMA).assign(video=pd.Series(dtype="string"), t=pd.Series(dtype=float))
+        )
+        directory = workspace / self.name
+        directory.mkdir(parents=True, exist_ok=True)
+        detections.to_parquet(directory / DETECTIONS_NAME, index=False)
+        (directory / BACKEND_NAME).write_text(
+            json.dumps({"name": backend.name, "version": backend.version, "joint_set": backend.joint_set}),
+            encoding="utf-8",
+        )
+        values = {
+            "t_start": [start],
+            "t_end": [end],
+            "n_videos_read": [float(len(sources))],
+            "frames_with_anyone": [n_with_anyone / n_processed if n_processed else float("nan")],
+        }
+        rows = build_long_rows(
+            values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id,
+            source=self.name, entities=recording.entities(),
+        )
+        return ExtractorResult(
+            rows=rows,
+            specs=[
+                FeatureSpec(
+                    name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
+                    extractor=self.name, extractor_version=self.version, backend=backend.name,
+                    backend_version=backend.version, validation="none",
+                )
+                for name, (description, unit) in _DETECT_SPECS.items()
+            ],
+            artifacts={DETECTIONS_NAME: directory / DETECTIONS_NAME, BACKEND_NAME: directory / BACKEND_NAME},
+            warnings=warnings,
+        )
+
+
+@register_extractor
+class PoseExtractor(Extractor):
+    """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
+
+    name = "pose.keypoints"
+    version = "0.3.0"
+    scale = Scale.FRAME
+    group = "pose"
+    config_sections = ("pose",)
+    requires = (PoseDetectExtractor.name,)
+
+    def check_available(self) -> None:
+        return None
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        layout = layout_for(self.config, create=False)
+        named = layout.camera_owners_path(recording.recording_id)
+        detections = layout.artifacts_dir(recording.recording_id, PoseDetectExtractor.name) / DETECTIONS_NAME
+        return [detections] + ([named] if named.is_file() else [])
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        cfg = self.config.pose
+        detections, backend = load_detections(self.config, recording.recording_id)
+        subjects = [subject.subject_id for subject in recording.subjects]
+        warnings: list[QCWarning] = []
+        named = read_owner_file(
+            layout_for(self.config, create=False).camera_owners_path(recording.recording_id)
+        )
+        owners: dict[str, dict] = {}
+        pieces: list[pd.DataFrame] = []
+        swaps_by_file: dict[str, list] = {}
+        for item in select_videos(recording)[0]:
+            piece = detections[detections["video"] == item.path.name].reset_index(drop=True)
+            if piece.empty:
+                continue
             piece, swaps, owner = self._identify(piece, item, subjects, cfg, named.get(item.path.name))
             swaps_by_file[item.path.name] = swaps
             if owner is not None:
@@ -378,13 +472,7 @@ class PoseExtractor(Extractor):
             )
 
     def _warning(self, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
-        return QCWarning(
-            check=self.name,
-            recording_id=recording.recording_id,
-            subject_id=subject_id,
-            severity=severity,
-            message=message,
-        )
+        return _warning(self.name, recording, subject_id, severity, message)
 
     def _specs(self, backend) -> list[FeatureSpec]:
         return [
@@ -396,9 +484,9 @@ class PoseExtractor(Extractor):
                 group=self.group,
                 extractor=self.name,
                 extractor_version=self.version,
-                backend=backend.name,
-                backend_version=backend.version,
-                params={"joint_set": backend.joint_set, "min_confidence": self.config.pose.min_confidence},
+                backend=backend["name"],
+                backend_version=backend["version"],
+                params={"joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence},
                 aggregation="mean",
                 comparable_across_backends=False,
             )
