@@ -52,7 +52,7 @@ BACKEND_KEYPOINT_SCHEMA: dict[str, str] = {
 
 # Same subset rule for the parameter table, plus track_id, which the stored table has no
 # column for: it is only the join key that carries parameters from a track to a subject, and
-# the extractor drops it once assign_subjects has filled subject_id in.
+# the extractor drops it once subject_id has been filled in.
 _EXTRACTOR_OWNED = ("recording_id", "subject_id", "source", "t")
 BACKEND_BODY_MODEL_SCHEMA: dict[str, str] = {
     "track_id": KEYPOINT_SCHEMA["track_id"],
@@ -92,6 +92,7 @@ class PoseFrames:
     keypoints: pd.DataFrame                     # BACKEND_KEYPOINT_SCHEMA
     body_model: pd.DataFrame | None = None      # BACKEND_BODY_MODEL_SCHEMA, 3D backends only
     provides: frozenset[str] = PROVIDES_2D_ONLY
+    frame_size: tuple[int, int] | None = None   # (width, height) px; points outside it are dropped
 
 
 class PoseBackend(Backend):
@@ -352,7 +353,7 @@ class MediaPipeBackend(PoseBackend):
         if not rows:
             return PoseFrames(keypoints=empty_frame(BACKEND_KEYPOINT_SCHEMA))
         frame = coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
-        return PoseFrames(keypoints=frame, provides=self.provides)
+        return PoseFrames(keypoints=frame, provides=self.provides, frame_size=(width, height))
 
 
 def _seek(capture, cv2, first: int) -> int:
@@ -515,7 +516,7 @@ class YOLOPoseBackend(PoseBackend):
         if not rows:
             return PoseFrames(keypoints=empty_frame(BACKEND_KEYPOINT_SCHEMA))
         frame = coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
-        return PoseFrames(keypoints=frame, provides=self.provides)
+        return PoseFrames(keypoints=frame, provides=self.provides, frame_size=(stream.width, stream.height))
 
     def _run_subprocess(
         self, video_path: Path, out_path: Path, *, model, input_size: int | None, device: str

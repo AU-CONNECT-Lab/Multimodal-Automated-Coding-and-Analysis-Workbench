@@ -12,12 +12,13 @@ from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing
 from macaw.extractors.video.pose.backends import resolve_backend
 from macaw.extractors.video.pose.track_repair import (
-    assign_subjects,
+    PeopleChoice,
     choose_camera_owner,
+    choose_people,
     detect_swaps,
-    owner_rows,
     repair_tracks,
     several_people,
+    subject_column,
     track_quality,
 )
 from macaw.project.layout import layout_for
@@ -41,6 +42,20 @@ _SPECS = {
 
 def read_owner_file(path: Path) -> dict[str, dict]:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def inside_frame(keypoints: pd.DataFrame, frame_size: tuple[int, int] | None) -> pd.DataFrame:
+    """A point outside the picture was guessed, not seen: it becomes missing, whatever the backend."""
+    if frame_size is None:
+        return keypoints
+    width, height = frame_size
+    x, y = keypoints["x"], keypoints["y"]
+    outside = (x < 0) | (x > width) | (y < 0) | (y > height)
+    if not outside.any():
+        return keypoints
+    out = keypoints.copy()
+    out.loc[outside, ["x", "y", "z"]] = float("nan")
+    return out
 
 
 def _video_files(recording: Recording) -> list:
@@ -67,7 +82,7 @@ def select_videos(recording: Recording) -> tuple[list, list]:
 @register_extractor
 class PoseExtractor(Extractor):
     name = "pose.keypoints"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "segment")
@@ -155,6 +170,7 @@ class PoseExtractor(Extractor):
             piece = frames.keypoints
             if piece.empty:
                 continue
+            piece = inside_frame(piece, frames.frame_size)
 
             # the backend counts frames from the file's own start; offset_s is what puts it on
             # the recording clock, and it is applied once, here, exactly as prep does for audio
@@ -204,49 +220,53 @@ class PoseExtractor(Extractor):
     def _identify(self, piece: pd.DataFrame, item, subjects: list[str], cfg, named: dict | None):
         """Attach subject_id. The stored track_id stays the backend's raw numbering, so a
         disputed assignment can still be traced back to what the model actually returned."""
+        if item.subject_id is not None and not several_people(piece):
+            piece["subject_id"] = item.subject_id
+            return piece, [], None
+
+        produced = set(piece["track_id"].dropna().astype(int))
+        by_hand = {
+            subject: [track for track in tracks if track in produced]
+            for subject, tracks in (named or {}).get("people", {}).items()
+        }
+        swaps: list = []
         if item.subject_id is not None:
-            if not several_people(piece):
-                piece["subject_id"] = item.subject_id
-                return piece, [], None
-            owner = self._camera_owner(piece, item.subject_id, named)
-            piece["subject_id"] = pd.Series(pd.NA, index=piece.index, dtype="object")
-            piece.loc[owner_rows(piece, owner["tracks"]), "subject_id"] = item.subject_id
-            return piece, [], owner
+            # others in view of a per-person camera stay in the table without a subject
+            identified = piece
+            if item.subject_id in by_hand:
+                choice = PeopleChoice(people={item.subject_id: by_hand[item.subject_id]})
+            else:
+                owner = choose_camera_owner(piece)
+                choice = PeopleChoice(people={item.subject_id: owner.tracks}, doubt=owner.doubt, spans=owner.spans)
+        else:
+            if cfg.track_repair:
+                swaps = detect_swaps(piece, max_gap_s=cfg.track_repair_max_gap_s)
+            identified = repair_tracks(piece, swaps)
+            choice = choose_people(
+                identified, subjects, identity_anchors=cfg.identity_anchors, named=by_hand
+            )
 
-        swaps = detect_swaps(piece, max_gap_s=cfg.track_repair_max_gap_s) if cfg.track_repair else []
-        repaired = repair_tracks(piece, swaps)
-        assigned = assign_subjects(repaired, subjects, identity_anchors=cfg.identity_anchors)
-        piece["subject_id"] = assigned["subject_id"].to_numpy()
-        return piece, swaps, None
-
-    @staticmethod
-    def _camera_owner(piece: pd.DataFrame, subject_id: str, named: dict | None) -> dict:
-        """Others in view of a per-person camera stay in the table without a subject."""
-        if named is not None:
-            produced = set(piece["track_id"].dropna().astype(int))
-            missing = sorted(set(named["tracks"]) - produced)
-            return {
-                "subject_id": subject_id,
-                "tracks": [track for track in named["tracks"] if track in produced],
-                "chosen_by": named["by"],
-                "doubt": f"tracks {missing} named by {named['by']} are not in this run's output" if missing else None,
-                "spans": [],
-            }
-        choice = choose_camera_owner(piece)
-        return {
-            "subject_id": subject_id,
-            "tracks": choice.tracks,
-            "chosen_by": "automatic",
-            "doubt": choice.doubt,
+        doubts = [choice.doubt] if choice.doubt else []
+        for subject, tracks in (named or {}).get("people", {}).items():
+            missing = sorted(set(tracks) - produced)
+            if missing:
+                doubts.append(f"tracks {missing} named for {subject} by {named['by']} are not in this run's output")
+        piece["subject_id"] = subject_column(identified, choice.people).to_numpy()
+        owner = {
+            "people": choice.people,
+            "chosen_by": {
+                subject: named["by"] if subject in by_hand else "automatic" for subject in choice.people
+            },
+            "doubt": "; ".join(doubts) or None,
             "spans": choice.spans or [],
         }
+        return piece, swaps, owner
 
     def _owner_warning(self, recording: Recording, file_name: str, owner: dict) -> QCWarning:
         spans = ", ".join(f"{start:.1f}-{end:.1f} s" for start, end in owner["spans"][:5])
         where = f" (look at {spans})" if spans else ""
-        return self._warning(
-            recording, owner["subject_id"], "warn", f"{file_name}: {owner['doubt']}{where}"
-        )
+        subject = next(iter(owner["people"])) if len(owner["people"]) == 1 else None
+        return self._warning(recording, subject, "warn", f"{file_name}: {owner['doubt']}{where}")
 
     def _write_swaps(self, workspace: Path, swaps_by_file: dict[str, list]) -> dict[str, Path]:
         """Evidence for the identity review step, not an input to anything computed."""
@@ -290,7 +310,8 @@ class PoseExtractor(Extractor):
 
         frames = []
         for subject_id, group in keypoints.groupby("subject_id", dropna=True, observed=True):
-            quality = track_quality(group)
+            # one person may be several tracker ids joined together; their gaps are what count
+            quality = track_quality(group.assign(track_id=0))
             seen = int(group.loc[group["x"].notna(), "frame"].nunique())
             detection_rate = seen / n_frames if n_frames else float("nan")
             frames.append(
@@ -387,7 +408,7 @@ class PoseExtractor(Extractor):
 
 @register_extractor
 class PoseReviewGate(Gate):
-    """Held only where pose.keypoints was not sure who a per-person camera belongs to."""
+    """Held only where pose.keypoints was not sure whose camera it is or who is who."""
 
     name = "pose.review"
     version = "0.1.0"
@@ -406,7 +427,7 @@ class PoseReviewGate(Gate):
         return [
             file_name
             for file_name, owner in owners.items()
-            if owner["doubt"] and accepted.get(file_name, {}).get("tracks") != owner["tracks"]
+            if owner["doubt"] and accepted.get(file_name, {}).get("people") != owner["people"]
         ]
 
     def pending(self, recording: Recording) -> str | None:
@@ -417,9 +438,10 @@ class PoseReviewGate(Gate):
             return None
         rid = recording.recording_id
         return (
-            f"not sure whose camera {', '.join(in_doubt)} is (the warnings say why): look at "
+            f"not sure who is on {', '.join(in_doubt)} (the warnings say why): look at "
             f"`macaw qc -r {rid} --render`, then `macaw accept-owner -r {rid}` keeps the choice, "
-            f"or `macaw accept-owner -r {rid} --media FILE --tracks N,M` names the person's tracks"
+            f"`--media FILE --rename SHOWN=RIGHT,...` corrects who is who, or "
+            f"`--media FILE --tracks N,M [--subject S]` names a person's tracks"
         )
 
     def notes(self, recording: Recording) -> list[QCWarning]:
@@ -431,6 +453,6 @@ class PoseReviewGate(Gate):
                 recording_id=recording.recording_id,
                 subject_id=None,
                 severity="warn",
-                message="pose.review is skip: a camera owner in doubt was used without a person looking",
+                message="pose.review is skip: a doubtful choice of who is on camera was used without a person looking",
             )
         ]

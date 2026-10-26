@@ -123,63 +123,6 @@ def repair_tracks(keypoints: pd.DataFrame, swaps: list[SwapEvent]) -> pd.DataFra
     return out
 
 
-def _track_order(keypoints: pd.DataFrame) -> pd.DataFrame:
-    """Tracks ranked by where they first appear on screen, longest-lived first."""
-    standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
-    standard = standard[standard["track_id"].notna() & standard["x"].notna()]
-    if standard.empty:
-        return pd.DataFrame(columns=["track_id", "first_x", "n_frames"])
-
-    first_frame = standard.groupby("track_id", observed=True)["frame"].transform("min")
-    opening = standard[standard["frame"] == first_frame]
-    return (
-        pd.DataFrame(
-            {
-                "first_x": opening.groupby("track_id", observed=True)["x"].mean(),
-                "n_frames": standard.groupby("track_id", observed=True)["frame"].nunique(),
-            }
-        )
-        .reset_index()
-        .sort_values("n_frames", ascending=False)
-    )
-
-
-def assign_subjects(
-    keypoints: pd.DataFrame,
-    subject_ids: list[str],
-    *,
-    identity_anchors: dict[str, float] | None = None,
-) -> pd.DataFrame:
-    """Map repaired tracks onto stable subject_ids, anchored by initial screen position.
-
-    Anchors are read as an ordering, not as a distance: they are configured as a fraction of
-    frame width while x is in pixels, and a fraction cannot be compared to a pixel without
-    knowing a width this function was never given. Ordering is the part that survives.
-    """
-    out = keypoints.copy()
-    out["subject_id"] = pd.NA
-
-    order = _track_order(keypoints)
-    if order.empty or not subject_ids:
-        return out
-
-    anchors = identity_anchors or {}
-    # without anchors the configured subject order is the only stated intent there is, and
-    # inventing an alphabetical one would silently disagree with it
-    ranked = (
-        sorted(subject_ids, key=lambda subject: (anchors.get(subject, 0.0), subject_ids.index(subject)))
-        if anchors
-        else list(subject_ids)
-    )
-    # more tracks than people means the extras are spurious detections; the longest-lived
-    # ones are the people, and what is left over stays unassigned rather than being forced
-    kept = order.head(len(ranked)).sort_values("first_x")
-
-    pairing = dict(zip(kept["track_id"].tolist(), ranked))
-    out["subject_id"] = out["track_id"].map(pairing).astype("object")
-    return out
-
-
 def track_quality(keypoints: pd.DataFrame) -> pd.DataFrame:
     """Continuity, mean confidence, missing fraction. Bad tracks warn instead of emitting NaN."""
     columns = [
@@ -218,12 +161,14 @@ def track_quality(keypoints: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).sort_values("track_id").reset_index(drop=True)
 
 
-# a later fragment of the owner may overlap the chain this much at a tracker hand-over
+# a fragment may overlap the chain it joins this much at a tracker hand-over
 HANDOVER_OVERLAP = 0.1
-# and must sit within this many owner body sizes of the owner, at a similar size
+# and must sit within this many body sizes of where the chain was, at a similar size
 SAME_PLACE = 0.5
 SAME_SIZE = 2.0
-# the choice is in doubt when someone else is this present relative to the owner
+# detections either side of a break that say where the person was
+EDGE_DETECTIONS = 10
+# a choice is in doubt when someone left out is this present relative to who was chosen
 RIVAL_SHARE = 0.5
 MIN_OWNER_COVERAGE = 0.5
 # frames closer than this are one span when pointing a person at where to look
@@ -231,8 +176,36 @@ SPAN_GAP_S = 1.0
 
 
 @dataclass
+class Chain:
+    """One person's detections, possibly from several tracker ids, in frame order."""
+
+    tracks: list[int]
+    frames: np.ndarray
+    t: np.ndarray
+    cx: np.ndarray
+    cy: np.ndarray
+    size: float
+    score: float
+
+    @property
+    def x(self) -> float:
+        return float(np.median(self.cx))
+
+    @property
+    def present(self) -> int:
+        return int(np.unique(self.frames).size)
+
+
+@dataclass
 class OwnerChoice:
     tracks: list[int]
+    doubt: str | None = None
+    spans: list[tuple[float, float]] | None = None
+
+
+@dataclass
+class PeopleChoice:
+    people: dict[str, list[int]]
     doubt: str | None = None
     spans: list[tuple[float, float]] | None = None
 
@@ -256,8 +229,8 @@ def _track_boxes(keypoints: pd.DataFrame) -> pd.DataFrame:
     return boxes
 
 
-def _spans(times: pd.Series) -> list[tuple[float, float]]:
-    values = np.sort(times.to_numpy(dtype=float))
+def _spans(times) -> list[tuple[float, float]]:
+    values = np.unique(np.asarray(times, dtype=float))
     if values.size == 0:
         return []
     breaks = np.flatnonzero(np.diff(values) > SPAN_GAP_S)
@@ -266,57 +239,150 @@ def _spans(times: pd.Series) -> list[tuple[float, float]]:
     return [(round(float(a), 2), round(float(b), 2)) for a, b in zip(starts, ends)]
 
 
+def _where(chain: Chain, rows) -> np.ndarray:
+    return np.array([np.median(chain.cx[rows]), np.median(chain.cy[rows])])
+
+
+def _gap_distance(chain: Chain, piece: Chain) -> float:
+    """How far the piece starts from where the chain last was, or ends from where it is next, or
+    sits from where the chain usually is: a box often jumps at the moment the tracker hands over."""
+    distances = [np.hypot(*(_where(chain, slice(None)) - _where(piece, slice(None))))]
+    before = np.flatnonzero(chain.frames < piece.frames[0])
+    if before.size:
+        start = _where(piece, slice(None, EDGE_DETECTIONS))
+        distances.append(np.hypot(*(_where(chain, before[-EDGE_DETECTIONS:]) - start)))
+    after = np.flatnonzero(chain.frames > piece.frames[-1])
+    if after.size:
+        end = _where(piece, slice(-EDGE_DETECTIONS, None))
+        distances.append(np.hypot(*(_where(chain, after[:EDGE_DETECTIONS]) - end)))
+    return float(min(distances))
+
+
+def _conflicts(chain: Chain, piece: Chain, reach: float) -> int:
+    """Frames both are in at different places; a second box on the same person is not one."""
+    _, mine, theirs = np.intersect1d(piece.frames, chain.frames, return_indices=True)
+    apart = np.hypot(piece.cx[mine] - chain.cx[theirs], piece.cy[mine] - chain.cy[theirs])
+    return int((apart > reach).sum())
+
+
+def _extend(chain: Chain, piece: Chain) -> None:
+    order = np.argsort(np.r_[chain.frames, piece.frames], kind="stable")
+    for name in ("frames", "t", "cx", "cy"):
+        setattr(chain, name, np.r_[getattr(chain, name), getattr(piece, name)][order])
+    chain.tracks.extend(piece.tracks)
+    chain.score += piece.score
+
+
+def join_fragments(keypoints: pd.DataFrame) -> list[Chain]:
+    """People the tracker lost and found again under new ids, strongest first. Tracks are taken
+    by presence times size, and each joins the nearest chain it fits."""
+    boxes = _track_boxes(keypoints).sort_values(["track_id", "frame"])
+    pieces = []
+    for track, group in boxes.groupby("track_id"):
+        size = float(group["size"].median())
+        pieces.append(
+            Chain(
+                tracks=[int(track)],
+                frames=group["frame"].to_numpy(),
+                t=group["t"].to_numpy(dtype=float),
+                cx=group["cx"].to_numpy(dtype=float),
+                cy=group["cy"].to_numpy(dtype=float),
+                size=size,
+                score=len(group) * size,
+            )
+        )
+    chains: list[Chain] = []
+    for piece in sorted(pieces, key=lambda item: item.score, reverse=True):
+        best, nearest = None, np.inf
+        for chain in chains:
+            small, large = sorted([piece.size, chain.size])
+            if small <= 0 or large / small > SAME_SIZE:
+                continue
+            reach = SAME_PLACE * small
+            if _conflicts(chain, piece, reach) > HANDOVER_OVERLAP * piece.frames.size:
+                continue
+            distance = _gap_distance(chain, piece)
+            if distance <= reach and distance < nearest:
+                best, nearest = chain, distance
+        if best is None:
+            chains.append(piece)
+        else:
+            _extend(best, piece)
+    return sorted(chains, key=lambda chain: chain.score, reverse=True)
+
+
 def choose_camera_owner(keypoints: pd.DataFrame) -> OwnerChoice:
-    """The person a per-person camera is pointed at: the most present and largest track, plus
-    the fragments the tracker split them into after an occlusion."""
-    boxes = _track_boxes(keypoints)
-    if boxes.empty:
+    """The person a per-person camera is pointed at: the most present and largest person in view."""
+    chains = join_fragments(keypoints)
+    if not chains:
         return OwnerChoice(tracks=[])
-    stats = boxes.groupby("track_id").agg(
-        n=("frame", "size"), size=("size", "median"), cx=("cx", "median"), cy=("cy", "median")
-    )
-    stats["score"] = stats["n"] * stats["size"]
-    stats = stats.sort_values("score", ascending=False)
-    frames = boxes.groupby("track_id")["frame"].apply(set)
-
-    seed = stats.iloc[0]
-    chain = [int(stats.index[0])]
-    owned = set(frames[stats.index[0]])
-    for track, row in stats.iloc[1:].iterrows():
-        mine = frames[track]
-        if len(mine & owned) > HANDOVER_OVERLAP * len(mine):
-            continue
-        if np.hypot(row["cx"] - seed["cx"], row["cy"] - seed["cy"]) > SAME_PLACE * seed["size"]:
-            continue
-        sizes = sorted([row["size"], seed["size"]])
-        if sizes[0] <= 0 or sizes[1] / sizes[0] > SAME_SIZE:
-            continue
-        chain.append(int(track))
-        owned |= mine
-
-    others = stats.drop(index=chain)
-    owner_score = float(stats.loc[chain, "score"].sum())
-    if not others.empty and others["score"].iloc[0] >= RIVAL_SHARE * owner_score:
-        rival = int(others.index[0])
+    owner, others = chains[0], chains[1:]
+    if others and others[0].score >= RIVAL_SHARE * owner.score:
+        rival = others[0]
         return OwnerChoice(
-            tracks=chain,
-            doubt=f"track {rival} is in view nearly as much as the chosen tracks {chain}",
-            spans=_spans(boxes.loc[boxes["track_id"] == rival, "t"]),
+            tracks=owner.tracks,
+            doubt=f"tracks {rival.tracks} are in view nearly as much as the chosen tracks {owner.tracks}",
+            spans=_spans(rival.t),
         )
-    coverage = len(owned) / boxes["frame"].nunique()
+    seen = np.unique(np.concatenate([chain.frames for chain in chains]))
+    coverage = owner.present / seen.size
     if coverage < MIN_OWNER_COVERAGE:
-        elsewhere = boxes[~boxes["frame"].isin(owned)].drop_duplicates("frame")
+        elsewhere = np.concatenate([chain.t[~np.isin(chain.frames, owner.frames)] for chain in others])
         return OwnerChoice(
-            tracks=chain,
-            doubt=f"the chosen tracks {chain} are in only {coverage:.0%} of the frames with anyone in them",
-            spans=_spans(elsewhere["t"]),
+            tracks=owner.tracks,
+            doubt=f"the chosen tracks {owner.tracks} are in only {coverage:.0%} of the frames with anyone in them",
+            spans=_spans(elsewhere),
         )
-    return OwnerChoice(tracks=chain)
+    return OwnerChoice(tracks=owner.tracks)
+
+
+def choose_people(
+    keypoints: pd.DataFrame,
+    subject_ids: list[str],
+    *,
+    identity_anchors: dict[str, float] | None = None,
+    named: dict[str, list[int]] | None = None,
+) -> PeopleChoice:
+    """Who is who on a shared camera. The most present people, left to right, go to the subjects
+    ranked by their anchors (a fraction of frame width, read as an ordering only), else in the
+    configured order, which is a guess a person has to check."""
+    named = {subject: list(tracks) for subject, tracks in (named or {}).items() if subject in subject_ids}
+    taken = [track for tracks in named.values() for track in tracks]
+    chains = join_fragments(keypoints[~keypoints["track_id"].isin(taken)])
+    open_subjects = [subject for subject in subject_ids if subject not in named]
+    anchors = identity_anchors or {}
+    ranked = (
+        sorted(open_subjects, key=lambda subject: (anchors.get(subject, 0.0), subject_ids.index(subject)))
+        if anchors
+        else open_subjects
+    )
+    found = sorted(chains[: len(ranked)], key=lambda chain: chain.x)
+    chosen = {**named, **{subject: chain.tracks for subject, chain in zip(ranked, found)}}
+    people = {subject: chosen[subject] for subject in subject_ids if subject in chosen}
+
+    doubts, spans = [], []
+    if len(found) < len(ranked):
+        doubts.append(f"found {len(found)} of the {len(ranked)} people to place")
+    if len(found) > 1 and not anchors:
+        order = ", ".join(f"{subject} at x {chain.x:.0f}" for subject, chain in zip(ranked, found))
+        doubts.append(f"who is who is the configured subject order from left to right ({order}), not yet checked")
+    left_out = chains[len(ranked):]
+    if found and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in found):
+        doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people chosen")
+        spans = _spans(left_out[0].t)
+    return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
 
 
 def owner_rows(keypoints: pd.DataFrame, tracks: list[int]) -> np.ndarray:
-    """Rows of the owner, one track per frame: where two overlap at a hand-over, the earlier listed wins."""
+    """Rows of one person, one track per frame: where two overlap at a hand-over, the earlier listed wins."""
     rank = keypoints["track_id"].map({track: index for index, track in enumerate(tracks)})
     rank = rank.astype("float64").to_numpy()
     best = pd.Series(rank).groupby(keypoints["frame"].to_numpy()).transform("min").to_numpy()
     return ~np.isnan(rank) & (rank == best)
+
+
+def subject_column(keypoints: pd.DataFrame, people: dict[str, list[int]]) -> pd.Series:
+    out = pd.Series(pd.NA, index=keypoints.index, dtype="object")
+    for subject, tracks in people.items():
+        out[owner_rows(keypoints, tracks)] = subject
+    return out

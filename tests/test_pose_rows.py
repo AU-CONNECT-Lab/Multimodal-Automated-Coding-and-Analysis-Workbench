@@ -11,7 +11,7 @@ from macaw.config.schema import PoseSection
 from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
-from macaw.extractors.video.pose.keypoints import PoseExtractor
+from macaw.extractors.video.pose.keypoints import PoseExtractor, inside_frame
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.store.schema import (
     KEYPOINT_SCHEMA,
@@ -190,6 +190,12 @@ class TestSharedCamera:
     def test_a_crossover_is_reported(self, shared):
         assert any(warning.severity == "info" for warning in shared[1].warnings)
 
+    def test_who_is_who_without_anchors_is_left_for_a_person_to_check(self, shared):
+        owners = json.loads(shared[1].artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["room.mp4"]["people"] == {"parent": [0], "child": [1]}
+        assert "not yet checked" in owners["room.mp4"]["doubt"]
+        assert any("not yet checked" in warning.message for warning in shared[1].warnings)
+
 
 class TestPerSubjectCameras:
     @pytest.fixture
@@ -285,6 +291,28 @@ class TestWindowAndClock:
         assert result.keypoints.t.min() == pytest.approx(100.0)
 
 
+class TestOutsideThePicture:
+    def test_a_point_beyond_any_edge_becomes_missing(self):
+        points = pd.DataFrame({"x": [-1.0, 10.0, 321.0, 10.0, 320.0], "y": [5.0, -0.5, 5.0, 241.0, 240.0], "z": 0.0})
+        kept = inside_frame(points, (320, 240))
+        assert kept["x"].notna().tolist() == [False, False, False, False, True]
+        assert kept["z"].isna().tolist() == [True, True, True, True, False]
+
+    def test_without_a_frame_size_nothing_is_dropped(self):
+        points = pd.DataFrame({"x": [-50.0], "y": [5.0], "z": float("nan")})
+        assert inside_frame(points, None)["x"].tolist() == [-50.0]
+
+    def test_the_extractor_applies_it_to_what_the_backend_returns(self, extractor, recording, tmp_path):
+        class SizedBackend(FakeBackend):
+            def infer(self, *args, **kwargs):
+                return PoseFrames(keypoints=self.frames, frame_size=(300, 400))
+
+        instance = extractor(SizedBackend(backend_frame([100.0, 500.0])))
+        keypoints = instance.run(recording([media()]), tmp_path).keypoints
+        assert keypoints.loc[keypoints.track_id == 1, "x"].isna().all()
+        assert keypoints.loc[keypoints.track_id == 0, "x"].notna().all()
+
+
 class TestNothingDetected:
     @pytest.fixture
     def result(self, extractor, recording, tmp_path):
@@ -361,15 +389,15 @@ class TestSeveralPeopleOnAPersonalCamera:
     def test_the_choice_is_written_out_for_the_review(self, extractor, recording, tmp_path):
         result = self.run(extractor, recording, tmp_path)
         owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
-        assert owners["a.mp4"]["tracks"] == [1] and owners["a.mp4"]["doubt"] is None
+        assert owners["a.mp4"]["people"] == {"parent": [1]} and owners["a.mp4"]["doubt"] is None
 
     def test_tracks_a_person_named_win(self, extractor, recording, tmp_path):
-        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"tracks": [2], "by": "ann"}}))
+        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"people": {"parent": [2]}, "by": "ann"}}))
         keypoints = self.run(extractor, recording, tmp_path).keypoints
         assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {2}
 
     def test_named_tracks_missing_from_the_output_are_a_doubt(self, extractor, recording, tmp_path):
-        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"tracks": [9], "by": "ann"}}))
+        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"people": {"parent": [9]}, "by": "ann"}}))
         result = self.run(extractor, recording, tmp_path)
         assert any("[9]" in warning.message for warning in result.warnings)
 
@@ -377,3 +405,17 @@ class TestSeveralPeopleOnAPersonalCamera:
         path = tmp_path / "camera_owners.json"
         path.write_text("{}")
         assert path in extractor().inputs_for(recording([media("a.mp4", subject_id="parent")]))
+
+
+class TestJoinedFragments:
+    def test_continuity_is_the_persons_not_the_shortest_fragments(self, extractor, recording, tmp_path):
+        frames = spread_frame(
+            (1, range(0, 10), 200.0, 100.0),
+            (2, range(10, N_FRAMES), 205.0, 100.0),
+            (3, range(0, N_FRAMES), 600.0, 40.0),
+        )
+        result = extractor(FakeBackend(frames)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        rows = result.rows
+        continuity = rows[(rows.feature == "track_continuity") & (rows.subject_id == "parent")]
+        assert float(continuity.value.iloc[0]) == 1.0
+        assert set(result.keypoints.loc[result.keypoints.subject_id == "parent", "track_id"]) == {1, 2}

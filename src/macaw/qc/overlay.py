@@ -94,11 +94,13 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
     thickness = max(1, int(round(height / 500.0)))
 
     standard = people[people["joint"].isin(STANDARD_JOINTS)]
-    who = standard["subject_id"].astype(object).where(
-        standard["subject_id"].notna(), "unassigned (track " + standard["track_id"].astype(str) + ")"
-    )
-    for name, person in standard.groupby(who, sort=False):
-        colour = _colour(name, subjects)
+    subject = standard["subject_id"].astype(object)
+    for (_, track), person in standard.groupby([subject.fillna(""), standard["track_id"]], sort=False, dropna=False):
+        subject_id = person["subject_id"].iloc[0]
+        colour = _colour(subject_id, subjects)
+        name = subject_id if pd.notna(subject_id) else "unassigned"
+        if pd.notna(track):
+            name = f"{name} (track {int(track)})"
         drawn = person[np.isfinite(person["x"]) & np.isfinite(person["y"])]
         points = {row.joint: (int(round(row.x)), int(round(row.y))) for row in drawn.itertuples()}
         for a, b in SKELETON_EDGES:

@@ -7,7 +7,6 @@ import pytest
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.extractors.video.pose.track_repair import (
     SwapEvent,
-    assign_subjects,
     detect_swaps,
     repair_tracks,
     track_quality,
@@ -114,47 +113,6 @@ class TestRepairTracks:
         assert len(repaired) == len(crossing)
         assert list(repaired.frame) == list(crossing.frame)
         assert list(repaired.x) == list(crossing.x)
-
-
-class TestAssignSubjects:
-    def test_anchors_are_read_as_an_ordering(self):
-        """They are configured as a fraction of frame width while x is in pixels, and this
-        function is never told the width, so only the ordering survives."""
-        clean = scene([100.0, 500.0])
-        left_is_child = assign_subjects(clean, ["parent", "child"], identity_anchors={"child": 0.1, "parent": 0.9})
-        assert left_is_child.groupby("subject_id")["x"].first().to_dict() == {"child": 100.0, "parent": 500.0}
-
-        left_is_parent = assign_subjects(clean, ["parent", "child"], identity_anchors={"child": 0.9, "parent": 0.1})
-        assert left_is_parent.groupby("subject_id")["x"].first().to_dict() == {"child": 500.0, "parent": 100.0}
-
-    def test_without_anchors_the_configured_subject_order_is_used_left_to_right(self):
-        """Inventing an alphabetical order would silently disagree with what was configured."""
-        clean = scene([100.0, 500.0])
-        assert assign_subjects(clean, ["parent", "child"]).groupby("subject_id")["x"].first().to_dict() == {
-            "parent": 100.0,
-            "child": 500.0,
-        }
-        assert assign_subjects(clean, ["child", "parent"]).groupby("subject_id")["x"].first().to_dict() == {
-            "child": 100.0,
-            "parent": 500.0,
-        }
-
-    def test_a_spurious_extra_track_is_left_unassigned(self):
-        """Forcing every track onto a person is how a reflection becomes a third participant."""
-        blip = scene([900.0], n_frames=2)
-        blip["track_id"] = 7
-        noisy = pd.concat([scene([100.0, 500.0]), blip], ignore_index=True)
-        assigned = assign_subjects(noisy, ["parent", "child"])
-        assert assigned[assigned.track_id == 7].subject_id.isna().all()
-        assert set(assigned.subject_id.dropna()) == {"parent", "child"}
-
-    def test_fewer_tracks_than_people_leaves_the_missing_one_out(self):
-        assigned = assign_subjects(scene([100.0]), ["parent", "child"])
-        assert set(assigned.subject_id.dropna()) == {"parent"}
-
-    def test_no_subjects_and_no_tracks(self):
-        assert assign_subjects(scene([100.0]), []).subject_id.isna().all()
-        assert assign_subjects(scene([100.0]).iloc[0:0], ["parent"]).empty
 
 
 class TestTrackQuality:

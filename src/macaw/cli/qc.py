@@ -133,27 +133,45 @@ def accept_owner(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     media: list[str] = typer.Option(None, "--media", help="Camera file, repeatable. Default: every one in doubt."),
-    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of the owner, for one --media."),
+    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of one person, for one --media."),
+    subject: str = typer.Option(None, "--subject", help="Whose tracks --tracks names. Default: the camera's own subject."),
+    rename: str = typer.Option(
+        None, "--rename", help="SHOWN=RIGHT pairs, comma-separated: the person labelled SHOWN in the renders is RIGHT."
+    ),
     by: str = typer.Option(None, "--by", help="Who looked. Default: the login name."),
 ) -> None:
-    """Keep the automatic choice of whose camera it is, or name the owner's tracks instead."""
+    """Keep the automatic choice of who is on camera, or correct it."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
     stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
     recording_ids = resolve_recordings(resolved, recordings)
     wanted = set(media or ())
 
-    if tracks is not None:
+    if tracks is not None or rename is not None:
+        if tracks is not None and rename is not None:
+            raise MacawError("give --tracks or --rename, not both")
         if len(wanted) != 1 or len(recording_ids) != 1:
-            raise MacawError("--tracks names the owner of one camera: give one -r and one --media")
+            raise MacawError("--tracks and --rename correct one camera: give one -r and one --media")
         recording_id, file_name = recording_ids[0], next(iter(wanted))
-        named = [int(track) for track in tracks.split(",") if track.strip()]
+        recording = build_recording(recording_id, resolved)
+        if tracks is not None:
+            people = {_tracks_owner(recording, file_name, subject): [int(track) for track in tracks.split(",") if track.strip()]}
+        else:
+            owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
+            people = _renamed(owners.get(file_name, {}).get("people", {}), rename, recording)
         path = layout.camera_owners_path(recording_id)
         entries = read_owner_file(path)
-        entries[file_name] = {"tracks": named, "by": stamp}
+        claimed = {track for ids in people.values() for track in ids}
+        earlier = {
+            who: ids
+            for who, ids in entries.get(file_name, {}).get("people", {}).items()
+            if who not in people and not claimed & set(ids)
+        }
+        entries[file_name] = {"people": {**earlier, **people}, "by": stamp}
         _write_json(path, entries)
+        named = "; ".join(f"{who} is tracks {_shortened(ids)}" for who, ids in people.items())
         typer.echo(
-            f"{recording_id}: {file_name} belongs to tracks {named}; apply it with "
+            f"{recording_id}: on {file_name}, {named}; apply it with "
             f"`macaw run -r {recording_id} -e pose.kinematics --no-resume`"
         )
         return
@@ -171,14 +189,51 @@ def accept_owner(
         path = layout.camera_owners_accepted_path(recording_id)
         entries = read_owner_file(path)
         for name, owner in chosen.items():
-            entries[name] = {"tracks": owner["tracks"], "by": stamp}
+            entries[name] = {"people": owner["people"], "by": stamp}
         _write_json(path, entries)
-        typer.echo(
-            f"{recording_id}: kept " + ", ".join(f"{name} as tracks {owner['tracks']}" for name, owner in chosen.items())
+        kept = "; ".join(
+            f"{name} as " + ", ".join(f"{who} tracks {_shortened(ids)}" for who, ids in owner["people"].items())
+            for name, owner in chosen.items()
         )
+        typer.echo(f"{recording_id}: kept {kept}")
     unknown = wanted - matched
     if unknown:
-        raise MacawError(f"no owner choice recorded for: {', '.join(sorted(unknown))}")
+        raise MacawError(f"no choice recorded for: {', '.join(sorted(unknown))}")
+
+
+def _shortened(ids: list[int], shown: int = 6) -> str:
+    rest = f" and {len(ids) - shown} more" if len(ids) > shown else ""
+    return ", ".join(str(track) for track in ids[:shown]) + rest
+
+
+def _tracks_owner(recording, file_name: str, subject: str | None) -> str:
+    camera = next((item for item in recording.media if item.path.name == file_name), None)
+    if camera is None:
+        raise MacawError(f"{recording.recording_id} has no file {file_name}")
+    who = subject or camera.subject_id
+    if who is None:
+        raise MacawError(f"{file_name} is a shared camera: say whose tracks these are with --subject")
+    if who not in [person.subject_id for person in recording.subjects]:
+        raise MacawError(f"{who} is not a subject of {recording.recording_id}")
+    return who
+
+
+def _renamed(people: dict[str, list[int]], rename: str, recording) -> dict[str, list[int]]:
+    """The tracks shown under one name, given to the person they really are."""
+    if not people:
+        raise MacawError("no automatic choice recorded for this camera; run pose.keypoints first")
+    pairs = [pair.split("=", 1) for pair in rename.split(",") if pair.strip()]
+    if any(len(pair) != 2 for pair in pairs):
+        raise MacawError("--rename takes SHOWN=RIGHT pairs, e.g. P1=P3,P3=P1")
+    subjects = [person.subject_id for person in recording.subjects]
+    shown = [old.strip() for old, _ in pairs]
+    right = [new.strip() for _, new in pairs]
+    unknown = [name for name in shown if name not in people] + [name for name in right if name not in subjects]
+    if unknown:
+        raise MacawError(f"not a person on this camera or not a subject: {', '.join(unknown)}")
+    if len(set(right)) != len(right):
+        raise MacawError("--rename gives one person two sets of tracks")
+    return {new: people[old] for old, new in zip(shown, right)}
 
 
 def _write_json(path: Path, payload) -> None:
