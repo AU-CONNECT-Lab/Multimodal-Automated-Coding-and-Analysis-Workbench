@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from macaw.qc.checks import CANDIDATE_SCHEMA
-from macaw.qc.figures import pitch_figure, present_spans, timeline_figure
+from macaw.qc.figures import motion_figure, pitch_figure, present_spans, timeline_figure
 from macaw.store.schema import coerce_frame
 
 pytest.importorskip("matplotlib")
@@ -42,4 +42,9 @@ class TestFigures:
     def test_the_pitch_panels_cover_a_person_without_pitch(self, tmp_path):
         pitch = {"parent": (np.arange(0, 10, 0.01), np.full(1000, 220.0))}
         path = pitch_figure(["parent", "child"], pitch, CANDIDATES, tmp_path / "p.png")
+        assert path.stat().st_size > 0
+
+    def test_the_motion_panels_shade_spans_of_nobody_too(self, tmp_path):
+        energy = {"parent": (np.arange(0, 10, 0.04), np.full(250, 0.02))}
+        path = motion_figure(["parent", "child"], energy, CANDIDATES, tmp_path / "m.png")
         assert path.stat().st_size > 0

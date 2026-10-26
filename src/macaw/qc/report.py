@@ -20,7 +20,7 @@ from macaw.project.recording import build_recording
 from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, read_transcript
-from macaw.qc.figures import pitch_figure, present_spans, require_matplotlib, timeline_figure
+from macaw.qc.figures import motion_figure, pitch_figure, present_spans, require_matplotlib, timeline_figure
 from macaw.store.schema import Scale
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -254,6 +254,16 @@ def _over_time(layout, results: RecordingResults, recording_id: str, subjects: l
         octave = candidates[candidates["reason"].astype(str).str.contains("octave")]
         path = pitch_figure(subjects, pitch, octave, directory / "pitch.png")
         figures.append({"name": "Pitch", "hint": "each person's f0; a band of points an octave above or below the rest is a tracking error, shaded where the octave check found one", "href": _href(path, page)})
+    motion = results.long_table("motion.mea", features=["motion_energy"])
+    motion = motion[motion["subject_id"].notna()]
+    if not motion.empty:
+        energy = {
+            str(who): (group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float))
+            for who, group in motion.sort_values("t_start").groupby("subject_id")
+        }
+        flagged = candidates[candidates["check"].astype(str) == "motion_energy"] if "check" in candidates else candidates.iloc[:0]
+        path = motion_figure(subjects, energy, flagged, directory / "motion.png")
+        figures.append({"name": "Motion energy", "hint": "share of each person's region that changed from one frame to the next; shaded where the whole picture changed or froze, or nothing moved for a long time", "href": _href(path, page)})
     return figures
 
 

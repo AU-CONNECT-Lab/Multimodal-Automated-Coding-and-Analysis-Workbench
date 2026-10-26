@@ -238,18 +238,32 @@ def timeline_figure(
 def pitch_figure(subjects: list[str], pitch: dict[str, tuple[np.ndarray, np.ndarray]], candidates, path: Path) -> Path:
     """Each person's f0 track, one panel each on a shared time axis, with the spans the octave
     check flagged shaded; a halving or doubling shows as a band of points an octave off."""
+    return _panels(subjects, pitch, candidates, path, ylabel="f0 (Hz)", empty="no pitch", style=".")
+
+
+def motion_figure(subjects: list[str], energy: dict[str, tuple[np.ndarray, np.ndarray]], candidates, path: Path) -> Path:
+    """Each person's motion energy on a shared time axis, with the spans the motion check flagged shaded."""
+    return _panels(subjects, energy, candidates, path, ylabel="share changed", empty="no region", style="-")
+
+
+def _panels(subjects, series, candidates, path: Path, *, ylabel: str, empty: str, style: str) -> Path:
+    """One panel per person; a span with no subject is shaded on every panel."""
     Figure = require_matplotlib()
     figure = Figure(figsize=(12, 0.6 + 1.6 * len(subjects)), layout="constrained")
     panels = np.atleast_1d(figure.subplots(len(subjects), 1, sharex=True, squeeze=False)[:, 0])
     for axes, subject in zip(panels, subjects):
-        t, f0 = pitch.get(subject, (np.empty(0), np.empty(0)))
-        for span in candidates[candidates["subject_id"].eq(subject).fillna(False).astype(bool)].itertuples():
+        t, values = series.get(subject, (np.empty(0), np.empty(0)))
+        mine = candidates["subject_id"].eq(subject).fillna(False).astype(bool) | candidates["subject_id"].isna()
+        for span in candidates[mine].itertuples():
             axes.axvspan(span.t_start, max(span.t_end, span.t_start + TIMELINE_STEP_S), color=LOOK_COLOR, alpha=0.35, lw=0)
         if t.size:
-            axes.plot(t, f0, ".", ms=1.5, color=SEEN_COLOR, rasterized=True)
+            if style == ".":
+                axes.plot(t, values, ".", ms=1.5, color=SEEN_COLOR, rasterized=True)
+            else:
+                axes.plot(t, values, "-", lw=0.6, color=SEEN_COLOR, rasterized=True)
         else:
-            axes.text(0.5, 0.5, "no pitch", ha="center", va="center", transform=axes.transAxes, color=MUTED_INK)
-        axes.set_ylabel("f0 (Hz)", fontsize=8)
+            axes.text(0.5, 0.5, empty, ha="center", va="center", transform=axes.transAxes, color=MUTED_INK)
+        axes.set_ylabel(ylabel, fontsize=8)
         axes.set_title(subject, loc="left", fontsize=9)
         axes.grid(color=GRID_COLOR, lw=0.5)
         for side in ("top", "right"):
