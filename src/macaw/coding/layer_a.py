@@ -148,14 +148,6 @@ def code_interruptions(transitions: pd.DataFrame, cfg: CodingSection) -> pd.Data
     )
 
 
-def code_mutual_gaze(gaze: pd.DataFrame, cfg) -> pd.DataFrame:
-    raise NotImplementedError(
-        "Moved out of layer A: measured agreement for single-camera mutual gaze sits near 66%, "
-        "which is not a physical fact. It becomes a continuous quantity in the long table plus "
-        "a thresholded boolean carrying its agreement metadata."
-    )
-
-
 def code_gesture_speech_alignment(strokes: pd.DataFrame, prominence: pd.DataFrame) -> pd.DataFrame:
     raise NotImplementedError
 
