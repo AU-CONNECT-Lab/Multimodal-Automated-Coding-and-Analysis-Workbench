@@ -101,7 +101,7 @@ def _render(resolved, layout, recording, results, candidates) -> None:
         seed=cfg.review_seed,
     )
     out_dir = layout.renders_dir(recording.recording_id)
-    index = render_review(recording, keypoints, sample, out_dir)
+    index = render_review(recording, keypoints, sample, out_dir, read_shared=resolved.pose.read_shared)
     logger.info("%s: %d frame(s) rendered", recording.recording_id, len(index))
     typer.echo(str(out_dir))
 

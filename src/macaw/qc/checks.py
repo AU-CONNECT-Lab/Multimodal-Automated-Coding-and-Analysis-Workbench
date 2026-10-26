@@ -189,7 +189,8 @@ def check_track_quality(recording: Recording, config: MacawConfig, results) -> C
     standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
     pieces = [_unassigned(rid, standard), _swaps(rid, results)]
     span = (float(keypoints["t"].min()), float(keypoints["t"].max()))
-    for subject_id, person in standard.groupby("subject_id", dropna=True, observed=True):
+    # frame numbers are each camera's own, so each person is checked per camera they are on
+    for (subject_id, _), person in standard.groupby(["subject_id", "video"], dropna=True, observed=True):
         subject_id = str(subject_id)
         pieces += [
             _missing(rid, subject_id, person, span),
@@ -202,15 +203,18 @@ def check_track_quality(recording: Recording, config: MacawConfig, results) -> C
 
 def _unassigned(rid: str, keypoints: pd.DataFrame) -> pd.DataFrame:
     """A detection no subject was matched to: a third person, a poster, a coat on a chair."""
-    per_frame = (
-        keypoints.assign(stray=keypoints["subject_id"].isna())
-        .groupby("frame")
-        .agg(t=("t", "first"), stray=("stray", "any"))
-    )
-    return candidate_spans(
-        rid, None, "track_quality", "unassigned_detection",
-        per_frame["t"], per_frame["stray"], np.ones(len(per_frame)),
-    )
+    pieces = []
+    for _, view in keypoints.groupby("video", observed=True):
+        per_frame = (
+            view.assign(stray=view["subject_id"].isna()).groupby("frame").agg(t=("t", "first"), stray=("stray", "any"))
+        )
+        pieces.append(
+            candidate_spans(
+                rid, None, "track_quality", "unassigned_detection",
+                per_frame["t"], per_frame["stray"], np.ones(len(per_frame)),
+            )
+        )
+    return _concat_candidates(pieces)
 
 
 def _swaps(rid: str, results) -> pd.DataFrame:

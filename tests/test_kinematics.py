@@ -357,10 +357,21 @@ class TestExtractor:
 
     def test_per_subject_cameras_get_no_pairwise_rows(self, run):
         keypoints = pd.concat([person("parent"), person("child")])
-        result = run(keypoints, [video("a.mp4", "parent"), video("b.mp4", "child")])
+        result = run(keypoints, [video("parent.mp4", "parent"), video("child.mp4", "child")])
         assert result.rows.subject_id_b.isna().all()
         assert "interpersonal_distance" not in {spec.name for spec in result.specs}
         assert any("own camera" in warning.message for warning in result.warnings)
+
+    def test_a_shared_camera_next_to_own_cameras_gives_the_pairs_and_only_the_pairs(self, run):
+        in_room = [person(name, centre=centre, scale=0.2).assign(video="room.mp4")
+                   for name, centre in (("parent", (100.0, 200.0)), ("child", (300.0, 200.0)))]
+        keypoints = pd.concat([person("parent"), person("child"), *in_room])
+        files = [video("parent.mp4", "parent"), video("child.mp4", "child"), video("room.mp4")]
+        rows = run(keypoints, files).rows
+        assert set(rows.subject_id_b.dropna()) == {"child"}
+        alone = run(pd.concat([person("parent"), person("child")]), files[:2]).rows
+        mine = rows[rows.subject_id_b.isna()].reset_index(drop=True)
+        pd.testing.assert_series_equal(mine.value, alone.value.reset_index(drop=True))
 
     def test_a_subject_without_keypoints_is_reported(self, run):
         result = run(person("parent"), [video("room.mp4")])

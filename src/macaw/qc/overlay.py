@@ -151,12 +151,14 @@ def render_review(
     keypoints: pd.DataFrame,
     sample: pd.DataFrame,
     out_dir: Path,
+    *,
+    read_shared: bool = False,
 ) -> pd.DataFrame:
     """One image per sampled moment and camera, plus an index.csv that says why each was drawn."""
     cv2 = _cv2()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    videos, _ = select_videos(recording)
+    videos, _ = select_videos(recording, read_shared=read_shared)
     subjects = [subject.subject_id for subject in recording.subjects]
 
     jobs = []

@@ -70,6 +70,7 @@ pose:
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
   identity_anchors: {}               # subject_id -> x position (0-1 of frame width) on a shared camera; without them who is who waits for a person
+  read_shared: false                 # with per-person cameras, also read the shared one: its people are named by their own camera's head motion and give the pairwise kinematics
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk

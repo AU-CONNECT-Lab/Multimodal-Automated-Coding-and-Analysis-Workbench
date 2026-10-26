@@ -13,7 +13,7 @@ from scipy.signal import savgol_filter
 from macaw.exceptions import SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, select_videos
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, own_views
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -93,7 +93,7 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -114,10 +114,20 @@ class KinematicsExtractor(Extractor):
         )
         keypoints = keypoints[keypoints["subject_id"].notna()]
         subjects = [subject.subject_id for subject in recording.subjects]
+        own = own_views(recording)
+        # a person with their own camera is measured there; a shared camera adds only the pairs
         by_subject = {
-            subject_id: keypoints[keypoints["subject_id"] == subject_id]
+            subject_id: keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == own[subject_id])]
+            if subject_id in own
+            else keypoints[keypoints["subject_id"] == subject_id]
             for subject_id in subjects
-            if (keypoints["subject_id"] == subject_id).any()
+        }
+        by_subject = {subject_id: kp for subject_id, kp in by_subject.items() if not kp.empty}
+        shared = keypoints[~keypoints["video"].isin(set(own.values()))]
+        in_room = {
+            subject_id: shared[shared["subject_id"] == subject_id]
+            for subject_id in subjects
+            if (shared["subject_id"] == subject_id).any()
         }
         warnings = [
             self._warning(recording, subject_id, "warn", "no keypoints for this subject")
@@ -139,19 +149,19 @@ class KinematicsExtractor(Extractor):
 
         # people filmed by separate cameras do not share an image plane, so no pixel distance
         # between them means anything
-        per_subject_cameras = any(item.subject_id is not None for item in select_videos(recording)[0])
-        if per_subject_cameras and len(by_subject) > 1:
+        if own and len(in_room) < 2 and len(by_subject) > 1:
             warnings.append(
                 self._warning(
                     recording, None, "info",
-                    "each person has their own camera, so pairwise quantities were not computed",
+                    "each person has their own camera, so pairwise quantities were not computed "
+                    "(pose.read_shared measures them on a shared camera)",
                 )
             )
         else:
-            for a, b in combinations(by_subject, 2):
+            for a, b in combinations(in_room, 2):
                 frames.append(
                     build_long_rows(
-                        values=_pair_values(by_subject[a], by_subject[b]),
+                        values=_pair_values(in_room[a], in_room[b]),
                         scale=Scale.FRAME,
                         subject_id=a,
                         subject_id_b=b,

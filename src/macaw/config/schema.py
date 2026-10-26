@@ -90,6 +90,7 @@ class PoseSection(_Section):
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
     identity_anchors: dict[str, float] = Field(default_factory=dict)
+    read_shared: bool = False
 
 
 class KinematicsSection(_Section):
