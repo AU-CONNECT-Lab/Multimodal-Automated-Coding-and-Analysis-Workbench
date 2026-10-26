@@ -169,14 +169,19 @@ def landmark_rows(
     min_confidence: float,
 ) -> list[dict]:
     """One frame of detections to BACKEND_KEYPOINT_SCHEMA rows. Pure, so it can be tested
-    without a model file or a video: it only reads x, y and visibility off each landmark."""
+    without a model file or a video: it only reads x, y, visibility and presence off each landmark."""
     rows: list[dict] = []
     for slot, landmarks in enumerate(poses):
         for index, landmark in enumerate(landmarks):
             if index >= len(MEDIAPIPE_LANDMARKS):
                 break                  # a newer model with extra points stays readable
             native = MEDIAPIPE_LANDMARKS[index]
-            confidence = float(getattr(landmark, "visibility", float("nan")))
+            confidence = _score(landmark, "visibility")
+            # visibility alone passes a point extrapolated past the image edge; presence is the
+            # model's own estimate that the point is inside the frame
+            presence = _score(landmark, "presence")
+            if presence < confidence:
+                confidence = presence
             below = not (confidence >= min_confidence)
             rows.append(
                 {
@@ -196,6 +201,11 @@ def landmark_rows(
                 }
             )
     return rows
+
+
+def _score(landmark, name: str) -> float:
+    value = getattr(landmark, name, None)
+    return float("nan") if value is None else float(value)
 
 
 @register_backend(BACKEND_GROUP)

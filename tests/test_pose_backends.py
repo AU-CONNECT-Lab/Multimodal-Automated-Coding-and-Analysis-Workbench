@@ -143,6 +143,35 @@ class TestLandmarkRows:
         )
         assert pd.isna(rows[0]["x"])
 
+    def test_a_point_extrapolated_out_of_frame_is_not_kept(self):
+        """A seated person's elbows under the table come back visible but not present."""
+        @dataclass
+        class Scored:
+            x: float
+            y: float
+            visibility: float
+            presence: float | None
+
+        rows = landmark_rows(
+            [[Scored(0.5, 1.3, 0.53, 0.02), Scored(0.5, 0.8, 0.95, 0.85)]],
+            frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.3,
+        )
+        assert pd.isna(rows[0]["y"])
+        assert rows[0]["confidence"] == pytest.approx(0.02)
+        assert rows[1]["y"] == pytest.approx(0.8 * HEIGHT)
+        assert rows[1]["confidence"] == pytest.approx(0.85)
+
+    def test_a_model_without_presence_falls_back_to_visibility(self):
+        @dataclass
+        class Unscored:
+            x: float
+            y: float
+            visibility: float
+            presence: None = None
+
+        rows = landmark_rows([[Unscored(0.5, 0.5, 0.9)]], frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.3)
+        assert rows[0]["confidence"] == pytest.approx(0.9)
+
     def test_a_model_with_more_points_than_we_know_stays_readable(self):
         rows = landmark_rows(
             [pose(n=len(MEDIAPIPE_LANDMARKS) + 5)],
