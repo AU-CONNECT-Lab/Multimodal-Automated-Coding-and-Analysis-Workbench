@@ -66,10 +66,10 @@ pose:
   device: auto                       # auto | cpu | cuda
   min_confidence: 0.3                # 0-1; keypoints below this become NaN
   input_size: 1280                   # px; side frames are scaled to before detection (yolo); small people need more
-  review: required                   # required | skip; stop before kinematics when a camera's owner is in doubt
+  review: required                   # required | skip; stop before kinematics when who is on a camera is in doubt
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
-  identity_anchors: {}               # subject_id -> initial x position (0-1 of frame width)
+  identity_anchors: {}               # subject_id -> x position (0-1 of frame width) on a shared camera; without them who is who waits for a person
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
@@ -103,6 +103,7 @@ coding:
   codebook: null                     # path to the codebook YAML; required for layer B
   backchannel_lexicon: []            # short acknowledgement tokens, language-specific
   backchannel_max_s: 1.0             # s; longer utterances cannot be backchannels
+  min_turn_internal_pause_s: 0.2     # s; shorter gaps inside a turn are recogniser segment seams; 0 keeps all
   llm:
     provider: ollama                 # local by default; some IRBs forbid uploading audio
     model: llama3.1:8b

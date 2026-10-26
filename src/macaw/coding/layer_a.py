@@ -64,13 +64,15 @@ def code_backchannels(turns: pd.DataFrame, cfg: CodingSection) -> pd.DataFrame:
 
 
 def code_pause_types(
-    turns: pd.DataFrame, cfg: TurnsSection, transcript: pd.DataFrame
+    turns: pd.DataFrame, cfg: TurnsSection, transcript: pd.DataFrame, *, min_internal_s: float = 0.0
 ) -> pd.DataFrame:
     """turn-internal vs switching pause; well established and highly reliable.
 
-    Every positive gap is emitted. How long a pause has to be before it means something is the
-    analyst's assumption, not ours, so no threshold is applied; the duration is on every row."""
-    parts = [_between_turn_pauses(turns, cfg), _within_turn_pauses(turns, transcript)]
+    Every positive gap between turns is emitted. How long a pause has to be before it means
+    something is the analyst's assumption, not ours; the duration is on every row. Inside a turn,
+    gaps under min_internal_s are left out: they are where the recogniser cut one stretch of
+    speech into segments, not silence."""
+    parts = [_between_turn_pauses(turns, cfg), _within_turn_pauses(turns, transcript, min_internal_s)]
     collected = [part for part in parts if not part.empty]
     if not collected:
         return _empty_intervals()
@@ -101,7 +103,7 @@ def _between_turn_pauses(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame
     )
 
 
-def _within_turn_pauses(turns: pd.DataFrame, transcript: pd.DataFrame) -> pd.DataFrame:
+def _within_turn_pauses(turns: pd.DataFrame, transcript: pd.DataFrame, min_s: float) -> pd.DataFrame:
     if turns.empty or transcript.empty:
         return _empty_intervals()
 
@@ -119,7 +121,7 @@ def _within_turn_pauses(turns: pd.DataFrame, transcript: pd.DataFrame) -> pd.Dat
         starts = inside["t_start"].to_numpy(dtype=float)[1:]
         # an utterance can overlap the previous one after crosstalk suppression trims things
         for low, high in zip(ends, starts):
-            if high > low:
+            if high > low and high - low >= min_s:
                 rows.append((str(turn.subject_id), low, high, "turn_internal"))
 
     if not rows:
@@ -201,7 +203,9 @@ class LayerACodingExtractor(Extractor):
 
         coded = {
             BACKCHANNEL_TIER: code_backchannels(turns, self.config.coding),
-            PAUSE_TIER: code_pause_types(turns, self.config.turns, transcript),
+            PAUSE_TIER: code_pause_types(
+                turns, self.config.turns, transcript, min_internal_s=self.config.coding.min_turn_internal_pause_s
+            ),
             INTERRUPTION_TIER: code_interruptions(transitions, self.config.coding),
         }
         return ExtractorResult(
@@ -334,6 +338,7 @@ class LayerACodingExtractor(Extractor):
         params = {
             "backchannel_lexicon": sorted(cfg.backchannel_lexicon),
             "backchannel_max_s": cfg.backchannel_max_s,
+            "min_turn_internal_pause_s": cfg.min_turn_internal_pause_s,
         }
         return [
             FeatureSpec(

@@ -145,6 +145,7 @@ class CodingSection(_Section):
     codebook: Path | None = None
     backchannel_lexicon: list[str] = Field(default_factory=list)
     backchannel_max_s: float = 1.0
+    min_turn_internal_pause_s: float = 0.2
     llm: LLMSection = Field(default_factory=LLMSection)
 
 

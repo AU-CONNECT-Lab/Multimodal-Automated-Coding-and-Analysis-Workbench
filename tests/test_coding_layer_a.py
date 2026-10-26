@@ -180,3 +180,14 @@ class TestInterruptions:
 
     def test_empty_input(self, make_turns, turns_cfg, cfg):
         assert code_interruptions(self.classified(make_turns([]), turns_cfg), cfg).empty
+
+
+class TestSegmentSeams:
+    def test_a_seam_between_recogniser_segments_is_not_a_pause(self, make_turns, make_transcript, turns_cfg):
+        turns = make_turns([("parent", 0.0, 5.0)])
+        transcript = make_transcript(
+            [("parent", 0.0, 2.0, "one"), ("parent", 2.02, 3.0, "two"), ("parent", 3.5, 5.0, "three")]
+        )
+        found = code_pause_types(turns, turns_cfg, transcript, min_internal_s=0.2)
+        assert list(found.t_start) == [3.0]
+        assert len(code_pause_types(turns, turns_cfg, transcript)) == 2
