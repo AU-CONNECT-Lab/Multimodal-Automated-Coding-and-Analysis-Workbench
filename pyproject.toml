@@ -23,14 +23,14 @@ dependencies = [
 
 # ultralytics (AGPL-3.0) and OpenFace (C++, needs compiling) are deliberately not
 # declared here; both are invoked via subprocess and checked for at runtime. ffmpeg is a
-# system binary and is found at runtime for the same reason.
+# system binary and is found at runtime for the same reason. opensmile (research-only
+# licence) is not declared either; prosody.standard_sets imports it if the user installed it.
 
 [project.optional-dependencies]
 audio = [
   "praat-parselmouth>=0.4.3",
   "librosa>=0.10",
   "soundfile>=0.12",
-  "opensmile>=2.5",
 ]
 
 # Install PyTorch from the index matching your CUDA version *before* this group. These
