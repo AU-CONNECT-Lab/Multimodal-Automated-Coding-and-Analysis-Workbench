@@ -17,6 +17,7 @@ from macaw.qc.checks import (
     RecordingResults,
     candidate_spans,
     check_motion_energy,
+    check_mouth_match,
     check_octave_error,
     check_transcript_match,
     check_track_quality,
@@ -28,7 +29,7 @@ from macaw.qc.checks import (
 )
 from macaw.store.keypoints import write_keypoints
 from macaw.store.longtable import build_long_rows, write_long_table
-from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame, validate_frame
+from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, Scale, coerce_frame, empty_frame, validate_frame
 
 FPS = 30.0
 RID = "sub-003_ses-12mo"
@@ -252,9 +253,15 @@ class TestRunChecks:
         with pytest.raises(ConfigError, match="trak_quality"):
             run_checks(RECORDING, config(["trak_quality"]), fake_results())
 
-    def test_an_unimplemented_check_is_reported_not_silently_dropped(self):
-        result = run_checks(RECORDING, config(["au_child_reliability"]), fake_results())
-        assert [(w.check, w.message) for w in result.warnings] == [("au_child_reliability", "not run: not implemented yet")]
+    def test_an_unimplemented_check_is_reported_not_silently_dropped(self, monkeypatch):
+        from macaw.qc import checks
+
+        def unfinished(recording, config, results):
+            raise NotImplementedError
+
+        monkeypatch.setitem(checks._CHECKS, "unfinished", unfinished)
+        result = run_checks(RECORDING, config(["unfinished"]), fake_results())
+        assert [(w.check, w.message) for w in result.warnings] == [("unfinished", "not run: not implemented yet")]
 
     def test_a_check_without_input_says_why(self):
         result = run_checks(RECORDING, config(["track_quality"]), fake_results())
@@ -426,3 +433,71 @@ class TestTranscriptMatch:
 
     def test_without_a_transcript_it_is_skipped(self):
         assert check_transcript_match(RECORDING, None, SimpleNamespace(artifact=lambda e, n: None)).skipped
+
+
+def talk_turns(seconds=240.0, turn=6.0):
+    """parent and child take turns of `turn` seconds with short pauses; returns subject -> spans."""
+    spans, t, who = {"parent": [], "child": []}, 1.0, "parent"
+    rng = np.random.default_rng(3)
+    while t + turn < seconds:
+        length = turn * rng.uniform(0.5, 1.5)
+        spans[who].append((t, t + length))
+        t += length + rng.uniform(0.5, 3.0)
+        who = "child" if who == "parent" else "parent"
+    return spans
+
+
+def mouth_rows(moves_with, spans, seconds=240.0, fps=25.0):
+    """Mouth movement per frame for each subject, high while the person in moves_with[subject] talks."""
+    from macaw.qc.checks import _within
+
+    rng = np.random.default_rng(4)
+    t = np.arange(0, seconds, 1 / fps)
+    parts = []
+    for subject, source in moves_with.items():
+        starts, ends = np.array(spans[source]).T
+        value = rng.gamma(1.0, 0.2, t.size) + 0.6 * _within(t, starts, ends) * rng.random(t.size)
+        parts.append(build_long_rows(values=pd.DataFrame({"t_start": t, "mouth_movement": value}), scale=Scale.FRAME,
+                                     recording_id=RID, source="face.movement", entities={}, subject_id=subject))
+    return pd.concat(parts, ignore_index=True)
+
+
+def two_person_transcript(path, spans):
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_SCHEMA
+
+    rows = [{"recording_id": RID, "subject_id": subject, "utterance_index": i, "t_start": a, "t_end": b, "text": "hi",
+             "n_words": 1, "confidence": 1.0, "avg_logprob": np.nan, "no_speech_prob": np.nan, "language": "en"}
+            for subject, items in spans.items() for i, (a, b) in enumerate(items)]
+    coerce_frame(pd.DataFrame(rows), TRANSCRIPT_SCHEMA, "transcript").to_parquet(path)
+    return path
+
+
+class TestMouthMatch:
+    def run(self, tmp_path, moves_with, spans=None):
+        spans = spans or talk_turns()
+        path = two_person_transcript(tmp_path / "transcript.parquet", spans)
+        mouth = mouth_rows(moves_with, spans if all(spans.values()) else talk_turns())
+        results = SimpleNamespace(artifact=lambda extractor, name: path, long_table=lambda source, features=None: mouth)
+        return {w.subject_id: w for w in check_mouth_match(RECORDING, None, results).warnings}
+
+    def test_mouths_that_move_with_their_own_talk_pass(self, tmp_path):
+        found = self.run(tmp_path, {"parent": "parent", "child": "child"})
+        assert {s: w.severity for s, w in found.items()} == {"parent": "info", "child": "info"}
+        assert found["parent"].details["rho"] > found["parent"].details["rival_rho"]
+
+    def test_swapped_cameras_warn_and_name_whose_talk_the_mouth_follows(self, tmp_path):
+        found = self.run(tmp_path, {"parent": "child", "child": "parent"})
+        assert {s: w.severity for s, w in found.items()} == {"parent": "warn", "child": "warn"}
+        assert found["parent"].details["rival"] == "child"
+
+    def test_someone_who_barely_talks_is_not_judged(self, tmp_path):
+        spans = talk_turns()
+        spans["child"] = spans["child"][:2]
+        found = self.run(tmp_path, {"parent": "parent", "child": "parent"}, spans)
+        assert found["child"].severity == "info" and "too little" in found["child"].message
+
+    def test_without_a_transcript_or_mouth_rows_it_is_skipped(self, tmp_path):
+        assert check_mouth_match(RECORDING, None, SimpleNamespace(artifact=lambda e, n: None)).skipped
+        path = two_person_transcript(tmp_path / "t.parquet", talk_turns())
+        results = SimpleNamespace(artifact=lambda e, n: path, long_table=lambda source, features=None: empty_frame(LONG_TABLE_SCHEMA))
+        assert "face.movement" in check_mouth_match(RECORDING, None, results).skipped

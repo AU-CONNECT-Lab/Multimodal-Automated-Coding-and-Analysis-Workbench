@@ -30,6 +30,7 @@ POSE_SOURCE = "pose.keypoints"
 PROSODY_SOURCE = "prosody.frame"
 MEA_SOURCE = "motion.mea"
 ASR_SOURCE = "text.asr"
+MOUTH_SOURCE = "face.movement"
 
 CANDIDATE_SCHEMA: dict[str, str] = {
     "recording_id": "string",
@@ -58,6 +59,11 @@ _MATCH_DB = 3.0
 _MATCH_Z = 3.0
 # shifts shorter than this could still overlap the real utterances
 _MATCH_SHIFT_S = 10.0
+# mouth movement and talking are compared in bins this long; a person needs this much talk to be judged
+_MOUTH_BIN_S = 0.5
+_MOUTH_MIN_TALK_S = 20.0
+# talk comes in long stretches, so shifting it in time keeps much of its fit and the null is wide
+_MOUTH_Z = 1.5
 # an identical picture for this long is a stalled recording, not a still room
 _FROZEN_S = 1.0
 # nothing at all moving in a person's region for this long: they left it, or it is drawn on a wall
@@ -237,6 +243,83 @@ def check_transcript_match(recording: Recording, config: MacawConfig, results) -
     return CheckResult(warnings=warnings + _summary("transcript_match", rid, candidates), candidates=candidates)
 
 
+@register_check("mouth_match")
+def check_mouth_match(recording: Recording, config: MacawConfig, results) -> CheckResult:
+    """Does the face on a person's camera move its mouth when the transcript has that person
+    talking, more than when anyone else talks. A miss means a camera, mic or transcript is someone else's."""
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, read_transcript
+
+    path = results.artifact(ASR_SOURCE, TRANSCRIPT_NAME)
+    if path is None:
+        return CheckResult(skipped=f"no {ASR_SOURCE} transcript")
+    mouth = results.long_table(MOUTH_SOURCE, features=["mouth_movement"])
+    if mouth.empty:
+        return CheckResult(skipped=f"no {MOUTH_SOURCE} output")
+
+    rid = recording.recording_id
+    utterances = read_transcript(path)
+    talk = {str(subject): spoken for subject, spoken in utterances.groupby("subject_id", dropna=True, observed=True)}
+    warnings = []
+    for subject_id, rows in mouth.groupby("subject_id", dropna=True, observed=True):
+        subject_id = str(subject_id)
+        bins = (rows["t_start"].to_numpy(dtype=float) // _MOUTH_BIN_S).astype(int)
+        moving = pd.Series(rows["value"].to_numpy(dtype=float)).groupby(bins).mean().dropna()
+        if subject_id not in talk or moving.size < 10:
+            continue
+        centres = (moving.index.to_numpy() + 0.5) * _MOUTH_BIN_S
+        talking = {
+            other: _within(centres, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float))
+            for other, spoken in talk.items()
+        }
+        own = talking[subject_id]
+        if own.sum() * _MOUTH_BIN_S < _MOUTH_MIN_TALK_S:
+            warnings.append(
+                QCWarning(
+                    check="mouth_match", recording_id=rid, subject_id=subject_id, severity="info",
+                    message=f"talks {own.sum() * _MOUTH_BIN_S:.0f} s while their face is seen; too little to check the mouth against",
+                )
+            )
+            continue
+        level = moving.rank().to_numpy()
+        rho, z = _rank_contrast(level, own)
+        others = {other: _rank_contrast(level, mask)[0] for other, mask in talking.items() if other != subject_id and mask.any()}
+        rival = max(others, key=others.get) if others else None
+        matched = z >= _MOUTH_Z and (rival is None or rho > others[rival])
+        warnings.append(
+            QCWarning(
+                check="mouth_match",
+                recording_id=rid,
+                subject_id=subject_id,
+                severity="info" if matched else "warn",
+                message=(
+                    f"mouth movement follows their own talking at rho {rho:.2f} (z {z:.1f} against the talking shifted in time)"
+                    + (f", {rival}'s at {others[rival]:.2f}" if rival else "")
+                    + ("" if matched else "; the camera, mic or transcript may be someone else's")
+                ),
+                details={"rho": rho, "z": z, **({"rival": rival, "rival_rho": others[rival]} if rival else {})},
+            )
+        )
+    return CheckResult(warnings=warnings)
+
+
+def _rank_contrast(ranks: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
+    """(Spearman rho of ranked values with a 0/1 mask, its z against the mask shifted in a circle)."""
+    def rho(m):
+        m = m.astype(float)
+        if m.std() == 0:
+            return float("nan")
+        return float(np.corrcoef(ranks, m)[0, 1])
+
+    observed = rho(mask)
+    minimum = int(_MATCH_SHIFT_S / _MOUTH_BIN_S)
+    shifts = np.linspace(minimum, mask.size - minimum, num=200, dtype=int) if mask.size > 2 * minimum else []
+    null = np.array([rho(np.roll(mask, shift)) for shift in np.unique(shifts)])
+    null = null[np.isfinite(null)]
+    if null.size < 10 or null.std() == 0:
+        return observed, float("nan")
+    return observed, float((observed - null.mean()) / null.std())
+
+
 def _within(t: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     order = np.argsort(starts)
     starts, ends = starts[order], np.maximum.accumulate(ends[order])
@@ -368,12 +451,6 @@ def _bone_stretch(rid: str, subject_id: str, person: pd.DataFrame) -> pd.DataFra
     return candidate_spans(
         rid, subject_id, "track_quality", "bone_stretch", times, worst > _BONE_STRETCH, worst
     )
-
-
-@register_check("au_child_reliability")
-def check_au_child_reliability(recording: Recording, config: MacawConfig, results) -> CheckResult:
-    """AU models degrade badly on children; always warn, never silently pass."""
-    raise NotImplementedError
 
 
 @register_check("octave_error")

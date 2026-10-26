@@ -156,6 +156,7 @@ class QCSection(_Section):
     checks: list[str] = Field(
         default_factory=lambda: [
             "transcript_match",
+            "mouth_match",
             "track_quality",
             "octave_error",
             "motion_energy",

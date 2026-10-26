@@ -122,6 +122,7 @@ coding:
 qc:
   checks:
     - transcript_match
+    - mouth_match
     - track_quality
     - octave_error
     - motion_energy
