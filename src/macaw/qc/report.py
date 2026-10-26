@@ -17,7 +17,10 @@ from macaw.extractors.base import Gate, QCWarning
 from macaw.media.align import describe_drift, drift_flagged, read_offset_table, review_reason
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.qc.checks import RecordingResults
+from macaw.exceptions import BackendNotAvailableError
+from macaw.qc.checks import RecordingResults, read_candidates
+from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, read_transcript
+from macaw.qc.figures import pitch_figure, present_spans, require_matplotlib, timeline_figure
 from macaw.store.schema import Scale
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -210,6 +213,50 @@ def _frames(layout, recording_id: str, page: Path) -> list[dict]:
     return sorted(groups, key=lambda group: group["reason"] == "baseline")
 
 
+def _over_time(layout, results: RecordingResults, recording_id: str, subjects: list[str], page: Path) -> list[dict]:
+    """Drawn when the page is written, from what the steps left; skipped without matplotlib."""
+    try:
+        require_matplotlib()
+    except BackendNotAvailableError:
+        return []
+    keypoints = results.keypoints()
+    keypoints = keypoints[keypoints["subject_id"].notna() & keypoints["x"].notna()]
+    seen = {str(who): present_spans(group["t"].to_numpy(dtype=float)) for who, group in keypoints.groupby("subject_id")}
+    frames = results.long_table("prosody.frame", features=["f0_hz"])
+    frames = frames[frames["subject_id"].notna()]
+    pitch_rows = frames[(frames["feature"] == "f0_hz") & frames["value"].notna()]
+    pitch = {
+        str(who): (group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float))
+        for who, group in pitch_rows.groupby("subject_id")
+    }
+    # what the recogniser kept is speech with crosstalk taken out; pitch alone also catches a neighbour
+    transcript = results.artifact("text.asr", TRANSCRIPT_NAME)
+    if transcript is not None:
+        utterances = read_transcript(transcript)
+        heard = {
+            str(who): list(zip(group["t_start"].astype(float), (group["t_end"] - group["t_start"]).astype(float)))
+            for who, group in utterances.groupby("subject_id")
+        }
+        heard_label = "speaking (transcript)"
+    else:
+        heard = {who: present_spans(t) for who, (t, _) in pitch.items()}
+        heard_label = "pitch found on their mic"
+    candidates_path = layout.qc_dir(recording_id) / "candidates.parquet"
+    candidates = read_candidates(candidates_path) if candidates_path.is_file() else pd.DataFrame(
+        columns=["subject_id", "t_start", "t_end", "reason"]
+    )
+    directory = layout.renders_dir(recording_id) / "report"
+    figures = []
+    if seen or heard:
+        path = timeline_figure(subjects, seen, heard, heard_label, candidates, directory / "timeline.png")
+        figures.append({"name": "Seen and heard", "hint": f"when a camera saw each person and when they were heard ({heard_label}); shaded spans were flagged by a check", "href": _href(path, page)})
+    if pitch:
+        octave = candidates[candidates["reason"].astype(str).str.contains("octave")]
+        path = pitch_figure(subjects, pitch, octave, directory / "pitch.png")
+        figures.append({"name": "Pitch", "hint": "each person's f0; a band of points an octave above or below the rest is a tracking error, shaded where the octave check found one", "href": _href(path, page)})
+    return figures
+
+
 def _warnings(layout, results: RecordingResults, recording_id: str) -> list[QCWarning]:
     found = results.extractor_warnings()
     qc_file = layout.qc_dir(recording_id) / "warnings.json"
@@ -255,6 +302,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "alignment": alignment,
         "alignment_figures": alignment_figures,
         "cameras": _cameras(layout, results, recording_id),
+        "over_time": _over_time(layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
         "measures": _measures(layout, results, recording_id, notes),
         "frames": _frames(layout, recording_id, page),
         "warnings": [
@@ -266,6 +314,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     sections = [("Summary", "Summary")]
     sections += [("Alignment", "Alignment")] if alignment else []
     sections += [("Camera", "On camera")] if context["cameras"] else []
+    sections += [("Time", "Over time")] if context["over_time"] else []
     sections += [("Measures", "Measures")] if context["measures"] else []
     sections += [("Frames", "Review frames")] if context["frames"] else []
     sections += [("Warnings", "Warnings"), ("Versions", "Versions")]

@@ -68,6 +68,17 @@
 </table>
 {% endif %}
 
+{% if over_time %}
+<h2 id="Time">Over time</h2>
+<p class="desc">The whole task on one time axis, drawn from what the steps wrote. Click a figure for full size.</p>
+{% for figure in over_time %}
+<details open>
+  <summary>{{ figure.name }} <span class="hint">{{ figure.hint }}</span></summary>
+  <div class="details-body figures"><a href="{{ figure.href }}"><img src="{{ figure.href }}" alt="{{ figure.name }}" loading="lazy"/></a></div>
+</details>
+{% endfor %}
+{% endif %}
+
 {% if measures %}
 <h2 id="Measures">Measures per person</h2>
 <p class="desc">Every recording-level value the steps wrote, one table per step. Hover a name for what it measures.</p>

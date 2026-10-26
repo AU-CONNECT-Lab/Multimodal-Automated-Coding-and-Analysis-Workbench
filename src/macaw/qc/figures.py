@@ -170,3 +170,92 @@ def _format(value: float | None) -> str:
 def _empty(axes, message: str) -> None:
     axes.text(0.5, 0.5, message, ha="center", va="center", transform=axes.transAxes)
     axes.set_axis_off()
+
+
+SEEN_COLOR = "#2a78d6"
+VOICE_COLOR = "#eb6834"
+LOOK_COLOR = "#fab219"
+GRID_COLOR = "#e1e0d9"
+MUTED_INK = "#898781"
+# presence is drawn in steps this long, so a run of single dropped frames does not fray the bar
+TIMELINE_STEP_S = 0.2
+
+
+def present_spans(times: np.ndarray, step: float = TIMELINE_STEP_S) -> list[tuple[float, float]]:
+    """(start, width) runs of the step-wide bins that hold at least one time."""
+    if times.size == 0:
+        return []
+    bins = np.unique(np.floor(np.asarray(times, dtype=float) / step).astype(int))
+    breaks = np.flatnonzero(np.diff(bins) > 1)
+    starts = np.r_[bins[0], bins[breaks + 1]]
+    stops = np.r_[bins[breaks], bins[-1]] + 1
+    return [(float(a * step), float((b - a) * step)) for a, b in zip(starts, stops)]
+
+
+def timeline_figure(
+    subjects: list[str],
+    seen: dict[str, list[tuple[float, float]]],
+    heard: dict[str, list[tuple[float, float]]],
+    heard_label: str,
+    candidates,
+    path: Path,
+) -> Path:
+    """Per person, (start, width) spans when a camera saw them and when they were heard, with the
+    spans the checks flagged shaded behind; a person never seen, or seen but never heard, shows at once."""
+    Figure = require_matplotlib()
+    lanes = [(subject, kind) for subject in subjects for kind in ("seen", "heard")]
+    figure = Figure(figsize=(12, 0.9 + 0.32 * len(lanes)), layout="constrained")
+    axes = figure.subplots()
+    for row, (subject, kind) in enumerate(lanes):
+        spans = (seen if kind == "seen" else heard).get(subject, [])
+        color = SEEN_COLOR if kind == "seen" else VOICE_COLOR
+        axes.broken_barh(spans, (row - 0.35, 0.7), color=color, lw=0)
+    for span in candidates.itertuples():
+        rows = [row for row, (subject, _) in enumerate(lanes) if subject == span.subject_id]
+        low, high = (min(rows) - 0.5, max(rows) + 0.5) if rows else (-0.5, len(lanes) - 0.5)
+        axes.fill_between([span.t_start, max(span.t_end, span.t_start + TIMELINE_STEP_S)], low, high,
+                          color=LOOK_COLOR, alpha=0.35, lw=0, zorder=0)
+    axes.set_yticks(range(len(lanes)), [f"{subject}  {kind}" for subject, kind in lanes], fontsize=8)
+    axes.set_ylim(len(lanes) - 0.5, -0.5)
+    axes.set_xlabel("recording time (s)")
+    axes.grid(axis="x", color=GRID_COLOR, lw=0.5)
+    axes.tick_params(colors=MUTED_INK, labelcolor="0.2")
+    for side in ("top", "right", "left"):
+        axes.spines[side].set_visible(False)
+    from matplotlib.patches import Patch
+
+    axes.legend(
+        handles=[Patch(color=SEEN_COLOR, label="seen on camera"), Patch(color=VOICE_COLOR, label=heard_label),
+                 Patch(color=LOOK_COLOR, alpha=0.35, label="flagged by a check")],
+        loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, fontsize=8, frameon=False,
+    )
+    return _save(figure, path)
+
+
+def pitch_figure(subjects: list[str], pitch: dict[str, tuple[np.ndarray, np.ndarray]], candidates, path: Path) -> Path:
+    """Each person's f0 track, one panel each on a shared time axis, with the spans the octave
+    check flagged shaded; a halving or doubling shows as a band of points an octave off."""
+    Figure = require_matplotlib()
+    figure = Figure(figsize=(12, 0.6 + 1.6 * len(subjects)), layout="constrained")
+    panels = np.atleast_1d(figure.subplots(len(subjects), 1, sharex=True, squeeze=False)[:, 0])
+    for axes, subject in zip(panels, subjects):
+        t, f0 = pitch.get(subject, (np.empty(0), np.empty(0)))
+        for span in candidates[candidates["subject_id"] == subject].itertuples():
+            axes.axvspan(span.t_start, max(span.t_end, span.t_start + TIMELINE_STEP_S), color=LOOK_COLOR, alpha=0.35, lw=0)
+        if t.size:
+            axes.plot(t, f0, ".", ms=1.5, color=SEEN_COLOR, rasterized=True)
+        else:
+            axes.text(0.5, 0.5, "no pitch", ha="center", va="center", transform=axes.transAxes, color=MUTED_INK)
+        axes.set_ylabel("f0 (Hz)", fontsize=8)
+        axes.set_title(subject, loc="left", fontsize=9)
+        axes.grid(color=GRID_COLOR, lw=0.5)
+        for side in ("top", "right"):
+            axes.spines[side].set_visible(False)
+    panels[-1].set_xlabel("recording time (s)")
+    return _save(figure, path)
+
+
+def _save(figure, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=110)
+    return path
