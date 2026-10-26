@@ -13,6 +13,7 @@
 - Command line interface for setting up a project, running extractors, and inspecting config.
 - Body movement measures from pose, quality checks that point at the frames worth reviewing (`macaw qc --render`), your own choice and grouping of what runs (`pipeline:`), and a template for adding your own extractors (`macaw new-extractor`).
 - Lining up files from separate devices by their sound (`macaw align`), with a figure per file to check the result, and setting an offset by hand (`macaw set-offset`).
+- Pose from YOLO as well as MediaPipe, chosen explicitly (`pose.backend` has no default), runs that stop for a person only where something is in doubt (`macaw accept-offset`, `macaw identify`, `macaw accept-owner`), and usage reporting by the tools pymacaw calls turned off by default.
 
 ## [0.1.0-alpha] – 2026-08-13
 
