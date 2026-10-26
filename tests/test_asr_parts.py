@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -77,6 +78,15 @@ class TestEmptyTranscript:
 
     def test_word_columns_survive(self):
         assert list(_concat([], WORD_SCHEMA).columns) == list(WORD_SCHEMA)
+
+
+class TestOtherRecognisers:
+    def test_columns_only_faster_whisper_gives_are_left_empty(self):
+        from_csv = pd.DataFrame({"utterance_index": [0], "t_start": [1.0], "t_end": [2.0], "text": ["hi"],
+                                 "confidence": [np.nan], "language": ["en"], "recording_id": ["r"], "subject_id": ["a"]})
+        out = _concat([from_csv], TRANSCRIPT_SCHEMA, drop={"n_words"})
+        assert list(out.columns) == [name for name in TRANSCRIPT_SCHEMA if name != "n_words"]
+        assert out[["avg_logprob", "no_speech_prob"]].isna().all().all()
 
 
 class TestLongTableRows:

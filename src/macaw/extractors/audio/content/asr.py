@@ -568,7 +568,8 @@ def _concat(parts: list[pd.DataFrame], schema: dict[str, str], drop: set[str] | 
     columns = [name for name in schema if name not in (drop or set())]
     if not parts:
         return empty_frame(schema).loc[:, columns]
-    return pd.concat(parts, ignore_index=True).loc[:, columns]
+    # a column only some recognisers give (avg_logprob, no_speech_prob) is empty for the others
+    return pd.concat(parts, ignore_index=True).reindex(columns=columns)
 
 
 def _keep_utterances(words: pd.DataFrame, utterances: pd.DataFrame) -> pd.DataFrame:
