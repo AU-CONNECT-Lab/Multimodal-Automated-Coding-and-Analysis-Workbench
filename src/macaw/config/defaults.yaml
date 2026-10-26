@@ -90,7 +90,6 @@ motion:
 
 turns:
   max_gap_s: 2.0                     # s; longer silence ends a turn instead of continuing it
-  lookback: 3                        # turns considered when attributing a transition
   interruption_overlap_s: 0.5        # s; overlap above this is an interruption, below a backchannel
   smooth_transfer_gap_s: 0.2         # s; |gap| under this counts as a fluent transfer
   silence_min_s: 1.0                 # s; joint silence longer than this is logged as a pause

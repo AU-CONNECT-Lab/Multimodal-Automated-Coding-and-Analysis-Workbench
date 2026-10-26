@@ -114,7 +114,6 @@ class MotionSection(_Section):
 
 class TurnsSection(_Section):
     max_gap_s: float = 2.0
-    lookback: int = 3
     interruption_overlap_s: float = 0.5
     smooth_transfer_gap_s: float = 0.2
     silence_min_s: float = 1.0
