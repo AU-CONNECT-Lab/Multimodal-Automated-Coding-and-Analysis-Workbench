@@ -284,7 +284,7 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = ("text", "segment")

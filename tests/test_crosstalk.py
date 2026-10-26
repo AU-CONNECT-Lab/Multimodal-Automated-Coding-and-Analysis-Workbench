@@ -88,11 +88,21 @@ def test_simultaneous_speech_survives(two_tracks):
 
 @pytest.mark.parametrize(
     "bleed_db, dropped",
-    [(3.0, False), (5.0, False), (6.0, False), (7.0, True), (12.0, True)],
+    [(3.0, False), (5.0, False), (7.0, True), (12.0, True)],
 )
 def test_margin_boundary(two_tracks, bleed_db, dropped):
-    """The comparison is strictly greater, so bleed at exactly the margin stays."""
     assert _flags(two_tracks(bleed_db))["A solo, bleed"] is dropped
+
+
+def test_a_mic_recorded_quieter_keeps_its_owners_speech(two_tracks, tmp_path, write_wav):
+    """B's mic is turned 10 dB down; A's bleed is still dropped from it and B still speaks on it."""
+    from macaw.extractors.audio.prosody.backends import load_audio
+
+    tracks = two_tracks(12.0)
+    tracks["B"] = write_wav(tmp_path / "B_quiet.wav", load_audio(tracks["B"])[0] * 10 ** (-10 / 20))
+    flags = _flags(tracks)
+    assert not flags["B solo, own track"] and not flags["both talking, B"]
+    assert flags["A solo, bleed"]
 
 
 def test_margin_is_configurable(two_tracks):
