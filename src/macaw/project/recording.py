@@ -79,10 +79,11 @@ class Recording:
                 return item
         return None
 
-    def reference_media(self) -> MediaFile:
-        """The clock everything else is aligned to."""
+    def reference_media(self, among: list[MediaFile] | None = None) -> MediaFile:
+        """The clock everything else is aligned to, picked from among when given."""
+        pool = self.media if among is None else among
         for kind in ("video", "audio"):
-            candidates = [item for item in self.media if item.kind == kind]
+            candidates = [item for item in pool if item.kind == kind]
             if candidates:
                 # longest first, then by path so the choice never depends on scan order
                 return sorted(candidates, key=lambda m: (-(m.duration_s or 0.0), str(m.path)))[0]

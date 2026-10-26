@@ -11,7 +11,8 @@ import pandas as pd
 from macaw.exceptions import UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.media.align import apply_alignment, read_offset_table
+from macaw.media.align import GCC_PHAT, UNALIGNED, apply_alignment, read_offset_table
+from macaw.media.drift import drift_is_real
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
 from macaw.project.layout import layout_for
@@ -275,33 +276,42 @@ class MediaPrepExtractor(Extractor):
         results = read_offset_table(table)
         apply_alignment(recording, results, recut=False)
 
-        for item in recording.media:
-            if item.offset_confidence is not None and item.offset_confidence < cfg.min_confidence:
-                warnings.append(
-                    QCWarning(
-                        check="alignment_confidence",
-                        recording_id=recording.recording_id,
-                        subject_id=item.subject_id,
-                        severity="warn",
-                        message=(
-                            f"{item.path.name} aligned at confidence "
-                            f"{item.offset_confidence:.3f}, below {cfg.min_confidence:.3f}"
-                        ),
-                        details={"offset_s": item.offset_s},
-                    )
+        def warn(check: str, item, message: str, **details) -> None:
+            warnings.append(
+                QCWarning(
+                    check=check,
+                    recording_id=recording.recording_id,
+                    subject_id=item.subject_id,
+                    severity="warn",
+                    message=message,
+                    details=details,
                 )
-            if item.drift_ppm is not None and abs(item.drift_ppm) > cfg.max_drift_ppm:
-                warnings.append(
-                    QCWarning(
-                        check="clock_drift",
-                        recording_id=recording.recording_id,
-                        subject_id=item.subject_id,
-                        severity="warn",
-                        message=(
-                            f"{item.path.name} drifts {item.drift_ppm:.1f} ppm, "
-                            f"above {cfg.max_drift_ppm:.1f}"
-                        ),
-                    )
+            )
+
+        by_name = {result.target: result for result in results}
+        for item in recording.media:
+            result = by_name.get(item.path.name)
+            if result is None:
+                warn("alignment_missing", item, f"{item.path.name} is not in the offset table; run `macaw align` again")
+                continue
+            if result.method == UNALIGNED:
+                warn(
+                    "alignment_missing", item,
+                    f"{item.path.name} was not aligned ({result.note}) and is taken to start with "
+                    f"{result.reference}; check it and set it with `macaw set-offset`",
+                    metadata_offset_s=result.metadata_offset_s,
+                )
+            elif result.method == GCC_PHAT and result.confidence is not None and result.confidence < cfg.min_confidence:
+                warn(
+                    "alignment_confidence", item,
+                    f"{item.path.name} aligned at confidence {result.confidence:.3f}, below {cfg.min_confidence:.3f}",
+                    offset_s=result.offset_s,
+                )
+            if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
+                warn(
+                    "clock_drift", item,
+                    f"{item.path.name} drifts {result.drift_ppm:.1f} ppm (r2 {result.drift_r2:.2f}), "
+                    f"above {cfg.max_drift_ppm:.1f}",
                 )
 
     def _rows(self, recording: Recording, start: float, end: float, n_tracks: int):

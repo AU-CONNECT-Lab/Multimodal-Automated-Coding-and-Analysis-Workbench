@@ -4,65 +4,140 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
 from macaw.config.schema import AlignSection
 from macaw.exceptions import AlignmentFailedError, MacawError
+from macaw.media.drift import MIN_SEGMENTS, estimate_drift, segment_offsets
 from macaw.media.ffmpeg import decode_audio
 from macaw.project.recording import Recording
 
 SAMPLE_RATE = 16000
-# an hour-long file would make the FFT the slowest thing in the pipeline; the global offset
-# is already settled by the opening minutes
+# an hour-long file would make the FFT the slowest thing in the pipeline; once the coarse lag
+# has lined the files up, the opening minutes settle the fine offset
 MAX_CORRELATION_S = 600.0
+ENVELOPE_STEP_S = 0.05
+# the coarse lag is good to a frame or two, so the fine search only needs a little room
+FINE_WINDOW_S = 1.0
+# early reflections land within this of the direct path and are the same event; the rivals
+# worth flagging are another match altogether, farther away
+PHAT_EXCLUSION_S = 0.05
+# envelope correlations are smooth over about a syllable, so a rival has to be well clear
+ENVELOPE_EXCLUSION_S = 2.0
+
+GCC_PHAT = "gcc_phat"
+MANUAL = "manual"
+# nothing to correlate: taken to start with the reference until a person sets it
+UNALIGNED = "unaligned"
 
 
 @dataclass
 class AlignResult:
-    reference: Path
-    target: Path
+    # file names, not paths, so a table written on one machine applies on another
+    reference: str
+    target: str
     offset_s: float
-    confidence: float                # peak sharpness, 0-1
+    confidence: float | None         # fine peak sharpness, 0-1; None when nothing was correlated
+    coarse_offset_s: float | None = None
+    coarse_confidence: float | None = None
     drift_ppm: float | None = None
     drift_r2: float | None = None
     segment_offsets: list[tuple[float, float]] | None = None
+    method: str = GCC_PHAT
+    metadata_offset_s: float | None = None
+    note: str | None = None
 
 
-def gcc_phat(
-    a: np.ndarray, b: np.ndarray, sample_rate: float, max_lag_s: float
-) -> tuple[float, float]:
-    """Returns (lag_s, confidence). PHAT weighting is what makes this robust to room response."""
+def _correlate(a: np.ndarray, b: np.ndarray, rate: float, max_lag_s: float, *, phat: bool):
+    """(lags_s, correlation) over +-max_lag_s; a positive lag means b started after a."""
     if a.size == 0 or b.size == 0:
         raise AlignmentFailedError("Cannot correlate an empty signal")
 
     size = int(2 ** np.ceil(np.log2(a.size + b.size)))
     spectrum = np.fft.rfft(a, size) * np.conj(np.fft.rfft(b, size))
-    # PHAT: keep only the phase. Magnitude carries the room and the mic, which differ
-    # between the two recorders and would otherwise dominate the peak.
-    magnitude = np.abs(spectrum)
-    spectrum /= np.maximum(magnitude, 1e-12)
+    if phat:
+        # keep only the phase. Magnitude carries the room and the mic, which differ between
+        # the two recorders and would otherwise dominate the peak.
+        spectrum /= np.maximum(np.abs(spectrum), 1e-12)
     correlation = np.fft.irfft(spectrum, size)
 
-    max_lag = int(min(max_lag_s * sample_rate, size // 2))
+    max_lag = max(int(min(max_lag_s * rate, size // 2)), 1)
     window = np.concatenate((correlation[-max_lag:], correlation[: max_lag + 1]))
-    peak_index = int(np.argmax(window))
-    peak = float(window[peak_index])
-    if peak <= 0:
-        return 0.0, 0.0
+    return np.arange(-max_lag, max_lag + 1) / rate, window
 
-    lag_s = (peak_index - max_lag) / sample_rate
 
-    # sharpness against the best competing peak, not against the noise floor: a periodic
-    # signal produces many tall peaks and that is exactly the case worth flagging
-    exclusion = max(int(0.005 * sample_rate), 1)
+def phat_correlation(a: np.ndarray, b: np.ndarray, sample_rate: float, max_lag_s: float):
+    return _correlate(a, b, sample_rate, max_lag_s, phat=True)
+
+
+def envelope(signal: np.ndarray, sample_rate: float, step_s: float = ENVELOPE_STEP_S) -> np.ndarray:
+    step = max(int(step_s * sample_rate), 1)
+    n = signal.size // step
+    return np.sqrt((signal[: n * step].reshape(n, step) ** 2).mean(axis=1))
+
+
+def envelope_correlation(reference: np.ndarray, target: np.ndarray, sample_rate: float, max_lag_s: float):
+    """Loudness envelopes on a log scale, so a close-talk mic and a room mic still rise and fall
+    together; good to a frame, blind to timbre, and cheap over a whole file."""
+    def standardised(signal):
+        env = envelope(signal, sample_rate)
+        env = np.log(env / max(float(np.percentile(env, 99)), 1e-12) + 1e-3)
+        return (env - env.mean()) / max(float(env.std()), 1e-12)
+
+    a, b = standardised(reference), standardised(target)
+    lags, window = _correlate(a, b, 1.0 / ENVELOPE_STEP_S, max_lag_s, phat=False)
+    return lags, window / min(a.size, b.size)
+
+
+def top_two_peaks(window: np.ndarray, exclusion: int) -> tuple[int, int]:
+    """The highest peak and the best competitor more than exclusion samples away from it."""
+    best = int(np.argmax(window))
     masked = window.copy()
-    low = max(peak_index - exclusion, 0)
-    masked[low : peak_index + exclusion + 1] = 0.0
-    runner_up = float(np.max(masked)) if masked.size else 0.0
-    confidence = float(np.clip(1.0 - max(runner_up, 0.0) / peak, 0.0, 1.0))
-    return lag_s, confidence
+    masked[max(best - exclusion, 0) : best + exclusion + 1] = -np.inf
+    return best, int(np.argmax(masked))
+
+
+def sharpness(window: np.ndarray, exclusion: int) -> tuple[int, float]:
+    """(peak index, confidence). Measured against the best competing peak, not the noise
+    floor: a periodic signal produces many tall peaks and that is exactly the case to flag."""
+    best, rival = top_two_peaks(window, exclusion)
+    peak = float(window[best])
+    if peak <= 0:
+        return best, 0.0
+    competitor = max(float(window[rival]), 0.0) if np.isfinite(window[rival]) else 0.0
+    return best, float(np.clip(1.0 - competitor / peak, 0.0, 1.0))
+
+
+def gcc_phat(
+    a: np.ndarray, b: np.ndarray, sample_rate: float, max_lag_s: float
+) -> tuple[float, float]:
+    """Returns (lag_s, confidence). A positive lag means b started after a."""
+    lags, window = phat_correlation(a, b, sample_rate, max_lag_s)
+    best, confidence = sharpness(window, max(int(PHAT_EXCLUSION_S * sample_rate), 1))
+    return (float(lags[best]), confidence) if confidence > 0 else (0.0, 0.0)
+
+
+def envelope_lag(reference: np.ndarray, target: np.ndarray, sample_rate: float, max_lag_s: float):
+    lags, window = envelope_correlation(reference, target, sample_rate, max_lag_s)
+    best, confidence = sharpness(window, int(ENVELOPE_EXCLUSION_S / ENVELOPE_STEP_S))
+    return float(lags[best]), confidence
+
+
+def fine_pieces(reference: np.ndarray, target: np.ndarray, shift: int, limit: int):
+    """The overlapping stretch once target sample j is placed at reference sample j + shift,
+    capped at limit samples."""
+    start_reference, start_target = max(shift, 0), max(-shift, 0)
+    length = min(reference.size - start_reference, target.size - start_target, limit)
+    if length <= 0:
+        raise AlignmentFailedError("The two files do not overlap at the coarse offset")
+    return (
+        reference[start_reference : start_reference + length],
+        target[start_target : start_target + length],
+    )
 
 
 def load_normalised(path: Path, limit_s: float | None = MAX_CORRELATION_S) -> np.ndarray:
@@ -74,49 +149,104 @@ def load_normalised(path: Path, limit_s: float | None = MAX_CORRELATION_S) -> np
     return samples / peak if peak > 0 else samples
 
 
-def align_pair(reference: Path, target: Path, cfg: AlignSection) -> AlignResult:
-    reference_audio = load_normalised(reference)
-    target_audio = load_normalised(target)
-    lag_s, confidence = gcc_phat(reference_audio, target_audio, SAMPLE_RATE, cfg.search_window_s)
-
+def align_signals(
+    reference: np.ndarray, target: np.ndarray, cfg: AlignSection, *, names: tuple[str, str]
+) -> AlignResult:
+    """Both at SAMPLE_RATE. Coarse lag from envelopes over the whole files, then GCC-PHAT on
+    the first minutes of overlap for the exact offset, then drift over the whole overlap."""
+    coarse_s, coarse_confidence = envelope_lag(reference, target, SAMPLE_RATE, cfg.search_window_s)
+    shift = int(round(coarse_s * SAMPLE_RATE))
+    piece_reference, piece_target = fine_pieces(reference, target, shift, int(MAX_CORRELATION_S * SAMPLE_RATE))
+    residual_s, confidence = gcc_phat(piece_reference, piece_target, SAMPLE_RATE, FINE_WINDOW_S)
+    lag_s = shift / SAMPLE_RATE + residual_s
     result = AlignResult(
-        reference=Path(reference), target=Path(target), offset_s=lag_s, confidence=confidence
+        reference=names[0], target=names[1], offset_s=lag_s, confidence=confidence,
+        coarse_offset_s=coarse_s, coarse_confidence=coarse_confidence,
     )
     if cfg.drift_check:
-        from macaw.media.drift import check_drift
-
-        drift_ppm, r_squared, _ = check_drift(reference, target, cfg)
-        result.drift_ppm = drift_ppm
-        result.drift_r2 = r_squared
+        duration_s = min(reference.size, target.size) / SAMPLE_RATE
+        segments = segment_offsets(
+            reference,
+            target,
+            SAMPLE_RATE,
+            offset_s=lag_s,
+            segment_s=cfg.drift_segment_s,
+            # room for twice the tolerated drift over the whole file, and never under a second
+            max_residual_s=max(1.0, 2 * cfg.max_drift_ppm * 1e-6 * duration_s),
+            min_confidence=cfg.min_confidence,
+        )
+        result.segment_offsets = segments
+        if len(segments) >= MIN_SEGMENTS:
+            result.drift_ppm, result.drift_r2 = estimate_drift(segments)
     return result
 
 
-def align_recording(recording: Recording, cfg: AlignSection) -> list[AlignResult]:
-    """Aligns every media file to recording.reference_media()."""
-    reference = recording.reference_media()
+def metadata_offset(reference: str | None, target: str | None) -> float | None:
+    """Start-time difference from container tags, same sign as offset_s. A hint for a person
+    only: device clocks are set by hand and some devices write local time labelled as UTC."""
+    try:
+        return (datetime.fromisoformat(target) - datetime.fromisoformat(reference)).total_seconds()
+    except (TypeError, ValueError):
+        return None
+
+
+def align_recording(
+    recording: Recording,
+    cfg: AlignSection,
+    infos: dict,
+    on_pair: Callable[[np.ndarray, np.ndarray, AlignResult], None] | None = None,
+) -> list[AlignResult]:
+    """Aligns every file to one reference that has audio. infos maps file name to its probe
+    result; on_pair sees each correlated pair's signals, e.g. to draw it for review."""
+    audible = [item for item in recording.media if infos[item.path.name].audio_streams()]
+    if not audible:
+        raise AlignmentFailedError(f"{recording.recording_id}: no file has an audio stream to align by")
+    reference = recording.reference_media(among=audible)
+    reference_name = reference.path.name
+    reference_audio = load_normalised(reference.path, limit_s=None)
+
     results: list[AlignResult] = []
     for item in recording.media:
-        if item.path == reference.path:
-            results.append(
-                AlignResult(reference=reference.path, target=item.path, offset_s=0.0, confidence=1.0)
-            )
+        name = item.path.name
+        if item is reference:
+            results.append(AlignResult(reference=name, target=name, offset_s=0.0, confidence=1.0))
+            continue
+        hint = metadata_offset(infos[reference_name].creation_time, infos[name].creation_time)
+        unaligned = AlignResult(
+            reference=reference_name, target=name, offset_s=0.0, confidence=None,
+            method=UNALIGNED, metadata_offset_s=hint, note="no audio stream",
+        )
+        if item not in audible:
+            results.append(unaligned)
             continue
         try:
-            results.append(align_pair(reference.path, item.path, cfg))
+            target_audio = load_normalised(item.path, limit_s=None)
+            result = align_signals(reference_audio, target_audio, cfg, names=(reference_name, name))
         except MacawError as error:
-            # a file with no usable audio cannot be aligned; record it at zero confidence
-            # so QC reports it instead of the run stopping here
-            results.append(
-                AlignResult(
-                    reference=reference.path,
-                    target=item.path,
-                    offset_s=0.0,
-                    confidence=0.0,
-                    segment_offsets=None,
-                )
-            )
-            recording.metadata.setdefault("align_errors", {})[str(item.path)] = str(error)
+            # one unreadable file should be reported, not stop the other files from aligning
+            unaligned.note = str(error)
+            results.append(unaligned)
+            continue
+        result.metadata_offset_s = hint
+        if on_pair is not None:
+            on_pair(reference_audio, target_audio, result)
+        results.append(result)
     return results
+
+
+def keep_manual(
+    fresh: list[AlignResult], previous: list[AlignResult]
+) -> tuple[list[AlignResult], list[str]]:
+    """A re-run never overwrites an offset a person set, unless the reference it was set
+    against is no longer the reference. Returns the merged table and the targets dropped."""
+    reference = next((result.reference for result in fresh), None)
+    manual = {result.target: result for result in previous if result.method == MANUAL}
+    stale = [target for target, result in manual.items() if result.reference != reference]
+    merged = [
+        manual[result.target] if result.target in manual and result.target not in stale else result
+        for result in fresh
+    ]
+    return merged, stale
 
 
 def write_offset_table(results: list[AlignResult], path: Path) -> Path:
@@ -125,8 +255,6 @@ def write_offset_table(results: list[AlignResult], path: Path) -> Path:
     payload = []
     for result in results:
         entry = asdict(result)
-        entry["reference"] = str(result.reference)
-        entry["target"] = str(result.target)
         if result.segment_offsets is not None:
             entry["segment_offsets"] = [list(pair) for pair in result.segment_offsets]
         payload.append(entry)
@@ -138,17 +266,9 @@ def read_offset_table(path: Path) -> list[AlignResult]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     results = []
     for entry in payload:
-        segments = entry.get("segment_offsets")
+        segments = entry.pop("segment_offsets", None)
         results.append(
-            AlignResult(
-                reference=Path(entry["reference"]),
-                target=Path(entry["target"]),
-                offset_s=entry["offset_s"],
-                confidence=entry["confidence"],
-                drift_ppm=entry.get("drift_ppm"),
-                drift_r2=entry.get("drift_r2"),
-                segment_offsets=[tuple(pair) for pair in segments] if segments else None,
-            )
+            AlignResult(**entry, segment_offsets=[tuple(pair) for pair in segments] if segments else None)
         )
     return results
 
@@ -156,10 +276,11 @@ def read_offset_table(path: Path) -> list[AlignResult]:
 def apply_alignment(
     recording: Recording, results: list[AlignResult], *, recut: bool = False
 ) -> Recording:
-    """Default is to record the offset and let readers add it; recut re-encodes instead."""
-    offsets = {result.target: result for result in results}
+    """Default is to record the offset and let readers add it; recut re-encodes instead.
+    Files are matched by name, so a table made on another machine still applies."""
+    by_name = {result.target: result for result in results}
     for item in recording.media:
-        result = offsets.get(item.path)
+        result = by_name.get(item.path.name)
         if result is None:
             continue
         item.offset_s = result.offset_s

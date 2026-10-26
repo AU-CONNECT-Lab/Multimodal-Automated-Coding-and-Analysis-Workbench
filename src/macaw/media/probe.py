@@ -39,6 +39,7 @@ class MediaInfo:
     duration_s: float
     streams: list[StreamInfo]
     variable_frame_rate: bool = False
+    creation_time: str | None = None    # as the device wrote it; its clock and time zone are unchecked
 
     def video_streams(self) -> list[StreamInfo]:
         return [stream for stream in self.streams if stream.codec_type == "video"]
@@ -134,7 +135,13 @@ def probe(path: Path) -> MediaInfo:
     if not duration:
         raise UnreadableMediaError(f"{path}: ffprobe reports no duration, the file may be truncated")
 
-    return MediaInfo(path=path, duration_s=duration, streams=streams, variable_frame_rate=variable)
+    tagged = [payload.get("format", {}), *payload.get("streams", [])]
+    creation = next(
+        (item["tags"]["creation_time"] for item in tagged if "creation_time" in (item.get("tags") or {})), None
+    )
+    return MediaInfo(
+        path=path, duration_s=duration, streams=streams, variable_frame_rate=variable, creation_time=creation
+    )
 
 
 def frame_timestamps(path: Path, stream_index: int = 0) -> list[float]:

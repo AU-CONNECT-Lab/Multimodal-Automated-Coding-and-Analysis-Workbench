@@ -58,6 +58,11 @@ gui = [
   "pywebview>=5.0",
 ]
 
+# review figures and the QC report
+report = [
+  "matplotlib>=3.8",
+]
+
 llm = [
   "anthropic>=0.34",
   "openai>=1.40",
@@ -66,7 +71,7 @@ llm = [
 
 # roughly 6 GB of wheels, and it resolves torch itself; prefer the groups above
 all = [
-  "pymacaw[audio,asr,text,vision,gui,llm]",
+  "pymacaw[audio,asr,text,vision,gui,report,llm]",
 ]
 
 dev = [

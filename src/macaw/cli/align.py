@@ -1,10 +1,31 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import typer
 
+from macaw.config.loader import resolve_config
+from macaw.exceptions import BackendNotAvailableError, MacawError
+from macaw.execution.runner import resolve_recordings
+from macaw.logging_setup import get_logger
+from macaw.media.align import (
+    MANUAL,
+    SAMPLE_RATE,
+    UNALIGNED,
+    AlignResult,
+    align_recording,
+    keep_manual,
+    read_offset_table,
+    write_offset_table,
+)
+from macaw.media.drift import drift_is_real
+from macaw.media.probe import probe
+from macaw.project.layout import layout_for
+from macaw.project.recording import build_recording
+
 app = typer.Typer()
+logger = get_logger("align")
 
 
 @app.command("align")
@@ -15,8 +36,38 @@ def align(
     drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check"),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
-    """Estimate inter-source offsets by cross-correlation and flag low-confidence results."""
-    raise NotImplementedError
+    """Estimate inter-source offsets by cross-correlation and draw each pair for review."""
+    if recut:
+        raise MacawError("--recut is not supported yet; offsets are stored and added when files are read")
+    overrides = list(set_ or ())
+    if not drift_check:
+        overrides.append("align.drift_check=false")
+    resolved = resolve_config(config, cli_overrides=overrides)
+    cfg = resolved.align
+    if cfg.method == "none":
+        typer.echo("align.method is none: every file is taken to start together, nothing to estimate")
+        return
+    if cfg.method == "manual":
+        typer.echo("align.method is manual: set each offset with `macaw set-offset`")
+        return
+
+    layout = layout_for(resolved)
+    for recording_id in resolve_recordings(resolved, recordings):
+        recording = build_recording(recording_id, resolved)
+        infos = _probe_all(recording)
+        figures = layout.renders_dir(recording_id) / "align"
+        results = align_recording(recording, cfg, infos, on_pair=_drawer(figures, cfg))
+
+        path = layout.offset_table_path(recording_id)
+        if path.is_file():
+            results, stale = keep_manual(results, read_offset_table(path))
+            for target in stale:
+                typer.echo(f"  {target}: its manual offset was set against another reference and was replaced")
+        write_offset_table(results, path)
+        _summarise(recording_id, results, cfg)
+        typer.echo(f"  table {path}")
+        if any(figures.glob("*.png")):
+            typer.echo(f"  figures {figures}")
 
 
 @app.command("set-offset")
@@ -26,5 +77,79 @@ def set_offset(
     media: str = typer.Option(..., "--media", help="Media file name to adjust."),
     offset: float = typer.Option(..., "--offset", help="Seconds."),
 ) -> None:
-    """Manually override one offset after inspecting it."""
-    raise NotImplementedError
+    """Manually override one offset after inspecting it; a later `macaw align` keeps it."""
+    resolved = resolve_config(config)
+    layout = layout_for(resolved)
+    built = build_recording(recording, resolved)
+    names = [item.path.name for item in built.media]
+    if media not in names:
+        raise MacawError(f"{media} is not a file of {recording}; its files are {', '.join(names)}")
+
+    path = layout.offset_table_path(recording)
+    results = read_offset_table(path) if path.is_file() else []
+    if results:
+        reference = results[0].reference
+    else:
+        _probe_all(built)
+        reference = built.reference_media().path.name
+        results = [AlignResult(reference=reference, target=reference, offset_s=0.0, confidence=None, method=MANUAL)]
+    if media == reference:
+        raise MacawError(f"{media} is the reference; every other offset is measured against it")
+
+    stamp = datetime.now().isoformat(timespec="seconds")
+    entry = AlignResult(
+        reference=reference, target=media, offset_s=offset, confidence=None, method=MANUAL,
+        note=f"set by hand {stamp}",
+    )
+    results = [result for result in results if result.target != media] + [entry]
+    write_offset_table(results, path)
+    typer.echo(f"{recording}: {media} set to {offset:+.3f} s against {reference}")
+
+
+def _probe_all(recording) -> dict:
+    """Durations decide the reference, and the streams decide what can be correlated."""
+    infos = {}
+    for item in recording.media:
+        info = probe(item.path)
+        item.duration_s = info.duration_s
+        infos[item.path.name] = info
+    return infos
+
+
+def _drawer(out_dir: Path, cfg):
+    try:
+        from macaw.qc.figures import alignment_figure, require_matplotlib
+
+        require_matplotlib()
+    except BackendNotAvailableError as error:
+        logger.warning("%s; no review figures drawn", error)
+        return None
+
+    def draw(reference, target, result):
+        name = f"{Path(result.target).stem}.png"
+        alignment_figure(reference, target, SAMPLE_RATE, result, cfg.search_window_s, out_dir / name)
+
+    return draw
+
+
+def _summarise(recording_id: str, results: list[AlignResult], cfg) -> None:
+    typer.echo(f"{recording_id}  reference {results[0].reference if results else '-'}")
+    for result in results:
+        if result.target == result.reference:
+            continue
+        flags = []
+        if result.method == UNALIGNED:
+            hint = "" if result.metadata_offset_s is None else f", metadata says {result.metadata_offset_s:+.1f} s"
+            line = f"not aligned ({result.note}{hint})"
+            flags.append("CHECK")
+        elif result.method == MANUAL:
+            line = f"{result.offset_s:+.3f} s  set by hand"
+        else:
+            line = f"{result.offset_s:+.3f} s  confidence {result.confidence:.2f}"
+            if result.drift_ppm is not None:
+                line += f"  drift {result.drift_ppm:+.1f} ppm (r2 {result.drift_r2:.2f})"
+            if result.confidence < cfg.min_confidence:
+                flags.append("LOW CONFIDENCE")
+        if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
+            flags.append("DRIFT")
+        typer.echo(f"  {result.target:<32} {line}  {' '.join(flags)}".rstrip())

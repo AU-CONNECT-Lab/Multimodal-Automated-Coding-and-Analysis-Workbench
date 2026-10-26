@@ -21,7 +21,7 @@ project:
 
 align:
   method: gcc_phat                   # gcc_phat | manual | none
-  search_window_s: 30.0              # s; max offset searched between two sources
+  search_window_s: 600.0             # s; max offset searched between two sources, on loudness envelopes
   min_confidence: 0.6                # 0-1; correlation peak sharpness below this is flagged red
   drift_check: true                  # detect linear clock drift by segment-wise offset
   drift_segment_s: 60.0              # s; segment length used for the drift regression

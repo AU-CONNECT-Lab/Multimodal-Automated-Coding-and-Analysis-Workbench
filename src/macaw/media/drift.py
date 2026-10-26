@@ -2,43 +2,44 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
-
-from macaw.config.schema import AlignSection
 
 # at least this many segments before a slope means anything
 MIN_SEGMENTS = 3
 
 
 def segment_offsets(
-    reference: Path,
-    target: Path,
+    reference: np.ndarray,
+    target: np.ndarray,
+    sample_rate: float,
     *,
+    offset_s: float,
     segment_s: float,
-    max_lag_s: float,
+    max_residual_s: float,
+    min_confidence: float,
 ) -> list[tuple[float, float]]:
-    """(segment_midpoint_s, offset_s) pairs."""
-    from macaw.media.align import SAMPLE_RATE, load_normalised, gcc_phat
+    """(segment midpoint on the reference clock, offset_s) for each segment that correlates.
+    The target is shifted by the global offset first, so a segment only searches the small
+    residual and a long offset cannot push the two pieces out of overlap."""
+    from macaw.media.align import gcc_phat
 
-    # no length cap here: drift only shows up over the full recording
-    reference_audio = load_normalised(reference, limit_s=None)
-    target_audio = load_normalised(target, limit_s=None)
-
-    step = int(segment_s * SAMPLE_RATE)
-    usable = min(reference_audio.size, target_audio.size)
-    if step <= 0 or usable < step:
+    step = int(segment_s * sample_rate)
+    shift = int(round(offset_s * sample_rate))
+    if step <= 0:
         return []
 
     offsets: list[tuple[float, float]] = []
-    for start in range(0, usable - step + 1, step):
-        stop = start + step
+    # target sample j sits at reference sample j + shift
+    for start in range(max(shift, 0), reference.size - step + 1, step):
+        piece = start - shift
+        if piece + step > target.size:
+            break
         lag_s, confidence = gcc_phat(
-            reference_audio[start:stop], target_audio[start:stop], SAMPLE_RATE, max_lag_s
+            reference[start : start + step], target[piece : piece + step], sample_rate, max_residual_s
         )
-        if confidence > 0:
-            offsets.append(((start + stop) / 2 / SAMPLE_RATE, lag_s))
+        # silence or room noise correlates weakly and would only add scatter to the fit
+        if confidence >= min_confidence:
+            offsets.append(((start + step / 2) / sample_rate, offset_s + lag_s))
     return offsets
 
 
@@ -59,12 +60,9 @@ def estimate_drift(offsets: list[tuple[float, float]]) -> tuple[float, float]:
     return float(slope * 1e6), float(r_squared)
 
 
-def check_drift(reference: Path, target: Path, cfg: AlignSection) -> tuple[float, float, bool]:
-    offsets = segment_offsets(
-        reference, target, segment_s=cfg.drift_segment_s, max_lag_s=cfg.search_window_s
-    )
-    drift_ppm, r_squared = estimate_drift(offsets)
-    # a large slope with a poor fit is noise, not a clock running fast, and re-timing on it
-    # would make the alignment worse
-    within_tolerance = abs(drift_ppm) <= cfg.max_drift_ppm or r_squared < 0.5
-    return drift_ppm, r_squared, within_tolerance
+def drift_is_real(drift_ppm: float | None, r_squared: float | None, max_drift_ppm: float) -> bool:
+    """A large slope with a poor fit is noise, not a clock running fast, and re-timing on it
+    would make the alignment worse."""
+    if drift_ppm is None or r_squared is None:
+        return False
+    return abs(drift_ppm) > max_drift_ppm and r_squared >= 0.5
