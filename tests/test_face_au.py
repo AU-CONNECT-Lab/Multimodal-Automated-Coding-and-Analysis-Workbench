@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
+from macaw.config.schema import FaceSection
+from macaw.extractors.video.face import au as au_module
+from macaw.extractors.video.face.au import FaceExtractor, name_faces
+from macaw.store.keypoints import write_keypoints
+from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+
+FPS = 10.0
+
+
+def heads(people, n_frames=10, video="room.mp4"):
+    """people: subject -> (nose x, nose y); a full keypoint row set is not needed to name a face."""
+    rows = [
+        {"recording_id": "r1", "subject_id": subject, "source": "pose.keypoints", "video": video, "frame": frame,
+         "t": frame / FPS, "joint": joint, "x": x, "y": y, "z": float("nan"), "confidence": 0.9, "track_id": 0,
+         "units": "pixel", "metric_scale_valid": None}
+        for frame in range(n_frames) for subject, (x, y) in people.items() for joint in ("nose", "left_eye", "right_eye")
+    ]
+    return coerce_frame(pd.DataFrame(rows), KEYPOINT_SCHEMA, "keypoints")
+
+
+def faces(boxes, n_frames=10, au12=0.5):
+    """boxes: list of (x, y, width, height, score); the same faces in every frame."""
+    return pd.DataFrame(
+        [{"frame": frame, "face_x": x, "face_y": y, "face_width": w, "face_height": h, "face_score": score,
+          "pitch": 1.0, "roll": 2.0, "yaw": 3.0, "AU01": 0.1, "AU12": au12, "x_0": x + 1.0, "y_0": y + 1.0}
+         for frame in range(n_frames) for x, y, w, h, score in boxes]
+    )
+
+
+class TestNameFaces:
+    def test_each_face_goes_to_the_person_whose_nose_is_in_it(self):
+        named = name_faces(faces([(80, 80, 40, 40, 0.9), (380, 80, 40, 40, 0.8)]),
+                           heads({"parent": (400, 100), "child": (100, 100)}), ["parent", "child"])
+        assert named.groupby("subject_id")["face_x"].first().to_dict() == {"child": 80, "parent": 380}
+
+    def test_a_face_no_one_is_in_stays_out(self):
+        named = name_faces(faces([(700, 80, 40, 40, 0.9)]), heads({"parent": (100, 100)}), ["parent"])
+        assert named.empty
+
+    def test_two_faces_on_one_person_keep_the_most_confident(self):
+        named = name_faces(faces([(80, 80, 40, 40, 0.6), (85, 85, 30, 30, 0.95)]), heads({"parent": (100, 100)}), ["parent"])
+        assert named["face_score"].unique().tolist() == [0.95] and len(named) == 10
+
+    def test_someone_not_measured_on_this_camera_is_not_named_here(self):
+        named = name_faces(faces([(80, 80, 40, 40, 0.9)]), heads({"parent": (100, 100)}), ["child"])
+        assert named.empty
+
+
+class FakeFaceBackend:
+    name, version = "fake", "1.0"
+
+    def __init__(self, table):
+        self.table = table
+        self.calls = []
+
+    def infer(self, video_path, **kwargs):
+        self.calls.append((Path(video_path).name, kwargs["frames"]))
+        return self.table
+
+
+@pytest.fixture
+def run(tmp_path, monkeypatch):
+    def build(keypoints, table, files, landmarks=True):
+        stored = tmp_path / "pose.keypoints.parquet"
+        write_keypoints(keypoints, stored)
+        backend = FakeFaceBackend(table)
+        monkeypatch.setattr(au_module, "_keypoints_file", lambda config, rid: stored)
+        monkeypatch.setattr(au_module, "resolve_backend", lambda name: backend)
+        monkeypatch.setattr(au_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
+        recording = SimpleNamespace(
+            recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
+            media=list(files), entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
+        )
+        config = SimpleNamespace(face=FaceSection(landmarks=landmarks))
+        return backend, FaceExtractor(config).run(recording, tmp_path)
+
+    return build
+
+
+def video(name, subject_id=None):
+    return SimpleNamespace(path=Path(name), kind="video", subject_id=subject_id, fps=FPS, offset_s=0.0)
+
+
+class TestExtractor:
+    def test_rows_manifest_and_names(self, run):
+        _, result = run(heads({"parent": (400, 100), "child": (100, 100)}),
+                        faces([(80, 80, 40, 40, 0.9), (380, 80, 40, 40, 0.8)]), [video("room.mp4")])
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        assert {"au01", "au12", "face_yaw_deg"} <= set(result.rows.feature)
+        assert set(result.rows.subject_id) == {"parent", "child"}
+        assert result.artifacts["landmarks.parquet"].is_file()
+        assert any("adult" in warning.message for warning in result.warnings)
+
+    def test_a_person_with_their_own_camera_is_read_there_only(self, run):
+        keypoints = pd.concat([heads({"parent": (100, 100)}, video="parent.mp4"),
+                               heads({"parent": (400, 100), "child": (100, 100)}, video="room.mp4")])
+        files = [video("parent.mp4", "parent"), video("room.mp4")]
+        backend, _ = run(keypoints, faces([(80, 80, 40, 40, 0.9)]), files)
+        assert sorted(name for name, _ in backend.calls) == ["parent.mp4", "room.mp4"]
+
+    def test_a_person_whose_face_is_rarely_found_is_reported(self, run):
+        _, result = run(heads({"parent": (100, 100), "child": (400, 100)}), faces([(80, 80, 40, 40, 0.9)]), [video("room.mp4")])
+        assert any(w.subject_id == "child" and "face was found in 0 of the 10" in w.message for w in result.warnings)
+
+
+def test_pyfeat_columns_become_the_backend_contract():
+    from macaw.extractors.video.face.backends import FACE_COLUMNS, _rows
+
+    found = pd.DataFrame({"frame": [0, 1], "FaceRectX": [1.0, 2.0], "FaceRectY": [3.0, 4.0], "FaceRectWidth": [5.0, 5.0],
+                          "FaceRectHeight": [6.0, 6.0], "FaceScore": [0.9, None], "Pitch": [1.0, 1.0], "Roll": [0.0, 0.0],
+                          "Yaw": [2.0, 2.0], "AU01": [0.2, 0.3], "x_0": [1.5, 2.5], "y_0": [3.5, 4.5], "Identity_1": [0.0, 0.0]})
+    out = _rows(found, offset=100, landmarks=True)
+    assert list(out.columns) == [*FACE_COLUMNS, "AU01", "x_0", "y_0"]
+    assert out["frame"].tolist() == [100]
+    assert out["yaw"].iloc[0] == pytest.approx(2.0 * 180.0 / 3.141592653589793)
+    assert list(_rows(found, offset=0, landmarks=False).columns) == [*FACE_COLUMNS, "AU01"]

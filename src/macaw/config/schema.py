@@ -99,6 +99,9 @@ class KinematicsSection(_Section):
 
 class FaceSection(_Section):
     backend: str = "pyfeat"
+    model: str | None = None
+    device: str = "auto"
+    batch_size: int = 16
     action_units: bool = True
     landmarks: bool = True
     gaze: bool = False
