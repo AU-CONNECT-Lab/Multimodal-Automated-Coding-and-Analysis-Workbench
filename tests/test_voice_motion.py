@@ -125,3 +125,14 @@ class TestChoosePeople:
         choice = choose_people(keypoints, ["a", "b", "c"])
         assert choice.people == {"a": [1], "b": [2], "c": [3]}
         assert "configured subject order" in choice.doubt
+
+    def test_someone_far_away_all_along_beats_someone_close_for_a_moment(self):
+        rows = []
+        for frame in range(200):
+            people = [(1, 100.0, 20.0), (2, 300.0, 20.0)] + ([(3, 500.0, 150.0)] if frame < 60 else [])
+            for track, x, size in people:
+                for index, joint in enumerate(STANDARD_JOINTS):
+                    rows.append({"frame": frame, "t": frame / 10, "joint": joint, "x": x + (index % 5) * size / 5,
+                                 "y": 100.0 + (index // 5) * size / 4, "confidence": 0.9, "track_id": track})
+        keypoints = pd.DataFrame(rows).astype({"track_id": "Int64"})
+        assert choose_people(keypoints, ["a", "b"]).people == {"a": [1], "b": [2]}

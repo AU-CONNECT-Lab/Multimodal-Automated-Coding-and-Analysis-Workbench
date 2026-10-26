@@ -246,7 +246,7 @@ class PoseExtractor(Extractor):
     """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
 
     name = "pose.keypoints"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose",)

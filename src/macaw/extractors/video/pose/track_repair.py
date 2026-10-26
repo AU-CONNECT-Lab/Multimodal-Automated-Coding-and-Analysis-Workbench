@@ -354,7 +354,8 @@ def choose_people(
 
     named = {subject: list(tracks) for subject, tracks in (named or {}).items() if subject in subject_ids}
     taken = [track for tracks in named.values() for track in tracks]
-    chains = join_fragments(keypoints[~keypoints["track_id"].isin(taken)])
+    # people sit at different distances from a room camera, so presence ranks them, not size
+    chains = sorted(join_fragments(keypoints[~keypoints["track_id"].isin(taken)]), key=lambda chain: chain.present, reverse=True)
     open_subjects = [subject for subject in subject_ids if subject not in named]
     anchors = identity_anchors or {}
     ranked = (
