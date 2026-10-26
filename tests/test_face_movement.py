@@ -123,6 +123,16 @@ def feature(result, name, subject="parent"):
     return rows[(rows.feature == name) & (rows.subject_id == subject)]
 
 
+class TestReadable:
+    def test_a_head_tilted_away_from_its_usual_pitch_or_a_narrow_face_is_not_read(self):
+        table = face(10).assign(yaw=0.0, pitch=[0.0] * 8 + [-30.0, 0.0])
+        table.loc[9, [f"x_{i}" for i in range(68)]] = table.loc[9, [f"x_{i}" for i in range(68)]] * 0.3
+        assert movement.eyes_in_view(table).tolist() == [True] * 8 + [False, False]
+
+    def test_missing_angles_do_not_count_against_a_frame(self):
+        assert movement.eyes_in_view(face(3).assign(yaw=np.nan, pitch=np.nan)).all()
+
+
 class TestExtractor:
     def test_rows_and_manifest_agree(self, run):
         result = run(face(500, eye_gap=with_blinks(500, [100, 250, 400])))

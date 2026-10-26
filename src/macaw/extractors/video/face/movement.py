@@ -24,7 +24,7 @@ EYES = ((36, 37, 38, 39, 40, 41), (42, 43, 44, 45, 46, 47))
 NOSE_BASE = 33
 
 # an eyelid this far below its own recent level is closed, and this close to it is open again
-CLOSED_SHARE = 0.6
+CLOSED_SHARE = 0.7
 OPEN_SHARE = 0.85
 BASELINE_S = 3.0
 MAX_BLINK_S = 0.5
@@ -32,6 +32,10 @@ MAX_BLINK_S = 0.5
 REOPEN_FRAMES = 3
 # beyond this the far eye is foreshortened and its landmarks guessed
 MAX_YAW_DEG = 45.0
+# a head lowered or raised this far from the person's usual pitch moves the lids by itself
+MAX_PITCH_SHIFT_DEG = 15.0
+# landmarks spanning less of the person's usual face width sit on an ear or the hair, not a face
+MIN_FACE_WIDTH_SHARE = 0.7
 _LOW_MEASURABLE = 0.5
 
 _FRAME_SPECS = {
@@ -77,7 +81,7 @@ class FaceMovementExtractor(Extractor):
             faces = faces.sort_values("frame").merge(angles.get(subject_id, _NO_ANGLES), on="t", how="left")
             opening = mouth_opening(faces)
             eyes, eye_width = eye_opening(faces)
-            readable = (eye_width >= min_eye_px) & ~(faces["yaw"].abs() > MAX_YAW_DEG)
+            readable = (eye_width >= min_eye_px) & eyes_in_view(faces)
             eyes = eyes.where(readable)
             values = pd.DataFrame(
                 {
@@ -139,7 +143,8 @@ class FaceMovementExtractor(Extractor):
             ),
             "blinks_per_min": ("Blinks per minute of the time the eyes could be read.", "1/min", Scale.RECORDING),
             "eyes_measurable_s": (
-                f"Time the eyes could be read: at least face.blink_min_eye_px wide and the head turned no more than {MAX_YAW_DEG:g} degrees.",
+                f"Time the eyes could be read: at least face.blink_min_eye_px wide, the head turned no more than {MAX_YAW_DEG:g} "
+                f"degrees and tilted no more than {MAX_PITCH_SHIFT_DEG:g} degrees from the person's usual pitch.",
                 "s", Scale.RECORDING,
             ),
         }
@@ -156,18 +161,35 @@ class FaceMovementExtractor(Extractor):
         ]
 
 
-_NO_ANGLES = pd.DataFrame({"t": pd.Series(dtype=float), "yaw": pd.Series(dtype=float)})
+_NO_ANGLES = pd.DataFrame({"t": pd.Series(dtype=float), "yaw": pd.Series(dtype=float), "pitch": pd.Series(dtype=float)})
 
 
 def head_angles(path: Path, recording_id: str) -> dict[str, pd.DataFrame]:
-    """subject -> (t, yaw) from face.au's own rows; landmarks and angles share their frame times."""
+    """subject -> (t, yaw, pitch) from face.au's own rows; landmarks and angles share their frame times."""
     if not Path(path).exists():
         return {}
-    rows = read_long_table(path, recording_id=recording_id, features=["face_yaw_deg"])
+    rows = read_long_table(path, recording_id=recording_id, features=["face_yaw_deg", "face_pitch_deg"])
+    if rows.empty:
+        return {}
+    wide = rows.pivot_table(index=["subject_id", "t_start"], columns="feature", values="value", observed=True).reset_index()
+    wide = wide.rename(columns={"t_start": "t", "face_yaw_deg": "yaw", "face_pitch_deg": "pitch"})
     return {
-        str(subject): pd.DataFrame({"t": part["t_start"].to_numpy(dtype=float), "yaw": part["value"].to_numpy(dtype=float)})
-        for subject, part in rows.groupby("subject_id", observed=True)
+        str(subject): part.reindex(columns=["t", "yaw", "pitch"]).reset_index(drop=True)
+        for subject, part in wide.groupby("subject_id", observed=True)
     }
+
+
+def eyes_in_view(faces: pd.DataFrame) -> pd.Series:
+    """Frames whose eyes can be read: head not turned or tilted away from how this person usually holds it,
+    and landmarks spread like this person's face; missing angles are not held against a frame."""
+    xs = faces[[column for column in faces.columns if column.startswith("x_")]]
+    width = xs.max(axis=1) - xs.min(axis=1)
+    pitch = faces["pitch"]
+    return (
+        ~(faces["yaw"].abs() > MAX_YAW_DEG)
+        & ~((pitch - pitch.median()).abs() > MAX_PITCH_SHIFT_DEG)
+        & (width >= MIN_FACE_WIDTH_SHARE * width.median())
+    )
 
 
 def _point(faces: pd.DataFrame, index: int) -> np.ndarray:

@@ -18,7 +18,6 @@ class GazeExtractor(Extractor):
     requires = ("face.au",)
 
     def check_available(self) -> None:
-        """Full gaze needs the openface backend; mediapipe gives the degraded version."""
         raise NotImplementedError
 
     def inputs_for(self, recording: Recording) -> list[Path]:
