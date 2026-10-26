@@ -16,6 +16,7 @@ from macaw.exceptions import MacawError
 from macaw.execution.backends.base import JobSpec, get_backend
 from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB, JobRecord, now
+from macaw.execution.lock import run_lock
 from macaw.execution.output_checker import completed_tasks, load_rules
 from macaw.extractors import get_extractor
 from macaw.extractors.base import Phase, QCWarning
@@ -203,6 +204,13 @@ def run(
     resume: bool = True,
     dry_run: bool = False,
 ) -> RunSummary:
+    if dry_run:
+        return _run(config, recordings, extractors, resume, dry_run)
+    with run_lock(layout_for(config).output_dir):
+        return _run(config, recordings, extractors, resume, dry_run)
+
+
+def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
     layout = layout_for(config)
     execution_id = new_execution_id()
 

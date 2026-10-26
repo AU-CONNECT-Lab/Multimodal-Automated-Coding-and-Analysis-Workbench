@@ -6,7 +6,9 @@ import pytest
 
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.execution import runner as runner_module
+from macaw.exceptions import MacawError
 from macaw.execution.dag import build_dag
+from macaw.execution.lock import run_lock
 from macaw.execution.runner import _write_stamp, completed_on_disk
 from macaw.extractors.base import Phase
 from macaw.project.layout import layout_for
@@ -76,3 +78,17 @@ class TestResume:
     def test_a_key_that_cannot_be_worked_out_runs_again(self, line):
         line.source.unlink()
         assert line.current() == set()
+
+
+class TestRunLock:
+    def test_a_second_run_on_the_same_output_is_refused(self, tmp_path):
+        with run_lock(tmp_path):
+            with pytest.raises(MacawError, match="another macaw run"):
+                with run_lock(tmp_path):
+                    pass
+
+    def test_the_lock_is_free_again_once_the_run_ends(self, tmp_path):
+        with run_lock(tmp_path):
+            pass
+        with run_lock(tmp_path):
+            pass
