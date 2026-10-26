@@ -15,6 +15,7 @@
 - Lining up files from separate devices by their sound (`macaw align`), with a figure per file to check the result, and setting an offset by hand (`macaw set-offset`).
 - Pose from YOLO as well as MediaPipe, chosen explicitly (`pose.backend` has no default), runs that stop for a person only where something is in doubt (`macaw accept-offset`, `macaw identify`, `macaw accept-owner`), and usage reporting by the tools pymacaw calls turned off by default.
 - People on a shared camera kept together when the tracker loses and finds them, matched to who they are by seat or by a person (`macaw accept-owner --rename`), an HTML quality report (`macaw qc --report`), and your own backends (`macaw new-backend`).
+- Correcting who is who no longer reruns the pose model, resuming notices changed settings or inputs, the quality report draws each person over time, mics hint at who is who on a shared camera, and speech and prosody backend templates (`macaw new-backend --kind`).
 
 ## [0.1.0-alpha] – 2026-08-13
 
