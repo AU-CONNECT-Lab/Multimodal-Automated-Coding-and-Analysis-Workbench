@@ -1,5 +1,7 @@
 """MACAW. Multimodal Automated Coding and Analysis Workbench."""
 
+# first, so the switches are in place before any dependency is imported
+import macaw.telemetry  # noqa: F401
 from macaw.config.loader import load_config, resolve_config
 from macaw.config.schema import MacawConfig
 from macaw.exceptions import MacawError
