@@ -30,8 +30,7 @@ def _is_under(path: Path, root: Path) -> bool:
 
 
 class TestDefaultsToOutputDir:
-    """Everything used to live under output_dir; a project that never sets work_dir must
-    keep finding its cache exactly where it left it."""
+    """A project that never sets work_dir keeps everything, cache included, under output_dir."""
 
     def test_every_path_stays_under_output_dir(self, tmp_path):
         layout = make_layout(tmp_path / "derivatives", create=False)

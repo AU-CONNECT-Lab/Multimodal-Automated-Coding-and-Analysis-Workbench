@@ -97,9 +97,7 @@ class TestStaging:
 
 
 class TestProvenanceStamping:
-    """Which execution and which config produced a row is stamped by the runner, because an
-    extractor cannot know its execution id. The annotations table was left out of that and
-    shipped a whole AMI run with both columns null."""
+    """The runner stamps execution id and config hash on every table, the annotations table included."""
 
     @pytest.fixture
     def written(self, tmp_path, monkeypatch):

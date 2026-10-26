@@ -121,8 +121,7 @@ class TestDrawOverlay:
         assert not draw_overlay(np.zeros((240, 320, 3), np.uint8), people, ["parent"], []).any()
 
     def test_the_header_is_light_on_dark_even_on_a_white_frame(self):
-        """A dark outline drawn as a second, thicker pass drifted off the glyphs on 352x288 video."""
-        header = ["closeup  t=3.06s  frame 76  ES2002a.Closeup1.avi"]
+        header = ["closeup  t=3.06s  frame 76  closeup.avi"]
         image = draw_overlay(np.full((288, 352, 3), 255, np.uint8), body("parent").iloc[:0], [], header)
         band = image[:30].min(axis=2)
         rows, cols = np.where(band < 128)
