@@ -16,13 +16,20 @@ from macaw.project.recording import build_recording
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import concat_long_tables, read_long_table
 from macaw.store.schema import Scale
-from macaw.store.sequence import export_state_sequence, to_state_sequence
+from macaw.store.sequence import (
+    export_state_sequence,
+    EMPTY_STATE,
+    floor_intervals,
+    speaking_intervals,
+    to_state_sequence,
+)
 from macaw.store.wide import export_csv, export_rmd_template, to_wide
 
 app = typer.Typer()
 logger = get_logger("export")
 
 FORMATS = ("csv", "parquet", "eaf", "sequence")
+SEQUENCES = ("speech", "floor", "annotations")
 
 
 @app.command("export")
@@ -33,6 +40,11 @@ def export(
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
     wide: bool = typer.Option(True, "--wide/--long"),
     step: float = typer.Option(1.0, "--step", help="Sequence format only: sampling step in seconds."),
+    of: str = typer.Option(
+        "speech", "--of",
+        help="Sequence format only: speech (one speaking/none series per person), floor (whose turn, or overlap) "
+        "or annotations.",
+    ),
     out: Path = typer.Option(None, "--out"),
     rmd: bool = typer.Option(False, "--rmd", help="Also write an .Rmd starter script."),
 ) -> None:
@@ -51,7 +63,12 @@ def export(
         _export_eaf(resolved, layout, recording_ids, out)
         return
     if format_ == "sequence":
-        _export_sequence(layout, recording_ids, step, out)
+        if of not in SEQUENCES:
+            raise MacawError(f"Unknown sequence '{of}'. Choose one of: {', '.join(SEQUENCES)}")
+        if of == "annotations":
+            _export_sequence(layout, recording_ids, step, out)
+        else:
+            _export_talk_sequence(resolved, layout, recording_ids, of, step, out)
         return
 
     frames = []
@@ -142,3 +159,52 @@ def _export_sequence(layout, recording_ids: list[str], step: float, out: Path | 
     export_state_sequence(sequence, out)
     logger.info("%d steps of %.3f s", len(sequence), step)
     typer.echo(str(out))
+
+
+def _export_talk_sequence(config, layout, recording_ids: list[str], of: str, step: float, out: Path | None) -> None:
+    """Talk resampled over the whole task window, so silence before the first word counts too."""
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, read_transcript
+    from macaw.extractors.prep import load_prep
+    from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, read_turns
+
+    source, name, read = (
+        (ASRExtractor.name, TRANSCRIPT_NAME, read_transcript) if of == "speech"
+        else (TurnStructureExtractor.name, TURNS_NAME, read_turns)
+    )
+    pieces = []
+    for recording_id in recording_ids:
+        path = layout.artifacts_dir(recording_id, source) / name
+        if not path.is_file():
+            logger.warning("%s: no %s output, left out", recording_id, source)
+            continue
+        table = read(path)
+        table["recording_id"] = recording_id
+        intervals = speaking_intervals(table) if of == "speech" else floor_intervals(table)
+        prep = load_prep(config, recording_id)
+        subjects = [subject.subject_id for subject in build_recording(recording_id, config).subjects]
+        series = to_state_sequence(
+            intervals, step_s=step, state_column="label",
+            series_columns=("subject_id",) if of == "speech" else ("series",),
+            t_start=prep.t_origin_s, t_end=prep.t_origin_s + prep.duration_s,
+        )
+        if of == "speech":
+            series = _with_silent_people(series, subjects, recording_id)
+        pieces.append(series)
+    if not pieces:
+        raise MacawError(f"No {source} output to export. Run it first.")
+    sequence = pd.concat(pieces, ignore_index=True)
+    out = out or (layout.output_dir / "exports" / f"{of}_sequence.csv")
+    export_state_sequence(sequence, out)
+    logger.info("%d steps of %.3f s", len(sequence), step)
+    typer.echo(str(out))
+
+
+def _with_silent_people(sequence: pd.DataFrame, subjects: list[str], recording_id: str) -> pd.DataFrame:
+    """Someone who never spoke still gets their series, all none."""
+    grid = sequence["t"].drop_duplicates().to_numpy()
+    missing = [subject for subject in subjects if subject not in set(sequence["series"])]
+    filler = [
+        pd.DataFrame({"recording_id": recording_id, "series": subject, "t": grid, "state": EMPTY_STATE})
+        for subject in missing
+    ]
+    return pd.concat([sequence, *filler], ignore_index=True) if filler else sequence

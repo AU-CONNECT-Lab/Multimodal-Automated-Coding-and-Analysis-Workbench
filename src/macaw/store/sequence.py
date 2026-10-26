@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 EMPTY_STATE = "none"
+SPEAKING_STATE = "speaking"
+OVERLAP_STATE = "overlap"
 SEQUENCE_COLUMNS = ("recording_id", "series", "t", "state")
 JOINT_COLUMNS = ("recording_id", "t", "state")
 DEFAULT_SERIES_COLUMNS = ("subject_id", "tier")
@@ -101,6 +103,31 @@ def _winner(bucket: dict[str, float], empty_state: str) -> str:
         return empty_state
     top = max(bucket.values())
     return sorted(state for state, seconds in bucket.items() if seconds == top)[0]
+
+
+def speaking_intervals(utterances: pd.DataFrame) -> pd.DataFrame:
+    """Each person's own series of when they were talking; overlap needs no state of its own."""
+    out = utterances.loc[:, ["recording_id", "subject_id", "t_start", "t_end"]].copy()
+    out["label"] = SPEAKING_STATE
+    return out
+
+
+def floor_intervals(turns: pd.DataFrame, *, overlap_state: str = OVERLAP_STATE) -> pd.DataFrame:
+    """One series for the recording: whose turn it is, or overlap_state while two turns run at once."""
+    columns = ["recording_id", "series", "t_start", "t_end", "label"]
+    if turns is None or turns.empty:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for recording_id, group in turns.groupby("recording_id", sort=True):
+        edges = np.unique(np.concatenate([group["t_start"].to_numpy(float), group["t_end"].to_numpy(float)]))
+        starts, ends = group["t_start"].to_numpy(float), group["t_end"].to_numpy(float)
+        who = group["subject_id"].astype(str).to_numpy()
+        for low, high in zip(edges[:-1], edges[1:]):
+            middle = (low + high) / 2.0
+            speakers = sorted(set(who[(starts <= middle) & (ends > middle)]))
+            if speakers:
+                rows.append((recording_id, "floor", low, high, speakers[0] if len(speakers) == 1 else overlap_state))
+    return pd.DataFrame(rows, columns=columns)
 
 
 def to_joint_sequence(sequence: pd.DataFrame, *, separator: str = "") -> pd.DataFrame:

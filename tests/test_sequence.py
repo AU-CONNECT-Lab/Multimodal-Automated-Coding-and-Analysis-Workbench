@@ -6,7 +6,10 @@ import pytest
 from macaw.store.sequence import (
     EMPTY_STATE,
     SEQUENCE_COLUMNS,
+    OVERLAP_STATE,
     export_state_sequence,
+    floor_intervals,
+    speaking_intervals,
     to_joint_sequence,
     to_state_sequence,
 )
@@ -156,3 +159,35 @@ class TestExport:
         path = export_state_sequence(sequence, tmp_path / "out" / "seq.csv")
         assert path.is_file()
         assert len(pd.read_csv(path)) == 2
+
+
+def talk(rows):
+    return pd.DataFrame(
+        [{"recording_id": "rec1", "subject_id": who, "t_start": float(a), "t_end": float(b)} for who, a, b in rows]
+    )
+
+
+class TestTalk:
+    def test_each_person_keeps_their_own_series_through_an_overlap(self):
+        sequence = to_state_sequence(
+            speaking_intervals(talk([("A", 0, 3), ("B", 2, 4)])), step_s=1.0, state_column="label",
+            series_columns=("subject_id",), t_start=0.0, t_end=5.0,
+        )
+        states = sequence.pivot(index="t", columns="series", values="state")
+        assert states["A"].tolist() == ["speaking"] * 3 + [EMPTY_STATE] * 2
+        assert states["B"].tolist() == [EMPTY_STATE] * 2 + ["speaking"] * 2 + [EMPTY_STATE]
+
+    def test_the_floor_names_the_overlap_instead_of_picking_someone(self):
+        intervals = floor_intervals(talk([("A", 0, 3), ("B", 2, 4)]))
+        assert list(zip(intervals.t_start, intervals.label)) == [(0.0, "A"), (2.0, OVERLAP_STATE), (3.0, "B")]
+        sequence = to_state_sequence(intervals, step_s=1.0, state_column="label", series_columns=("series",),
+                                     t_start=0.0, t_end=5.0)
+        assert sequence.state.tolist() == ["A", "A", OVERLAP_STATE, "B", EMPTY_STATE]
+        assert set(sequence.series) == {"floor"}
+
+    def test_a_gap_between_turns_is_nobody(self):
+        intervals = floor_intervals(talk([("A", 0, 1), ("B", 2, 3)]))
+        assert intervals.label.tolist() == ["A", "B"]
+
+    def test_no_turns_no_floor(self):
+        assert floor_intervals(talk([])).empty
