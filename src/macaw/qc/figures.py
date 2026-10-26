@@ -203,7 +203,8 @@ def timeline_figure(
     """Per person, (start, width) spans when a camera saw them and when they were heard, with the
     spans the checks flagged shaded behind; a person never seen, or seen but never heard, shows at once."""
     Figure = require_matplotlib()
-    lanes = [(subject, kind) for subject in subjects for kind in ("seen", "heard")]
+    kinds = [kind for kind, spans in (("seen", seen), ("heard", heard)) if any(spans.values())]
+    lanes = [(subject, kind) for subject in subjects for kind in kinds]
     figure = Figure(figsize=(12, 0.9 + 0.32 * len(lanes)), layout="constrained")
     axes = figure.subplots()
     for row, (subject, kind) in enumerate(lanes):
@@ -226,8 +227,9 @@ def timeline_figure(
     from matplotlib.patches import Patch
 
     axes.legend(
-        handles=[Patch(color=SEEN_COLOR, label="seen on camera"), Patch(color=VOICE_COLOR, label=heard_label),
-                 Patch(color=LOOK_COLOR, alpha=0.35, label="flagged by a check")],
+        handles=[Patch(color=SEEN_COLOR, label="seen on camera")] * ("seen" in kinds)
+        + [Patch(color=VOICE_COLOR, label=heard_label)] * ("heard" in kinds)
+        + [Patch(color=LOOK_COLOR, alpha=0.35, label="flagged by a check")],
         loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, fontsize=8, frameon=False,
     )
     return _save(figure, path)
