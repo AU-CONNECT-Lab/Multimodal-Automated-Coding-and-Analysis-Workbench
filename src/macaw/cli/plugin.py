@@ -28,8 +28,9 @@ def new_extractor(
 def new_backend(
     name: str = typer.Argument(..., help="Namespaced backend name, e.g. mylab.openpose_csv."),
     directory: Path = typer.Option(Path("."), "--dir", help="Where to create the package."),
+    kind: str = typer.Option("pose", "--kind", help="pose, asr or prosody."),
 ) -> None:
-    """Write a package holding a working pose backend to edit, its entry point and a test."""
+    """Write a package holding a working backend to edit, its entry point and a test."""
     if any(name in list_backends(group) for group in list_backend_groups()):
         raise MacawError(f"A backend named '{name}' is already installed")
-    typer.echo(str(scaffold_backend(name, directory)))
+    typer.echo(str(scaffold_backend(name, directory, kind=kind)))

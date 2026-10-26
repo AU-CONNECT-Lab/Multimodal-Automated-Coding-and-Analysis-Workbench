@@ -116,3 +116,43 @@ class TestCommand:
         result = CliRunner().invoke(app, ["new-backend", "yolo", "--dir", str(tmp_path)])
         assert result.exit_code != 0
         assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "kind, group, base",
+    [
+        ("asr", "asr", "macaw.extractors.audio.content.asr:ASRBackend"),
+        ("prosody", "prosody", "macaw.extractors.audio.prosody.backends:ProsodyBackend"),
+    ],
+)
+class TestOtherKinds:
+    def test_it_registers_under_its_own_group_and_its_tests_pass(self, kind, group, base, tmp_path, monkeypatch):
+        monkeypatch.setattr(registry, "_BACKENDS", {g: dict(names) for g, names in registry._BACKENDS.items()})
+        name = f"mylab.{kind}_example"
+        root = scaffold_backend(name, tmp_path / "plugins", kind=kind)
+        monkeypatch.syspath_prepend(str(root / "src"))
+        module = f"mylab_{kind}_example"
+        try:
+            importlib.import_module(f"{module}.backend")
+            module_name, cls_name = base.split(":")
+            assert issubclass(registry.get_backend(group, name), getattr(importlib.import_module(module_name), cls_name))
+            namespace: dict = {}
+            exec(compile((root / "tests" / "test_backend.py").read_text(encoding="utf-8"), "test_backend.py", "exec"), namespace)
+            for test_name, function in namespace.items():
+                if test_name.startswith("test_"):
+                    folder = tmp_path / test_name
+                    folder.mkdir()
+                    function(*([folder] if function.__code__.co_argcount else []))
+        finally:
+            for loaded in (f"{module}.backend", module):
+                importlib.sys.modules.pop(loaded, None)
+
+    def test_the_command_takes_the_kind(self, kind, group, base, tmp_path):
+        result = CliRunner().invoke(app, ["new-backend", f"mylab.{kind}_cmd", "--kind", kind, "--dir", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        assert "register_backend" in (Path(result.output.strip()) / "src" / f"mylab_{kind}_cmd" / "backend.py").read_text(encoding="utf-8")
+
+
+def test_an_unknown_kind_is_refused(tmp_path):
+    with pytest.raises(MacawError, match="pose, asr, prosody"):
+        scaffold_backend("mylab.x", tmp_path, kind="face")
