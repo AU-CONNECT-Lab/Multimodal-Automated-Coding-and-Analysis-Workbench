@@ -23,6 +23,9 @@ event tables, fixed-rate time series, and binary spike trains.
 Steps that cannot be decided reliably (scale calibration, track repair, speaker identity,
 low-confidence coding) produce candidates for review rather than silent guesses.
 
+Reviewing the output works the same way. The quality report points at the frames and
+segments worth looking at, and review stays sampled rather than exhaustive.
+
 ## Completed features
 
 ### 0.1.0-alpha
@@ -35,7 +38,8 @@ low-confidence coding) produce candidates for review rather than silent guesses.
 - **0.4** Speaker identity, coder agreement, export formats, generated methods text
 - **0.5** Ingest quality assessment, pose, body-type classification, motion energy,
   scale calibration
-- **0.6** Face, quality control reporting, rule-based and LLM-assisted coding
+- **0.6** Face, quality control reporting, assisted quality review, rule-based and
+  LLM-assisted coding
 - **0.7** ELAN interchange, GUI, cluster job scripts
 
 Metric 3D output is planned after 0.7; the storage schema reserves room for it.
