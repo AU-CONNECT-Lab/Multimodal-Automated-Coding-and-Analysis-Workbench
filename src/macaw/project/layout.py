@@ -67,6 +67,10 @@ class Layout:
     def warnings_path(self, recording_id: str, extractor: str) -> Path:
         return self.recording_dir(recording_id) / "warnings" / f"{extractor}.json"
 
+    def completion_path(self, recording_id: str, extractor: str) -> Path:
+        """The cache key a finished task was made under; resume trusts the outputs only while it still matches."""
+        return self.recording_dir(recording_id) / "done" / f"{extractor}.key"
+
     @property
     def recordings_dir(self) -> Path:
         return self.output_dir / "recordings"

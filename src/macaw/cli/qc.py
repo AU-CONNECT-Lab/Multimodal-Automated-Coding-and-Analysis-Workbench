@@ -178,7 +178,7 @@ def accept_owner(
         named = "; ".join(f"{who} is tracks {_shortened(ids)}" for who, ids in people.items())
         typer.echo(
             f"{recording_id}: on {file_name}, {named}; apply it with "
-            f"`macaw run -r {recording_id} -e pose.kinematics --no-resume`"
+            f"`macaw run -r {recording_id} -e pose.kinematics`"
         )
         return
 

@@ -230,7 +230,7 @@ class TestAcceptOwner:
             "--media", "003_parent.mp4", "--tracks", "2,7", "--by", "ann",
         )
         assert outcome.exit_code == 0, outcome.output
-        assert "--no-resume" in outcome.output
+        assert "-e pose.kinematics`" in outcome.output
         path = layout_for(project.resolved()).camera_owners_path("003")
         entry = json.loads(path.read_text(encoding="utf-8"))["003_parent.mp4"]
         assert entry["people"] == {"parent": [2, 7]} and entry["by"].startswith("ann ")

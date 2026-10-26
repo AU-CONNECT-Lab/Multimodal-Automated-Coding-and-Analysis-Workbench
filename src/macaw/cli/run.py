@@ -67,7 +67,7 @@ def run(
     _echo_reporting(resolved, dag)
 
     if dry_run:
-        finished = runner.completed_on_disk(resolved)
+        finished = runner.completed_on_disk(resolved, dag, recording_ids)
         for task_id in runner.plan(resolved, recording_ids, wanted, finished):
             typer.echo(task_id)
         _echo_waiting(runner.check_gates(resolved, dag, recording_ids, finished)[0])

@@ -144,8 +144,47 @@ def check_gates(
     return waiting, blocked, notes
 
 
-def completed_on_disk(config: MacawConfig) -> set[str]:
-    return completed_tasks(layout_for(config, create=False).output_dir, _output_rules(config))
+def completed_on_disk(config: MacawConfig, dag, recording_ids: list[str]) -> set[str]:
+    """Tasks whose outputs are there and were made from what is there now: the same version,
+    config and inputs as when they ran, and nothing upstream about to run again."""
+    layout = layout_for(config, create=False)
+    on_disk = completed_tasks(layout.output_dir, _output_rules(config))
+    gates = set(_gates(dag))
+    current: set[str] = set()
+    for recording_id in recording_ids:
+        try:
+            recording = build_recording(recording_id, config)
+        except MacawError:
+            continue
+        for name in dag.topological_order():
+            task_id = task_id_for(recording_id, name)
+            if name in gates or task_id not in on_disk:
+                continue
+            needed = _job_dependencies(dag, name, gates)
+            if any(task_id_for(recording_id, dependency) not in current for dependency in needed):
+                continue
+            stamp = layout.completion_path(recording_id, name)
+            try:
+                if stamp.is_file() and stamp.read_text(encoding="utf-8") == task_key(config, name, recording):
+                    current.add(task_id)
+            except Exception:
+                # a key that cannot be worked out means run it again, which is where the error shows
+                continue
+    return current
+
+
+def task_key(config: MacawConfig, extractor_name: str, recording) -> str:
+    cls = get_extractor(extractor_name)
+    return _make_key(config, cls, cls(config), recording, hash_extractor_config(config, extractor_name)).as_dirname()
+
+
+def _make_key(config, cls, extractor, recording, config_hash):
+    return cache_store.make_key(
+        extractor=cls.name,
+        extractor_version=cls.version,
+        inputs=extractor.inputs_for(recording),
+        config_hash=config_hash,
+    )
 
 
 def _cache_root(config: MacawConfig, layout) -> Path:
@@ -173,7 +212,7 @@ def run(
     gates = set(_gates(dag))
 
     in_scope = {task_id_for(r, name) for r in recording_ids for name in order if name not in gates}
-    already = completed_tasks(layout.output_dir, _output_rules(config)) & in_scope if resume else set()
+    already = completed_on_disk(config, dag, recording_ids) & in_scope if resume else set()
     finished = set(already)
     attempted: set[str] = set()
     n_tasks = 0
@@ -312,22 +351,20 @@ def run_task(
         )
     )
 
+    stamp = layout.completion_path(recording_id, extractor_name)
+    stamp.unlink(missing_ok=True)
     try:
         extractor = cls(config)
         extractor.check_available()
         recording = build_recording(recording_id, config)
 
-        key = cache_store.make_key(
-            extractor=extractor_name,
-            extractor_version=cls.version,
-            inputs=extractor.inputs_for(recording),
-            config_hash=config_hash,
-        )
+        key = _make_key(config, cls, extractor, recording, config_hash)
         cache_root = _cache_root(config, layout)
         entry = cache_store.lookup(cache_root, key) if config.execution.cache else None
         if entry is not None:
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
+            _write_stamp(stamp, key)
             database.set_status(task_id, "cached", finished_at=now())
             return
 
@@ -341,6 +378,7 @@ def run_task(
             if config.execution.cache:
                 cache_store.store(cache_root, key, payload)
 
+        _write_stamp(stamp, key)
         database.set_status(task_id, "done", finished_at=now())
     except Exception as error:
         database.set_status(
@@ -348,6 +386,11 @@ def run_task(
         )
         traceback.print_exc()
         raise
+
+
+def _write_stamp(path: Path, key) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(key.as_dirname(), encoding="utf-8")
 
 
 def _stamp(frame, execution_id: str, config_hash: str):
