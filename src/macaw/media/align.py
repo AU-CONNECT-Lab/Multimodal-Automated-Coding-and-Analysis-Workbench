@@ -12,7 +12,7 @@ import numpy as np
 
 from macaw.config.schema import AlignSection
 from macaw.exceptions import AlignmentFailedError, MacawError
-from macaw.media.drift import MIN_SEGMENTS, estimate_drift, segment_offsets
+from macaw.media.drift import MIN_SEGMENTS, drift_is_real, drift_walk_s, estimate_drift, segment_offsets
 from macaw.media.ffmpeg import decode_audio
 from macaw.project.recording import Recording
 
@@ -48,6 +48,7 @@ class AlignResult:
     coarse_confidence: float | None = None
     # share of sounding segments that found the same offset; None when too few to say
     agreement: float | None = None
+    overlap_s: float | None = None   # how long the two files overlap at offset_s
     drift_ppm: float | None = None
     drift_r2: float | None = None
     # (midpoint_s, offset_s, confidence) per sounding segment
@@ -170,6 +171,8 @@ def align_signals(
         coarse_offset_s=coarse_s, coarse_confidence=coarse_confidence,
     )
     duration_s = min(reference.size, target.size) / SAMPLE_RATE
+    placed = int(round(lag_s * SAMPLE_RATE))
+    result.overlap_s = max(min(reference.size - max(placed, 0), target.size - max(-placed, 0)), 0) / SAMPLE_RATE
     segments = segment_offsets(
         reference,
         target,
@@ -194,6 +197,17 @@ def agreement(segments: list[tuple[float, float, float]] | None, offset_s: float
         return None
     same = [confidence > 0 and abs(offset - offset_s) <= AGREEMENT_TOLERANCE_S for _, offset, confidence in segments]
     return sum(same) / len(same)
+
+
+def drift_flagged(result: AlignResult) -> bool:
+    return drift_is_real(result.drift_ppm, result.drift_r2, result.overlap_s, AGREEMENT_TOLERANCE_S)
+
+
+def describe_drift(result: AlignResult) -> str:
+    text = f"drift {result.drift_ppm:+.1f} ppm (r2 {result.drift_r2:.2f})"
+    if result.overlap_s:
+        text += f", {drift_walk_s(result.drift_ppm, result.overlap_s) * 1000:.0f} ms over {result.overlap_s:.0f} s"
+    return text
 
 
 def describe_agreement(result: AlignResult) -> str:

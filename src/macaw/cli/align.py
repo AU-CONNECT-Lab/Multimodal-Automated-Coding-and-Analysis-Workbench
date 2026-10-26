@@ -16,12 +16,13 @@ from macaw.media.align import (
     AlignResult,
     align_recording,
     describe_agreement,
+    describe_drift,
+    drift_flagged,
     keep_manual,
     low_confidence,
     read_offset_table,
     write_offset_table,
 )
-from macaw.media.drift import drift_is_real
 from macaw.media.probe import probe
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -149,9 +150,9 @@ def _summarise(recording_id: str, results: list[AlignResult], cfg) -> None:
         else:
             line = f"{result.offset_s:+.3f} s  confidence {result.confidence:.2f}, {describe_agreement(result)}"
             if result.drift_ppm is not None:
-                line += f"  drift {result.drift_ppm:+.1f} ppm (r2 {result.drift_r2:.2f})"
+                line += f"  {describe_drift(result)}"
             if low_confidence(result, cfg):
                 flags.append("LOW CONFIDENCE")
-        if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
+        if drift_flagged(result):
             flags.append("DRIFT")
         typer.echo(f"  {result.target:<32} {line}  {' '.join(flags)}".rstrip())

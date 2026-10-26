@@ -78,9 +78,14 @@ def estimate_drift(offsets: list[tuple[float, ...]]) -> tuple[float, float]:
     return float(slope * 1e6), float(r_squared)
 
 
-def drift_is_real(drift_ppm: float | None, r_squared: float | None, max_drift_ppm: float) -> bool:
-    """A large slope with a poor fit is noise, not a clock running fast, and re-timing on it
-    would make the alignment worse."""
-    if drift_ppm is None or r_squared is None:
+def drift_is_real(
+    drift_ppm: float | None, r_squared: float | None, overlap_s: float | None, tolerance_s: float
+) -> bool:
+    """A credible slope that walks the offset further than tolerance_s over the file; drift is not corrected."""
+    if drift_ppm is None or r_squared is None or overlap_s is None:
         return False
-    return abs(drift_ppm) > max_drift_ppm and r_squared >= 0.5
+    return r_squared >= 0.5 and drift_walk_s(drift_ppm, overlap_s) > tolerance_s
+
+
+def drift_walk_s(drift_ppm: float, overlap_s: float) -> float:
+    return abs(drift_ppm) * 1e-6 * overlap_s

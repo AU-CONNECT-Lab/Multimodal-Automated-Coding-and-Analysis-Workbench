@@ -11,8 +11,15 @@ import pandas as pd
 from macaw.exceptions import UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.media.align import UNALIGNED, apply_alignment, describe_agreement, low_confidence, read_offset_table
-from macaw.media.drift import drift_is_real
+from macaw.media.align import (
+    UNALIGNED,
+    apply_alignment,
+    describe_agreement,
+    describe_drift,
+    drift_flagged,
+    low_confidence,
+    read_offset_table,
+)
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
 from macaw.project.layout import layout_for
@@ -308,11 +315,11 @@ class MediaPrepExtractor(Extractor):
                     f"and {describe_agreement(result)}",
                     offset_s=result.offset_s, agreement=result.agreement,
                 )
-            if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
+            if drift_flagged(result):
                 warn(
                     "clock_drift", item,
-                    f"{item.path.name} drifts {result.drift_ppm:.1f} ppm (r2 {result.drift_r2:.2f}), "
-                    f"above {cfg.max_drift_ppm:.1f}",
+                    f"{item.path.name} has {describe_drift(result)}; drift is not corrected, so the offset is "
+                    "off by that much at the far end",
                 )
 
     def _rows(self, recording: Recording, start: float, end: float, n_tracks: int):

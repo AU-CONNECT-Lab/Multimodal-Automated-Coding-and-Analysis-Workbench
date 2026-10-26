@@ -26,7 +26,7 @@ align:
   min_agreement: 0.5                 # 0-1; a blunt peak is flagged when fewer sounding segments than this find the same offset
   drift_check: true                  # detect linear clock drift by segment-wise offset
   drift_segment_s: 60.0              # s; segment length for the cross-check and the drift regression
-  max_drift_ppm: 200.0               # parts per million; above this the recording fails QC
+  max_drift_ppm: 200.0               # parts per million; the largest drift the segment search allows for
   apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
 
 segment:

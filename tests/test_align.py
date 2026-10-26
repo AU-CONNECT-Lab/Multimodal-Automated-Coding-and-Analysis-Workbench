@@ -24,6 +24,7 @@ from macaw.media.align import (
     align_signals,
     apply_alignment,
     describe_agreement,
+    drift_flagged,
     gcc_phat,
     keep_manual,
     low_confidence,
@@ -112,11 +113,12 @@ class TestAlignSignals:
         target = started_later(other_mic(room), 20.0, 280, drift_ppm=150.0)
         result = align_signals(room[: 320 * SR], target, CFG, names=("a", "b"))
         assert result.drift_ppm == pytest.approx(150.0, abs=15.0)
-        assert drift_is_real(result.drift_ppm, result.drift_r2, 100.0)
+        assert result.overlap_s == pytest.approx(280.0, abs=0.1)
+        assert drift_flagged(result)
 
     def test_a_steady_clock_shows_no_real_drift(self, room):
         result = align_signals(room[: 300 * SR], started_later(other_mic(room), 20.0, 280), CFG, names=("a", "b"))
-        assert not drift_is_real(result.drift_ppm, result.drift_r2, 100.0)
+        assert not drift_flagged(result)
 
     def test_a_different_recording_is_not_confident(self, room):
         result = align_signals(room[: 300 * SR], speechlike(280, 9), CFG, names=("a", "b"))
@@ -175,6 +177,22 @@ class TestAgreement:
         segments = [(30.0 * i, 4.0, 0.5) for i in range(9)] + [(300.0, 3.0, 0.5)]
         result = entry("parent.wav", 4.0, agreement=agreement(segments, 4.0), segment_offsets=segments)
         assert describe_agreement(result) == "same offset in 9 of 10 sounding segments"
+
+
+class TestDrift:
+    def test_a_slow_clock_under_the_ppm_limit_still_counts_over_a_long_file(self):
+        """120 ppm over 20 minutes walks 144 ms; the offset is wrong for most of the file."""
+        assert drift_is_real(120.0, 1.0, 1200.0, 0.02)
+
+    def test_the_same_clock_over_a_short_clip_does_not(self):
+        assert not drift_is_real(120.0, 1.0, 100.0, 0.02)
+
+    def test_a_steep_slope_with_a_poor_fit_is_noise(self):
+        assert not drift_is_real(500.0, 0.1, 1200.0, 0.02)
+
+    def test_nothing_measured_is_nothing_flagged(self):
+        assert not drift_is_real(None, None, 1200.0, 0.02)
+        assert not drift_is_real(120.0, 1.0, None, 0.02)
 
 
 class TestMetadataOffset:
@@ -294,7 +312,7 @@ class TestPrepWarnings:
     def test_each_problem_is_named_once(self, tmp_path, monkeypatch):
         table = [
             entry("room.wav", confidence=1.0),
-            entry("parent.wav", 4.0, confidence=0.3, drift_ppm=180.0, drift_r2=0.95),
+            entry("parent.wav", 4.0, confidence=0.3, drift_ppm=180.0, drift_r2=0.95, overlap_s=600.0),
             entry("camera.avi", method=UNALIGNED, confidence=None, note="no audio stream"),
         ]
         assert self.warnings(tmp_path, monkeypatch, table) == {
