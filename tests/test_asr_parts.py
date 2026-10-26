@@ -120,3 +120,21 @@ class TestLongTableRows:
     def test_words_per_minute_counts_speaking_time_only(self, rows):
         """Not words per minute of the session: 12 words over 6 s of speech is 120."""
         assert float(rows[rows.feature == "words_per_minute"].value.iloc[0]) == pytest.approx(120.0)
+
+
+class TestLowConfidence:
+    """Each backend's confidence has its own scale, so the warning threshold is the backend's."""
+
+    def warnings(self, low_confidence):
+        extractor = ASRExtractor(SimpleNamespace(text=SimpleNamespace()))
+        extractor.backend = lambda: SimpleNamespace(low_confidence=low_confidence)
+        recording = SimpleNamespace(recording_id="r", subjects=[SimpleNamespace(subject_id="parent")])
+        prep = SimpleNamespace(t_origin_s=0.0, duration_s=60.0, tracks={"parent": "parent.wav"})
+        utterances = pd.DataFrame([{"subject_id": "parent", "confidence": 0.41, "language": "en"}])
+        return [warning.check for warning in extractor._quality_warnings(recording, utterances, prep)]
+
+    def test_below_the_backends_threshold_warns(self):
+        assert self.warnings(0.5) == ["asr_confidence"]
+
+    def test_a_backend_without_a_measured_threshold_does_not(self):
+        assert self.warnings(None) == []

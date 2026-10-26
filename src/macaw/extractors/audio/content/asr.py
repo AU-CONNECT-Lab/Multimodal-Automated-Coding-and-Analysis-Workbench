@@ -55,7 +55,6 @@ WORD_SCHEMA: dict[str, str] = {
 WHISPERX_BATCH_SIZE = 8
 
 _CROSSTALK_WARN_FRACTION = 0.5
-_LOW_CONFIDENCE = 0.5
 
 
 def resolve_device(device: str) -> str:
@@ -76,6 +75,10 @@ def resolve_compute_type(compute_type: str, device: str) -> str:
 
 
 class ASRBackend(Backend):
+    # mean confidence below which a transcript is unlikely to be usable, on this backend's own
+    # scale; None where nobody has measured one, since the scales are not comparable
+    low_confidence: float | None = None
+
     def __init__(self, model: str, *, device: str = "auto", compute_type: str = "float16"):
         self.model = model
         self.device = resolve_device(device)
@@ -183,6 +186,7 @@ class WhisperXBackend(ASRBackend):
 @register_backend(BACKEND_GROUP)
 class FasterWhisperBackend(ASRBackend):
     name = "faster_whisper"
+    low_confidence = 0.5
 
     @property
     def version(self) -> str:
@@ -432,7 +436,8 @@ class ASRExtractor(Extractor):
                 )
                 continue
             confidence = float(mine["confidence"].mean())
-            if math.isfinite(confidence) and confidence < _LOW_CONFIDENCE:
+            threshold = self.backend().low_confidence
+            if threshold is not None and math.isfinite(confidence) and confidence < threshold:
                 warnings.append(
                     QCWarning(
                         check="asr_confidence",
