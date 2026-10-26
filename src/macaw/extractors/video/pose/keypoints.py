@@ -71,9 +71,8 @@ def _video_files(recording: Recording) -> list:
 
 def select_videos(recording: Recording, *, read_shared: bool = False) -> tuple[list, list]:
     """(read, skipped). Per-person cameras answer the identity question by themselves, so they
-    win over a shared one, the same preference as per_track over a shared mic; read_shared adds
-    one shared camera next to them. Otherwise only one view is read per person or per room: a
-    second would put two rows on one frame and joint, numbered on another file's clock."""
+    win over shared ones, the same preference as per_track over a shared mic; read_shared adds
+    the shared cameras next to them. One camera per person: a second would only repeat them."""
     videos = sorted(_video_files(recording), key=lambda item: str(item.path))
     per_subject = [item for item in videos if item.subject_id is not None]
     shared = [item for item in videos if item.subject_id is None]
@@ -81,15 +80,25 @@ def select_videos(recording: Recording, *, read_shared: bool = False) -> tuple[l
         chosen: dict[str, object] = {}
         for item in per_subject:
             chosen.setdefault(item.subject_id, item)
-        read = list(chosen.values()) + (shared[:1] if read_shared else [])
+        read = list(chosen.values()) + (shared if read_shared else [])
     else:
-        read = videos[:1]
+        read = shared
     return read, [item for item in videos if item not in read]
 
 
 def own_views(recording: Recording) -> dict[str, str]:
     """subject -> the file name of their own camera, where they have one."""
     return {item.subject_id: item.path.name for item in select_videos(recording)[0] if item.subject_id is not None}
+
+
+def primary_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, str]:
+    """subject -> the view a person is measured on: their own camera, else the shared one that saw them most."""
+    views = own_views(recording)
+    seen = keypoints[keypoints["subject_id"].notna() & keypoints["x"].notna()]
+    counts = seen.groupby(["subject_id", "video"], observed=True)["frame"].nunique()
+    for (subject, video), _ in counts.sort_values(ascending=False, kind="stable").items():
+        views.setdefault(str(subject), str(video))
+    return views
 
 
 DETECTIONS_NAME = "detections.parquet"
@@ -165,14 +174,12 @@ class PoseDetectExtractor(Extractor):
                     "not read (pose.read_shared)",
                 )
             )
-        repeated = [
-            item.path.name for item in skipped if item.subject_id is not None or not per_subject or cfg.read_shared
-        ]
+        repeated = [item.path.name for item in skipped if item.subject_id is not None]
         if repeated:
             warnings.append(
                 _warning(
                     self.name, recording, None, "warn",
-                    f"only one camera per person or per room is read; skipped {', '.join(repeated)}",
+                    f"only one camera per person is read; skipped {', '.join(repeated)}",
                 )
             )
 
@@ -256,7 +263,7 @@ class PoseExtractor(Extractor):
     """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
 
     name = "pose.keypoints"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose",)
@@ -292,12 +299,17 @@ class PoseExtractor(Extractor):
         pieces: list[pd.DataFrame] = []
         swaps_by_file: dict[str, list] = {}
         sources = select_videos(recording, read_shared=cfg.read_shared)[0]
-        # people on their own cameras first: their head motion names them on a shared one
+        # people on their own cameras first, then shared cameras in order: each view is named by the
+        # head motion of the people already named on an earlier one
+        shared_done = False
         for item in sorted(sources, key=lambda item: item.subject_id is None):
             piece = detections[detections["video"] == item.path.name].reset_index(drop=True)
             if piece.empty:
                 continue
-            piece, swaps, owner = self._identify(piece, item, subjects, cfg, named.get(item.path.name), pieces)
+            piece, swaps, owner = self._identify(
+                piece, item, subjects, cfg, named.get(item.path.name), pieces, first_shared=not shared_done
+            )
+            shared_done = shared_done or item.subject_id is None
             swaps_by_file[item.path.name] = swaps
             if owner is not None:
                 owners[item.path.name] = owner
@@ -333,7 +345,10 @@ class PoseExtractor(Extractor):
             warnings=warnings,
         )
 
-    def _identify(self, piece: pd.DataFrame, item, subjects: list[str], cfg, named: dict | None, own: list[pd.DataFrame]):
+    def _identify(
+        self, piece: pd.DataFrame, item, subjects: list[str], cfg, named: dict | None, own: list[pd.DataFrame],
+        *, first_shared: bool,
+    ):
         """Attach subject_id. The stored track_id stays the backend's raw numbering, so a
         disputed assignment can still be traced back to what the model actually returned."""
         if item.subject_id is not None and not several_people(piece):
@@ -358,11 +373,13 @@ class PoseExtractor(Extractor):
             if cfg.track_repair:
                 swaps = detect_swaps(piece, max_gap_s=cfg.track_repair_max_gap_s)
             identified = repair_tracks(piece, swaps)
+            # anchors are drawn on the first shared camera; a later one is named against the earlier views
+            anchors = cfg.identity_anchors if first_shared else {}
             voices = references = edges = None
-            if not cfg.identity_anchors:
+            if not anchors:
                 references, voices, edges = self._evidence(own, subjects)
             choice = choose_people(
-                identified, subjects, identity_anchors=cfg.identity_anchors, named=by_hand,
+                identified, subjects, identity_anchors=anchors, named=by_hand,
                 voices=voices, references=references, edges=edges,
             )
 
@@ -386,11 +403,15 @@ class PoseExtractor(Extractor):
         """(references, voices, edges) for who is who on a shared camera: each person's head motion
         on their own camera, else their talking on their own mic; none without either."""
         prep = self._prep
-        named = pd.concat([piece[piece["subject_id"].notna()] for piece in own], ignore_index=True) if own else None
+        # each person from the first view they were named on, so frame numbers come from one file
+        first: dict[str, pd.DataFrame] = {}
+        for piece in own:
+            for subject, group in piece[piece["subject_id"].notna()].groupby("subject_id"):
+                first.setdefault(str(subject), group)
         tracks = {subject: prep.track_path(subject) for subject in subjects if subject in prep.tracks}
-        if named is not None and named["subject_id"].nunique() > 1:
+        if len(first) > 1:
             edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-            return {str(subject): head_motion(group, edges) for subject, group in named.groupby("subject_id")}, None, edges
+            return {subject: head_motion(group, edges) for subject, group in first.items()}, None, edges
         if len(tracks) > 1:
             edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
             return None, speech_activity(tracks, prep.t_origin_s, edges), edges
@@ -440,13 +461,12 @@ class PoseExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         t_start = float(keypoints["t"].min())
         t_end = float(keypoints["t"].max())
-        own = own_views(recording)
+        views = primary_views(keypoints, recording)
 
         frames = []
         for subject_id, group in keypoints.groupby("subject_id", dropna=True, observed=True):
-            if str(subject_id) in own:
-                group = group[group["video"] == own[str(subject_id)]]
-            n_frames = int(keypoints.loc[keypoints["video"].isin(group["video"].unique()), "frame"].nunique())
+            group = group[group["video"] == views[str(subject_id)]]
+            n_frames = int(keypoints.loc[keypoints["video"] == views[str(subject_id)], "frame"].nunique())
             # one person may be several tracker ids joined together; their gaps are what count
             quality = track_quality(group.assign(track_id=0))
             seen = int(group.loc[group["x"].notna(), "frame"].nunique())

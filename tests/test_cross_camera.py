@@ -24,12 +24,17 @@ SECONDS = 120.0
 
 
 class TestSelectVideos:
-    def test_a_shared_camera_is_read_next_to_the_own_cameras_only_when_asked(self, recording):
+    def test_shared_cameras_are_read_next_to_the_own_cameras_only_when_asked(self, recording):
         files = [media("a.mp4", subject_id="parent"), media("b.mp4", subject_id="child"), media("room.mp4"), media("room2.mp4")]
         assert [item.path.name for item in select_videos(recording(files))[0]] == ["a.mp4", "b.mp4"]
         read, skipped = select_videos(recording(files), read_shared=True)
-        assert [item.path.name for item in read] == ["a.mp4", "b.mp4", "room.mp4"]
-        assert [item.path.name for item in skipped] == ["room2.mp4"]
+        assert [item.path.name for item in read] == ["a.mp4", "b.mp4", "room.mp4", "room2.mp4"]
+        assert skipped == []
+
+    def test_every_room_camera_is_read(self, recording):
+        assert [item.path.name for item in select_videos(recording([media("room.mp4"), media("room2.mp4")]))[0]] == [
+            "room.mp4", "room2.mp4",
+        ]
 
 
 class TestReferences:
@@ -140,3 +145,33 @@ class TestNamingTheRoomFromOwnCameras:
         _, result = room_and_own(True)
         rows = result.rows[result.rows.feature == "detection_rate"]
         assert rows.value.astype(float).tolist() == [1.0, 1.0]
+
+
+@pytest.fixture
+def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
+    """Two room cameras facing each other: the child is left on one and right on the other."""
+    activity = {"parent": talking(n=240), "child": talking(n=240)}
+    frame = lambda rows: coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+    backend = PerFileBackend({
+        "room_a.mp4": frame(nodding(activity["child"], 100.0, 60.0, 1) + nodding(activity["parent"], 500.0, 60.0, 2)),
+        "room_b.mp4": frame(nodding(activity["parent"], 100.0, 60.0, 1) + nodding(activity["child"], 500.0, 60.0, 2)),
+    })
+    monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
+    monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
+    monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
+    config = SimpleNamespace(pose=PoseSection(identity_anchors={"child": 0.1, "parent": 0.9}))
+    rec = recording([media("room_a.mp4"), media("room_b.mp4")], t_task_end=SECONDS - 1 / FPS)
+    found = PoseDetectExtractor(config).run(rec, tmp_path / "detect")
+    artifacts = tmp_path / "artifacts" / PoseDetectExtractor.name
+    artifacts.mkdir(parents=True, exist_ok=True)
+    for name, source in found.artifacts.items():
+        (artifacts / name).write_bytes(source.read_bytes())
+    return PoseExtractor(config).run(rec, tmp_path)
+
+
+class TestTwoRoomCameras:
+    def test_the_second_camera_is_named_by_motion_against_the_first(self, two_rooms):
+        left = two_rooms.keypoints[two_rooms.keypoints.x < 300].groupby("video")["subject_id"].agg(lambda s: set(s.dropna()))
+        assert {video: set(who) for video, who in left.items()} == {"room_a.mp4": {"child"}, "room_b.mp4": {"parent"}}
+        owners = json.loads(two_rooms.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["room_a.mp4"]["doubt"] is None and owners["room_b.mp4"]["doubt"] is None

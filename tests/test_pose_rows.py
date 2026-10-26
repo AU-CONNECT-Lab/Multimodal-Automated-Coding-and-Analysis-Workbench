@@ -149,7 +149,9 @@ def extractor(monkeypatch, offsets):
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
         # no mic per person, so who is who on a shared camera falls back to the configured order
-        monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}))
+        monkeypatch.setattr(
+            pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=N_FRAMES / FPS)
+        )
         return Chain(backend)
 
     return build
@@ -252,13 +254,11 @@ class TestOneViewPerPerson:
     """A second view of the same person would put two rows on one frame and joint, numbered on
     another file's clock."""
 
-    def test_a_second_shared_camera_is_skipped_with_a_warning(self, extractor, recording, tmp_path):
+    def test_every_shared_camera_is_read(self, extractor, recording, tmp_path):
         instance = extractor()
         result = instance.run(recording([media("room_b.mp4"), media("room_a.mp4")]), tmp_path)
-        assert [call["path"].name for call in instance.fake.calls] == ["room_a.mp4"]
-        assert any(
-            w.severity == "warn" and "room_b.mp4" in w.message for w in result.warnings
-        )
+        assert [call["path"].name for call in instance.fake.calls] == ["room_a.mp4", "room_b.mp4"]
+        assert set(result.keypoints.video) == {"room_a.mp4", "room_b.mp4"}
 
     def test_a_second_camera_on_one_person_is_skipped(self, extractor, recording, tmp_path):
         instance = extractor(FakeBackend(backend_frame([100.0])))

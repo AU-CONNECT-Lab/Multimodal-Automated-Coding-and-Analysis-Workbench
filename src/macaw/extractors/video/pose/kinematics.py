@@ -13,7 +13,7 @@ from scipy.signal import savgol_filter
 from macaw.exceptions import SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, own_views
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, own_views, primary_views
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -93,7 +93,7 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -115,20 +115,14 @@ class KinematicsExtractor(Extractor):
         keypoints = keypoints[keypoints["subject_id"].notna()]
         subjects = [subject.subject_id for subject in recording.subjects]
         own = own_views(recording)
-        # a person with their own camera is measured there; a shared camera adds only the pairs
+        views = primary_views(keypoints, recording)
+        # each person is measured on one view: their own camera, else the shared one that saw them most
         by_subject = {
-            subject_id: keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == own[subject_id])]
-            if subject_id in own
-            else keypoints[keypoints["subject_id"] == subject_id]
+            subject_id: keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == views[subject_id])]
             for subject_id in subjects
+            if subject_id in views
         }
-        by_subject = {subject_id: kp for subject_id, kp in by_subject.items() if not kp.empty}
         shared = keypoints[~keypoints["video"].isin(set(own.values()))]
-        in_room = {
-            subject_id: shared[shared["subject_id"] == subject_id]
-            for subject_id in subjects
-            if (shared["subject_id"] == subject_id).any()
-        }
         warnings = [
             self._warning(recording, subject_id, "warn", "no keypoints for this subject")
             for subject_id in subjects
@@ -149,7 +143,9 @@ class KinematicsExtractor(Extractor):
 
         # people filmed by separate cameras do not share an image plane, so no pixel distance
         # between them means anything
-        if own and len(in_room) < 2 and len(by_subject) > 1:
+        pairs = {pair: _pair_view(shared, *pair) for pair in combinations([s for s in subjects if s in by_subject], 2)}
+        pairs = {pair: view for pair, view in pairs.items() if view is not None}
+        if own and not pairs and len(by_subject) > 1:
             warnings.append(
                 self._warning(
                     recording, None, "info",
@@ -158,10 +154,10 @@ class KinematicsExtractor(Extractor):
                 )
             )
         else:
-            for a, b in combinations(in_room, 2):
+            for (a, b), view in pairs.items():
                 frames.append(
                     build_long_rows(
-                        values=_pair_values(in_room[a], in_room[b]),
+                        values=_pair_values(view[view["subject_id"] == a], view[view["subject_id"] == b]),
                         scale=Scale.FRAME,
                         subject_id=a,
                         subject_id_b=b,
@@ -215,6 +211,16 @@ class KinematicsExtractor(Extractor):
             severity=severity,
             message=message,
         )
+
+
+def _pair_view(shared: pd.DataFrame, a: str, b: str) -> pd.DataFrame | None:
+    """The rows of the shared camera on which the two were seen together most; none if never."""
+    seen = shared[shared["subject_id"].isin([a, b]) & shared["x"].notna()]
+    together = seen.groupby(["video", "frame"], observed=True)["subject_id"].nunique()
+    together = together[together == 2].groupby(level="video").size()
+    if together.empty:
+        return None
+    return shared[shared["video"] == together.idxmax()]
 
 
 def _keypoints_file(config, recording_id: str) -> Path:

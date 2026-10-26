@@ -317,7 +317,7 @@ def run(tmp_path, monkeypatch):
 def shared(run):
     keypoints = pd.concat(
         [person("parent", centre=(150.0, 200.0)), person("child", centre=(450.0, 220.0))]
-    )
+    ).assign(video="room.mp4")
     return run(keypoints, [video("room.mp4")])
 
 
@@ -372,6 +372,15 @@ class TestExtractor:
         alone = run(pd.concat([person("parent"), person("child")]), files[:2]).rows
         mine = rows[rows.subject_id_b.isna()].reset_index(drop=True)
         pd.testing.assert_series_equal(mine.value, alone.value.reset_index(drop=True))
+
+    def test_two_room_cameras_measure_each_person_where_they_are_seen_most(self, run):
+        left = pd.concat([person("parent", n_frames=20), person("child", centre=(450.0, 220.0), n_frames=5)]).assign(video="left.mp4")
+        right = pd.concat([person("parent", n_frames=8), person("child", centre=(450.0, 220.0), n_frames=20, scale=2.0)]).assign(video="right.mp4")
+        rows = run(pd.concat([left, right]), [video("left.mp4"), video("right.mp4")]).rows
+        hands = rows[rows.feature == "hand_distance"].groupby("subject_id").size()
+        assert hands.to_dict() == {"child": 20, "parent": 20}
+        pairs = rows[rows.feature == "interpersonal_distance"]
+        assert len(pairs) == 8
 
     def test_a_subject_without_keypoints_is_reported(self, run):
         result = run(person("parent"), [video("room.mp4")])
