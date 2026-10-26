@@ -39,14 +39,17 @@ def bin_edges(start: float, end: float, step: float = BIN_S) -> np.ndarray:
     return start + np.arange(int(np.floor((end - start) / step)) + 1) * step
 
 
+def frame_levels(path: Path) -> np.ndarray:
+    """Level in dB of each ENERGY_FRAME_S frame of a track."""
+    audio, rate = load_audio(Path(path))
+    hop = max(int(ENERGY_FRAME_S * rate), 1)
+    frames = audio[: audio.size // hop * hop].reshape(-1, hop)
+    return 10 * np.log10(np.mean(np.square(frames, dtype=float), axis=1) + 1e-12)
+
+
 def speech_activity(tracks: dict[str, Path], t_origin: float, edges: np.ndarray) -> dict[str, np.ndarray]:
     """Share of each bin in which a person's own mic carries their voice; tracks start at t_origin."""
-    levels = {}
-    for subject, path in tracks.items():
-        audio, rate = load_audio(Path(path))
-        hop = max(int(ENERGY_FRAME_S * rate), 1)
-        frames = audio[: audio.size // hop * hop].reshape(-1, hop)
-        levels[subject] = 10 * np.log10(np.mean(np.square(frames, dtype=float), axis=1) + 1e-12)
+    levels = {subject: frame_levels(path) for subject, path in tracks.items()}
     if not levels:
         return {}
     length = min(level.size for level in levels.values())

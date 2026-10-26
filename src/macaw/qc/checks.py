@@ -15,9 +15,10 @@ import numpy as np
 import pandas as pd
 
 from macaw.config.schema import MacawConfig
-from macaw.exceptions import ConfigError
+from macaw.exceptions import ConfigError, MacawError
 from macaw.extractors.base import QCWarning
 from macaw.extractors.video.motion.mea import PICTURE_NAME, WHOLE_PICTURE_CHANGE
+from macaw.extractors.video.pose.voice_motion import ENERGY_FRAME_S, frame_levels
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -28,6 +29,7 @@ from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame,
 POSE_SOURCE = "pose.keypoints"
 PROSODY_SOURCE = "prosody.frame"
 MEA_SOURCE = "motion.mea"
+ASR_SOURCE = "text.asr"
 
 CANDIDATE_SCHEMA: dict[str, str] = {
     "recording_id": "string",
@@ -51,6 +53,11 @@ _MISSING_GAP_S = 0.5
 # 0.8 octave between two 10 ms frames is beyond any voice, so it is the tracker jumping
 _OCTAVE_JUMP = 0.8
 _OCTAVE_WARN_FRACTION = 0.01
+# speech on a person's own mic should stand this far above the rest of their track
+_MATCH_DB = 3.0
+_MATCH_Z = 3.0
+# shifts shorter than this could still overlap the real utterances
+_MATCH_SHIFT_S = 10.0
 # an identical picture for this long is a stalled recording, not a still room
 _FROZEN_S = 1.0
 # nothing at all moving in a person's region for this long: they left it, or it is drawn on a wall
@@ -169,20 +176,86 @@ def _summary(check: str, recording_id: str, candidates: pd.DataFrame) -> list[QC
     return warnings
 
 
-@register_check("alignment_confidence")
-def check_alignment_confidence(recording: Recording, config: MacawConfig, results) -> CheckResult:
-    raise NotImplementedError
-
-
-@register_check("clock_drift")
-def check_clock_drift(recording: Recording, config: MacawConfig, results) -> CheckResult:
-    raise NotImplementedError
-
-
 @register_check("transcript_match")
 def check_transcript_match(recording: Recording, config: MacawConfig, results) -> CheckResult:
-    """Energy-ratio test: does this transcript belong to this recording at all."""
-    raise NotImplementedError
+    """Energy-ratio test: does this transcript belong to this recording at all. Where it says a
+    person speaks, their own mic should be clearly louder than where it says they do not."""
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, read_transcript
+    from macaw.extractors.prep import load_prep
+
+    path = results.artifact(ASR_SOURCE, TRANSCRIPT_NAME)
+    if path is None:
+        return CheckResult(skipped=f"no {ASR_SOURCE} transcript")
+    try:
+        prep = load_prep(config, recording.recording_id)
+    except MacawError as error:
+        return CheckResult(skipped=str(error))
+
+    rid = recording.recording_id
+    utterances = read_transcript(path)
+    warnings, pieces = [], []
+    for subject_id, spoken in utterances.groupby("subject_id", dropna=True, observed=True):
+        subject_id = str(subject_id)
+        if subject_id not in prep.tracks:
+            continue
+        level = frame_levels(prep.track_path(subject_id))
+        t = prep.t_origin_s + (np.arange(level.size) + 0.5) * ENERGY_FRAME_S
+        inside = _within(t, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float))
+        if not inside.any() or inside.all():
+            continue
+        contrast, z = _contrast(level, inside)
+        matched = contrast >= _MATCH_DB and z >= _MATCH_Z
+        warnings.append(
+            QCWarning(
+                check="transcript_match",
+                recording_id=rid,
+                subject_id=subject_id,
+                severity="info" if matched else "warn",
+                message=(
+                    f"where the transcript has them speaking their mic is {contrast:+.1f} dB against the rest of the "
+                    f"track (z {z:.1f} against the transcript shifted in time)"
+                    + ("" if matched else "; the transcript may belong to another recording, person or clock")
+                ),
+                details={"contrast_db": contrast, "z": z},
+            )
+        )
+        quiet = np.median(level[~inside]) + _MATCH_DB
+        rows = []
+        for utterance in spoken.itertuples():
+            here = (t >= utterance.t_start) & (t <= utterance.t_end)
+            if here.any() and np.median(level[here]) < quiet:
+                rows.append(
+                    {
+                        "recording_id": rid, "subject_id": subject_id, "check": "transcript_match",
+                        "reason": "quiet_utterance", "t_start": utterance.t_start, "t_end": utterance.t_end,
+                        "t": (utterance.t_start + utterance.t_end) / 2.0, "score": float(quiet - np.median(level[here])),
+                    }
+                )
+        if rows:
+            pieces.append(coerce_frame(pd.DataFrame(rows), CANDIDATE_SCHEMA, "candidates"))
+    candidates = _concat_candidates(pieces)
+    return CheckResult(warnings=warnings + _summary("transcript_match", rid, candidates), candidates=candidates)
+
+
+def _within(t: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+    order = np.argsort(starts)
+    starts, ends = starts[order], np.maximum.accumulate(ends[order])
+    index = np.searchsorted(starts, t, side="right") - 1
+    return (index >= 0) & (t <= ends[np.clip(index, 0, None)])
+
+
+def _contrast(level: np.ndarray, inside: np.ndarray) -> tuple[float, float]:
+    """(dB louder inside than outside, its z against the same mask shifted in a circle)."""
+    def gap(mask):
+        return float(np.median(level[mask]) - np.median(level[~mask]))
+
+    observed = gap(inside)
+    minimum = int(_MATCH_SHIFT_S / ENERGY_FRAME_S)
+    shifts = np.linspace(minimum, inside.size - minimum, num=200, dtype=int) if inside.size > 2 * minimum else []
+    null = np.array([gap(np.roll(inside, shift)) for shift in np.unique(shifts)])
+    if null.size < 10 or null.std() == 0:
+        return observed, float("nan")
+    return observed, float((observed - null.mean()) / null.std())
 
 
 @register_check("track_quality")

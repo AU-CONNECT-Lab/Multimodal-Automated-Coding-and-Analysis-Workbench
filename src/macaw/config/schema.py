@@ -152,8 +152,6 @@ class CodingSection(_Section):
 class QCSection(_Section):
     checks: list[str] = Field(
         default_factory=lambda: [
-            "alignment_confidence",
-            "clock_drift",
             "transcript_match",
             "track_quality",
             "octave_error",

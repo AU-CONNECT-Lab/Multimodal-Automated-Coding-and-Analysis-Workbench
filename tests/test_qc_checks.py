@@ -18,6 +18,7 @@ from macaw.qc.checks import (
     candidate_spans,
     check_motion_energy,
     check_octave_error,
+    check_transcript_match,
     check_track_quality,
     octave_jumps,
     read_candidates,
@@ -252,8 +253,8 @@ class TestRunChecks:
             run_checks(RECORDING, config(["trak_quality"]), fake_results())
 
     def test_an_unimplemented_check_is_reported_not_silently_dropped(self):
-        result = run_checks(RECORDING, config(["clock_drift"]), fake_results())
-        assert [(w.check, w.message) for w in result.warnings] == [("clock_drift", "not run: not implemented yet")]
+        result = run_checks(RECORDING, config(["au_child_reliability"]), fake_results())
+        assert [(w.check, w.message) for w in result.warnings] == [("au_child_reliability", "not run: not implemented yet")]
 
     def test_a_check_without_input_says_why(self):
         result = run_checks(RECORDING, config(["track_quality"]), fake_results())
@@ -271,7 +272,7 @@ class TestRunChecks:
         assert set(result.candidates.check) == {"track_quality", "octave_error"}
 
     def test_only_overrides_the_configured_list(self):
-        result = run_checks(RECORDING, config(["clock_drift"]), fake_results(), only=["octave_error"])
+        result = run_checks(RECORDING, config(["track_quality"]), fake_results(), only=["octave_error"])
         assert [w.check for w in result.warnings] == ["octave_error"]
 
 
@@ -362,3 +363,66 @@ class TestMotionCheck:
     def test_without_motion_energy_it_is_skipped(self):
         empty = SimpleNamespace(long_table=lambda source, features=None: pd.DataFrame(), artifact=lambda e, n: None)
         assert check_motion_energy(RECORDING, None, empty).skipped
+
+
+def speaking_track(path, spans, seconds=60.0, rate=8000):
+    """A quiet track with a loud tone in each (start, end) span."""
+    import wave
+
+    rng = np.random.default_rng(1)
+    t = np.arange(int(seconds * rate)) / rate
+    audio = rng.normal(0, 0.003, t.size)
+    for start, end in spans:
+        here = (t >= start) & (t < end)
+        audio[here] += 0.3 * np.sin(2 * np.pi * 200 * t[here])
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+    return path
+
+
+def transcript_file(path, spans):
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_SCHEMA
+
+    rows = [{"recording_id": RID, "subject_id": "parent", "utterance_index": i, "t_start": a, "t_end": b, "text": "hi",
+             "n_words": 1, "confidence": 1.0, "avg_logprob": np.nan, "no_speech_prob": np.nan, "language": "en"}
+            for i, (a, b) in enumerate(spans)]
+    coerce_frame(pd.DataFrame(rows), TRANSCRIPT_SCHEMA, "transcript").to_parquet(path)
+    return path
+
+
+SPEECH = [(start, start + 1.5) for start in (2.0, 7.0, 9.5, 15.0, 21.0, 22.8, 30.0, 33.0, 41.0, 48.0, 52.5, 57.0)]
+
+
+class TestTranscriptMatch:
+    def run(self, tmp_path, monkeypatch, spoken, written):
+        from macaw.extractors import prep as prep_module
+
+        track = speaking_track(tmp_path / "parent.wav", spoken)
+        monkeypatch.setattr(
+            prep_module, "load_prep",
+            lambda config, rid: SimpleNamespace(t_origin_s=0.0, tracks={"parent": "parent.wav"}, track_path=lambda s: track),
+        )
+        path = transcript_file(tmp_path / "transcript.parquet", written)
+        return check_transcript_match(RECORDING, None, SimpleNamespace(artifact=lambda extractor, name: path))
+
+    def test_a_transcript_of_this_mic_passes(self, tmp_path, monkeypatch):
+        result = self.run(tmp_path, monkeypatch, SPEECH, SPEECH)
+        assert [w.severity for w in result.warnings] == ["info"]
+        assert result.candidates.empty
+
+    def test_a_transcript_of_something_else_warns_and_points_at_quiet_utterances(self, tmp_path, monkeypatch):
+        elsewhere = [(start + 3.0, end + 3.0) for start, end in SPEECH]
+        result = self.run(tmp_path, monkeypatch, SPEECH, elsewhere)
+        assert result.warnings[0].severity == "warn"
+        assert set(result.candidates.reason) == {"quiet_utterance"}
+
+    def test_one_made_up_utterance_is_pointed_at_without_failing_the_rest(self, tmp_path, monkeypatch):
+        result = self.run(tmp_path, monkeypatch, SPEECH, SPEECH + [(44.0, 45.0)])
+        assert result.warnings[0].severity == "info"
+        assert result.candidates.t_start.tolist() == [44.0]
+
+    def test_without_a_transcript_it_is_skipped(self):
+        assert check_transcript_match(RECORDING, None, SimpleNamespace(artifact=lambda e, n: None)).skipped

@@ -118,8 +118,6 @@ coding:
 
 qc:
   checks:
-    - alignment_confidence
-    - clock_drift
     - transcript_match
     - track_quality
     - octave_error
