@@ -104,6 +104,7 @@ class FaceSection(_Section):
     batch_size: int = 16
     action_units: bool = True
     landmarks: bool = True
+    blink_min_eye_px: float = 5.0
     gaze: bool = False
     mutual_gaze_angle_deg: float = 15.0
     cross_backend_check: str | None = None

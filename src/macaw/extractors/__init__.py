@@ -28,6 +28,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.video.motion.mea",
     "macaw.extractors.audio.prosody.standard_sets",
     "macaw.extractors.video.face.au",
+    "macaw.extractors.video.face.movement",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}

@@ -81,7 +81,8 @@ face:
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the face model takes at once
   action_units: true                 # 20 action units per frame, 0 to 1
-  landmarks: true                    # face landmarks kept in an artifact, not the long table
+  landmarks: true                    # face landmarks kept in an artifact, not the long table; face.movement reads them
+  blink_min_eye_px: 5.0              # px; eyes narrower than this in the picture are not read for blinks
   gaze: false                        # gaze direction per frame as well (pyfeat: v1 adds L2CS-Net, v2 has it built in)
   mutual_gaze_angle_deg: 15.0        # deg; angular tolerance for calling two gazes mutual
   cross_backend_check: null          # second backend name; runs the AU agreement QC only
