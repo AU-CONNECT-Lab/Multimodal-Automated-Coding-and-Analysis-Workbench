@@ -25,6 +25,7 @@ BUILTIN_MODULES = (
     "macaw.coding.layer_a",
     "macaw.extractors.video.pose.keypoints",
     "macaw.extractors.video.pose.kinematics",
+    "macaw.extractors.video.motion.mea",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}

@@ -107,7 +107,6 @@ class FaceSection(_Section):
 
 
 class MotionSection(_Section):
-    enabled: bool = True
     rois: dict[str, tuple[int, int, int, int]] = Field(default_factory=dict)
     threshold: int = 10
     smoothing_s: float = 0.0

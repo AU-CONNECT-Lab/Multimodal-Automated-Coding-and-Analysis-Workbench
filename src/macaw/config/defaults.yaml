@@ -84,8 +84,7 @@ face:
   cross_backend_check: null          # second backend name; runs the AU agreement QC only
 
 motion:
-  enabled: true                      # frame-differencing MEA, the fallback when pose fails
-  rois: {}                           # subject_id -> [x, y, w, h] in pixels; required if enabled
+  rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera, else the shared one; required by motion.mea
   threshold: 10                      # 0-255; per-pixel difference counted as motion
   smoothing_s: 0.0                   # s; moving-average window. 0 = raw
 
