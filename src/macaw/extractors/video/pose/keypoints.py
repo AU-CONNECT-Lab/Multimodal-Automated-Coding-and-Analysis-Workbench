@@ -9,8 +9,9 @@ import pandas as pd
 from macaw.exceptions import InputNotFoundError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing
+from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing, load_prep
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
+from macaw.extractors.video.pose.voice_motion import bin_edges, speech_activity
 from macaw.extractors.video.pose.track_repair import (
     PeopleChoice,
     choose_camera_owner,
@@ -245,7 +246,7 @@ class PoseExtractor(Extractor):
     """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
 
     name = "pose.keypoints"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose",)
@@ -258,11 +259,18 @@ class PoseExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         named = layout.camera_owners_path(recording.recording_id)
         detections = layout.artifacts_dir(recording.recording_id, PoseDetectExtractor.name) / DETECTIONS_NAME
-        return [detections] + ([named] if named.is_file() else [])
+        inputs = [detections] + ([named] if named.is_file() else [])
+        shared = any(item.subject_id is None for item in select_videos(recording)[0])
+        if shared and not self.config.pose.identity_anchors:
+            # who is who is then read off each person's mic
+            prep = load_prep(self.config, recording.recording_id)
+            inputs += [prep.track_path(subject) for subject in sorted(prep.tracks)]
+        return inputs
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.pose
         detections, backend = load_detections(self.config, recording.recording_id)
+        self._prep = load_prep(self.config, recording.recording_id)
         subjects = [subject.subject_id for subject in recording.subjects]
         warnings: list[QCWarning] = []
         named = read_owner_file(
@@ -336,8 +344,10 @@ class PoseExtractor(Extractor):
             if cfg.track_repair:
                 swaps = detect_swaps(piece, max_gap_s=cfg.track_repair_max_gap_s)
             identified = repair_tracks(piece, swaps)
+            voices, edges = self._voices(subjects) if not cfg.identity_anchors else (None, None)
             choice = choose_people(
-                identified, subjects, identity_anchors=cfg.identity_anchors, named=by_hand
+                identified, subjects, identity_anchors=cfg.identity_anchors, named=by_hand,
+                voices=voices, edges=edges,
             )
 
         doubts = [choice.doubt] if choice.doubt else []
@@ -355,6 +365,15 @@ class PoseExtractor(Extractor):
             "spans": choice.spans or [],
         }
         return piece, swaps, owner
+
+    def _voices(self, subjects: list[str]):
+        """Each person's talking from their own mic, for who is who on a shared camera; none without such mics."""
+        prep = self._prep
+        tracks = {subject: prep.track_path(subject) for subject in subjects if subject in prep.tracks}
+        if len(tracks) < 2:
+            return None, None
+        edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        return speech_activity(tracks, prep.t_origin_s, edges), edges
 
     def _owner_warning(self, recording: Recording, file_name: str, owner: dict) -> QCWarning:
         spans = ", ".join(f"{start:.1f}-{end:.1f} s" for start, end in owner["spans"][:5])

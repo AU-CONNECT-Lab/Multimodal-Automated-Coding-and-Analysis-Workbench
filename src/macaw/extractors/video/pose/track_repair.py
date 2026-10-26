@@ -342,10 +342,16 @@ def choose_people(
     *,
     identity_anchors: dict[str, float] | None = None,
     named: dict[str, list[int]] | None = None,
+    voices: dict[str, np.ndarray] | None = None,
+    edges: np.ndarray | None = None,
 ) -> PeopleChoice:
-    """Who is who on a shared camera. The most present people, left to right, go to the subjects
-    ranked by their anchors (a fraction of frame width, read as an ordering only), else in the
-    configured order, which is a guess a person has to check."""
+    """Who is who on a shared camera. The most present people go to the subjects ranked by their
+    anchors (a fraction of frame width, read as an ordering only), left to right. Without anchors,
+    each person's own mic (voices: share of each bin between edges they were talking) is matched
+    against head motion, and whoever that leaves goes in the configured order: a guess a person
+    has to check either way."""
+    from macaw.extractors.video.pose.voice_motion import head_motion, match_voices
+
     named = {subject: list(tracks) for subject, tracks in (named or {}).items() if subject in subject_ids}
     taken = [track for tracks in named.values() for track in tracks]
     chains = join_fragments(keypoints[~keypoints["track_id"].isin(taken)])
@@ -357,20 +363,45 @@ def choose_people(
         else open_subjects
     )
     found = sorted(chains[: len(ranked)], key=lambda chain: chain.x)
-    chosen = {**named, **{subject: chain.tracks for subject, chain in zip(ranked, found)}}
+    placed = dict(zip(ranked, found))
+    match = None
+    if voices and edges is not None and not anchors and len(found) > 1:
+        motion = [head_motion(keypoints[owner_rows(keypoints, chain.tracks)], edges) for chain in found]
+        match = match_voices({subject: voices[subject] for subject in ranked if subject in voices}, motion)
+        sure = {subject: match.people[subject] for subject in match.clear}
+        if sure:
+            placed = {subject: found[index] for subject, index in sure.items()}
+            rest = [chain for index, chain in enumerate(found) if index not in sure.values()]
+            placed.update(zip([subject for subject in ranked if subject not in placed], rest))
+    chosen = {**named, **{subject: chain.tracks for subject, chain in placed.items()}}
     people = {subject: chosen[subject] for subject in subject_ids if subject in chosen}
 
     doubts, spans = [], []
     if len(found) < len(ranked):
         doubts.append(f"found {len(found)} of the {len(ranked)} people to place")
     if len(found) > 1 and not anchors:
-        order = ", ".join(f"{subject} at x {chain.x:.0f}" for subject, chain in zip(ranked, found))
-        doubts.append(f"who is who is the configured subject order from left to right ({order}), not yet checked")
+        doubts.append(_who_is_who(placed, match))
     left_out = chains[len(ranked):]
     if found and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in found):
         doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people chosen")
         spans = _spans(left_out[0].t)
     return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
+
+
+def _who_is_who(placed: dict[str, Chain], match) -> str:
+    """Only a clear voice pairing places anyone; a weak one is shown as evidence next to the configured order."""
+    sure = set(match.clear) if match is not None else set()
+    parts = []
+    for subject, chain in sorted(placed.items(), key=lambda item: item[1].x):
+        if subject in sure:
+            parts.append(f"{subject} at x {chain.x:.0f} by voice, z {match.z[subject]:.1f} against {match.runner_up[subject]:.1f}")
+            continue
+        part = f"{subject} at x {chain.x:.0f} by configured order"
+        if match is not None and subject in match.people:
+            part += f", voice weakly favours person {match.people[subject] + 1} from the left (z {match.z[subject]:.1f} against {match.runner_up[subject]:.1f})"
+        parts.append(part)
+    how = "each mic's voice against head motion" if sure else "the configured subject order from left to right"
+    return f"who is who is a guess from {how} ({'; '.join(parts)}), not yet checked"
 
 
 def owner_rows(keypoints: pd.DataFrame, tracks: list[int]) -> np.ndarray:

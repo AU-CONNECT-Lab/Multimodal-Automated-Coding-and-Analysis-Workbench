@@ -148,6 +148,8 @@ def extractor(monkeypatch, offsets):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
+        # no mic per person, so who is who on a shared camera falls back to the configured order
+        monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}))
         return Chain(backend)
 
     return build
