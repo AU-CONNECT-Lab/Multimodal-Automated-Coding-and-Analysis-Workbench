@@ -27,6 +27,8 @@ from macaw.media.align import (
 )
 
 EXCERPT_S = 30.0
+# a headset's bursts reach many times its 99th percentile and would flatten everything else
+LOUDNESS_CLIP = 1.5
 
 
 def require_matplotlib():
@@ -102,9 +104,12 @@ def alignment_figure(
     else:
         first, reference_part, target_part = excerpt
         t = (first + np.arange(reference_part.size)) * ENVELOPE_STEP_S
+        reference_part = np.minimum(reference_part, LOUDNESS_CLIP)
+        target_part = np.minimum(target_part, LOUDNESS_CLIP)
         envelopes.fill_between(t, 0, reference_part, color="C0", lw=0, label=result.reference)
         envelopes.fill_between(t, 0, -target_part, color="C1", lw=0, label=f"{result.target}, shifted")
         envelopes.axhline(0, color="0.2", lw=0.5)
+        envelopes.set_ylim(-LOUDNESS_CLIP * 1.05, LOUDNESS_CLIP * 1.05)
         envelopes.set(xlabel="recording time (s)", ylabel="loudness", title="aligned, the two should rise and fall together")
         _legend(envelopes)
 
