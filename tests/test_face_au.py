@@ -30,7 +30,8 @@ def faces(boxes, n_frames=10, au12=0.5):
     """boxes: list of (x, y, width, height, score); the same faces in every frame."""
     return pd.DataFrame(
         [{"frame": frame, "face_x": x, "face_y": y, "face_width": w, "face_height": h, "face_score": score,
-          "pitch": 1.0, "roll": 2.0, "yaw": 3.0, "AU01": 0.1, "AU12": au12, "x_0": x + 1.0, "y_0": y + 1.0}
+          "pitch": 1.0, "roll": 2.0, "yaw": 3.0, "gaze_pitch": -10.0, "gaze_yaw": 20.0, "AU01": 0.1, "AU12": au12,
+          "x_0": x + 1.0, "y_0": y + 1.0}
          for frame in range(n_frames) for x, y, w, h, score in boxes]
     )
 
@@ -68,7 +69,7 @@ class FakeFaceBackend:
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    def build(keypoints, table, files, landmarks=True):
+    def build(keypoints, table, files, landmarks=True, gaze=False):
         stored = tmp_path / "pose.keypoints.parquet"
         write_keypoints(keypoints, stored)
         backend = FakeFaceBackend(table)
@@ -79,7 +80,7 @@ def run(tmp_path, monkeypatch):
             recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
             media=list(files), entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
         )
-        config = SimpleNamespace(face=FaceSection(landmarks=landmarks))
+        config = SimpleNamespace(face=FaceSection(landmarks=landmarks, gaze=gaze))
         return backend, FaceExtractor(config).run(recording, tmp_path)
 
     return build
@@ -107,13 +108,21 @@ class TestExtractor:
         backend, _ = run(keypoints, faces([(80, 80, 40, 40, 0.9)]), files)
         assert sorted(name for name, _ in backend.calls) == ["parent.mp4", "room.mp4"]
 
+    def test_gaze_rows_only_when_asked_for(self, run):
+        people, boxes = heads({"parent": (100, 100)}), faces([(80, 80, 40, 40, 0.9)])
+        _, without = run(people, boxes, [video("room.mp4")])
+        backend, with_gaze = run(people, boxes, [video("room.mp4")], gaze=True)
+        assert not {"gaze_pitch_deg", "gaze_yaw_deg"} & set(without.rows.feature)
+        assert with_gaze.rows.loc[with_gaze.rows.feature == "gaze_yaw_deg", "value"].unique().tolist() == [20.0]
+        assert {"gaze_pitch_deg", "gaze_yaw_deg"} <= {spec.name for spec in with_gaze.specs}
+
     def test_a_person_whose_face_is_rarely_found_is_reported(self, run):
         _, result = run(heads({"parent": (100, 100), "child": (400, 100)}), faces([(80, 80, 40, 40, 0.9)]), [video("room.mp4")])
         assert any(w.subject_id == "child" and "face was found in 0 of the 10" in w.message for w in result.warnings)
 
 
 def test_pyfeat_columns_become_the_backend_contract():
-    from macaw.extractors.video.face.backends import FACE_COLUMNS, _rows
+    from macaw.extractors.video.face.backends import FACE_COLUMNS, GAZE_COLUMNS, _rows
 
     found = pd.DataFrame({"frame": [0, 1], "FaceRectX": [1.0, 2.0], "FaceRectY": [3.0, 4.0], "FaceRectWidth": [5.0, 5.0],
                           "FaceRectHeight": [6.0, 6.0], "FaceScore": [0.9, None], "Pitch": [1.0, 1.0], "Roll": [0.0, 0.0],
@@ -123,3 +132,15 @@ def test_pyfeat_columns_become_the_backend_contract():
     assert out["frame"].tolist() == [100]
     assert out["yaw"].iloc[0] == pytest.approx(2.0 * 180.0 / 3.141592653589793)
     assert list(_rows(found, offset=0, landmarks=False).columns) == [*FACE_COLUMNS, "AU01"]
+    found["gaze_pitch"], found["gaze_yaw"], found["gaze_angle"] = 0.5, -0.25, 0.6
+    with_gaze = _rows(found, offset=0, landmarks=False, gaze=True)
+    assert list(with_gaze.columns) == [*FACE_COLUMNS, *GAZE_COLUMNS, "AU01"]
+    assert with_gaze["gaze_yaw"].iloc[0] == pytest.approx(-0.25 * 180.0 / 3.141592653589793)
+
+
+def test_gaze_needs_a_backend_that_gives_it(monkeypatch):
+    from macaw.exceptions import BackendNotAvailableError
+
+    monkeypatch.setattr(au_module, "resolve_backend", lambda name: SimpleNamespace(name="plain", provides_gaze=False))
+    with pytest.raises(BackendNotAvailableError, match="no gaze direction"):
+        FaceExtractor(SimpleNamespace(face=FaceSection(gaze=True))).check_available()

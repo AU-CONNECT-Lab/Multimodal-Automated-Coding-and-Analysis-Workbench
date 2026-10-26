@@ -12,6 +12,8 @@ from macaw.extractors.base import Backend
 BACKEND_GROUP = "face"
 # what every face backend returns per face and frame, besides its action units and landmarks; angles in degrees
 FACE_COLUMNS = ("frame", "face_x", "face_y", "face_width", "face_height", "face_score", "pitch", "roll", "yaw")
+# when gaze is asked for, in degrees; pitch up and yaw to the person's own right are positive
+GAZE_COLUMNS = ("gaze_pitch", "gaze_yaw")
 # frames decoded and handed over at a time; the model batches within it
 CHUNK_FRAMES = 256
 
@@ -28,9 +30,10 @@ class FaceBackend(Backend):
         model: str | None,
         batch_size: int,
         landmarks: bool,
+        gaze: bool = False,
     ) -> pd.DataFrame:
         """One row per face and frame (the file's own frame numbers): FACE_COLUMNS, AU columns
-        (AU01, AU02, ...), and x_0, y_0, ... landmark columns when asked for."""
+        (AU01, AU02, ...), and x_0, y_0, ... landmark and GAZE_COLUMNS when asked for."""
         raise NotImplementedError
 
 
@@ -39,7 +42,7 @@ class PyFeatBackend(FaceBackend):
     """MIT code; most of its model weights are for non-commercial research. The user installs it."""
 
     name = "pyfeat"
-    provides_gaze = False
+    provides_gaze = True
     models = ("v1", "v2")
 
     @property
@@ -59,18 +62,18 @@ class PyFeatBackend(FaceBackend):
                 "PyTorch for your GPU first and then: pip install py-feat"
             ) from error
 
-    def detector(self, model: str | None, device: str):
+    def detector(self, model: str | None, device: str, gaze: bool = False):
         from feat import Detectorv1, Detectorv2
 
         model = model or "v1"
         if model not in self.models:
             raise BackendNotAvailableError(f"face.model for pyfeat is one of {', '.join(self.models)}, not {model}")
-        # identity embeddings are never needed: who is who comes from pose
+        # identity embeddings are never needed: who is who comes from pose; v2 has gaze built in
         if model == "v2":
             return Detectorv2(device=device, identity_model=None)
-        return Detectorv1(device=device, identity_model=None, gaze_model=None, emotion_model=None)
+        return Detectorv1(device=device, identity_model=None, gaze_model="l2cs" if gaze else None, emotion_model=None)
 
-    def infer(self, video_path, *, frames, device, model, batch_size, landmarks):
+    def infer(self, video_path, *, frames, device, model, batch_size, landmarks, gaze=False):
         import cv2
         import torch
 
@@ -78,7 +81,7 @@ class PyFeatBackend(FaceBackend):
 
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        detector = self.detector(model, device)
+        detector = self.detector(model, device, gaze)
         capture = cv2.VideoCapture(str(video_path))
         if not capture.isOpened():
             raise ExternalToolError(f"could not open video: {video_path}")
@@ -97,7 +100,7 @@ class PyFeatBackend(FaceBackend):
                     break
                 tensor = torch.from_numpy(np.stack(chunk)).permute(0, 3, 1, 2).contiguous()
                 found = detector.detect(tensor, data_type="tensor", batch_size=batch_size, progress_bar=False)
-                pieces.append(_rows(pd.DataFrame(found), index, landmarks))
+                pieces.append(_rows(pd.DataFrame(found), index, landmarks, gaze))
                 index += len(chunk)
         finally:
             capture.release()
@@ -106,7 +109,7 @@ class PyFeatBackend(FaceBackend):
 
 
 class OpenFaceBackend(FaceBackend):
-    """Academic-only licence, needs compiling. The only backend with real gaze vectors."""
+    """Academic-only licence, needs compiling."""
 
     name = "openface"
     provides_gaze = True
@@ -130,7 +133,7 @@ class MediaPipeFaceBackend(FaceBackend):
         raise NotImplementedError
 
 
-def _rows(found: pd.DataFrame, offset: int, landmarks: bool) -> pd.DataFrame:
+def _rows(found: pd.DataFrame, offset: int, landmarks: bool, gaze: bool = False) -> pd.DataFrame:
     found = found[found["FaceScore"].notna()] if "FaceScore" in found else found.iloc[:0]
     out = pd.DataFrame(
         {
@@ -146,6 +149,9 @@ def _rows(found: pd.DataFrame, offset: int, landmarks: bool) -> pd.DataFrame:
             "yaw": np.degrees(found["Yaw"].to_numpy(dtype=float)),
         }
     )
+    if gaze:
+        for column in GAZE_COLUMNS:
+            out[column] = np.degrees(found[column].to_numpy(dtype=float))
     extra = [column for column in found.columns if column.startswith("AU")]
     if landmarks:
         extra += [column for column in found.columns if column.startswith(("x_", "y_")) and column[2:].isdigit()]

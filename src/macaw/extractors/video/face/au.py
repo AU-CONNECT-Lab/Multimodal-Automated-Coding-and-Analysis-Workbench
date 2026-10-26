@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import UnreadableMediaError
+from macaw.exceptions import BackendNotAvailableError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
@@ -36,16 +36,20 @@ _POSE_SPECS = {
     "face_pitch_deg": "Head pitch from the face model.",
     "face_roll_deg": "Head roll from the face model.",
     "face_yaw_deg": "Head yaw from the face model.",
+    "gaze_pitch_deg": "Gaze pitch from the face model, both eyes together; up is positive.",
+    "gaze_yaw_deg": "Gaze yaw from the face model, both eyes together; toward the person's own right is positive.",
 }
 
 
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "face"
-    config_sections = ("face", "segment")
+    config_sections = (
+        "face.backend", "face.model", "face.device", "face.action_units", "face.landmarks", "face.gaze", "segment",
+    )
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
 
@@ -57,7 +61,9 @@ class FaceExtractor(Extractor):
         return (backend.name, backend.version)
 
     def check_available(self) -> None:
-        self.backend()
+        backend = self.backend()
+        if self.config.face.gaze and not backend.provides_gaze:
+            raise BackendNotAvailableError(f"face.gaze is on but face.backend {backend.name} gives no gaze direction")
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         """Faces are named through the people pose named, so the keypoints are the input that matters."""
@@ -86,7 +92,7 @@ class FaceExtractor(Extractor):
             stop = math.ceil((end - item.offset_s) * fps) + 1
             faces = backend.infer(
                 item.path, frames=(first, stop), device=cfg.device, model=cfg.model,
-                batch_size=cfg.batch_size, landmarks=cfg.landmarks,
+                batch_size=cfg.batch_size, landmarks=cfg.landmarks, gaze=cfg.gaze,
             )
             subjects = [subject for subject, view in views.items() if view == video]
             named = name_faces(faces, keypoints[keypoints["video"] == video], subjects)
@@ -114,6 +120,9 @@ class FaceExtractor(Extractor):
                     values[column.lower()] = faces[column].to_numpy(dtype=float)
             for name, source in (("face_pitch_deg", "pitch"), ("face_roll_deg", "roll"), ("face_yaw_deg", "yaw")):
                 values[name] = faces[source].to_numpy(dtype=float)
+            if cfg.gaze:
+                for name, source in (("gaze_pitch_deg", "gaze_pitch"), ("gaze_yaw_deg", "gaze_yaw")):
+                    values[name] = faces[source].to_numpy(dtype=float)
             frames.append(
                 build_long_rows(
                     values=values, scale=Scale.FRAME, recording_id=recording.recording_id, source=self.name,
