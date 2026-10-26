@@ -28,6 +28,8 @@ FINE_WINDOW_S = 1.0
 PHAT_EXCLUSION_S = 0.05
 # envelope correlations are smooth over about a syllable, so a rival has to be well clear
 ENVELOPE_EXCLUSION_S = 2.0
+# a segment within this of the offset found the same offset; about half a video frame
+AGREEMENT_TOLERANCE_S = 0.02
 
 GCC_PHAT = "gcc_phat"
 MANUAL = "manual"
@@ -44,9 +46,12 @@ class AlignResult:
     confidence: float | None         # fine peak sharpness, 0-1; None when nothing was correlated
     coarse_offset_s: float | None = None
     coarse_confidence: float | None = None
+    # share of sounding segments that found the same offset; None when too few to say
+    agreement: float | None = None
     drift_ppm: float | None = None
     drift_r2: float | None = None
-    segment_offsets: list[tuple[float, float]] | None = None
+    # (midpoint_s, offset_s, confidence) per sounding segment
+    segment_offsets: list[tuple[float, float, float]] | None = None
     method: str = GCC_PHAT
     metadata_offset_s: float | None = None
     note: str | None = None
@@ -153,7 +158,8 @@ def align_signals(
     reference: np.ndarray, target: np.ndarray, cfg: AlignSection, *, names: tuple[str, str]
 ) -> AlignResult:
     """Both at SAMPLE_RATE. Coarse lag from envelopes over the whole files, then GCC-PHAT on
-    the first minutes of overlap for the exact offset, then drift over the whole overlap."""
+    the first minutes of overlap for the exact offset, then segment by segment over the whole
+    overlap to cross-check it and measure drift."""
     coarse_s, coarse_confidence = envelope_lag(reference, target, SAMPLE_RATE, cfg.search_window_s)
     shift = int(round(coarse_s * SAMPLE_RATE))
     piece_reference, piece_target = fine_pieces(reference, target, shift, int(MAX_CORRELATION_S * SAMPLE_RATE))
@@ -163,22 +169,45 @@ def align_signals(
         reference=names[0], target=names[1], offset_s=lag_s, confidence=confidence,
         coarse_offset_s=coarse_s, coarse_confidence=coarse_confidence,
     )
+    duration_s = min(reference.size, target.size) / SAMPLE_RATE
+    segments = segment_offsets(
+        reference,
+        target,
+        SAMPLE_RATE,
+        offset_s=lag_s,
+        segment_s=cfg.drift_segment_s,
+        # room for twice the tolerated drift over the whole file, and never under a second
+        max_residual_s=max(1.0, 2 * cfg.max_drift_ppm * 1e-6 * duration_s),
+    )
+    result.segment_offsets = segments
+    result.agreement = agreement(segments, lag_s)
     if cfg.drift_check:
-        duration_s = min(reference.size, target.size) / SAMPLE_RATE
-        segments = segment_offsets(
-            reference,
-            target,
-            SAMPLE_RATE,
-            offset_s=lag_s,
-            segment_s=cfg.drift_segment_s,
-            # room for twice the tolerated drift over the whole file, and never under a second
-            max_residual_s=max(1.0, 2 * cfg.max_drift_ppm * 1e-6 * duration_s),
-            min_confidence=cfg.min_confidence,
-        )
-        result.segment_offsets = segments
-        if len(segments) >= MIN_SEGMENTS:
-            result.drift_ppm, result.drift_r2 = estimate_drift(segments)
+        # blunt segments only add scatter to the slope
+        sharp = [segment for segment in segments if segment[2] >= cfg.min_confidence]
+        if len(sharp) >= MIN_SEGMENTS:
+            result.drift_ppm, result.drift_r2 = estimate_drift(sharp)
     return result
+
+
+def agreement(segments: list[tuple[float, float, float]] | None, offset_s: float) -> float | None:
+    if not segments or len(segments) < MIN_SEGMENTS:
+        return None
+    same = [confidence > 0 and abs(offset - offset_s) <= AGREEMENT_TOLERANCE_S for _, offset, confidence in segments]
+    return sum(same) / len(same)
+
+
+def describe_agreement(result: AlignResult) -> str:
+    if result.agreement is None:
+        return "too few sounding segments to cross-check"
+    total = len(result.segment_offsets or ())
+    return f"same offset in {round(result.agreement * total)} of {total} sounding segments"
+
+
+def low_confidence(result: AlignResult, cfg: AlignSection) -> bool:
+    """A blunt peak is normal between a close-talk and a room mic; it is a doubt only when the segments disagree too."""
+    if result.method != GCC_PHAT or result.confidence is None or result.confidence >= cfg.min_confidence:
+        return False
+    return result.agreement is None or result.agreement < cfg.min_agreement
 
 
 def metadata_offset(reference: str | None, target: str | None) -> float | None:

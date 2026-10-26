@@ -22,9 +22,10 @@ project:
 align:
   method: gcc_phat                   # gcc_phat | manual | none
   search_window_s: 600.0             # s; max offset searched between two sources, on loudness envelopes
-  min_confidence: 0.6                # 0-1; correlation peak sharpness below this is flagged red
+  min_confidence: 0.6                # 0-1; correlation peak sharpness below this counts as blunt
+  min_agreement: 0.5                 # 0-1; a blunt peak is flagged when fewer sounding segments than this find the same offset
   drift_check: true                  # detect linear clock drift by segment-wise offset
-  drift_segment_s: 60.0              # s; segment length used for the drift regression
+  drift_segment_s: 60.0              # s; segment length for the cross-check and the drift regression
   max_drift_ppm: 200.0               # parts per million; above this the recording fails QC
   apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
 

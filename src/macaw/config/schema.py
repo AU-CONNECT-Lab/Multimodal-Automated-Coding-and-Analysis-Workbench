@@ -36,6 +36,7 @@ class AlignSection(_Section):
     method: Literal["gcc_phat", "manual", "none"] = "gcc_phat"
     search_window_s: float = 600.0
     min_confidence: float = 0.6
+    min_agreement: float = 0.5
     drift_check: bool = True
     drift_segment_s: float = 60.0
     max_drift_ppm: float = 200.0

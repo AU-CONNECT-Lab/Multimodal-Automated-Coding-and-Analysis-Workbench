@@ -7,14 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
+from macaw.config.schema import AlignSection
 from macaw.exceptions import AlignmentFailedError, BackendNotAvailableError
 from macaw.media.align import (
+    AGREEMENT_TOLERANCE_S,
     ENVELOPE_EXCLUSION_S,
     ENVELOPE_STEP_S,
     FINE_WINDOW_S,
     MAX_CORRELATION_S,
     PHAT_EXCLUSION_S,
     AlignResult,
+    describe_agreement,
     envelope,
     envelope_correlation,
     fine_pieces,
@@ -55,17 +58,18 @@ def alignment_figure(
     target: np.ndarray,
     sample_rate: float,
     result: AlignResult,
-    search_window_s: float,
+    cfg: AlignSection,
     path: Path,
 ) -> Path:
     """What a person or an agent needs to accept or reject one offset: each correlation peak
-    against its nearest rival, both loudness envelopes on the recording clock, the drift fit."""
+    against its nearest rival, both loudness envelopes on the recording clock, and whether the
+    segments keep finding the same offset."""
     Figure = require_matplotlib()
-    figure = Figure(figsize=(10, 11), layout="constrained")
-    coarse, fine, envelopes, drift = figure.subplots(4, 1)
+    figure = Figure(figsize=(12, 11), layout="constrained")
+    coarse, fine, envelopes, segments = figure.subplots(4, 1)
     figure.suptitle(f"{result.target} against {result.reference}: offset {result.offset_s:+.3f} s")
 
-    lags, window = envelope_correlation(reference, target, sample_rate, search_window_s)
+    lags, window = envelope_correlation(reference, target, sample_rate, cfg.search_window_s)
     _peaks(coarse, lags, window, int(ENVELOPE_EXCLUSION_S / ENVELOPE_STEP_S), "s")
     coarse.set(
         xlabel="lag (s)", ylabel="envelope correlation",
@@ -101,20 +105,12 @@ def alignment_figure(
         envelopes.fill_between(t, 0, -target_part, color="C1", lw=0, label=f"{result.target}, shifted")
         envelopes.axhline(0, color="0.2", lw=0.5)
         envelopes.set(xlabel="recording time (s)", ylabel="loudness", title="aligned, the two should rise and fall together")
-        envelopes.legend(loc="upper right", fontsize=8)
+        _legend(envelopes)
 
-    if result.segment_offsets and len(result.segment_offsets) >= 2:
-        t, offsets = np.array(result.segment_offsets, dtype=float).T
-        drift.plot(t, offsets * 1000, "o", ms=3, color="C0")
-        slope, intercept = np.polyfit(t, offsets, 1)
-        drift.plot(t, (slope * t + intercept) * 1000, color="C3", lw=1)
-        title = (
-            "drift: too few segments for a slope" if result.drift_ppm is None
-            else f"drift {result.drift_ppm:+.1f} ppm, r2 {result.drift_r2:.2f}"
-        )
-        drift.set(xlabel="recording time (s)", ylabel="offset (ms)", title=title)
+    if result.segment_offsets:
+        _segments(segments, result, cfg)
     else:
-        _empty(drift, "drift not measured")
+        _empty(segments, "no sounding segments to cross-check")
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,10 +120,41 @@ def alignment_figure(
 
 def _peaks(axes, lags, window, exclusion: int, unit: str) -> None:
     best, rival = top_two_peaks(window, exclusion)
-    axes.plot(lags, window, lw=0.6, color="0.45")
-    axes.axvline(lags[best], color="C3", lw=1.2, label=f"chosen {lags[best]:+.3f} {unit}")
-    axes.axvline(lags[rival], color="C0", lw=1.2, ls="--", label=f"runner-up {lags[rival]:+.3f} {unit}")
-    axes.legend(loc="upper right", fontsize=8)
+    # lines behind the curve and a dot on each peak, so a line never hides the peak it marks
+    axes.axvline(lags[best], color="C3", lw=1, alpha=0.5, zorder=1)
+    axes.axvline(lags[rival], color="C0", lw=1, ls="--", alpha=0.5, zorder=1)
+    axes.plot(lags, window, lw=0.6, color="0.45", zorder=2)
+    axes.plot(lags[best], window[best], "o", color="C3", ms=6, zorder=3, label=f"chosen {lags[best]:+.3f} {unit}")
+    axes.plot(
+        lags[rival], window[rival], "o", color="C0", mfc="white", ms=6, zorder=3,
+        label=f"runner-up {lags[rival]:+.3f} {unit}",
+    )
+    _legend(axes)
+
+
+def _segments(axes, result: AlignResult, cfg: AlignSection) -> None:
+    t, offsets, confidence = np.array(result.segment_offsets, dtype=float).T
+    difference = (offsets - result.offset_s) * 1000
+    tolerance = AGREEMENT_TOLERANCE_S * 1000
+    same = (confidence > 0) & (np.abs(difference) <= tolerance)
+    axes.axhspan(-tolerance, tolerance, color="C2", alpha=0.15, lw=0, label=f"within {tolerance:.0f} ms")
+    if same.any():
+        axes.plot(t[same], difference[same], "o", ms=5, color="C0", label="same offset")
+    if not same.all():
+        axes.plot(t[~same], difference[~same], "o", ms=5, color="C3", mfc="white", label="another offset")
+    title = describe_agreement(result)
+    sharp = confidence >= cfg.min_confidence
+    if result.drift_ppm is not None and sharp.sum() >= 2:
+        slope, intercept = np.polyfit(t[sharp], offsets[sharp], 1)
+        axes.plot(t, (slope * t + intercept - result.offset_s) * 1000, color="C1", lw=1, label="drift fit")
+        title += f"; drift {result.drift_ppm:+.1f} ppm, r2 {result.drift_r2:.2f}"
+    axes.set(xlabel="recording time (s)", ylabel="segment offset minus offset (ms)", title=title)
+    _legend(axes)
+
+
+def _legend(axes) -> None:
+    # outside the panel, so it never covers a peak or a point
+    axes.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, frameon=False)
 
 
 def _format(value: float | None) -> str:

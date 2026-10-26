@@ -11,7 +11,7 @@ import pandas as pd
 from macaw.exceptions import UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.media.align import GCC_PHAT, UNALIGNED, apply_alignment, read_offset_table
+from macaw.media.align import UNALIGNED, apply_alignment, describe_agreement, low_confidence, read_offset_table
 from macaw.media.drift import drift_is_real
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
@@ -301,11 +301,12 @@ class MediaPrepExtractor(Extractor):
                     f"{result.reference}; check it and set it with `macaw set-offset`",
                     metadata_offset_s=result.metadata_offset_s,
                 )
-            elif result.method == GCC_PHAT and result.confidence is not None and result.confidence < cfg.min_confidence:
+            elif low_confidence(result, cfg):
                 warn(
                     "alignment_confidence", item,
-                    f"{item.path.name} aligned at confidence {result.confidence:.3f}, below {cfg.min_confidence:.3f}",
-                    offset_s=result.offset_s,
+                    f"{item.path.name} aligned at confidence {result.confidence:.3f}, below {cfg.min_confidence:.3f}, "
+                    f"and {describe_agreement(result)}",
+                    offset_s=result.offset_s, agreement=result.agreement,
                 )
             if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
                 warn(

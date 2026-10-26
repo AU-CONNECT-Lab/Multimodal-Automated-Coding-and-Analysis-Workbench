@@ -15,7 +15,9 @@ from macaw.media.align import (
     UNALIGNED,
     AlignResult,
     align_recording,
+    describe_agreement,
     keep_manual,
+    low_confidence,
     read_offset_table,
     write_offset_table,
 )
@@ -127,7 +129,7 @@ def _drawer(out_dir: Path, cfg):
 
     def draw(reference, target, result):
         name = f"{Path(result.target).stem}.png"
-        alignment_figure(reference, target, SAMPLE_RATE, result, cfg.search_window_s, out_dir / name)
+        alignment_figure(reference, target, SAMPLE_RATE, result, cfg, out_dir / name)
 
     return draw
 
@@ -145,10 +147,10 @@ def _summarise(recording_id: str, results: list[AlignResult], cfg) -> None:
         elif result.method == MANUAL:
             line = f"{result.offset_s:+.3f} s  set by hand"
         else:
-            line = f"{result.offset_s:+.3f} s  confidence {result.confidence:.2f}"
+            line = f"{result.offset_s:+.3f} s  confidence {result.confidence:.2f}, {describe_agreement(result)}"
             if result.drift_ppm is not None:
                 line += f"  drift {result.drift_ppm:+.1f} ppm (r2 {result.drift_r2:.2f})"
-            if result.confidence < cfg.min_confidence:
+            if low_confidence(result, cfg):
                 flags.append("LOW CONFIDENCE")
         if drift_is_real(result.drift_ppm, result.drift_r2, cfg.max_drift_ppm):
             flags.append("DRIFT")

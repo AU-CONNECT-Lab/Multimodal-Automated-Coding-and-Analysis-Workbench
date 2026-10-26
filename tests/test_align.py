@@ -19,16 +19,19 @@ from macaw.media.align import (
     SAMPLE_RATE as SR,
     UNALIGNED,
     AlignResult,
+    agreement,
     align_recording,
     align_signals,
     apply_alignment,
+    describe_agreement,
     gcc_phat,
     keep_manual,
+    low_confidence,
     metadata_offset,
     read_offset_table,
     write_offset_table,
 )
-from macaw.media.drift import drift_is_real
+from macaw.media.drift import drift_is_real, segment_offsets
 from macaw.media.probe import MediaInfo, StreamInfo
 from macaw.project.layout import make_layout
 from macaw.project.recording import MediaFile, Recording
@@ -118,6 +121,60 @@ class TestAlignSignals:
     def test_a_different_recording_is_not_confident(self, room):
         result = align_signals(room[: 300 * SR], speechlike(280, 9), CFG, names=("a", "b"))
         assert result.confidence < CFG.min_confidence
+        assert result.agreement < CFG.min_agreement
+        assert low_confidence(result, CFG)
+
+    def test_segments_are_cross_checked_without_the_drift_check(self, room):
+        cfg = AlignSection(drift_segment_s=30.0, drift_check=False)
+        result = align_signals(room[: 300 * SR], started_later(other_mic(room), 20.0, 280), cfg, names=("a", "b"))
+        assert result.drift_ppm is None
+        assert result.agreement == 1.0
+        assert len(result.segment_offsets[0]) == 3
+
+
+class TestAgreement:
+    def test_silent_segments_are_left_out(self, room):
+        """A quiet participant's own mic: the silent stretches say nothing about the offset."""
+        target = started_later(other_mic(room), 4.0, 280)
+        quiet = slice(60 * SR, 180 * SR)
+        target[quiet] = 1e-5 * np.random.default_rng(4).standard_normal(target[quiet].size)
+        segments = segment_offsets(room[: 300 * SR], target, SR, offset_s=4.0, segment_s=30.0, max_residual_s=1.0)
+        midpoints = [midpoint for midpoint, _, _ in segments]
+        assert not any(64.0 <= midpoint <= 184.0 for midpoint in midpoints)
+        assert len(segments) == 5
+        assert agreement(segments, 4.0) == 1.0
+
+    def test_counts_segments_within_twenty_ms(self):
+        segments = [(30.0, 4.0, 0.5), (90.0, 4.015, 0.4), (150.0, 4.03, 0.6), (210.0, 3.2, 0.1)]
+        assert agreement(segments, 4.0) == 0.5
+
+    def test_a_segment_without_a_peak_does_not_agree(self):
+        assert agreement([(30.0, 4.0, 0.0), (90.0, 4.0, 0.5), (150.0, 4.0, 0.5)], 4.0) == pytest.approx(2 / 3)
+
+    def test_too_few_segments_say_nothing(self):
+        assert agreement([(30.0, 4.0, 0.9), (90.0, 4.0, 0.9)], 4.0) is None
+        assert agreement(None, 4.0) is None
+
+    @pytest.mark.parametrize(
+        "confidence, share, flagged",
+        [
+            (0.44, 0.95, False),  # close-talk mic against a room mic: blunt peak, segments agree
+            (0.44, 0.0, True),
+            (0.44, None, True),
+            (0.9, 0.0, False),
+            (None, None, False),
+        ],
+    )
+    def test_only_a_blunt_peak_that_the_segments_do_not_back_is_flagged(self, confidence, share, flagged):
+        assert low_confidence(entry("parent.wav", 4.0, confidence=confidence, agreement=share), CFG) == flagged
+
+    def test_a_hand_set_offset_is_never_flagged(self):
+        assert not low_confidence(entry("parent.wav", 4.0, method=MANUAL, confidence=0.1), CFG)
+
+    def test_the_count_is_spelled_out(self):
+        segments = [(30.0 * i, 4.0, 0.5) for i in range(9)] + [(300.0, 3.0, 0.5)]
+        result = entry("parent.wav", 4.0, agreement=agreement(segments, 4.0), segment_offsets=segments)
+        assert describe_agreement(result) == "same offset in 9 of 10 sounding segments"
 
 
 class TestMetadataOffset:
@@ -198,9 +255,9 @@ def entry(target, offset_s=0.0, *, method=GCC_PHAT, reference="room.wav", confid
 class TestOffsetTable:
     def test_the_table_holds_names_not_paths(self, tmp_path):
         """A table made on the cluster has to apply on a laptop, and hash the same on both."""
-        path = write_offset_table([entry("parent.wav", 4.0, segment_offsets=[(30.0, 4.0)])], tmp_path / "o.json")
+        path = write_offset_table([entry("parent.wav", 4.0, segment_offsets=[(30.0, 4.0, 0.9)])], tmp_path / "o.json")
         assert "\\" not in path.read_text(encoding="utf-8") and "/" not in path.read_text(encoding="utf-8")
-        assert read_offset_table(path)[0].segment_offsets == [(30.0, 4.0)]
+        assert read_offset_table(path)[0].segment_offsets == [(30.0, 4.0, 0.9)]
 
     def test_files_are_matched_by_name_wherever_they_sit(self):
         item = MediaFile(path=Path("D:/elsewhere/parent.wav"), kind="audio")
@@ -253,6 +310,10 @@ class TestPrepWarnings:
         ]
         assert self.warnings(tmp_path, monkeypatch, table, names=("room.wav", "parent.wav")) == set()
 
+    def test_a_blunt_peak_the_segments_back_raises_nothing(self, tmp_path, monkeypatch):
+        table = [entry("room.wav", confidence=1.0), entry("parent.wav", 4.0, confidence=0.44, agreement=0.95)]
+        assert self.warnings(tmp_path, monkeypatch, table, names=("room.wav", "parent.wav")) == set()
+
     def test_a_file_added_after_aligning_is_reported(self, tmp_path, monkeypatch):
         assert ("alignment_missing", "camera.avi") in self.warnings(tmp_path, monkeypatch, [entry("room.wav")])
 
@@ -264,7 +325,7 @@ class TestFigure:
 
         reference, target = room[: 120 * SR], started_later(other_mic(room), 4.0, 110)
         result = align_signals(reference, target, CFG, names=("room.wav", "parent.wav"))
-        path = alignment_figure(reference, target, SR, result, CFG.search_window_s, tmp_path / "parent.png")
+        path = alignment_figure(reference, target, SR, result, CFG, tmp_path / "parent.png")
         assert path.stat().st_size > 10_000
 
 
