@@ -211,7 +211,8 @@ def timeline_figure(
         color = SEEN_COLOR if kind == "seen" else VOICE_COLOR
         axes.broken_barh(spans, (row - 0.35, 0.7), color=color, lw=0)
     for span in candidates.itertuples():
-        rows = [row for row, (subject, _) in enumerate(lanes) if subject == span.subject_id]
+        who = span.subject_id if isinstance(span.subject_id, str) else None
+        rows = [row for row, (subject, _) in enumerate(lanes) if subject == who]
         low, high = (min(rows) - 0.5, max(rows) + 0.5) if rows else (-0.5, len(lanes) - 0.5)
         axes.fill_between([span.t_start, max(span.t_end, span.t_start + TIMELINE_STEP_S)], low, high,
                           color=LOOK_COLOR, alpha=0.35, lw=0, zorder=0)
@@ -240,7 +241,7 @@ def pitch_figure(subjects: list[str], pitch: dict[str, tuple[np.ndarray, np.ndar
     panels = np.atleast_1d(figure.subplots(len(subjects), 1, sharex=True, squeeze=False)[:, 0])
     for axes, subject in zip(panels, subjects):
         t, f0 = pitch.get(subject, (np.empty(0), np.empty(0)))
-        for span in candidates[candidates["subject_id"] == subject].itertuples():
+        for span in candidates[candidates["subject_id"].eq(subject).fillna(False).astype(bool)].itertuples():
             axes.axvspan(span.t_start, max(span.t_end, span.t_start + TIMELINE_STEP_S), color=LOOK_COLOR, alpha=0.35, lw=0)
         if t.size:
             axes.plot(t, f0, ".", ms=1.5, color=SEEN_COLOR, rasterized=True)

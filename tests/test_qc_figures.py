@@ -4,12 +4,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from macaw.qc.checks import CANDIDATE_SCHEMA
 from macaw.qc.figures import pitch_figure, present_spans, timeline_figure
+from macaw.store.schema import coerce_frame
 
 pytest.importorskip("matplotlib")
 
-CANDIDATES = pd.DataFrame(
-    {"subject_id": ["parent", None], "t_start": [2.0, 5.0], "t_end": [3.0, 5.0], "reason": ["octave_error", "track_swap"]}
+# the column types candidates come back from disk with, where a span of nobody's is NA
+CANDIDATES = coerce_frame(
+    pd.DataFrame(
+        {"recording_id": "r", "subject_id": ["parent", None], "check": "c", "reason": ["octave_error", "track_swap"],
+         "t_start": [2.0, 5.0], "t_end": [3.0, 5.0], "t": [2.5, 5.0], "score": 1.0}
+    ),
+    CANDIDATE_SCHEMA,
+    "candidates",
 )
 
 
@@ -33,5 +41,5 @@ class TestFigures:
 
     def test_the_pitch_panels_cover_a_person_without_pitch(self, tmp_path):
         pitch = {"parent": (np.arange(0, 10, 0.01), np.full(1000, 220.0))}
-        path = pitch_figure(["parent", "child"], pitch, CANDIDATES[:1], tmp_path / "p.png")
+        path = pitch_figure(["parent", "child"], pitch, CANDIDATES, tmp_path / "p.png")
         assert path.stat().st_size > 0
