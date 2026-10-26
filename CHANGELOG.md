@@ -12,6 +12,7 @@
 - Export to CSV, Parquet, ELAN, and fixed-rate state sequences.
 - Command line interface for setting up a project, running extractors, and inspecting config.
 - Body movement measures from pose, quality checks that point at the frames worth reviewing (`macaw qc --render`), your own choice and grouping of what runs (`pipeline:`), and a template for adding your own extractors (`macaw new-extractor`).
+- Lining up files from separate devices by their sound (`macaw align`), with a figure per file to check the result, and setting an offset by hand (`macaw set-offset`).
 
 ## [0.1.0-alpha] – 2026-08-13
 
