@@ -196,3 +196,61 @@ def queue_summary(queue: pd.DataFrame) -> dict:
 def _counts(values: pd.Series) -> dict[str, int]:
     counted = values.astype("string").fillna("").value_counts()
     return {str(name): int(count) for name, count in counted.items()}
+
+
+# beside the layer files, so a rerun of the model pass that rewrites B.parquet leaves people's decisions alone
+REVIEWED_NAME = "reviewed.parquet"
+_UNIT = ["recording_id", "subject_id", "tier", "t_start", "t_end"]
+
+
+def _unit_keys(frame: pd.DataFrame) -> pd.Series:
+    return _keys(frame.assign(annotator="", label=""))
+
+
+def export_review(config, recording_ids: list[str]) -> pd.DataFrame:
+    """The queue across recordings, without units a person has already decided."""
+    from macaw.coding.agreement import load_annotations
+    from macaw.project.layout import layout_for
+
+    annotations = load_annotations(config, recording_ids)
+    if annotations.empty:
+        return empty_frame(REVIEW_QUEUE_SCHEMA)
+    queue = build_queue(annotations, threshold=config.coding.llm.review_threshold)
+    layout = layout_for(config, create=False)
+    decided = [
+        _io.read_file(path, ANNOTATION_SCHEMA, "annotations")
+        for path in (layout.annotations_path(recording_id) / REVIEWED_NAME for recording_id in recording_ids)
+        if path.is_file()
+    ]
+    if decided:
+        done = set(_unit_keys(pd.concat(decided, ignore_index=True)))
+        queue = queue[~_unit_keys(queue).isin(done).to_numpy()].reset_index(drop=True)
+    return queue
+
+
+def apply_review(config, queue: pd.DataFrame) -> dict[str, int]:
+    """Decided rows become a person's annotations in reviewed.parquet. Per recording, how many were added
+    and, under '<id> (not found)', how many decisions matched no annotation."""
+    from macaw.project.layout import layout_for
+
+    layout = layout_for(config, create=False)
+    counts: dict[str, int] = {}
+    for recording_id, decisions in queue.loc[_decided(queue)].groupby("recording_id", sort=True):
+        directory = layout.annotations_path(str(recording_id))
+        present = directory.is_dir() and any(directory.glob("*.parquet"))
+        annotations = _io.read_partitioned(directory, ANNOTATION_SCHEMA, "annotations") if present else empty_frame(ANNOTATION_SCHEMA)
+        target = directory / REVIEWED_NAME
+        earlier = _io.read_file(target, ANNOTATION_SCHEMA, "annotations") if target.is_file() else empty_frame(ANNOTATION_SCHEMA)
+        annotations = annotations[~_keys(annotations).isin(set(_keys(earlier))).to_numpy()].reset_index(drop=True)
+        merged = apply_decisions(annotations, decisions)
+        # apply_decisions appends the people's rows after the ones it was given
+        added = merged.iloc[len(annotations):]
+        if merged.attrs.get("unmatched_decisions"):
+            counts[f"{recording_id} (not found)"] = int(merged.attrs["unmatched_decisions"])
+        if added.empty:
+            continue
+        # a unit decided again replaces the earlier decision
+        both = pd.concat([earlier, added], ignore_index=True).drop_duplicates(subset=[*_UNIT, "annotator"], keep="last")
+        _io.write_file(both.reset_index(drop=True), target, ANNOTATION_SCHEMA, "annotations")
+        counts[str(recording_id)] = int(len(added))
+    return counts

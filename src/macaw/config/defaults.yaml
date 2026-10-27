@@ -113,14 +113,18 @@ coding:
   backchannel_max_s: 1.0             # s; longer utterances cannot be backchannels
   min_turn_internal_pause_s: 0.2     # s; shorter gaps inside a turn are recogniser segment seams; 0 keeps all
   llm:
-    provider: ollama                 # local by default; some IRBs forbid uploading audio
-    model: llama3.1:8b
+    provider: ollama                 # ollama | vllm | llamacpp | openai | anthropic, or a plugin's name
+    model: null                      # required for layer B; the name the provider knows it by
     base_url: null                   # null = provider default endpoint
-    temperature: 0.0                 # 0 for reproducible coding
+    temperature: 0.3                 # above 0 so repeated samples can disagree
     max_tokens: 1024
+    timeout_s: 300                   # s; one request
+    n_samples: 5                     # answers per unit; the label is the majority, confidence its share
+    seed: 0                          # sample i sends seed + i where the provider takes one
     allow_abstain: true              # the model may answer "cannot tell"
-    review_threshold: 0.7            # 0-1; below this the utterance enters the human review queue
-    batch_size: 20                   # utterances per request
+    review_threshold: 0.7            # 0-1; below this the unit enters the human review queue
+    batch_size: 20                   # units per request
+    context_units: 5                 # earlier units shown before each batch, not coded
     launch: []                       # lines starting a local server inside a cluster job
     ready_timeout_s: 300             # s; how long to wait for that server to answer
 

@@ -18,7 +18,7 @@ BIB_NAME = "references.bib"
 # extractors in the order a reader meets them; anything else (plugins) follows
 ORDER = (
     "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
-    "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "pose.detect", "pose.keypoints",
+    "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
 SECTIONS = {
@@ -340,6 +340,24 @@ def _layer_a(config, spec, names) -> str:
     return text
 
 
+def _judge(config, spec, names) -> str:
+    params = spec.params
+    model = spec.backend_version or params.get("model")
+    text = (
+        f"Each {params.get('codebook_unit', 'unit')} was coded with the codebook \"{params.get('codebook')}\" by the language model "
+        f"{model} ({params.get('provider')}), given the codebook's definitions and examples, the speaker letters and timing, "
+        f"and the {params.get('context_units')} preceding units as context."
+    )
+    samples = params.get("n_samples", 1)
+    if samples > 1:
+        text += (
+            f" Each unit was coded {_count(samples)} times at temperature {params.get('temperature')}; the label is the "
+            f"majority answer and its share the confidence. Units below {params.get('review_threshold')}, ties and units "
+            "the model could not code were reviewed by a person."
+        )
+    return text
+
+
 _POSE = {
     "mediapipe": "MediaPipe Pose Landmarker {version}{model} [bazarevsky2020; lugaresi2019]",
     "yolo": "Ultralytics YOLO{model} [jocher_ultralytics] with ByteTrack tracking [zhang2022]",
@@ -452,6 +470,7 @@ _WRITERS = {
     "turns.transitions": _transitions,
     "turns.entropy": _entropy,
     "coding.layer_a": _layer_a,
+    "coding.judge": _judge,
     "pose.detect": _detect,
     "pose.keypoints": _keypoints,
     "pose.kinematics": _kinematics,

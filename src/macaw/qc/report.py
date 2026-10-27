@@ -264,7 +264,32 @@ def _decisions(
             "decided": ", ".join(f"{count} as {reason}" for reason, count in reasons.items()),
             "by": "software", "href": "#Dropped",
         })
+    coded = _model_coding(layout, recording_id)
+    if coded is not None:
+        rows.append(coded)
     return rows
+
+
+def _model_coding(layout, recording_id: str) -> dict | None:
+    from macaw.coding.llm.judge import LAYER
+    from macaw.coding.review_queue import REVIEWED_NAME
+    from macaw.store.schema import ANNOTATION_SCHEMA
+
+    directory = layout.annotations_path(recording_id)
+    machine = directory / f"{LAYER}.parquet"
+    if not machine.is_file():
+        return None
+    units = _io.read_file(machine, ANNOTATION_SCHEMA, "annotations")
+    reviewed = directory / REVIEWED_NAME
+    n_reviewed = len(_io.read_file(reviewed, ANNOTATION_SCHEMA, "annotations")) if reviewed.is_file() else 0
+    flagged = int(units["needs_review"].fillna(False).sum())
+    return {
+        "what": "Speech acts",
+        "decided": f"{len(units)} unit(s) coded by a model, {flagged} sent for review, {n_reviewed} decided by a person; "
+        f"macaw review --export queue.csv -r {recording_id}",
+        "by": "person" if flagged and n_reviewed >= flagged else "software",
+        "href": None,
+    }
 
 
 def _feature_notes(layout, recording_id: str) -> tuple[dict[str, dict], list[dict]]:

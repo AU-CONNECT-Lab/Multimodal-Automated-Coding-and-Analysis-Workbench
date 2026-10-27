@@ -132,20 +132,27 @@ class TurnsSection(_Section):
 
 
 class LLMSection(_Section):
-    provider: Literal["ollama", "vllm", "llamacpp", "anthropic", "openai"] = "ollama"
-    model: str = "llama3.1:8b"
+    provider: str = "ollama"
+    model: str | None = None
     base_url: str | None = None
-    temperature: float = 0.0
+    temperature: float = 0.3
     max_tokens: int = 1024
+    timeout_s: int = 300
+    n_samples: int = Field(default=5, ge=1)
+    seed: int = 0
     allow_abstain: bool = True
     review_threshold: float = 0.7
-    batch_size: int = 20
+    batch_size: int = Field(default=20, ge=1)
+    context_units: int = Field(default=5, ge=0)
     # lines that bring a local server up inside a cluster job, plus how long to wait for it
     launch: list[str] = Field(default_factory=list)
     ready_timeout_s: int = 300
 
     def is_local(self) -> bool:
-        return self.provider in ("ollama", "vllm", "llamacpp")
+        from macaw.coding.llm.backends import BACKEND_GROUP
+        from macaw.extractors import get_backend
+
+        return get_backend(BACKEND_GROUP, self.provider).is_local
 
 
 class CodingSection(_Section):

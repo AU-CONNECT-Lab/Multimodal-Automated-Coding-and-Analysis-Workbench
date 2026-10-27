@@ -67,6 +67,11 @@ class Extractor(ABC):
         """requires, plus any step this project's settings put in front of this one."""
         return cls.requires
 
+    @classmethod
+    def wanted_by_default(cls, config: MacawConfig) -> bool:
+        """Whether a run that names no steps includes this one."""
+        return True
+
     @abstractmethod
     def check_available(self) -> None:
         """Raise BackendNotAvailableError with install instructions if deps are missing."""

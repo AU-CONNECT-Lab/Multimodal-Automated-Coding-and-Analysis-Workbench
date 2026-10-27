@@ -39,6 +39,10 @@ EVERYTHING = manifest(
     spec("text.features", "mlu_words", embedding_model="all-MiniLM-L6-v2"),
     spec("turns.structure", "n_turns"), spec("turns.transitions", "fto_s"), spec("turns.entropy", "speaker_entropy_bits"),
     spec("coding.layer_a", "n_turn_internal_pauses"),
+    spec(
+        "coding.judge", "n_units_judged", "ollama", "qwen3:14b@abc", codebook="acts", codebook_unit="utterance",
+        provider="ollama", n_samples=5, temperature=0.3, review_threshold=0.7, context_units=5,
+    ),
     spec("pose.detect", "n_videos_read", "yolo", "8.4"), spec("pose.keypoints", "detection_rate", "yolo", "8.4"),
     spec("pose.kinematics", "hand_distance"), spec("motion.mea", "motion_energy"),
     spec("face.au", "au01", "pyfeat", "2.1.5", model="v1"), spec("face.au", "face_yaw_deg", "pyfeat", "2.1.5", model="v1"),
@@ -65,6 +69,8 @@ def test_every_step_renders_and_every_citation_is_in_the_reference_list():
     assert "from 30 s to 630 s" in text and "child 150 to 600 Hz" in text and "yolo11x-pose.pt" in text
     assert "my.plugin 0.1.0 extractor, backend mine 1.0" in text
     assert "v2 models were run on the same faces" in text
+    assert "Each utterance was coded with the codebook \"acts\" by the language model qwen3:14b@abc" in text
+    assert "coded five times at temperature 0.3" in text
 
 
 def test_only_what_ran_is_described():

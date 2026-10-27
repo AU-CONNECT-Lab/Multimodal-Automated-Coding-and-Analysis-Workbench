@@ -164,6 +164,8 @@ def resolve_selection(config: MacawConfig, names: list[str]) -> list[str]:
 def build_dag(config: MacawConfig, requested: list[str] | None = None) -> DAG:
     """Without a request, pipeline.run; without that, every installed extractor."""
     dag = DAG(config)
-    names = requested or config.pipeline.run or list_extractors()
+    names = requested or config.pipeline.run or [
+        name for name in list_extractors() if get_extractor(name).wanted_by_default(config)
+    ]
     dag.expand(resolve_selection(config, names))
     return dag
