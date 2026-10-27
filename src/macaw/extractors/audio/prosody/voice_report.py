@@ -77,7 +77,7 @@ _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[a
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment")
@@ -92,7 +92,7 @@ class VoiceReportExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         import parselmouth
 
-        return ("parselmouth", f"{parselmouth.VERSION} (Praat {parselmouth.PRAAT_VERSION})")
+        return ("parselmouth", parselmouth.VERSION)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         layout = layout_for(self.config, create=False)
@@ -137,8 +137,10 @@ class VoiceReportExtractor(Extractor):
         return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(), warnings=warnings)
 
     def _specs(self) -> list[FeatureSpec]:
+        import parselmouth
+
         backend, version = self.backend_info()
-        cfg = self.config.prosody
+        params = {"frame_step_s": self.config.prosody.frame_step_s, "praat_version": parselmouth.PRAAT_VERSION}
         return [
             FeatureSpec(
                 name=name,
@@ -150,7 +152,7 @@ class VoiceReportExtractor(Extractor):
                 extractor_version=self.version,
                 backend=backend,
                 backend_version=version,
-                params={"frame_step_s": cfg.frame_step_s},
+                params=params,
                 aggregation="mean",
                 comparable_across_subjects=comparable,
                 comparable_across_backends=False,

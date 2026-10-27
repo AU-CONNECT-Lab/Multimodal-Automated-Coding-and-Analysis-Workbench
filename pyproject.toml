@@ -92,7 +92,7 @@ where = ["src"]
 include = ["macaw*"]
 
 [tool.setuptools.package-data]
-"macaw" = ["config/*.yaml", "qc/templates/*"]
+"macaw" = ["config/*.yaml", "qc/templates/*", "qc/references.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

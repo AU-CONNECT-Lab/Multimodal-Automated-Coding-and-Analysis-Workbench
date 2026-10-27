@@ -1,0 +1,167 @@
+boersma_praat:
+  type: misc
+  author: "Boersma, Paul and Weenink, David"
+  title: "Praat: doing phonetics by computer"
+  howpublished: Computer program
+jadoul2018:
+  type: article
+  author: "Jadoul, Yannick and Thompson, Bill and de Boer, Bart"
+  title: "Introducing Parselmouth: A Python interface to Praat"
+  journal: Journal of Phonetics
+  volume: 71
+  pages: 1--15
+  year: 2018
+mcfee2015:
+  type: inproceedings
+  author: "McFee, Brian and Raffel, Colin and Liang, Dawen and Ellis, Daniel P. W. and McVicar, Matt and Battenberg, Eric and Nieto, Oriol"
+  title: "librosa: Audio and music signal analysis in Python"
+  booktitle: Proceedings of the 14th Python in Science Conference
+  pages: 18--25
+  year: 2015
+hillenbrand1996:
+  type: article
+  author: "Hillenbrand, James and Houde, Robert A."
+  title: "Acoustic correlates of breathy vocal quality: Dysphonic voices and continuous speech"
+  journal: Journal of Speech and Hearing Research
+  volume: 39
+  number: 2
+  pages: 311--321
+  year: 1996
+eyben2010:
+  type: inproceedings
+  author: "Eyben, Florian and Wöllmer, Martin and Schuller, Björn"
+  title: "openSMILE: The Munich versatile and fast open-source audio feature extractor"
+  booktitle: Proceedings of the 18th ACM International Conference on Multimedia
+  pages: 1459--1462
+  year: 2010
+eyben2016:
+  type: article
+  author: "Eyben, Florian and Scherer, Klaus R. and Schuller, Björn W. and Sundberg, Johan and André, Elisabeth and Busso, Carlos and Devillers, Laurence Y. and Epps, Julien and Laukka, Petri and Narayanan, Shrikanth S. and Truong, Khiet P."
+  title: "The Geneva Minimalistic Acoustic Parameter Set (GeMAPS) for voice research and affective computing"
+  journal: IEEE Transactions on Affective Computing
+  volume: 7
+  number: 2
+  pages: 190--202
+  year: 2016
+schuller2016:
+  type: inproceedings
+  author: "Schuller, Björn and Steidl, Stefan and Batliner, Anton and Hirschberg, Julia and Burgoon, Judee K. and Baird, Alice and Elkins, Aaron and Zhang, Yue and Coutinho, Eduardo and Evanini, Keelan"
+  title: "The INTERSPEECH 2016 Computational Paralinguistics Challenge: Deception, sincerity and native language"
+  booktitle: Proceedings of Interspeech 2016
+  pages: 2001--2005
+  year: 2016
+radford2023:
+  type: inproceedings
+  author: "Radford, Alec and Kim, Jong Wook and Xu, Tao and Brockman, Greg and McLeavey, Christine and Sutskever, Ilya"
+  title: "Robust speech recognition via large-scale weak supervision"
+  booktitle: Proceedings of the 40th International Conference on Machine Learning
+  pages: 28492--28518
+  year: 2023
+bain2023:
+  type: inproceedings
+  author: "Bain, Max and Huh, Jaesung and Han, Tengda and Zisserman, Andrew"
+  title: "WhisperX: Time-accurate speech transcription of long-form audio"
+  booktitle: Proceedings of Interspeech 2023
+  pages: 4489--4493
+  year: 2023
+heldner2010:
+  type: article
+  author: "Heldner, Mattias and Edlund, Jens"
+  title: "Pauses, gaps and overlaps in conversations"
+  journal: Journal of Phonetics
+  volume: 38
+  number: 4
+  pages: 555--568
+  year: 2010
+miller1955:
+  type: incollection
+  author: "Miller, George A."
+  title: "Note on the bias of information estimates"
+  booktitle: "Information Theory in Psychology: Problems and Methods"
+  editor: Quastler, Henry
+  publisher: Free Press
+  pages: 95--100
+  year: 1955
+bandt2002:
+  type: article
+  author: "Bandt, Christoph and Pompe, Bernd"
+  title: "Permutation entropy: A natural complexity measure for time series"
+  journal: Physical Review Letters
+  volume: 88
+  number: 17
+  pages: "174102"
+  year: 2002
+knapp1976:
+  type: article
+  author: "Knapp, Charles H. and Carter, G. Clifford"
+  title: "The generalized correlation method for estimation of time delay"
+  journal: IEEE Transactions on Acoustics, Speech, and Signal Processing
+  volume: 24
+  number: 4
+  pages: 320--327
+  year: 1976
+lugaresi2019:
+  type: misc
+  author: "Lugaresi, Camillo and Tang, Jiuqiang and Nash, Hadon and McClanahan, Chris and Uboweja, Esha and Hays, Michael and Zhang, Fan and Chang, Chuo-Ling and Yong, Ming Guang and Lee, Juhyun and Chang, Wan-Teh and Hua, Wei and Georg, Manfred and Grundmann, Matthias"
+  title: "MediaPipe: A framework for building perception pipelines"
+  howpublished: arXiv:1906.08172
+  year: 2019
+bazarevsky2020:
+  type: misc
+  author: "Bazarevsky, Valentin and Grishchenko, Ivan and Raveendran, Karthik and Zhu, Tyler and Zhang, Fan and Grundmann, Matthias"
+  title: "BlazePose: On-device real-time body pose tracking"
+  howpublished: arXiv:2006.10204
+  year: 2020
+jocher_ultralytics:
+  type: misc
+  author: "Jocher, Glenn and Qiu, Jing"
+  title: Ultralytics YOLO
+  howpublished: Software
+zhang2022:
+  type: inproceedings
+  author: "Zhang, Yifu and Sun, Peize and Jiang, Yi and Yu, Dongdong and Weng, Fucheng and Yuan, Zehuan and Luo, Ping and Liu, Wenyu and Wang, Xinggang"
+  title: "ByteTrack: Multi-object tracking by associating every detection box"
+  booktitle: European Conference on Computer Vision (ECCV 2022)
+  pages: 1--21
+  year: 2022
+savitzky1964:
+  type: article
+  author: "Savitzky, Abraham and Golay, Marcel J. E."
+  title: "Smoothing and differentiation of data by simplified least squares procedures"
+  journal: Analytical Chemistry
+  volume: 36
+  number: 8
+  pages: 1627--1639
+  year: 1964
+ramseyer2011:
+  type: article
+  author: "Ramseyer, Fabian and Tschacher, Wolfgang"
+  title: "Nonverbal synchrony in psychotherapy: Coordinated body movement reflects relationship quality and outcome"
+  journal: Journal of Consulting and Clinical Psychology
+  volume: 79
+  number: 3
+  pages: 284--295
+  year: 2011
+cheong2023:
+  type: article
+  author: "Cheong, Jin Hyun and Jolly, Eshin and Xie, Tiankang and Byrne, Sophie and Kenney, Matthew and Chang, Luke J."
+  title: "Py-Feat: Python facial expression analysis toolbox"
+  journal: Affective Science
+  volume: 4
+  number: 4
+  pages: 781--796
+  year: 2023
+abdelrahman2023:
+  type: inproceedings
+  author: "Abdelrahman, Ahmed A. and Hempel, Thorsten and Khalifa, Aly and Al-Hamadi, Ayoub and Dinges, Laslo"
+  title: "L2CS-Net: Fine-grained gaze estimation in unconstrained environments"
+  booktitle: 2023 8th International Conference on Frontiers of Signal Processing (ICFSP)
+  pages: 98--102
+  year: 2023
+reimers2019:
+  type: inproceedings
+  author: "Reimers, Nils and Gurevych, Iryna"
+  title: "Sentence-BERT: Sentence embeddings using Siamese BERT-networks"
+  booktitle: Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing
+  pages: 3982--3992
+  year: 2019

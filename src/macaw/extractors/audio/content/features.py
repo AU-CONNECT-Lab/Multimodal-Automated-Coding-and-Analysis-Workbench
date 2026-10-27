@@ -42,7 +42,7 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = ("text.embedding_model", "text.device", "segment")
@@ -113,7 +113,7 @@ class TextFeatureExtractor(Extractor):
                 group=self.group,
                 extractor=self.name,
                 extractor_version=self.version,
-                params={"tokenizer": "english_words"},
+                params={"tokenizer": "english_words", "embedding_model": self.config.text.embedding_model},
                 validation="synthetic",
             )
             for name, (description, unit) in _SPECS.items()
