@@ -4,6 +4,8 @@ from pathlib import Path
 
 import typer
 
+from macaw.config.loader import resolve_config
+
 app = typer.Typer()
 
 
@@ -16,5 +18,16 @@ def gui(
     port: int = typer.Option(None, "--port"),
     debug: bool = typer.Option(False, "--debug"),
 ) -> None:
-    """Launch the workbench. Default is a native window."""
-    raise NotImplementedError
+    """Launch the workbench. Default is gui.mode from the config, a native window unless set otherwise."""
+    from macaw.interface.run_gui import launch_browser, launch_server, launch_window
+
+    settings = resolve_config(config).gui
+    mode = "server" if server else "browser" if browser else settings.mode
+    port = port or settings.port
+    if mode == "server":
+        typer.echo(f"listening on {host or '0.0.0.0'}:{port}; from your machine: ssh -L {port}:localhost:{port} <server>, then http://localhost:{port}")
+        launch_server(config, host=host or "0.0.0.0", port=port)
+    elif mode == "browser":
+        launch_browser(config, host=host or settings.host, port=port, debug=debug)
+    else:
+        launch_window(config, port=port, debug=debug)

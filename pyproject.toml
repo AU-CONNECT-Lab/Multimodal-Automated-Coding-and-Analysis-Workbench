@@ -92,7 +92,7 @@ where = ["src"]
 include = ["macaw*"]
 
 [tool.setuptools.package-data]
-"macaw" = ["config/*.yaml", "qc/templates/*", "qc/references.yaml", "extractors/audio/content/english_stopwords.txt"]
+"macaw" = ["config/*.yaml", "qc/templates/*", "qc/references.yaml", "extractors/audio/content/english_stopwords.txt", "interface/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
