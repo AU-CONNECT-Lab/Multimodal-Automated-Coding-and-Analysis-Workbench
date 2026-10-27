@@ -112,29 +112,51 @@ class TestWordsToPeople:
         assert unplaced == 1 and placed["subject_id"].tolist() == ["parent", "parent", "child", "child"]
 
 
-def test_mouth_movement_names_the_voice_it_moves_with():
+def three_voices():
     rng = np.random.default_rng(1)
-    blocks = np.arange(0, 240, 10.0)
-    order = rng.permutation(np.repeat(["S0", "S1"], len(blocks) // 2))
+    blocks = np.arange(0, 270, 10.0)
+    order = rng.permutation(np.repeat(["S0", "S1", "S2"], len(blocks) // 3))
     found = turns(*[(label, start, start + 9.0) for label, start in zip(order, blocks)])
-    t = np.arange(0, 240, 0.04)
-    talking = {label: talk_mask(found, label, t) for label in ("S0", "S1")}
-    mouth = pd.concat([
-        pd.DataFrame({"subject_id": "parent", "t_start": t, "value": talking["S1"] + 0.3 * rng.random(t.size)}),
-        pd.DataFrame({"subject_id": "child", "t_start": t, "value": talking["S0"] + 0.3 * rng.random(t.size)}),
-    ])
-    suggestion = match_voices(found, mouth)
-    assert suggestion["people"] == {"S0": "child", "S1": "parent"}
+    t = np.arange(0, 270, 0.04)
+    talking = {label: talk_mask(found, label, t) for label in ("S0", "S1", "S2")}
+    return found, t, talking, rng
+
+
+def test_each_persons_signal_names_the_voice_it_follows():
+    found, t, talking, rng = three_voices()
+    signals = {
+        "parent": (t, talking["S1"] + 0.3 * rng.random(t.size), "mouth movement"),
+        "child": (t, 20 * talking["S0"] + rng.random(t.size), "own microphone"),
+        "sibling": (t, talking["S2"] + 0.3 * rng.random(t.size), "mouth movement"),
+    }
+    suggestion = match_voices(found, signals, ["parent", "child", "sibling"])
+    assert suggestion["people"] == {"S0": "child", "S1": "parent", "S2": "sibling"}
     assert suggestion["evidence"]["parent"]["rho"] > 0.5 > suggestion["evidence"]["parent"]["rival_rho"]
+    assert suggestion["evidence"]["child"]["source"] == "own microphone"
 
 
-def test_a_voice_matched_by_elimination_is_marked_for_listening():
+def test_the_one_person_and_voice_left_are_paired_by_elimination():
+    found, t, talking, rng = three_voices()
+    signals = {
+        "parent": (t, talking["S1"] + 0.3 * rng.random(t.size), "own microphone"),
+        "child": (t, talking["S0"] + 0.3 * rng.random(t.size), "own microphone"),
+    }
+    suggestion = match_voices(found, signals, ["parent", "child", "sibling"])
+    assert suggestion["people"]["S2"] == "sibling" and suggestion["evidence"]["sibling"]["source"] == "elimination"
+    assert "S2 is sibling (the one voice and person left: listen to it)" in describe_suggestion(suggestion)
+    two_left = match_voices(found, {"parent": signals["parent"]}, ["parent", "child", "sibling"])
+    assert two_left["people"]["S1"] == "parent" and two_left["people"]["S0"] is None is two_left["people"]["S2"]
+    assert "S0 is one of child, sibling (listen to it)" in describe_suggestion(two_left)
+
+
+def test_a_signal_that_barely_follows_its_voice_is_marked_for_listening():
     suggestion = {
         "people": {"S0": "parent", "S1": "child"},
-        "evidence": {"parent": {"rho": 0.5, "z": 6.0}, "child": {"rho": 0.0, "z": -0.1}},
+        "evidence": {"parent": {"rho": 0.5, "z": 6.0, "source": "mouth movement"}, "child": {"rho": 0.0, "z": -0.1, "source": "mouth movement"}},
     }
     shown = describe_suggestion(suggestion)
-    assert "S0 is parent (rho 0.50, z 6.0)" in shown and "S1 is child (rho 0.00, z -0.1, weak: listen to it)" in shown
+    assert "S0 is parent (mouth movement, rho 0.50, z 6.0)" in shown
+    assert "S1 is child (mouth movement, rho 0.00, z -0.1, weak: listen to it)" in shown
 
 
 def talk_mask(found, label, t):
@@ -242,3 +264,43 @@ def test_a_turn_off_a_shared_microphone_keeps_only_its_solo_stretches():
     assert kept == [0.5, 0.0] and pieces[1].size == 0
     whole, share = turn_pieces(audio, 100.0, 10.0, np.array([11.0]), np.array([12.0]), None)
     assert whole[0].size == 100 and share == [1.0]
+
+
+class TestMixed:
+    TURNS = turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0))
+    NAMES = {"S0": "parent", "S1": "child"}
+
+    def test_words_of_someone_with_their_own_mic_are_left_to_it(self):
+        utterances = pd.DataFrame({"utterance_index": [0], "t_start": [0.0], "t_end": [9.0], "text": [""], "confidence": [np.nan], "language": ["en"]})
+        words = pd.DataFrame({"utterance_index": [0, 0], "t_start": [1.0, 6.0], "t_end": [1.5, 6.5], "word": ["hi", "yo"], "score": [0.9, 0.9]})
+        split, _, unplaced = split_by_voice(utterances, words, self.TURNS, self.NAMES, elsewhere=frozenset({"parent"}))
+        assert split["subject_id"].tolist() == ["child"] and unplaced == 0
+
+    def test_an_own_mic_utterance_in_the_voice_of_someone_without_one_is_dropped(self, project, monkeypatch):
+        from macaw.extractors.audio.content import asr as asr_module
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        prep = PrepInfo(recording_id="003", t_origin_s=0.0, duration_s=10.0, sample_rate=SAMPLE_RATE, tracks={"parent": "parent.wav"})
+        regular = turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0), ("S0", 6.0, 6.4), exclusive=False)
+        monkeypatch.setattr(asr_module, "_track_clock_turns", lambda config, rid, prep, exclusive=True: regular)
+        monkeypatch.setattr(asr_module, "voice_names", lambda config, rid: self.NAMES)
+        own = pd.DataFrame({"subject_id": ["parent"] * 3, "t_start": [0.5, 5.5, 6.0], "t_end": [3.5, 8.0, 6.5]})
+        config = project.resolved()
+        warnings = []
+        kept = ASRExtractor(config)._drop_room_bleed(build_recording("003", config), prep, own, warnings)
+        # the last one also lies in the child's voice, but the owner talks over most of it
+        assert kept["t_start"].tolist() == [0.5, 6.0]
+        assert warnings[0].check == "asr_room_bleed" and "1 of 3" in warnings[0].message
+
+    def test_each_person_is_measured_on_their_own_mic_or_their_solo_stretches(self, project, monkeypatch, tmp_path):
+        prep = PrepInfo(
+            recording_id="003", t_origin_s=0.0, duration_s=10.0, sample_rate=SAMPLE_RATE,
+            tracks={"parent": "parent.wav"}, shared_tracks={"003_room.wav": "shared_003_room.wav"}, root=tmp_path,
+        )
+        monkeypatch.setattr(diarization_module, "read_diarization", lambda config, rid: turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0), exclusive=False))
+        monkeypatch.setattr(diarization_module, "voice_names", lambda config, rid: self.NAMES)
+        config = project.resolved()
+        sources = diarization_module.voice_sources(config, build_recording("003", config), prep)
+        assert sources["parent"] == (tmp_path / "parent.wav", None)
+        assert sources["child"][0] == tmp_path / "shared_003_room.wav"
+        assert sources["child"][1].values.tolist() == [[5.0, 9.0]]

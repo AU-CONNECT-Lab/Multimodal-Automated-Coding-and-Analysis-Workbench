@@ -468,8 +468,8 @@ class SpeakerReviewGate(Gate):
         clips = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name)
         suggestion = suggest_voices(self.config, recording)
         hint = (
-            f"; from mouth movement {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`"
-            if suggestion else "; with face.movement run on each person's camera a suggestion appears here"
+            f"; suggested: {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`"
+            if suggestion else "; with each person's own mic or face.movement on their camera a suggestion appears here"
         )
         return (
             f"nobody has said which voice is whom ({', '.join(sorted(voices)) or 'none found'}): listen to the clips "
@@ -509,11 +509,12 @@ def inside(t: np.ndarray, spans: pd.DataFrame) -> np.ndarray:
 
 def voice_sources(config, recording: Recording, prep) -> dict[str, tuple[Path, pd.DataFrame | None]]:
     """Where each person's voice is: their own track whole, or the shared track within their solo spans."""
+    own = {subject_id: (prep.track_path(subject_id), None) for subject_id in prep.tracks}
     if config.text.diarization != SHARED_MODE:
-        return {subject_id: (prep.track_path(subject_id), None) for subject_id in prep.tracks}
+        return own
     path = prep.shared_track_path(shared_track(prep, recording.recording_id))
     spans = solo_spans(read_diarization(config, recording.recording_id), voice_names(config, recording.recording_id))
-    return {who: (path, found) for who, found in spans.items()}
+    return {**{who: (path, found) for who, found in spans.items() if who not in own}, **own}
 
 
 def voice_inputs(config, recording: Recording, prep) -> list[Path]:
@@ -522,6 +523,7 @@ def voice_inputs(config, recording: Recording, prep) -> list[Path]:
         return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
     layout = layout_for(config, create=False)
     return [
+        *(prep.track_path(subject_id) for subject_id in sorted(prep.tracks)),
         prep.shared_track_path(shared_track(prep, recording.recording_id)),
         layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
         layout.voice_owners_path(recording.recording_id),

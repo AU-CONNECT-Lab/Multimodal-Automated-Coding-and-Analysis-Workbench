@@ -242,7 +242,9 @@ def _asr(config, spec, names) -> str:
         return (
             f"The shared microphone was transcribed{language} with {_backend(_ASR, spec, model=text_cfg.asr_model)}. "
             "Each word was given to the voice whose diarized turn it overlapped most, and consecutive words of one "
-            "participant within a recogniser segment formed an utterance."
+            "participant within a recogniser segment formed an utterance. A participant with a microphone of their own "
+            "was transcribed from it instead, and an utterance on it lying mostly in the voice of a participant heard "
+            "only on the shared microphone was removed as bleed."
         )
     return (
         f"Speech on each participant's own track was transcribed{language} with "

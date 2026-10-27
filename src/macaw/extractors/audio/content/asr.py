@@ -65,6 +65,10 @@ WHISPER_SAMPLE_RATE = 16000
 _CROSSTALK_WARN_FRACTION = 0.5
 # a word just outside every diarized turn still belongs to the nearest one within this
 _WORD_REACH_S = 0.5
+# an own-mic utterance at least this much inside the voice of someone without a mic can be their bleed
+_ROOM_BLEED_SHARE = 0.5
+# and only while the owner's own voice covers less than this of it, since overlapping talk is both people's
+_OWNER_ABSENT_SHARE = 0.2
 
 
 def resolve_device(device: str) -> str:
@@ -296,7 +300,7 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.4.0"
+    version = "0.6.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -350,10 +354,17 @@ class ASRExtractor(Extractor):
         prep = load_prep(self.config, recording.recording_id)
         backend = self.backend()
         warnings: list[QCWarning] = []
-        if self._shared():
-            utterances, words = self._from_shared_track(recording, prep, backend, warnings)
-        else:
+        if not self._shared():
             utterances, words = self._from_own_tracks(recording, prep, backend, warnings)
+        else:
+            # whoever has a microphone of their own is transcribed from it; the shared one covers the rest
+            utterances, words = self._from_shared_track(recording, prep, backend, warnings)
+            if prep.tracks:
+                own_utterances, own_words = self._from_own_tracks(recording, prep, backend, warnings)
+                own_utterances = self._drop_room_bleed(recording, prep, own_utterances, warnings)
+                own_words = _keep_utterances(own_words, own_utterances)
+                utterances = _concat([own_utterances, utterances], TRANSCRIPT_SCHEMA, drop={"n_words"})
+                words = _concat([own_words, words], WORD_SCHEMA)
 
         utterances = utterances.reset_index(drop=True)
         utterances["n_words"] = (
@@ -392,11 +403,10 @@ class ASRExtractor(Extractor):
                     message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
                 )
             )
-        turns = read_diarization(self.config, rid)
-        turns = turns[turns["exclusive"].astype(bool)].assign(
-            t_start=lambda frame: frame["t_start"] - prep.t_origin_s, t_end=lambda frame: frame["t_end"] - prep.t_origin_s
+        turns = _track_clock_turns(self.config, rid, prep)
+        utterances, words, unplaced = split_by_voice(
+            utterances, words, turns, voice_names(self.config, rid), elsewhere=frozenset(prep.tracks)
         )
-        utterances, words, unplaced = split_by_voice(utterances, words, turns, voice_names(self.config, rid))
         if unplaced:
             warnings.append(
                 QCWarning(
@@ -408,6 +418,35 @@ class ASRExtractor(Extractor):
             frame["recording_id"] = rid
         return _concat([utterances], TRANSCRIPT_SCHEMA, drop={"n_words"}), _concat([words], WORD_SCHEMA)
 
+    def _drop_room_bleed(self, recording: Recording, prep, utterances: pd.DataFrame, warnings: list[QCWarning]) -> pd.DataFrame:
+        """A person heard only on the shared microphone still leaks into the others' own microphones.
+        An utterance is their bleed when it lies mostly in their voice and the owner's is all but absent."""
+        names = voice_names(self.config, recording.recording_id)
+        turns = _track_clock_turns(self.config, recording.recording_id, prep, exclusive=False)
+        turns = turns.assign(subject_id=turns["label"].map(lambda label: names.get(label)))
+        roomers = set(turns["subject_id"].dropna()) - set(prep.tracks)
+        flags = np.zeros(len(utterances), dtype=bool)
+        for index, row in enumerate(utterances.itertuples(index=False)):
+            length = row.t_end - row.t_start
+            if length <= 0:
+                continue
+            overlap = (np.minimum(turns["t_end"], row.t_end) - np.maximum(turns["t_start"], row.t_start)).clip(lower=0)
+            own = float(overlap[turns["subject_id"] == row.subject_id].sum())
+            other = float(overlap[turns["subject_id"].isin(roomers)].sum())
+            flags[index] = other >= _ROOM_BLEED_SHARE * length and own < _OWNER_ABSENT_SHARE * length
+        for subject_id in utterances.loc[flags, "subject_id"].unique():
+            mine = utterances["subject_id"] == subject_id
+            warnings.append(
+                QCWarning(
+                    check="asr_room_bleed", recording_id=recording.recording_id, subject_id=str(subject_id), severity="info",
+                    message=(
+                        f"{int((flags & mine).sum())} of {int(mine.sum())} utterances on their own microphone were in the voice of "
+                        "someone heard only on the shared microphone and were dropped."
+                    ),
+                )
+            )
+        return utterances[~flags]
+
     def _from_own_tracks(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
         cfg = self.config.text
         tracks = {subject_id: prep.track_path(subject_id) for subject_id in prep.tracks}
@@ -416,6 +455,8 @@ class ASRExtractor(Extractor):
 
         for subject in recording.subjects:
             if subject.subject_id not in prep.tracks:
+                if self._shared():
+                    continue
                 warnings.append(
                     QCWarning(
                         check="asr_missing_track",
@@ -455,7 +496,8 @@ class ASRExtractor(Extractor):
         utterances = _concat(utterance_parts, TRANSCRIPT_SCHEMA, drop={"n_words"})
         words = _concat(word_parts, WORD_SCHEMA)
 
-        diarizer = resolve_diarization(recording, cfg.diarization)
+        # beside a shared microphone the own tracks still bleed into each other
+        diarizer = resolve_diarization(recording, "per_track" if self._shared() else cfg.diarization)
         flagged = diarizer.attribute(utterances, tracks, margin_db=cfg.crosstalk_margin_db)
         warnings += self._crosstalk_warnings(recording, flagged)
 
@@ -692,24 +734,35 @@ def load_transcript(config, recording_id: str) -> pd.DataFrame:
     return read_transcript(root / TRANSCRIPT_NAME)
 
 
+def _track_clock_turns(config, recording_id: str, prep, *, exclusive: bool = True) -> pd.DataFrame:
+    turns = read_diarization(config, recording_id)
+    return turns[turns["exclusive"].astype(bool) == exclusive].assign(
+        t_start=lambda frame: frame["t_start"] - prep.t_origin_s, t_end=lambda frame: frame["t_end"] - prep.t_origin_s
+    )
+
+
 def split_by_voice(
-    utterances: pd.DataFrame, words: pd.DataFrame, turns: pd.DataFrame, names: dict[str, str | None]
+    utterances: pd.DataFrame, words: pd.DataFrame, turns: pd.DataFrame, names: dict[str, str | None],
+    *, elsewhere: frozenset[str] = frozenset(),
 ) -> tuple[pd.DataFrame, pd.DataFrame, int]:
     """Each word goes to the voice turn it overlaps most, or the nearest within reach; a run of
-    one person's words inside a recogniser segment is one utterance. Returns the unplaced word count."""
+    one person's words inside a recogniser segment is one utterance. Words of people in elsewhere
+    are left to their own microphone. Returns the count of words no named voice took."""
     columns = [column for column in utterances.columns if column not in {"utterance_index", "t_start", "t_end", "text", "confidence"}]
     if words.empty:
         # a backend without word times can only be split at its segments
         placed = assign_voices(utterances, turns)
         placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
-        kept = placed[placed["subject_id"].notna()].copy()
+        unplaced = int(placed["subject_id"].isna().sum())
+        kept = placed[placed["subject_id"].notna() & ~placed["subject_id"].isin(elsewhere)].copy()
         kept["utterance_index"] = kept.sort_values("t_start").groupby("subject_id").cumcount()
-        return kept, words.assign(subject_id=pd.Series(dtype="string")), int(len(placed) - len(kept))
+        return kept, words.assign(subject_id=pd.Series(dtype="string")), unplaced
 
     placed = assign_voices(words, turns)
     placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
     unplaced = int(placed["subject_id"].isna().sum())
-    placed = placed[placed["subject_id"].notna()].sort_values(["t_start", "t_end"]).reset_index(drop=True)
+    placed = placed[placed["subject_id"].notna() & ~placed["subject_id"].isin(elsewhere)]
+    placed = placed.sort_values(["t_start", "t_end"]).reset_index(drop=True)
     # a new utterance starts wherever the speaker or the recogniser segment changes
     run = (placed["subject_id"] != placed["subject_id"].shift()) | (placed["utterance_index"] != placed["utterance_index"].shift())
     placed["run"] = run.cumsum()
