@@ -9,6 +9,8 @@ from macaw.coding.codebook import Codebook
 from macaw.coding.llm.prompts import ABSTAIN
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+# reasoning models write their thinking first, braces and all
+_THINKING = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
 _CLOSERS = {"{": "}", "[": "]"}
 
 
@@ -54,6 +56,7 @@ def parse_refinement_response(text: str) -> Codebook:
 
 def repair_json(text: str) -> str:
     """Small local models often wrap JSON in prose or truncate it."""
+    text = _THINKING.sub("", text)
     fenced = _FENCE.search(text)
     if fenced:
         text = fenced.group(1)

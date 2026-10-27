@@ -128,6 +128,10 @@ class TestRepair:
         text = '{"labels": [{"id": "u0", "label": "inform"}, {"id": "u1", "lab'
         assert json.loads(repair_json(text)) == {"labels": [{"id": "u0", "label": "inform"}]}
 
+    def test_thinking_before_the_answer_is_dropped(self):
+        text = '<think>maybe {"labels": []} or not</think>\n{"labels": [{"id": "u0", "label": "inform"}]}'
+        assert json.loads(repair_json(text))["labels"] == [{"id": "u0", "label": "inform"}]
+
     def test_braces_inside_strings_do_not_count(self):
         assert json.loads(repair_json('{"id": "u}0", "label": "a{b"} trailing')) == {"id": "u}0", "label": "a{b"}
 
