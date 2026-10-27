@@ -19,6 +19,7 @@ from macaw.extractors.audio.content.diarization import (
     shared_track,
     voice_names,
 )
+from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -61,6 +62,7 @@ WORD_SCHEMA: dict[str, str] = {
 
 # whisperx transcribes in batches; 8 fits comfortably next to a large-v3 model on 24 GB
 WHISPERX_BATCH_SIZE = 8
+WHISPER_SAMPLE_RATE = 16000
 
 _CROSSTALK_WARN_FRACTION = 0.5
 # a word just outside every diarized turn still belongs to the nearest one within this
@@ -139,7 +141,9 @@ class WhisperXBackend(ASRBackend):
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         import whisperx
 
-        audio = whisperx.load_audio(str(audio_path))
+        # whisperx's own loader shells out to an ffmpeg on PATH; prepared tracks are 16 kHz wav already
+        samples, _ = load_audio(Path(audio_path), sample_rate=WHISPER_SAMPLE_RATE)
+        audio = samples.astype(np.float32)
         result = self._load().transcribe(
             audio, batch_size=WHISPERX_BATCH_SIZE, language=language
         )
