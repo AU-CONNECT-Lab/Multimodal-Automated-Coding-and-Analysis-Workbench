@@ -37,6 +37,8 @@ MAX_PITCH_SHIFT_DEG = 15.0
 # landmarks spanning less of the person's usual face width sit on an ear or the hair, not a face
 MIN_FACE_WIDTH_SHARE = 0.7
 _LOW_MEASURABLE = 0.5
+# people blink many times a minute, so none in this much readable time means the landmarks never close
+_NO_BLINK_S = 60.0
 
 _FRAME_SPECS = {
     "mouth_opening": "Gap between the inner lips over the distance from the eyes to the base of the nose.",
@@ -48,7 +50,7 @@ _FRAME_SPECS = {
 @register_extractor
 class FaceMovementExtractor(Extractor):
     name = "face.movement"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = ("face.blink_min_eye_px", "segment")
@@ -107,6 +109,17 @@ class FaceMovementExtractor(Extractor):
                 )
             measurable_s = float(readable.sum()) * _frame_period(faces["t"])
             rate = len(blinks) / measurable_s * 60.0 if measurable_s > 0 else np.nan
+            if blinks.empty and measurable_s >= _NO_BLINK_S:
+                rate = np.nan
+                warnings.append(
+                    QCWarning(
+                        check=self.name, recording_id=recording.recording_id, subject_id=subject_id, severity="warn",
+                        message=(
+                            f"not one blink in {measurable_s:.0f} s of readable eyes, so the eye landmarks do not follow the "
+                            "lids (OpenFace's do not on small faces); blinks_per_min is left empty"
+                        ),
+                    )
+                )
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(

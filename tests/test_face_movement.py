@@ -161,3 +161,10 @@ class TestExtractor:
         result = run(both)
         assert len(feature(result, "blink_duration_s")) == 1 and feature(result, "blink_duration_s", "child").empty
         assert feature(result, "mouth_opening", "child")["value"].median() == pytest.approx(0.3)
+
+    def test_a_minute_of_eyes_without_one_blink_is_no_rate_not_zero(self, run):
+        result = run(face(1600))
+        assert np.isnan(feature(result, "blinks_per_min")["value"].item())
+        assert any("do not follow the lids" in warning.message for warning in result.warnings)
+        short = run(face(1000))
+        assert feature(short, "blinks_per_min")["value"].item() == 0.0 and not short.warnings
