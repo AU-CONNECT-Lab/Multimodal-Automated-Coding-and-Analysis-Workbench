@@ -573,7 +573,7 @@ def check_au_agreement(recording: Recording, config: MacawConfig, results) -> Ch
     disagree on is not dependable. No moments: within a short window a still face drives the agreement down."""
     summary = results.long_table(AU_CHECK_SOURCE)
     if summary.empty:
-        return CheckResult(skipped=f"no {AU_CHECK_SOURCE} output; set face.check_model to run it")
+        return CheckResult(skipped=f"no {AU_CHECK_SOURCE} output; set face.check_model or face.check_backend to run it")
     rid = recording.recording_id
     summary = summary[summary["feature"].str.match(r"^au\d+_agreement$")]
     warnings = []

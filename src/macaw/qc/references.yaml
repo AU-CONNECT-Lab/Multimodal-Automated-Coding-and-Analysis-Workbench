@@ -188,3 +188,16 @@ liu2008:
   number: 2
   pages: 159--191
   year: 2008
+baltrusaitis2018:
+  type: inproceedings
+  author: "Baltrusaitis, Tadas and Zadeh, Amir and Lim, Yao Chong and Morency, Louis-Philippe"
+  title: "OpenFace 2.0: Facial behavior analysis toolkit"
+  booktitle: "13th IEEE International Conference on Automatic Face and Gesture Recognition (FG 2018)"
+  pages: 59--66
+  year: 2018
+kartynnik2019:
+  type: misc
+  author: "Kartynnik, Yury and Ablavatski, Artsiom and Grishchenko, Ivan and Grundmann, Matthias"
+  title: "Real-time facial surface geometry from monocular video on mobile GPUs"
+  howpublished: arXiv:1907.06724
+  year: 2019

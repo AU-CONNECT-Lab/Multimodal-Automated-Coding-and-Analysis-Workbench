@@ -171,21 +171,27 @@ class TestAgreement:
         assert pd.isna(au_module.au_agreement(a, b)["au12"])
 
 
-@pytest.mark.parametrize("check_model, message", [(None, "set face.check_model"), ("v1", "already uses")])
-def test_the_check_model_must_be_set_and_differ(check_model, message):
+@pytest.mark.parametrize(
+    "face, message",
+    [
+        ({}, "set face.check_model"),
+        ({"check_model": "v1"}, "already uses"),
+        ({"backend": "openface", "check_backend": "openface"}, "already uses"),
+        ({"backend": "mediapipe", "check_model": "v2"}, "mediapipe gives none"),
+        ({"check_backend": "mediapipe"}, "mediapipe gives none"),
+    ],
+)
+def test_the_check_must_be_another_model_or_backend_with_action_units(face, message):
     from macaw.exceptions import ConfigError
 
-    extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(check_model=check_model)))
+    extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(**face)))
     with pytest.raises(ConfigError, match=message):
         extractor.check_available()
 
 
-def test_au_check_compares_py_feat_models_only():
-    from macaw.exceptions import ConfigError
-
-    extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(backend="mediapipe", check_model="v2")))
-    with pytest.raises(ConfigError, match="py-feat"):
-        extractor.check_available()
+@pytest.mark.parametrize("face", [{"check_model": "v2"}, {"check_backend": "openface"}, {"backend": "openface", "check_backend": "pyfeat"}])
+def test_another_model_or_another_backend_is_a_check(face):
+    au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(**face))).check_available()
 
 
 class TestMediaPipeFace:

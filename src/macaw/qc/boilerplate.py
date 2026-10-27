@@ -406,8 +406,17 @@ def _mea(config, spec, names) -> str:
     )
 
 
+_FACE = {
+    "pyfeat": "Py-Feat {version} [cheong2023] using its {model} models",
+    "openface": "OpenFace {version} [baltrusaitis2018]",
+    "mediapipe": "the MediaPipe Face Landmarker {version} [kartynnik2019; lugaresi2019]",
+}
+_FACE_NAMES = {"pyfeat": "Py-Feat", "openface": "OpenFace", "mediapipe": "MediaPipe"}
+_FACE_CITED = {"pyfeat": "Py-Feat [cheong2023]", "openface": "OpenFace [baltrusaitis2018]", "mediapipe": "MediaPipe [kartynnik2019]"}
+
+
 def _face(config, spec, names) -> str:
-    model = spec.params.get("model") or config.face.model or "default"
+    model = spec.params.get("model") or config.face.model or "v1"
     measured = []
     if any(name.startswith("au") for name in names):
         measured.append("facial action unit intensities")
@@ -416,19 +425,29 @@ def _face(config, spec, names) -> str:
     if any(name.startswith("gaze_") for name in names):
         measured.append("gaze direction")
     text = (
-        f"Faces were detected and {_listed(measured or ['landmarks'])} estimated with Py-Feat {spec.backend_version} "
-        f"[cheong2023] using its {model} models; each face was assigned to the person whose nose or eyes fell inside it."
+        f"Faces were detected and {_listed(measured or ['landmarks'])} estimated with {_backend(_FACE, spec, model=model)}; "
+        "each face was assigned to the person whose nose or eyes fell inside it."
     )
-    if "gaze direction" in measured and model == "v1":
+    if spec.backend == "openface" and "facial action unit intensities" in measured:
+        text += " OpenFace's intensities (0 to 5) were divided by 5."
+    if spec.backend == "pyfeat" and "gaze direction" in measured and model == "v1":
         text += " Gaze came from L2CS-Net [abdelrahman2023]."
     return text
 
 
 def _au_check(config, spec, names) -> str:
+    params = spec.params
+    first = _FACE_NAMES.get(params.get("backend"), params.get("backend"))
+    second = _FACE_NAMES.get(params.get("check_backend"), params.get("check_backend"))
+    if params.get("check_backend") == params.get("backend"):
+        checked = f"{second}'s {params.get('check_model')} models were run on the same faces"
+        against = f"the {params.get('model')} models"
+    else:
+        checked = f"{_FACE_CITED.get(params.get('check_backend'), second)} was run on the same faces"
+        against = first
     return (
-        f"As a check on the action units, Py-Feat's {spec.params.get('check_model')} models were run on the same faces "
-        f"and each action unit's agreement with the {spec.params.get('model')} models was measured as the Spearman "
-        "correlation of their 1 s means."
+        f"As a check on the action units, {checked} and each action unit's agreement with {against} was measured as "
+        "the Spearman correlation of their 1 s means."
     )
 
 

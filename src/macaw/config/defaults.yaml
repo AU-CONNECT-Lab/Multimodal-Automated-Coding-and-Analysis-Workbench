@@ -91,6 +91,7 @@ face:
   gaze: false                        # gaze direction per frame as well (pyfeat: v1 adds L2CS-Net, v2 has it built in)
   mutual_gaze_angle_deg: 15.0        # deg; angular tolerance for calling two gazes mutual
   check_model: null                  # a second model (v1 or v2) for face.au_check, which only checks AU agreement
+  check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera, else the first shared one; required by motion.mea

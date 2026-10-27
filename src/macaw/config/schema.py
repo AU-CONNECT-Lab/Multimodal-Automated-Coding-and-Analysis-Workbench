@@ -113,6 +113,7 @@ class FaceSection(_Section):
     gaze: bool = False
     mutual_gaze_angle_deg: float = 15.0
     check_model: str | None = None
+    check_backend: str | None = None
 
 
 class MotionSection(_Section):

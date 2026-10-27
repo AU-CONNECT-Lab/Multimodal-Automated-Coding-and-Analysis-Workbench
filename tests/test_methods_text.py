@@ -29,6 +29,11 @@ def manifest(*specs):
     return out
 
 
+def face_check(spec_, backend):
+    spec_.params["backend"] = backend
+    return spec_
+
+
 EVERYTHING = manifest(
     spec("prep.media", "n_media"),
     spec("prosody.frame", "f0_hz", "parselmouth", "0.4.7"), spec("prosody.frame", "hnr_db", "parselmouth", "0.4.7"),
@@ -47,7 +52,7 @@ EVERYTHING = manifest(
     spec("pose.kinematics", "hand_distance"), spec("motion.mea", "motion_energy"),
     spec("face.au", "au01", "pyfeat", "2.1.5", model="v1"), spec("face.au", "face_yaw_deg", "pyfeat", "2.1.5", model="v1"),
     spec("face.au", "gaze_yaw_deg", "pyfeat", "2.1.5", model="v1"),
-    spec("face.au_check", "au12_agreement", "pyfeat", "2.1.5", model="v1", check_model="v2"),
+    face_check(spec("face.au_check", "au12_agreement", "pyfeat", "2.1.5", model="v1", check_backend="pyfeat", check_model="v2"), "pyfeat"),
     spec("face.movement", "mouth_opening"),
     spec("my.plugin", "thing", "mine", "1.0"),
 )
@@ -129,3 +134,14 @@ def test_a_shared_microphone_is_described_only_when_one_was_diarized():
     assert "pyannote.audio 4.0.7 (Bredin, 2023)" in text and "community-1 pipeline" in text
     assert "The shared microphone was transcribed" in text and "cross-talk" not in text
     assert "bredin2023" in used
+
+
+def test_the_face_backend_that_ran_is_the_one_named():
+    specs = manifest(
+        spec("face.au", "au12", "openface", "2.2.0"), spec("face.au", "face_yaw_deg", "openface", "2.2.0"),
+        face_check(spec("face.au_check", "au12_agreement", "pyfeat", "2.1.5", model=None, check_backend="pyfeat", check_model="v1"), "openface"),
+    )
+    text, used = render(describe(specs, config(face={"backend": "openface", "check_backend": "pyfeat"})), load_references())
+    assert "OpenFace 2.2.0" in text and "Py-Feat" in text.split("As a check")[1]
+    assert "Py-Feat (Cheong et al., 2023) was run on the same faces" in text and "agreement with OpenFace" in text
+    assert {"baltrusaitis2018", "cheong2023"} <= set(used)

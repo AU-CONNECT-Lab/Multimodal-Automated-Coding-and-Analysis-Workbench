@@ -7,10 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ConfigError, UnreadableMediaError
-from macaw.extractors import register_extractor
+from macaw.extractors import get_backend, register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
-from macaw.extractors.video.face.backends import resolve_backend
+from macaw.extractors.video.face.backends import BACKEND_GROUP, resolve_backend
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, primary_views
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -78,10 +78,10 @@ class FaceExtractor(Extractor):
         """Faces are named through the people pose named, so the keypoints are the input that matters."""
         return [_keypoints_file(self.config, recording.recording_id)]
 
-    def faces(self, recording: Recording, *, model: str | None, landmarks: bool, gaze: bool):
+    def faces(self, recording: Recording, *, model: str | None, landmarks: bool, gaze: bool, backend=None):
         """(each person's named faces with a time column, frames each person was seen in, each person's view)."""
         cfg = self.config.face
-        backend = self.backend()
+        backend = backend or self.backend()
         prep = apply_prep_timing(self.config, recording)
         start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
         keypoints = keypoints_store.read_keypoints(
@@ -201,24 +201,32 @@ class FaceAUCheckExtractor(FaceExtractor):
     name = "face.au_check"
     version = "0.1.0"
     scale = Scale.RECORDING
-    config_sections = ("face.backend", "face.model", "face.check_model", "face.device", "segment")
+    config_sections = ("face.backend", "face.model", "face.check_backend", "face.check_model", "face.device", "segment")
     requires = (FaceExtractor.name,)
+
+    def check_backend(self):
+        return resolve_backend(self.config.face.check_backend or self.config.face.backend)
 
     def check_available(self) -> None:
         cfg = self.config.face
-        if cfg.backend != "pyfeat":
-            raise ConfigError(f"face.au_check compares the two py-feat models; face.backend is {cfg.backend}")
-        if cfg.check_model is None:
-            raise ConfigError("face.au_check runs a second face model to check face.au against; set face.check_model, e.g. v2")
-        if cfg.check_model == (cfg.model or "v1"):
-            raise ConfigError(f"face.check_model is {cfg.check_model}, the model face.au already uses; pick the other one")
+        if cfg.check_backend is None and cfg.check_model is None:
+            raise ConfigError(
+                "face.au_check runs a second face model to check face.au against; set face.check_model (e.g. v2) "
+                "or face.check_backend (e.g. openface)"
+            )
+        check = cfg.check_backend or cfg.backend
+        if (check, cfg.check_model or _default_model(check)) == (cfg.backend, cfg.model or _default_model(cfg.backend)):
+            raise ConfigError("face.check_backend and face.check_model name what face.au already uses; pick another model or backend")
+        for name in {cfg.backend, check}:
+            if not get_backend(BACKEND_GROUP, name).provides_action_units:
+                raise ConfigError(f"face.au_check compares action units, and face backend {name} gives none")
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return super().inputs_for(recording) + [_face_rows_file(self.config, recording.recording_id)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.face
-        per_subject, _, _ = self.faces(recording, model=cfg.check_model, landmarks=False, gaze=False)
+        per_subject, _, _ = self.faces(recording, model=cfg.check_model, landmarks=False, gaze=False, backend=self.check_backend())
         reference = read_long_table(_face_rows_file(self.config, recording.recording_id), recording_id=recording.recording_id)
         names = [code.lower() for code in ACTION_UNITS]
         reference = reference[reference["feature"].isin(names)]
@@ -250,8 +258,8 @@ class FaceAUCheckExtractor(FaceExtractor):
         return ExtractorResult(rows=rows, specs=self._check_specs(set(rows["feature"])), artifacts=artifacts)
 
     def _check_specs(self, emitted: set[str]) -> list[FeatureSpec]:
-        backend, cfg = self.backend(), self.config.face
-        models = f"the {cfg.model or 'v1'} and {cfg.check_model} models"
+        backend, cfg = self.check_backend(), self.config.face
+        models = f"{_described(cfg.backend, cfg.model)} and {_described(backend.name, cfg.check_model)}"
         described = {
             **{
                 f"{code.lower()}_agreement": f"Spearman correlation of action unit {int(code[2:])} between {models} over {AGREEMENT_BIN_S:g} s means."
@@ -263,12 +271,25 @@ class FaceAUCheckExtractor(FaceExtractor):
             FeatureSpec(
                 name=name, description=description, unit=None, scale=Scale.RECORDING, group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name,
-                backend_version=backend.version, params={"model": cfg.model or "v1", "check_model": cfg.check_model},
+                backend_version=backend.version,
+                params={
+                    "backend": cfg.backend, "model": cfg.model or _default_model(cfg.backend),
+                    "check_backend": backend.name, "check_model": cfg.check_model or _default_model(backend.name),
+                },
                 aggregation="mean", validation="none",
             )
             for name, description in described.items()
             if name in emitted
         ]
+
+
+def _default_model(backend: str) -> str | None:
+    return "v1" if backend == "pyfeat" else None
+
+
+def _described(backend: str, model: str | None) -> str:
+    model = model or _default_model(backend)
+    return f"{backend} {model}" if model else backend
 
 
 def _face_rows_file(config, recording_id: str) -> Path:
