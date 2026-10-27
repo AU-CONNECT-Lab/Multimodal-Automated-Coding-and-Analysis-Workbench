@@ -96,3 +96,38 @@ def test_min_max_keeps_the_extremes_of_every_run():
     small_t, small_y = min_max_downsample(t, y, 200)
     assert small_t.size <= 200 and 9.0 in small_y and np.all(np.diff(small_t) > 0)
     assert min_max_downsample(t[:50], y[:50], 200)[0].size == 50
+
+
+def test_the_review_page_lists_uncertain_speech_acts_and_saves_a_pick(project):
+    from macaw.coding.codebook import Codebook, CodeDefinition, write_codebook
+    from macaw.coding.review_queue import REVIEWED_NAME
+    from macaw.store.annotations import write_annotations
+    from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame
+
+    write_codebook(
+        Codebook("acts", "utterance", [CodeDefinition("ask", "asks", criteria=["?"]), CodeDefinition("tell", "tells", criteria=["."])]),
+        project.parent / "codebook.yaml",
+    )
+    project.write_text(project.read_text(encoding="utf-8") + "\ncoding:\n  codebook: codebook.yaml\n", encoding="utf-8")
+    config = resolve_config(project)
+    rows = pd.DataFrame({
+        "recording_id": "003", "group_id": "003", "session_id": None, "task": None, "run": None,
+        "subject_id": ["parent", "child"], "tier": "acts", "t_start": [1.0, 2.0], "t_end": [1.5, 2.5],
+        "label": ["ask", "tell"], "annotator": "llm:ollama/x", "layer": "B", "confidence": [0.6, 1.0],
+        "abstained": False, "needs_review": [True, False], "execution_id": "e", "config_hash": "h",
+    })
+    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).annotations_path("003"))
+    samples = layout_for(config).artifacts_dir("003", "coding.judge") / "samples.parquet"
+    samples.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"unit_id": ["u0"] * 5, "sample": range(5), "label": ["ask"] * 3 + ["tell"] * 2,
+                  "subject_id": "parent", "t_start": 1.0, "t_end": 1.5}).to_parquet(samples)
+
+    shown = text_of(review.body(project, "003"))
+    assert "Speech acts" in shown and "ask 3, tell 2" in shown and "apply-review" in shown and "act-pick" in shown
+
+    path = review.review_file(project, "003", "ann", {"parent|1.000|acts": "tell"})
+    code, text = cli_bridge.run_now(["macaw", "review", "-c", str(project), "--apply", str(path)])
+    assert code == 0, text
+    reviewed = pd.read_parquet(layout_for(config).annotations_path("003") / REVIEWED_NAME)
+    assert reviewed[["annotator", "label", "t_start"]].values.tolist() == [["ann", "tell", 1.0]]
+    assert "No coded unit is waiting" in text_of(review.body(project, "003"))

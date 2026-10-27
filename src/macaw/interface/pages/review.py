@@ -23,6 +23,9 @@ from macaw.qc.report import _alignment, _cameras, _waiting
 LABEL = "Review"
 ACT = "review-act"
 NO_ONE = "none"
+PICK = "act-pick"
+# a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
+_MAX_ACTS = 200
 
 
 def layout(config_path: Path):
@@ -185,6 +188,73 @@ def _transcript(layout, rid):
     )
 
 
+def _act_key(subject, t_start, tier) -> str:
+    return f"{subject}|{float(t_start):.3f}|{tier}"
+
+
+def _waiting_acts(config, rid) -> pd.DataFrame:
+    from macaw.coding.review_queue import export_review
+
+    return export_review(config, [rid])
+
+
+def _speech_acts(config, layout, recording):
+    from macaw.coding.codebook import read_codebook
+    from macaw.coding.llm.judge import LAYER, SAMPLES_NAME, JudgementExtractor, coding_units
+
+    rid = recording.recording_id
+    if not (layout.annotations_path(rid) / f"{LAYER}.parquet").is_file():
+        return None
+    queue = _waiting_acts(config, rid)
+    desc = "Units the model was unsure about. Pick the right code for each and save; your choice is kept beside the model's, which agreement then compares."
+    if queue.empty:
+        return ui.section("Speech acts", ui.note("No coded unit is waiting for a person.", "ok"), desc=desc)
+    try:
+        codebook = read_codebook(config.coding.codebook)
+        codes = codebook.labels()
+        units = coding_units(config, recording, codebook.unit)
+        words = {_act_key(row.subject_id, row.t_start, codebook.name): row.text for row in units.itertuples()}
+    except Exception:   # the codebook moved or the transcript was redone; the times still identify each unit
+        codes, words = sorted(set(queue["label"].dropna())), {}
+    samples_path = layout.artifacts_dir(rid, JudgementExtractor.name) / SAMPLES_NAME
+    answers = {}
+    if samples_path.is_file():
+        samples = pd.read_parquet(samples_path)
+        for (subject, t_start), group in samples.groupby(["subject_id", "t_start"]):
+            counted = group["label"].value_counts()
+            answers[(str(subject), round(float(t_start), 3))] = ", ".join(f"{label} {count}" for label, count in counted.items())
+    rows = []
+    for row in queue.head(_MAX_ACTS).itertuples():
+        key = _act_key(row.subject_id, row.t_start, row.tier)
+        rows.append([
+            f"{row.t_start:.1f}", row.subject_id, words.get(key, ""),
+            answers.get((str(row.subject_id), round(float(row.t_start), 3)), "" if pd.isna(row.label) else str(row.label)),
+            ui.pill(str(row.reason).replace("_", " "), "warn"),
+            dcc.Dropdown(codes, None, id={"type": PICK, "key": key}, placeholder="code", className="picker small"),
+        ])
+    more = [ui.note(f"Showing the first {_MAX_ACTS} of {len(queue)}; save these to see the rest.")] if len(queue) > _MAX_ACTS else []
+    return ui.section(
+        "Speech acts",
+        ui.table(["At (s)", "Who", "Words", "Model's answers", "Why", "Code"], rows, numeric={"At (s)"}),
+        *more,
+        html.Div(_button("Save decisions", "apply-review", primary=True), className="buttons"),
+        desc=desc,
+    )
+
+
+def review_file(config_path: Path, rid: str, by: str, picks: dict[str, str]) -> Path:
+    """The queue with the person's picks filled in, written where macaw review --apply reads it."""
+    config = resolve_config(config_path)
+    queue = _waiting_acts(config, rid)
+    keys = [_act_key(row.subject_id, row.t_start, row.tier) for row in queue.itertuples()]
+    queue["decision"] = [picks.get(key) or pd.NA for key in keys]
+    queue["reviewer"] = by or pd.NA
+    path = layout_for(config, create=False).work_dir / "gui" / f"review_{rid}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    queue.to_csv(path, index=False)
+    return path
+
+
 def body(config_path: Path, rid: str | None):
     if rid is None:
         return html.P("No recordings found.", className="none")
@@ -203,6 +273,7 @@ def body(config_path: Path, rid: str | None):
         _offsets(config, layout, rid),
         _people_on_camera(layout, results, rid),
         _voices(config, layout, recording),
+        _speech_acts(config, layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
         parts.append(_transcript(layout, rid))
@@ -251,8 +322,10 @@ def register(app, config_path: Path) -> None:
         State({"type": "voice-pick", "label": ALL}, "id"),
         State({"type": "review-rename", "target": ALL}, "value"),
         State({"type": "review-rename", "target": ALL}, "id"),
+        State({"type": PICK, "key": ALL}, "value"),
+        State({"type": PICK, "key": ALL}, "id"),
     )
-    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids):
+    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids):
         trigger = ctx.triggered_id
         message = None
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
@@ -262,6 +335,9 @@ def register(app, config_path: Path) -> None:
             action, target = trigger["action"], trigger["target"]
             if action == "transcript-export":
                 argv = _transcript_command(config_path, rid, action, None, by)
+            elif action == "apply-review":
+                chosen = {item["key"]: value for item, value in zip(act_ids, acts) if value}
+                argv = ["macaw", "review", "-c", str(config_path), "--apply", str(review_file(config_path, rid, by, chosen))]
             else:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
                 named = {item["target"]: value for item, value in zip(rename_ids, renames)}
