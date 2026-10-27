@@ -75,16 +75,17 @@ def plan(
     extractors: list[str],
     finished: set[str] | None = None,
 ) -> list[str]:
-    """What would run, in order, without running it. Gates are checked, not listed."""
+    """What would run, in order, without running it. Gates are checked, not listed; finished tasks are left out."""
     dag = build_dag(config, extractors or None)
     gates = _gates(dag)
     _, blocked, _ = check_gates(config, dag, recording_ids, finished)
+    skip = blocked | (finished or set())
     return [
         task_id_for(recording_id, name)
         for name in dag.topological_order()
         if name not in gates
         for recording_id in recording_ids
-        if task_id_for(recording_id, name) not in blocked
+        if task_id_for(recording_id, name) not in skip
     ]
 
 

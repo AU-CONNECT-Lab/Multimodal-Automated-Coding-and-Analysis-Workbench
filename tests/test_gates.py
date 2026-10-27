@@ -252,6 +252,9 @@ class TestRunnerGates:
     def test_a_waiting_gate_holds_back_only_its_own_recording(self, fake_line):
         assert plan(fake_line, ["rec1", "rec2"], ["after"]) == ["rec1:prep", "rec2:prep", "rec1:after"]
 
+    def test_the_plan_leaves_out_what_is_already_finished(self, fake_line):
+        assert plan(fake_line, ["rec1", "rec2"], ["after"], {"rec1:prep", "rec2:prep"}) == ["rec1:after"]
+
     def test_the_wait_says_which_recording_and_why(self, fake_line):
         waiting, _, _ = check_gates(fake_line, build_dag(fake_line, ["after"]), ["rec1", "rec2"])
         assert [(w.recording_id, w.gate, w.message) for w in waiting] == [("rec2", "gate", "look at it")]
