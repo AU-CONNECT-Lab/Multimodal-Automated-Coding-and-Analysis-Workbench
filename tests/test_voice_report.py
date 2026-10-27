@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("parselmouth")
 
-from macaw.config.schema import ProsodySection  # noqa: E402
+from macaw.config.schema import ProsodySection, TextSection  # noqa: E402
 from macaw.extractors.audio.prosody import voice_report as module  # noqa: E402
 from macaw.extractors.audio.prosody.voice_report import (  # noqa: E402
     VoiceReportExtractor,
@@ -69,7 +69,7 @@ class TestVoiceQuality:
         clean = glide(1.0, 150.0, 150.0)
         noisy = clean + np.random.default_rng(1).normal(0, 0.1, clean.size)
         a, b = report(clean), report(noisy)
-        assert b["hnr_db"] < a["hnr_db"] - 5
+        assert b["turn_hnr_db"] < a["turn_hnr_db"] - 5
         assert b["cpps_db"] < a["cpps_db"]
         assert b["shimmer_local"] > a["shimmer_local"]
 
@@ -98,7 +98,7 @@ def test_the_extractor_writes_one_row_per_turn_and_measure(tmp_path, monkeypatch
         subjects=[SimpleNamespace(subject_id="parent", role="parent"), SimpleNamespace(subject_id="child", role="child")],
         entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
     )
-    result = VoiceReportExtractor(SimpleNamespace(prosody=ProsodySection())).run(recording, tmp_path)
+    result = VoiceReportExtractor(SimpleNamespace(prosody=ProsodySection(), text=TextSection())).run(recording, tmp_path)
     validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
     assert {spec.name for spec in result.specs} == set(result.rows.feature)
     slope = result.rows[result.rows.feature == "turn_f0_slope_st_per_s"].sort_values("t_start")
@@ -115,3 +115,9 @@ def test_without_parselmouth_it_says_how_to_install(monkeypatch):
     monkeypatch.setitem(sys.modules, "parselmouth", None)
     with pytest.raises(BackendNotAvailableError, match="parselmouth"):
         VoiceReportExtractor(SimpleNamespace(prosody=ProsodySection())).check_available()
+
+
+def test_no_turn_measure_shares_a_name_with_a_frame_measure():
+    from macaw.extractors.audio.prosody import frame
+
+    assert not set(module._SPECS) & (set(frame._FRAME_SPECS) | set(frame._SUMMARY_SPECS))

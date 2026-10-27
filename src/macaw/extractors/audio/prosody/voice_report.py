@@ -9,6 +9,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
+from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.audio.prosody.frame import SEMITONE_REF_HZ, f0_range, to_semitones
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
@@ -24,6 +25,8 @@ from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_tu
 _PERIOD_ARGS = (0.0001, 0.02, 1.3)
 _AMPLITUDE_FACTOR = 1.6
 _MIN_VOICED_FRAMES = 3
+# on a shared microphone a turn measured on less than this share of itself gets a note
+_SOLO_NOTE = 0.5
 
 JITTER = {
     "jitter_local": "local",
@@ -67,7 +70,7 @@ _SPECS = {
     "shimmer_apq5": ("Five-point amplitude perturbation quotient.", None, False),
     "shimmer_apq11": ("Eleven-point amplitude perturbation quotient.", None, False),
     "shimmer_dda": ("Mean absolute difference of consecutive amplitude differences over the mean amplitude; three times APQ3.", None, False),
-    "hnr_db": ("Mean harmonics-to-noise ratio over the voiced part of the turn.", "dB", False),
+    "turn_hnr_db": ("Mean harmonics-to-noise ratio over the voiced part of the turn.", "dB", False),
     "cpps_db": ("Smoothed cepstral peak prominence; lower means a breathier or less periodic voice.", "dB", False),
 }
 
@@ -77,10 +80,10 @@ _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[a
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "prosody"
-    config_sections = ("prosody", "turns", "segment")
+    config_sections = ("prosody", "turns", "segment", "text.diarization")
     requires = (TurnStructureExtractor.name, MediaPrepExtractor.name)
 
     def check_available(self) -> None:
@@ -98,24 +101,32 @@ class VoiceReportExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
         turns = layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME
-        return [turns] + [prep.track_path(subject) for subject in sorted(prep.tracks)]
+        return [turns, *voice_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.prosody
         prep = load_prep(self.config, recording.recording_id)
         turns = load_turns(self.config, recording.recording_id)
         frames, warnings = [], []
+        sources = voice_sources(self.config, recording, prep)
         for subject in recording.subjects:
             spoken = turns[turns["subject_id"].astype(str) == subject.subject_id]
-            if spoken.empty or subject.subject_id not in prep.tracks:
+            if spoken.empty or subject.subject_id not in sources:
                 continue
-            audio, rate = load_audio(prep.track_path(subject.subject_id))
+            path, spans = sources[subject.subject_id]
+            audio, rate = load_audio(path)
             f0_min, f0_max = f0_range(cfg, subject)
-            reports = []
-            for start, end in zip(spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float)):
-                first = max(int((start - prep.t_origin_s) * rate), 0)
-                last = max(int((end - prep.t_origin_s) * rate), 0)
-                reports.append(voice_report(audio[first:last], rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s))
+            pieces, kept = turn_pieces(
+                audio, rate, prep.t_origin_s, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float), spans
+            )
+            reports = [voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s) for piece in pieces]
+            if spans is not None and (partial := sum(share < _SOLO_NOTE for share in kept)):
+                warnings.append(
+                    QCWarning(
+                        check=self.name, recording_id=recording.recording_id, subject_id=subject.subject_id, severity="info",
+                        message=f"{partial} of {len(kept)} turn(s) had someone else talking over more than half of them; only their solo part was measured",
+                    )
+                )
             values = pd.DataFrame(reports, columns=list(_SPECS)).astype(float)
             values.insert(0, "t_start", spoken["t_start"].to_numpy(dtype=float))
             values.insert(1, "t_end", spoken["t_end"].to_numpy(dtype=float))
@@ -185,7 +196,7 @@ def voice_report(audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float
     for name, kind in SHIMMER.items():
         report[name] = call([sound, points], f"Get shimmer ({kind})", 0, 0, *_PERIOD_ARGS, _AMPLITUDE_FACTOR)
     harmonicity = sound.to_harmonicity_cc(time_step=step_s, minimum_pitch=f0_min, silence_threshold=0.1, periods_per_window=1.0)
-    report["hnr_db"] = call(harmonicity, "Get mean", 0, 0)
+    report["turn_hnr_db"] = call(harmonicity, "Get mean", 0, 0)
     try:
         cepstrogram = call(sound, "To PowerCepstrogram", f0_min, 0.002, 5000, 50)
         # a least-squares straight trend line, as CPPS was first defined; the robust fits are 70 times slower
