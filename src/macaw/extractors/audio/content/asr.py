@@ -363,7 +363,7 @@ class ASRExtractor(Extractor):
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         corrected = layout_for(self.config, create=False).corrected_transcript_path(recording.recording_id)
-        return [*voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), corrected]
+        return [*voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), *([corrected] if corrected.is_file() else [])]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)

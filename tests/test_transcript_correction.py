@@ -77,3 +77,16 @@ def test_text_asr_reads_the_correction_instead_of_recognising(project, tmp_path)
 
     outcome = runner.invoke(app, ["transcript", "reset", "-c", str(project.config), "-r", "003"])
     assert outcome.exit_code == 0 and not layout.corrected_transcript_path("003").exists()
+
+
+def test_without_a_correction_the_cache_key_reads_only_files_that_exist(project, monkeypatch):
+    from macaw.extractors.audio.content import asr as asr_module
+
+    monkeypatch.setattr(asr_module, "load_prep", lambda config, rid: None)
+    monkeypatch.setattr(asr_module, "voice_inputs", lambda config, recording, prep: [])
+    extractor = ASRExtractor(project.resolved)
+    assert extractor.inputs_for(project.recording) == []
+    corrected = layout_for(project.resolved).corrected_transcript_path("003")
+    corrected.parent.mkdir(parents=True, exist_ok=True)
+    corrected.write_text("<ANNOTATION_DOCUMENT/>", encoding="utf-8")
+    assert extractor.inputs_for(project.recording) == [corrected]
