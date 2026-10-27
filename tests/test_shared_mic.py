@@ -236,6 +236,25 @@ class TestReview:
         note = gate.notes(recording)[0]
         assert note.severity == "warn" and "S1" in note.message
 
+    def test_the_report_lists_the_voices_and_what_was_left_out_and_who_decided(self, project, monkeypatch):
+        from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, ASRExtractor
+        from macaw.qc.report import write_recording_report
+        from macaw.store import _io
+
+        self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch)
+        config = project.resolved()
+        directory = layout_for(config).artifacts_dir("003", ASRExtractor.name)
+        directory.mkdir(parents=True)
+        dropped = pd.DataFrame({
+            "recording_id": ["003"], "subject_id": ["parent"], "t_start": [12.0], "t_end": [13.0],
+            "text": ["no no no"], "reason": ["room bleed"], "detail": ["in the voice of child"],
+        })
+        _io.write_file(dropped, directory / DROPPED_NAME, DROPPED_SCHEMA, "dropped utterances")
+        text = write_recording_report(config, "003")[0].read_text(encoding="utf-8")
+        assert "Whose voice is which" in text and ">software<" in text
+        assert "S0</td>" in text and "child" in text
+        assert "no no no" in text and "in the voice of child" in text and "1 as room bleed" in text
+
     def test_own_microphones_never_wait(self, project):
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data["text"]["diarization"] = "per_track"

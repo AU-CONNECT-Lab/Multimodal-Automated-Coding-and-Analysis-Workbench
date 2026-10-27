@@ -19,7 +19,9 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.checks import RecordingResults, read_candidates
-from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, read_transcript
+from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
+from macaw.project.identity import read_confirmation
+from macaw.store import _io
 from macaw.qc.figures import motion_figure, pitch_figure, present_spans, require_matplotlib, timeline_figure
 from macaw.store.schema import Scale
 
@@ -145,6 +147,124 @@ def _cameras(layout, results: RecordingResults, recording_id: str) -> list[dict]
             }
         )
     return cameras
+
+
+def _voices(config: MacawConfig, layout, recording_id: str, page: Path) -> list[dict]:
+    """Each voice found on a shared microphone, whom it was given to, and its clips to listen to."""
+    from macaw.extractors.audio.content.diarization import NO_ONE, DiarizationExtractor, read_voice_owners, read_voices
+
+    voices = read_voices(config, recording_id)
+    named = read_voice_owners(layout.voice_owners_path(recording_id))
+    directory = layout.artifacts_dir(recording_id, DiarizationExtractor.name)
+    rows = []
+    for label, voice in sorted(voices.items()):
+        who = named.get("people", {}).get(label)
+        rows.append(
+            {
+                "label": label,
+                "speech": f"{voice.get('speech_s', 0.0):.0f} s",
+                "person": None if who is None else ("left out" if who == NO_ONE else who),
+                "clips": [
+                    {"href": _href(directory / clip["file"], page), "at": f"{clip['t_start']:.0f} s"}
+                    for clip in voice.get("clips", [])
+                ],
+            }
+        )
+    return rows
+
+
+def _dropped(results: RecordingResults) -> list[dict]:
+    path = results.artifact("text.asr", DROPPED_NAME)
+    if path is None:
+        return []
+    dropped = _io.read_file(path, DROPPED_SCHEMA, "dropped utterances").sort_values("t_start")
+    return [
+        {
+            "who": row.subject_id, "when": f"{row.t_start:.1f}", "length": f"{row.t_end - row.t_start:.1f}",
+            "text": row.text if isinstance(row.text, str) else "", "reason": row.reason,
+            "detail": row.detail if isinstance(row.detail, str) else "",
+        }
+        for row in dropped.itertuples(index=False)
+    ]
+
+
+def _who_and_when(stamp: str | None) -> str:
+    """'ann 2026-10-26T10:00:00' as 'ann, 2026-10-26'."""
+    if not stamp:
+        return ""
+    who, _, when = stamp.partition(" ")
+    return f"{who}, {when[:10]}" if when else who
+
+
+def _decisions(
+    config: MacawConfig, layout, results: RecordingResults, recording_id: str,
+    alignment: list[dict], cameras: list[dict], voices: list[dict], dropped: list[dict], frames: list[dict],
+) -> list[dict]:
+    """What the software decided by itself for this recording, beside what a person decided, with where to check it."""
+    from macaw.extractors.audio.content.diarization import AUTOMATIC, read_voice_owners
+
+    rows = []
+    confirmation = read_confirmation(layout.identity_path)
+    if config.identity.confirm == "skip":
+        rows.append({"what": "Which file is whose", "decided": "taken from the file names, not confirmed (identity.confirm: skip)", "by": "software", "href": None})
+    elif confirmation is not None:
+        stamp = f"{confirmation.get('confirmed_by', '')} {confirmation.get('confirmed_at', '')}".strip()
+        rows.append({"what": "Which file is whose", "decided": "confirmed for the project", "by": _who_and_when(stamp), "href": None})
+    else:
+        rows.append({"what": "Which file is whose", "decided": "not confirmed yet", "by": "waiting", "href": None})
+
+    if alignment:
+        kept = sum(1 for row in alignment if row["accepted"])
+        manual = sum(1 for row in alignment if row["method"] == "manual")
+        automatic = len(alignment) - kept - manual
+        rows.append({
+            "what": "Offsets between files",
+            "decided": f"{len(alignment)} file(s): {kept} kept by a person, {manual} set by hand, {automatic} automatic",
+            "by": "person" if not automatic else "software", "href": "#Alignment",
+        })
+    if cameras:
+        kept = sum(1 for camera in cameras if camera["accepted"])
+        doubt = sum(1 for camera in cameras if camera["doubt"] and not camera["accepted"])
+        rows.append({
+            "what": "Who is on each camera",
+            "decided": f"{len(cameras)} camera(s): {kept} kept by a person, {len(cameras) - kept} automatic" + (f", {doubt} in doubt" if doubt else ""),
+            "by": "person" if kept == len(cameras) else "software", "href": "#Camera",
+        })
+    swaps = results.artifact("pose.keypoints", "swaps.json")
+    if swaps is not None:
+        count = sum(len(events) for events in json.loads(swaps.read_text(encoding="utf-8")).values())
+        rows.append({
+            "what": "Track swaps repaired",
+            "decided": f"{count} swap(s) between two people's tracks undone",
+            "by": "software", "href": "#Frames" if frames else None,
+        })
+    if voices:
+        by = read_voice_owners(layout.voice_owners_path(recording_id)).get("by")
+        rows.append({
+            "what": "Whose voice is which",
+            "decided": f"{len(voices)} voice(s) on the shared microphone" + ("" if by else ", not named yet"),
+            "by": "waiting" if not by else "software" if by == AUTOMATIC else _who_and_when(by), "href": "#Voices",
+        })
+    stamp_path = layout.corrected_transcript_stamp_path(recording_id)
+    if stamp_path.is_file():
+        stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+        rows.append({
+            "what": "Transcript", "decided": f"corrected by hand from {stamp.get('from', 'an ELAN file')}",
+            "by": _who_and_when(f"{stamp.get('by', '')} {stamp.get('at', '')}".strip()), "href": None,
+        })
+    elif results.artifact("text.asr", TRANSCRIPT_NAME) is not None:
+        rows.append({
+            "what": "Transcript", "decided": f"as recognised; to correct it, macaw transcript export -r {recording_id}",
+            "by": "software", "href": None,
+        })
+    if dropped:
+        reasons = Counter(row["reason"] for row in dropped)
+        rows.append({
+            "what": "Speech left out",
+            "decided": ", ".join(f"{count} as {reason}" for reason, count in reasons.items()),
+            "by": "software", "href": "#Dropped",
+        })
+    return rows
 
 
 def _feature_notes(layout, recording_id: str) -> tuple[dict[str, dict], list[dict]]:
@@ -299,6 +419,10 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
 
     notes, versions = _feature_notes(layout, recording_id)
     alignment, alignment_figures = _alignment(config, layout, recording_id, page)
+    cameras = _cameras(layout, results, recording_id)
+    voices = _voices(config, layout, recording_id, page)
+    dropped = _dropped(results)
+    frames = _frames(layout, recording_id, page)
     warnings = _warnings(layout, results, recording_id)
     counts = Counter(warning.severity for warning in warnings)
     waiting = _waiting(config, recording)
@@ -311,19 +435,24 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "counts": counts,
         "alignment": alignment,
         "alignment_figures": alignment_figures,
-        "cameras": _cameras(layout, results, recording_id),
+        "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames),
+        "cameras": cameras,
+        "voices": voices,
+        "dropped": dropped,
         "over_time": _over_time(layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
         "measures": _measures(layout, results, recording_id, notes),
-        "frames": _frames(layout, recording_id, page),
+        "frames": frames,
         "warnings": [
             {**asdict(warning), "when": f"{warning.t_start:.1f}" if warning.t_start is not None else ""}
             for warning in warnings
         ],
         "versions": versions,
     }
-    sections = [("Summary", "Summary")]
+    sections = [("Summary", "Summary"), ("Decisions", "Decisions")]
     sections += [("Alignment", "Alignment")] if alignment else []
-    sections += [("Camera", "On camera")] if context["cameras"] else []
+    sections += [("Camera", "On camera")] if cameras else []
+    sections += [("Voices", "Voices")] if voices else []
+    sections += [("Dropped", "Speech left out")] if dropped else []
     sections += [("Time", "Over time")] if context["over_time"] else []
     sections += [("Measures", "Measures")] if context["measures"] else []
     sections += [("Frames", "Review frames")] if context["frames"] else []

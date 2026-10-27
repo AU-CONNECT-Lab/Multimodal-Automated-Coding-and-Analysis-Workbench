@@ -29,6 +29,19 @@
 </div>
 {% endif %}
 
+<h2 id="Decisions">Decisions</h2>
+<p class="desc">What the software decided by itself for this recording and what a person decided, with where on this page to check each. Rows the software decided are worth a sampled look; the gates in the configuration (always, flagged, skip) set which ones wait for a person.</p>
+<table class="flat">
+  <thead><tr><th>Decision</th><th>What was decided</th><th>By</th><th></th></tr></thead>
+  <tbody>
+  {%- for row in decisions %}
+  <tr><td>{{ row.what }}</td><td>{{ row.decided }}</td>
+    <td>{% if row.by == "software" %}<span class="info">software</span>{% elif row.by == "waiting" %}<span class="warn">waiting</span>{% else %}<span class="ok">{{ row.by }}</span>{% endif %}</td>
+    <td>{% if row.href %}<a href="{{ row.href }}">check</a>{% endif %}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+
 {% if alignment %}
 <h2 id="Alignment">Alignment</h2>
 <p class="desc">Each file's start on the recording clock, against the reference. A flagged file holds the run back at align.review until a person keeps it or sets the offset by hand.</p>
@@ -66,6 +79,39 @@
   {%- endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if voices %}
+<h2 id="Voices">Voices on the shared microphone</h2>
+<p class="desc">Each voice the diarization found, how long it talks and whom it was given to. Listen to a clip or two to check; rename with <code>macaw accept-voices --rename</code>.</p>
+<table class="flat">
+  <thead><tr><th>Voice</th><th class="num">Speech</th><th>Person</th><th>Clips</th></tr></thead>
+  <tbody>
+  {%- for voice in voices %}
+  <tr><td>{{ voice.label }}</td><td class="num">{{ voice.speech }}</td>
+    <td>{% if voice.person is none %}<span class="warn">not named</span>{% else %}{{ voice.person }}{% endif %}</td>
+    <td>{% for clip in voice.clips %}<a href="{{ clip.href }}">{{ clip.at }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if dropped %}
+<h2 id="Dropped">Speech left out</h2>
+<p class="desc">Utterances the recogniser heard that the transcript leaves out: crosstalk was louder on another person's microphone, room bleed lay in the voice of someone heard only on the shared microphone. To put one back, export the transcript to ELAN, where these sit on tiers of their own.</p>
+<details{% if dropped | length <= 30 %} open{% endif %}>
+  <summary>{{ dropped | length }} utterance(s)</summary>
+  <div class="details-body">
+  <table class="flat">
+    <thead><tr><th>On the mic of</th><th class="num">Time (s)</th><th class="num">Length (s)</th><th>Text</th><th>Why</th></tr></thead>
+    <tbody>
+    {%- for row in dropped %}
+    <tr><td>{{ row.who }}</td><td class="num">{{ row.when }}</td><td class="num">{{ row.length }}</td><td class="message">{{ row.text }}</td><td>{{ row.reason }}{% if row.detail %} <span class="hint">{{ row.detail }}</span>{% endif %}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
 {% endif %}
 
 {% if over_time %}
