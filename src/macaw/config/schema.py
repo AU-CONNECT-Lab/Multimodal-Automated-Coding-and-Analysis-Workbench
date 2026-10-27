@@ -79,6 +79,7 @@ class TextSection(_Section):
     crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
     embedding_model: str | None = None
+    syntax_model: str = "en_core_web_sm"
     first_use_min_speakers: int = Field(default=2, ge=2)
     first_use_exclude: Literal["none", "english_stopwords"] | Path = "english_stopwords"
     first_use_words: Path | None = None

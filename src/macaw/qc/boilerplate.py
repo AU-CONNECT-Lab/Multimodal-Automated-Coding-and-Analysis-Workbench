@@ -17,7 +17,7 @@ BIB_NAME = "references.bib"
 
 # extractors in the order a reader meets them; anything else (plugins) follows
 ORDER = (
-    "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features",
+    "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "pose.detect", "pose.keypoints",
     "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
@@ -423,6 +423,17 @@ def _movement(config, spec, names) -> str:
     )
 
 
+def _syntax(config, spec, names) -> str:
+    model = spec.params.get("syntax_model") or config.text.syntax_model
+    version = spec.params.get("syntax_model_version")
+    return (
+        f"Each utterance was parsed on its own with spaCy {spec.backend_version} [honnibal2020] and its {model} model"
+        f"{f' {version}' if version else ''}. For each speaker, the mean dependency distance [liu2008], the share of "
+        "dependencies between adjacent words, subordinate clauses per utterance, lexical density and the share of each "
+        "part of speech were computed."
+    )
+
+
 def _plugin(config, spec, names) -> str:
     backend = f", backend {spec.backend} {spec.backend_version}" if spec.backend else ""
     return f"Features from the {spec.extractor} {spec.extractor_version} extractor{backend} were included."
@@ -436,6 +447,7 @@ _WRITERS = {
     "text.diarize": _diarize,
     "text.asr": _asr,
     "text.features": _text_features,
+    "text.syntax": _syntax,
     "turns.structure": _turns,
     "turns.transitions": _transitions,
     "turns.entropy": _entropy,

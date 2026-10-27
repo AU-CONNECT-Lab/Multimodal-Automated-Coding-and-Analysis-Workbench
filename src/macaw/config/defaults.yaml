@@ -60,6 +60,7 @@ text:
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
   word_timestamps: true              # needed for gesture-speech alignment and MLU
   embedding_model: null              # sentence-transformers name; null disables text embeddings
+  syntax_model: en_core_web_sm       # spaCy parser for text.syntax; install it with python -m spacy download
   first_use_min_speakers: 2          # first_use_share counts a word once this many speakers have used it
   first_use_exclude: english_stopwords  # english_stopwords | none | path to a word list, one word per line
   first_use_words: null              # path to a word list; only these words count, e.g. the task's topic words

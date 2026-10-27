@@ -43,6 +43,7 @@ asr = [
 
 text = [
   "sentence-transformers>=3.0",
+  "spacy>=3.7",
 ]
 
 # mediapipe and py-feat are what hold requires-python below 3.13

@@ -172,3 +172,19 @@ reimers2019:
   booktitle: Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing
   pages: 3982--3992
   year: 2019
+honnibal2020:
+  type: misc
+  author: "Honnibal, Matthew and Montani, Ines and Van Landeghem, Sofie and Boyd, Adriane"
+  title: "spaCy: Industrial-strength Natural Language Processing in Python"
+  howpublished: Zenodo
+  doi: 10.5281/zenodo.1212303
+  year: 2020
+liu2008:
+  type: article
+  author: "Liu, Haitao"
+  title: "Dependency distance as a metric of language comprehension difficulty"
+  journal: Journal of Cognitive Science
+  volume: 9
+  number: 2
+  pages: 159--191
+  year: 2008
