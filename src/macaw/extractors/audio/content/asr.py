@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from macaw.extractors.audio.content.diarization import (
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -31,6 +33,7 @@ BACKEND_GROUP = "asr"
 
 TRANSCRIPT_NAME = "transcript.parquet"
 WORDS_NAME = "words.parquet"
+DROPPED_NAME = "dropped.parquet"
 
 # text cannot live in the long table, whose value column is a float, so the transcript is an
 # artifact and only the countable quantities derived from it become features
@@ -56,6 +59,17 @@ WORD_SCHEMA: dict[str, str] = {
     "t_end": "float64",
     "word": "string",
     "score": "float64",
+}
+
+# what the recogniser heard but the transcript leaves out, kept for a person to check
+DROPPED_SCHEMA: dict[str, str] = {
+    "recording_id": "string",
+    "subject_id": "string",
+    "t_start": "float64",
+    "t_end": "float64",
+    "text": "string",
+    "reason": "string",
+    "detail": "string",
 }
 
 # whisperx transcribes in batches; 8 fits comfortably next to a large-v3 model on 24 GB
@@ -300,7 +314,7 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -348,13 +362,17 @@ class ASRExtractor(Extractor):
         return (backend.name, str(backend.version))
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id))
+        corrected = layout_for(self.config, create=False).corrected_transcript_path(recording.recording_id)
+        return [*voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), corrected]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)
         backend = self.backend()
         warnings: list[QCWarning] = []
-        if not self._shared():
+        self._dropped: list[pd.DataFrame] = []
+        if layout_for(self.config, create=False).corrected_transcript_path(recording.recording_id).is_file():
+            utterances, words = self._from_correction(recording, prep, warnings)
+        elif not self._shared():
             utterances, words = self._from_own_tracks(recording, prep, backend, warnings)
         else:
             # whoever has a microphone of their own is transcribed from it; the shared one covers the rest
@@ -370,14 +388,17 @@ class ASRExtractor(Extractor):
         utterances["n_words"] = (
             utterances["text"].fillna("").astype(str).str.split().str.len().astype("int64")
         )
+        dropped = _concat(self._dropped, DROPPED_SCHEMA)
+        dropped["recording_id"] = recording.recording_id
         # ASR times are on the prepared track, whose sample 0 sits at t_origin_s
-        for frame in (utterances, words):
+        for frame in (utterances, words, dropped):
             frame["t_start"] = frame["t_start"] + prep.t_origin_s
             frame["t_end"] = frame["t_end"] + prep.t_origin_s
 
         artifacts = {
             TRANSCRIPT_NAME: write_transcript(utterances, workspace / TRANSCRIPT_NAME),
             WORDS_NAME: _io.write_file(words, workspace / WORDS_NAME, WORD_SCHEMA, "words"),
+            DROPPED_NAME: _io.write_file(dropped, workspace / DROPPED_NAME, DROPPED_SCHEMA, "dropped utterances"),
         }
 
         warnings += self._quality_warnings(recording, utterances, prep)
@@ -387,6 +408,36 @@ class ASRExtractor(Extractor):
             artifacts=artifacts,
             warnings=warnings,
         )
+
+    def _from_correction(self, recording: Recording, prep, warnings: list[QCWarning]):
+        """The transcript a person corrected, on the prepared-track clock like a recogniser's; no words, nothing dropped."""
+        from macaw.interop.transcript_eaf import read_transcript_eaf
+
+        layout = layout_for(self.config, create=False)
+        rid = recording.recording_id
+        corrected = read_transcript_eaf(
+            layout.corrected_transcript_path(rid), [subject.subject_id for subject in recording.subjects]
+        )
+        utterances = corrected.assign(
+            recording_id=rid,
+            utterance_index=corrected.groupby("subject_id").cumcount().astype("int64"),
+            t_start=corrected["t_start"] - prep.t_origin_s,
+            t_end=corrected["t_end"] - prep.t_origin_s,
+            confidence=np.nan,
+            language=self.config.text.language,
+        )
+        stamp_path = layout.corrected_transcript_stamp_path(rid)
+        stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.is_file() else {}
+        warnings.append(
+            QCWarning(
+                check="asr_corrected", recording_id=rid, subject_id=None, severity="info",
+                message=f"the transcript is the one {stamp.get('by', 'a person')} corrected; speech was not recognised again",
+            )
+        )
+        return _concat([utterances], TRANSCRIPT_SCHEMA, drop={"n_words"}), _concat([], WORD_SCHEMA)
+
+    def _keep_dropped(self, frame: pd.DataFrame) -> None:
+        self.__dict__.setdefault("_dropped", []).append(frame)
 
     def _from_shared_track(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
         """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
@@ -426,14 +477,22 @@ class ASRExtractor(Extractor):
         turns = turns.assign(subject_id=turns["label"].map(lambda label: names.get(label)))
         roomers = set(turns["subject_id"].dropna()) - set(prep.tracks)
         flags = np.zeros(len(utterances), dtype=bool)
+        whose = [""] * len(utterances)
         for index, row in enumerate(utterances.itertuples(index=False)):
             length = row.t_end - row.t_start
             if length <= 0:
                 continue
             overlap = (np.minimum(turns["t_end"], row.t_end) - np.maximum(turns["t_start"], row.t_start)).clip(lower=0)
             own = float(overlap[turns["subject_id"] == row.subject_id].sum())
-            other = float(overlap[turns["subject_id"].isin(roomers)].sum())
+            in_room = overlap[turns["subject_id"].isin(roomers)].groupby(turns["subject_id"]).sum()
+            other = float(in_room.sum())
             flags[index] = other >= _ROOM_BLEED_SHARE * length and own < _OWNER_ABSENT_SHARE * length
+            whose[index] = f"in the voice of {in_room.idxmax()}" if other > 0 else ""
+        self._keep_dropped(
+            utterances[flags].assign(
+                reason="room bleed", detail=[whose[index] for index in np.flatnonzero(flags)]
+            )
+        )
         for subject_id in utterances.loc[flags, "subject_id"].unique():
             mine = utterances["subject_id"] == subject_id
             warnings.append(
@@ -501,7 +560,18 @@ class ASRExtractor(Extractor):
         flagged = diarizer.attribute(utterances, tracks, margin_db=cfg.crosstalk_margin_db)
         warnings += self._crosstalk_warnings(recording, flagged)
 
-        utterances = flagged[~flagged["is_crosstalk"].astype(bool)].drop(columns=["is_crosstalk"])
+        bleed = flagged[flagged["is_crosstalk"].astype(bool)]
+        self._keep_dropped(
+            bleed.assign(
+                reason="crosstalk",
+                detail=[
+                    f"{by:.1f} dB louder on {on}" if isinstance(on, str) else ""
+                    for on, by in zip(bleed.get("louder_on", [None] * len(bleed)), bleed.get("louder_by_db", [np.nan] * len(bleed)))
+                ],
+            )
+        )
+        extra = [column for column in ("is_crosstalk", "louder_on", "louder_by_db") if column in flagged]
+        utterances = flagged[~flagged["is_crosstalk"].astype(bool)].drop(columns=extra)
         return utterances, _keep_utterances(words, utterances)
 
     def _crosstalk_warnings(self, recording: Recording, flagged: pd.DataFrame) -> list[QCWarning]:

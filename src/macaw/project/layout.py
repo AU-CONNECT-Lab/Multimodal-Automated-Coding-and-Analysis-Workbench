@@ -93,6 +93,14 @@ class Layout:
     def voice_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "voice_owners.json"
 
+    # the transcript a person corrected in ELAN; when there, text.asr reads it instead of recognising speech
+    def corrected_transcript_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "transcript_corrected.eaf"
+
+    # who corrected it and when
+    def corrected_transcript_stamp_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "transcript_corrected.json"
+
     # a person's decision about who is who feeds the results, so it lives with them
     @property
     def identity_path(self) -> Path:

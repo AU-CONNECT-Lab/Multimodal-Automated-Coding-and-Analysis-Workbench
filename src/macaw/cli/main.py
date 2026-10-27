@@ -4,7 +4,7 @@ import sys
 
 import typer
 
-from macaw.cli import align, code, config_cmd, export, gui, hpc, init, methods, plugin, qc, run, recordings
+from macaw.cli import align, code, config_cmd, export, gui, hpc, init, methods, plugin, qc, run, recordings, transcript
 from macaw.exceptions import MacawError
 from macaw.logging_setup import setup_logging
 
@@ -26,6 +26,7 @@ app.add_typer(plugin.app)
 app.add_typer(hpc.app, name="hpc")
 app.add_typer(gui.app)
 app.add_typer(config_cmd.app, name="config")
+app.add_typer(transcript.app, name="transcript")
 
 
 @app.callback()

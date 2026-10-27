@@ -193,6 +193,8 @@ def suppress_crosstalk(
     Times must be on the prepared-track clock, where sample 0 is the same instant on every
     track."""
     out = segments.copy()
+    out["louder_on"] = None
+    out["louder_by_db"] = np.nan
     if out.empty:
         out["is_crosstalk"] = pd.Series([], dtype=bool)
         return out
@@ -204,20 +206,27 @@ def suppress_crosstalk(
     gain = {subject_id: _gain_db(samples, sr) for subject_id, (samples, sr) in audio.items()}
     loudest = max(gain.values())
     gain = {subject_id: max(value, loudest - _MAX_GAIN_GAP_DB) for subject_id, value in gain.items()}
-    flags = []
+    flags, louder_on, louder_by = [], [], []
     for row in out.itertuples(index=False):
         own = audio.get(row.subject_id)
         if own is None:
             flags.append(False)
+            louder_on.append(None)
+            louder_by.append(np.nan)
             continue
         own_db = _level_db(own[0], own[1], row.t_start, row.t_end) - gain[row.subject_id]
-        others = [
-            _level_db(samples, sr, row.t_start, row.t_end) - gain[subject_id]
+        others = {
+            subject_id: _level_db(samples, sr, row.t_start, row.t_end) - gain[subject_id]
             for subject_id, (samples, sr) in audio.items()
             if subject_id != row.subject_id
-        ]
-        flags.append(bool(others) and max(others) - own_db > margin_db)
+        }
+        loudest_other = max(others, key=others.get) if others else None
+        louder_on.append(loudest_other)
+        louder_by.append(others[loudest_other] - own_db if others else np.nan)
+        flags.append(bool(others) and others[loudest_other] - own_db > margin_db)
     out["is_crosstalk"] = flags
+    out["louder_on"] = louder_on
+    out["louder_by_db"] = louder_by
     return out
 
 

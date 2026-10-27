@@ -79,6 +79,12 @@ def test_bleed_is_dropped_and_real_speech_is_not(two_tracks):
     assert not flags["B solo, own track"]
 
 
+def test_a_dropped_utterance_says_where_it_was_louder(two_tracks):
+    out = suppress_crosstalk(SEGMENTS, two_tracks(12.0), margin_db=6.0).set_index("tag")
+    assert out.at["A solo, bleed", "louder_on"] == "A" and out.at["A solo, bleed", "louder_by_db"] > 6.0
+    assert out.at["A solo, own track", "louder_by_db"] < 0
+
+
 def test_simultaneous_speech_survives(two_tracks):
     """The failure that would matter most: suppression must not eat genuine overlap."""
     flags = _flags(two_tracks(12.0))

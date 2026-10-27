@@ -321,10 +321,13 @@ class TestMixed:
         own = pd.DataFrame({"subject_id": ["parent"] * 3, "t_start": [0.5, 5.5, 6.0], "t_end": [3.5, 8.0, 6.5]})
         config = project.resolved()
         warnings = []
-        kept = ASRExtractor(config)._drop_room_bleed(build_recording("003", config), prep, own, warnings)
+        extractor = ASRExtractor(config)
+        kept = extractor._drop_room_bleed(build_recording("003", config), prep, own, warnings)
         # the last one also lies in the child's voice, but the owner talks over most of it
         assert kept["t_start"].tolist() == [0.5, 6.0]
         assert warnings[0].check == "asr_room_bleed" and "1 of 3" in warnings[0].message
+        dropped = pd.concat(extractor._dropped)
+        assert dropped[["t_start", "reason", "detail"]].values.tolist() == [[5.5, "room bleed", "in the voice of child"]]
 
     def test_each_person_is_measured_on_their_own_mic_or_their_solo_stretches(self, project, monkeypatch, tmp_path):
         prep = PrepInfo(
