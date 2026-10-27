@@ -304,3 +304,16 @@ class TestMixed:
         assert sources["parent"] == (tmp_path / "parent.wav", None)
         assert sources["child"][0] == tmp_path / "shared_003_room.wav"
         assert sources["child"][1].values.tolist() == [[5.0, 9.0]]
+
+
+def test_the_review_waits_for_faces_read_in_the_same_run_without_pulling_them_in(project):
+    from macaw.execution.dag import build_dag
+
+    config = project.resolved()
+    alone = build_dag(config, ["text.asr"])
+    assert "face.movement" not in alone.nodes
+    assert alone.nodes["text.review"].depends_on == {DiarizationExtractor.name}
+    with_faces = build_dag(config, ["text.asr", "face.movement"])
+    assert "face.movement" in with_faces.nodes["text.review"].depends_on
+    order = with_faces.topological_order()
+    assert order.index("face.movement") < order.index("text.review") < order.index("text.asr")

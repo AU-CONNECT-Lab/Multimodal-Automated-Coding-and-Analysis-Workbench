@@ -452,6 +452,8 @@ class SpeakerReviewGate(Gate):
     group = "text"
     config_sections = ("text.diarization",)
     requires = (DiarizationExtractor.name,)
+    # with faces read in the same run, the suggestion can use their mouths
+    runs_after = ("face.movement",)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return []

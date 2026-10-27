@@ -204,6 +204,7 @@ def fake_line(monkeypatch):
 
     class FakeGate:
         name, requires, phase, config_sections = "gate", ("prep",), Phase.INTERACTIVE, ()
+        runs_after = ()
 
         def __init__(self, config):
             pass
@@ -219,7 +220,7 @@ def fake_line(monkeypatch):
             return []
 
     def plain(name, requires, phase):
-        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires)})
+        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": ()})
 
     registry = {
         "prep": plain("prep", (), Phase.PREP),

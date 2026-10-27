@@ -45,6 +45,8 @@ class DAG:
             if name in self.nodes:
                 continue
             queue.extend(self.add(name).depends_on)
+        for name, node in self.nodes.items():
+            node.depends_on |= set(get_extractor(name).runs_after) & set(self.nodes)
 
     def topological_order(self) -> list[str]:
         """Raises DependencyCycleError on a cycle."""
