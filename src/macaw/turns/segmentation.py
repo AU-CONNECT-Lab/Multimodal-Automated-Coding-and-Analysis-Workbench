@@ -218,7 +218,7 @@ class TurnStructureExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.EVENT
     group = "turns"
-    config_sections = ("turns", "text")
+    config_sections = ("turns",)
     requires = (ASRExtractor.name, MediaPrepExtractor.name, IdentityConfirmGate.name)
 
     def check_available(self) -> None:

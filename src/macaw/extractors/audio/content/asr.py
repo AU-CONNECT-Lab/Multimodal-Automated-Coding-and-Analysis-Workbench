@@ -287,7 +287,10 @@ class ASRExtractor(Extractor):
     version = "0.3.0"
     scale = Scale.EVENT
     group = "text"
-    config_sections = ("text", "segment")
+    config_sections = (
+        "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.compute_type",
+        "text.diarization", "text.crosstalk_margin_db", "text.word_timestamps", "segment",
+    )
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
