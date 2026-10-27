@@ -320,7 +320,7 @@ def _entropy(config, spec, names) -> str:
         f"{turns.permutation_entropy_order} [bandt2002]."
     )
     if turns.window_s:
-        hop = f" every {_seconds(turns.window_hop_s)}" if turns.window_hop_s else ""
+        hop = f" every {_seconds(turns.window_hop_s or turns.window_s / 2.0)}"
         text += f" They were computed over the whole recording and in windows of {_seconds(turns.window_s)}{hop}."
     return text
 

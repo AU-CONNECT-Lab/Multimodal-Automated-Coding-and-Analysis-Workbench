@@ -177,11 +177,3 @@ def _aggregate(
     functions = frame["feature"].map(how).fillna("mean")
     parts = [run(frame[functions == function], function) for function in pd.unique(functions)]
     return pd.concat(parts, ignore_index=True)
-
-
-def suggest_window_length(task_duration_s: float, tau_s: float, min_windows: int = 10) -> float:
-    """Window length must follow task duration, not be hard-coded."""
-    raise NotImplementedError(
-        "Undecided: the rule depends on how tau is estimated, which needs real "
-        "autocorrelation data from the turns layer first."
-    )

@@ -19,7 +19,6 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns
 
 PREFIXES = {"eGeMAPSv02": "egemaps", "ComParE_2016": "compare"}
 # openSMILE writes 0 (or -201) for a voiced-only measure of a turn with no voiced frame; that is a
@@ -34,6 +33,19 @@ _INSTALL = (
 )
 
 
+# macaw.turns imports the asr step, which imports this package, so turns are read on use
+def _turns_name() -> str:
+    from macaw.turns.segmentation import TURNS_NAME
+
+    return TURNS_NAME
+
+
+def load_turns(config, recording_id: str):
+    from macaw.turns.segmentation import load_turns as read
+
+    return read(config, recording_id)
+
+
 @register_extractor
 class StandardSetExtractor(Extractor):
     name = "prosody.standard_sets"
@@ -41,7 +53,7 @@ class StandardSetExtractor(Extractor):
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody.standard_sets", "turns", "segment", "text.diarization")
-    requires = (TurnStructureExtractor.name, MediaPrepExtractor.name)
+    requires = ("turns.structure", MediaPrepExtractor.name)
 
     def check_available(self) -> None:
         try:
@@ -52,7 +64,7 @@ class StandardSetExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
-        turns = layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME
+        turns = layout.artifacts_dir(recording.recording_id, "turns.structure") / _turns_name()
         return [turns, *voice_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:

@@ -160,10 +160,15 @@ _RECORDING_SPECS = {
 }
 
 
+def window_hop(cfg) -> float:
+    """turns.window_hop_s, or half the window when it is not set."""
+    return cfg.window_hop_s or cfg.window_s / 2.0
+
+
 @register_extractor
 class EntropyExtractor(Extractor):
     name = "turns.entropy"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.WINDOW
     group = "turns"
     config_sections = ("turns",)
@@ -200,18 +205,19 @@ class EntropyExtractor(Extractor):
 
     def _window_edges(self, prep) -> list[tuple[float, float]]:
         cfg = self.config.turns
-        if not cfg.window_s or not cfg.window_hop_s:
+        if not cfg.window_s:
             return []
+        hop = window_hop(cfg)
         # entropy cannot be averaged, so windows are recomputed from the turns they contain
         # rather than rolled up out of the recording-level rows
         span = prep.duration_s - cfg.window_s
         if span < 0:
             return []
-        count = int(math.floor(span / cfg.window_hop_s)) + 1
+        count = int(math.floor(span / hop)) + 1
         return [
             (
-                prep.t_origin_s + index * cfg.window_hop_s,
-                prep.t_origin_s + index * cfg.window_hop_s + cfg.window_s,
+                prep.t_origin_s + index * hop,
+                prep.t_origin_s + index * hop + cfg.window_s,
             )
             for index in range(count)
         ]
@@ -356,7 +362,7 @@ class EntropyExtractor(Extractor):
             )
 
         edges = self._window_edges(prep)
-        if cfg.window_s and cfg.window_hop_s and len(edges) < _MIN_WINDOWS:
+        if cfg.window_s and len(edges) < _MIN_WINDOWS:
             warnings.append(
                 QCWarning(
                     check="entropy_too_few_windows",
@@ -364,7 +370,7 @@ class EntropyExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"A {cfg.window_s} s window at {cfg.window_hop_s} s hop yields "
+                        f"A {cfg.window_s} s window at {window_hop(cfg)} s hop yields "
                         f"{len(edges)} windows over {prep.duration_s:.0f} s. Nothing about "
                         "change over time can be read off that few."
                     ),
@@ -379,7 +385,7 @@ class EntropyExtractor(Extractor):
         params = {
             "permutation_entropy_order": cfg.permutation_entropy_order,
             "window_s": cfg.window_s,
-            "window_hop_s": cfg.window_hop_s,
+            "window_hop_s": window_hop(cfg) if cfg.window_s else None,
             "estimator": "miller-madow",
         }
         return [

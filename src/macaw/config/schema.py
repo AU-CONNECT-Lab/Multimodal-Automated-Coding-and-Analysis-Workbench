@@ -82,7 +82,6 @@ class TextSection(_Section):
     first_use_min_speakers: int = Field(default=2, ge=2)
     first_use_exclude: Literal["none", "english_stopwords"] | Path = "english_stopwords"
     first_use_words: Path | None = None
-    kinship_anchors: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PoseSection(_Section):
@@ -145,7 +144,7 @@ class LLMSection(_Section):
     ready_timeout_s: int = 300
 
     def is_local(self) -> bool:
-        raise NotImplementedError
+        return self.provider in ("ollama", "vllm", "llamacpp")
 
 
 class CodingSection(_Section):

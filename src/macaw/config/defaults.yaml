@@ -63,7 +63,6 @@ text:
   first_use_min_speakers: 2          # first_use_share counts a word once this many speakers have used it
   first_use_exclude: english_stopwords  # english_stopwords | none | path to a word list, one word per line
   first_use_words: null              # path to a word list; only these words count, e.g. the task's topic words
-  kinship_anchors: {}                # role -> address terms, e.g. {child: [mommy, mama]}
 
 pose:
   backend: null                      # mediapipe (reports usage to Google, no off switch) | yolo (offline; AGPL, not bundled)
@@ -102,7 +101,7 @@ turns:
   interruption_overlap_s: 0.5        # s; overlap above this is an interruption, below a backchannel
   smooth_transfer_gap_s: 0.2         # s; |gap| under this counts as a fluent transfer
   silence_min_s: 1.0                 # s; joint silence longer than this is logged as a pause
-  window_s: null                     # s; null = derived from task duration
+  window_s: null                     # s; entropy over sliding windows as well; null = whole recording only
   window_hop_s: null                 # s; null = half of window_s
   permutation_entropy_order: 3       # embedding order; 3 needs far shorter series than 5
 

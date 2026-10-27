@@ -19,7 +19,6 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns
 
 # Praat's voice report defaults: shortest and longest period, largest period ratio, largest amplitude ratio
 _PERIOD_ARGS = (0.0001, 0.02, 1.3)
@@ -77,6 +76,19 @@ _SPECS = {
 _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[audio]"'
 
 
+# macaw.turns imports the asr step, which imports this package, so turns are read on use
+def _turns_name() -> str:
+    from macaw.turns.segmentation import TURNS_NAME
+
+    return TURNS_NAME
+
+
+def load_turns(config, recording_id: str):
+    from macaw.turns.segmentation import load_turns as read
+
+    return read(config, recording_id)
+
+
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
@@ -84,7 +96,7 @@ class VoiceReportExtractor(Extractor):
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
-    requires = (TurnStructureExtractor.name, MediaPrepExtractor.name)
+    requires = ("turns.structure", MediaPrepExtractor.name)
 
     def check_available(self) -> None:
         try:
@@ -100,7 +112,7 @@ class VoiceReportExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
-        turns = layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME
+        turns = layout.artifacts_dir(recording.recording_id, "turns.structure") / _turns_name()
         return [turns, *voice_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:

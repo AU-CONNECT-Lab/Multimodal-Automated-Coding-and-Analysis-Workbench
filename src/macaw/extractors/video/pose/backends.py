@@ -133,16 +133,6 @@ class PoseBackend(Backend):
         raise NotImplementedError
 
 
-class RTMPoseBackend(PoseBackend):
-    """Optional, and deliberately not implemented: mmengine / mmcv / mmpose usually has to be
-    compiled against a specific torch and CUDA. check_available is what users meet instead."""
-
-    name = "rtmpose"
-
-    def check_available(self) -> None:
-        raise NotImplementedError
-
-
 MEDIAPIPE_LANDMARKS: tuple[str, ...] = (
     "nose",
     "left_eye_inner", "left_eye", "left_eye_outer",
@@ -550,13 +540,6 @@ def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) 
         "-c:v", "mpeg4", "-q:v", "2", str(clip),
     ])
     return clip
-
-
-class DWPoseBackend(PoseBackend):
-    name = "dwpose"
-
-    def check_available(self) -> None:
-        raise NotImplementedError
 
 
 NO_BACKEND_MESSAGE = (
