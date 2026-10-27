@@ -26,7 +26,7 @@ def line(tmp_path, monkeypatch):
     def step(name, requires, phase):
         return type(name, (), {
             "name": name, "requires": requires, "phase": phase, "config_sections": (), "version": "0.1.0",
-            "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (),
+            "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True),
             "__init__": lambda self, config: None,
             "inputs_for": lambda self, recording: [source],
         })

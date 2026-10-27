@@ -233,7 +233,7 @@ def fake_line(monkeypatch):
             return None
 
     def plain(name, requires, phase):
-        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": ()})
+        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True)})
 
     registry = {
         "prep": plain("prep", (), Phase.PREP),
