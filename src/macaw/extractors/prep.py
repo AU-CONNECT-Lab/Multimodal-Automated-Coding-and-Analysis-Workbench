@@ -33,6 +33,7 @@ from macaw.store.schema import Scale
 # every prepared track is written at this rate so downstream extractors never resample
 PREP_SAMPLE_RATE = 16000
 PREP_INFO_NAME = "prep.json"
+SHARED_TRACK_PREFIX = "shared_"
 
 
 @dataclass
@@ -45,6 +46,7 @@ class PrepInfo:
     sample_rate: int
     tracks: dict[str, str] = field(default_factory=dict)      # subject_id -> file name
     shared: list[str] = field(default_factory=list)
+    shared_tracks: dict[str, str] = field(default_factory=dict)  # shared audio file -> prepared file name
     media: list[dict] = field(default_factory=list)
     root: Path | None = None                # where the files above actually sit
 
@@ -56,6 +58,9 @@ class PrepInfo:
             )
         return Path(self.root or ".") / self.tracks[subject_id]
 
+    def shared_track_path(self, media_name: str) -> Path:
+        return Path(self.root or ".") / self.shared_tracks[media_name]
+
     def to_dict(self) -> dict:
         return {
             "recording_id": self.recording_id,
@@ -64,6 +69,7 @@ class PrepInfo:
             "sample_rate": self.sample_rate,
             "tracks": self.tracks,
             "shared": self.shared,
+            "shared_tracks": self.shared_tracks,
             "media": self.media,
         }
 
@@ -251,7 +257,7 @@ class IdentityConfirmGate(Gate):
 @register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
@@ -288,17 +294,35 @@ class MediaPrepExtractor(Extractor):
         duration = end - start
 
         artifacts: dict[str, Path] = {}
+        shared_audio = sorted(
+            (item for item in recording.media if item.kind == "audio" and item.subject_id is None),
+            key=lambda item: item.path.name,
+        )
+        shared_tracks: dict[str, str] = {}
+        for item in shared_audio:
+            name = f"{SHARED_TRACK_PREFIX}{item.path.stem}.wav"
+            _extract_track(
+                item.path, workspace / name, start_s=start - item.offset_s, duration_s=duration,
+                sample_rate=PREP_SAMPLE_RATE,
+            )
+            artifacts[name] = workspace / name
+            shared_tracks[item.path.name] = name
+
         tracks: dict[str, str] = {}
         for subject in recording.subjects:
             track = recording.audio_for(subject.subject_id)
             if track is None:
+                # with a shared microphone their voice is in the room track, found by diarization
                 warnings.append(
                     QCWarning(
                         check="prep_missing_track",
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
-                        severity="warn",
+                        severity="info" if shared_tracks else "warn",
                         message=(
+                            f"No audio file is attributed to '{subject.subject_id}'; their voice can come "
+                            f"only from the shared track(s) {', '.join(shared_tracks)}."
+                            if shared_tracks else
                             f"No audio file is attributed to '{subject.subject_id}'. "
                             "Per-speaker audio features cannot be computed for them."
                         ),
@@ -325,6 +349,7 @@ class MediaPrepExtractor(Extractor):
             sample_rate=PREP_SAMPLE_RATE,
             tracks=tracks,
             shared=shared,
+            shared_tracks=shared_tracks,
             media=[_media_entry(item) for item in recording.media],
         )
         info_path = workspace / PREP_INFO_NAME
