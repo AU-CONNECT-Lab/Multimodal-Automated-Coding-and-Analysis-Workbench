@@ -13,6 +13,8 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
+from macaw.extractors.audio.content.diarization import NO_ONE, read_voices
+from macaw.extractors.audio.content.speaker_id import suggest_voices
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file
 from macaw.logging_setup import get_logger
 from macaw.project.identity import identity_basis, pairing, write_confirmation
@@ -252,3 +254,55 @@ def _renamed(people: dict[str, list[int]], rename: str, recording) -> dict[str, 
 def _write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+@app.command("accept-voices")
+def accept_voices(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
+    rename: str = typer.Option(
+        None, "--rename", help=f"LABEL=PERSON pairs for every voice, comma-separated; PERSON {NO_ONE} leaves a voice out."
+    ),
+    by: str = typer.Option(None, "--by", help="Who listened. Default: the login name."),
+) -> None:
+    """Keep the suggested names of the voices on a shared microphone, or name them."""
+    resolved = resolve_config(config)
+    layout = layout_for(resolved, create=False)
+    stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
+    recording_ids = resolve_recordings(resolved, recordings)
+    if rename is not None and len(recording_ids) != 1:
+        raise MacawError("--rename names the voices of one recording: give one -r")
+    for recording_id in recording_ids:
+        recording = build_recording(recording_id, resolved)
+        voices = read_voices(resolved, recording_id)
+        if not voices:
+            raise MacawError(f"{recording_id}: no voices found yet; run text.diarize first")
+        if rename is not None:
+            people = _named_voices(voices, rename, recording)
+        else:
+            suggestion = suggest_voices(resolved, recording)
+            if suggestion is None:
+                raise MacawError(
+                    f"{recording_id}: no suggestion without face.movement on each person's camera; name the voices with --rename"
+                )
+            people = suggestion["people"]
+        _write_json(layout.voice_owners_path(recording_id), {"people": people, "by": stamp})
+        named = "; ".join(f"{label} is {who}" for label, who in sorted(people.items()))
+        typer.echo(f"{recording_id}: {named}; apply it with `macaw run -r {recording_id}`")
+
+
+def _named_voices(voices: dict, rename: str, recording) -> dict[str, str]:
+    pairs = [pair.split("=", 1) for pair in rename.split(",") if pair.strip()]
+    if any(len(pair) != 2 for pair in pairs):
+        raise MacawError("--rename takes LABEL=PERSON pairs, e.g. SPEAKER_00=A,SPEAKER_01=none")
+    people = {label.strip(): who.strip() for label, who in pairs}
+    subjects = {person.subject_id for person in recording.subjects}
+    unknown = [label for label in people if label not in voices] + [
+        who for who in people.values() if who not in subjects and who != NO_ONE
+    ]
+    if unknown:
+        raise MacawError(f"not a voice found or not a subject: {', '.join(unknown)}")
+    missing = sorted(set(voices) - set(people))
+    if missing:
+        raise MacawError(f"say who every voice is, or {NO_ONE}: {', '.join(missing)} not named")
+    return people

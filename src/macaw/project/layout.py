@@ -89,6 +89,10 @@ class Layout:
     def camera_owners_accepted_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "camera_owners_accepted.json"
 
+    # which diarized voice on a shared microphone is whom, as a person named them; an input to text.asr
+    def voice_owners_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "voice_owners.json"
+
     # a person's decision about who is who feeds the results, so it lives with them
     @property
     def identity_path(self) -> Path:

@@ -54,7 +54,8 @@ text:
   language: null                     # ISO code; null = autodetect per recording
   device: auto                       # auto | cuda | cpu; auto picks cpu when no GPU is visible
   compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback
-  diarization: per_track             # per_track is more accurate when each person has a mic
+  diarization: per_track             # per_track: one mic per person | pyannote: one shared mic, voices found by diarization | none
+  diarization_model: pyannote/speaker-diarization-community-1  # HuggingFace pipeline for pyannote; accept its terms first
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
   word_timestamps: true              # needed for gesture-speech alignment and MLU
   embedding_model: null              # sentence-transformers name; null disables text embeddings

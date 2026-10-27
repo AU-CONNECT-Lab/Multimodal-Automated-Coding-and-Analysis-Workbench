@@ -74,6 +74,7 @@ class TextSection(_Section):
     device: str = "auto"
     compute_type: str = "float16"
     diarization: str = "per_track"
+    diarization_model: str = "pyannote/speaker-diarization-community-1"
     crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
     embedding_model: str | None = None

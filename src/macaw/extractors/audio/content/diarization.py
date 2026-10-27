@@ -3,18 +3,45 @@ off, but only after the partner's bleed has been taken back out."""
 
 from __future__ import annotations
 
+import json
+import wave
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from macaw.exceptions import BackendNotAvailableError
-from macaw.extractors import register_backend
+from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
+from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.base import Backend
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.project.layout import layout_for
+from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.store import _io
+from macaw.store.longtable import build_long_rows
+from macaw.store.schema import Scale
 
 BACKEND_GROUP = "diarization"
+# the one mode that reads voices off a shared microphone; the others attribute by track
+SHARED_MODE = "pyannote"
+
+DIARIZATION_NAME = "diarization.parquet"
+VOICES_NAME = "voices.json"
+NO_ONE = "none"
+
+DIARIZATION_SCHEMA: dict[str, str] = {
+    "track": "string",
+    "label": "string",
+    "t_start": "float64",
+    "t_end": "float64",
+    "exclusive": "bool",
+}
+
+# a voice with less speech than this is more likely a cough, a door or a cut-off word than a person
+_MIN_VOICE_S = 5.0
+_CLIPS_PER_VOICE = 3
+_CLIP_S = 5.0
 
 _SILENCE_FLOOR_DB = -120.0
 # a mic's own loud level: its owner's speech, whatever the gain it was recorded at
@@ -28,7 +55,8 @@ class DiarizationBackend(Backend):
     version = "0.1.0"
 
     def diarize(self, audio_path: Path, *, n_speakers: int | None = None) -> pd.DataFrame:
-        """Speaker turns found in one mixed recording: t_start, t_end, speaker."""
+        """Speaker turns in one mixed recording: t_start, t_end, label, and exclusive, true on the
+        copy where overlapping speech is given to one speaker only."""
         raise NotImplementedError
 
     def attribute(
@@ -40,23 +68,61 @@ class DiarizationBackend(Backend):
 
 @register_backend(BACKEND_GROUP)
 class PyannoteBackend(DiarizationBackend):
-    name = "pyannote"
+    name = SHARED_MODE
+
+    def __init__(self, model: str = "pyannote/speaker-diarization-community-1", *, device: str = "auto"):
+        self.model = model
+        self.device = device
+        self._pipeline = None
+
+    @property
+    def version(self) -> str:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("pyannote.audio")
+        except PackageNotFoundError:
+            return "unknown"
 
     def check_available(self) -> None:
-        """Model weights need HuggingFace terms accepted; say so in the error."""
         try:
             import pyannote.audio  # noqa: F401
         except ImportError:
             raise BackendNotAvailableError(
-                "pyannote.audio is not installed. Install it with "
-                '`pip install "pymacaw[asr]"`, accept the terms for '
-                "pyannote/speaker-diarization-3.1 on HuggingFace, and log in with "
-                "`huggingface-cli login`."
+                "pyannote.audio is not installed. Install PyTorch for your CUDA version first, then "
+                f'`pip install "pymacaw[asr]"`; accept the terms for {self.model} on HuggingFace and log in '
+                "with `hf auth login`."
             ) from None
-        raise BackendNotAvailableError(
-            "The pyannote diarizer is not wired up yet. Use `text.diarization: per_track` "
-            "when every person has their own microphone."
-        )
+
+    def _load(self):
+        if self._pipeline is None:
+            import torch
+            from pyannote.audio import Pipeline
+
+            from macaw.extractors.audio.content.asr import resolve_device
+
+            pipeline = Pipeline.from_pretrained(self.model)
+            if pipeline is None:
+                raise BackendNotAvailableError(
+                    f"{self.model} could not be loaded: accept its terms on HuggingFace and log in with `hf auth login`"
+                )
+            self._pipeline = pipeline.to(torch.device(resolve_device(self.device)))
+        return self._pipeline
+
+    def diarize(self, audio_path: Path, *, n_speakers: int | None = None) -> pd.DataFrame:
+        import torch
+
+        samples, sr = load_audio(Path(audio_path))
+        # handing over the samples skips pyannote's own decoder, which needs ffmpeg libraries on the path
+        waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
+        output = self._load()({"waveform": waveform, "sample_rate": int(sr)}, num_speakers=n_speakers)
+        rows = []
+        for exclusive, annotation in (
+            (False, output.speaker_diarization), (True, output.exclusive_speaker_diarization)
+        ):
+            for turn, label in annotation:
+                rows.append({"t_start": float(turn.start), "t_end": float(turn.end), "label": str(label), "exclusive": exclusive})
+        return pd.DataFrame(rows, columns=["t_start", "t_end", "label", "exclusive"])
 
 
 @register_backend(BACKEND_GROUP)
@@ -181,3 +247,232 @@ def resolve_diarization(recording: Recording, mode: str) -> DiarizationBackend:
     backend = get_backend(BACKEND_GROUP, mode)()
     backend.check_available()
     return backend
+
+
+def resolve_diarizer(config) -> DiarizationBackend:
+    from macaw.extractors import get_backend
+
+    cfg = config.text
+    cls = get_backend(BACKEND_GROUP, cfg.diarization)
+    backend = cls(cfg.diarization_model, device=cfg.device) if cfg.diarization == SHARED_MODE else cls()
+    backend.check_available()
+    return backend
+
+
+def shared_track(prep, recording_id: str) -> str:
+    """The one shared audio file the voices are read from."""
+    if len(prep.shared_tracks) != 1:
+        found = ", ".join(sorted(prep.shared_tracks)) or "none"
+        raise InputNotFoundError(
+            f"{recording_id}: text.diarization {SHARED_MODE} reads exactly one shared audio file, found: {found}"
+        )
+    return next(iter(prep.shared_tracks))
+
+
+@register_extractor
+class DiarizationExtractor(Extractor):
+    """Who speaks when on a shared microphone, as anonymous voices; text.review says who they are."""
+
+    name = "text.diarize"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "text"
+    config_sections = ("text.diarization", "text.diarization_model", "text.device", "segment")
+    requires = (MediaPrepExtractor.name,)
+    resource_profile = "gpu_standard"
+
+    def check_available(self) -> None:
+        if self.config.text.diarization == SHARED_MODE:
+            resolve_diarizer(self.config)
+
+    def backend_info(self) -> tuple[str | None, str | None]:
+        if self.config.text.diarization != SHARED_MODE:
+            return (None, None)
+        return (SHARED_MODE, resolve_diarizer(self.config).version)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        prep = load_prep(self.config, recording.recording_id)
+        return [prep.shared_track_path(name) for name in sorted(prep.shared_tracks)]
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        prep = load_prep(self.config, recording.recording_id)
+        values = {"n_shared_tracks_diarized": 0.0}
+        if self.config.text.diarization != SHARED_MODE:
+            return ExtractorResult(rows=self._rows(recording, prep, values), specs=self._specs(values))
+
+        track = shared_track(prep, recording.recording_id)
+        path = prep.shared_track_path(track)
+        turns = resolve_diarizer(self.config).diarize(path, n_speakers=len(recording.subjects))
+        turns["t_start"] = turns["t_start"] + prep.t_origin_s
+        turns["t_end"] = turns["t_end"] + prep.t_origin_s
+        turns["track"] = track
+        voices = describe_voices(turns, path, prep.t_origin_s, workspace)
+        values = {
+            "n_shared_tracks_diarized": 1.0,
+            "n_voices_found": float(len(voices)),
+            "overlapped_speech_fraction": overlapped_fraction(turns),
+        }
+        artifacts = {
+            DIARIZATION_NAME: _io.write_file(turns, workspace / DIARIZATION_NAME, DIARIZATION_SCHEMA, "diarization"),
+            VOICES_NAME: _write_json(workspace / VOICES_NAME, voices),
+        }
+        artifacts.update({clip["file"]: workspace / clip["file"] for voice in voices.values() for clip in voice["clips"]})
+        return ExtractorResult(
+            rows=self._rows(recording, prep, values),
+            specs=self._specs(values),
+            artifacts=artifacts,
+            warnings=self._warnings(recording, voices, track),
+        )
+
+    def _rows(self, recording: Recording, prep, values: dict[str, float]) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s], **{name: [value] for name, value in values.items()}}
+        )
+        return build_long_rows(
+            values=frame, scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
+            entities=recording.entities(), subject_id=None,
+        )
+
+    def _specs(self, values: dict[str, float]) -> list[FeatureSpec]:
+        params = {"model": self.config.text.diarization_model} if self.config.text.diarization == SHARED_MODE else {}
+        return [
+            FeatureSpec(
+                name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
+                extractor=self.name, extractor_version=self.version, params=params, validation="synthetic",
+            )
+            for name, (description, unit) in _DIARIZATION_SPECS.items()
+            if name in values
+        ]
+
+    def _warnings(self, recording: Recording, voices: dict, track: str) -> list[QCWarning]:
+        rid = recording.recording_id
+        warnings = []
+        faint = [label for label, voice in voices.items() if voice["speech_s"] < _MIN_VOICE_S]
+        if faint:
+            warnings.append(QCWarning(
+                check="diarization_faint_voice", recording_id=rid, subject_id=None, severity="info",
+                message=f"on {track}, {', '.join(faint)} speak under {_MIN_VOICE_S:g} s in all; likely not a person",
+            ))
+        if len(voices) < len(recording.subjects):
+            warnings.append(QCWarning(
+                check="diarization_voice_count", recording_id=rid, subject_id=None, severity="warn",
+                message=f"{len(voices)} voices found on {track} for {len(recording.subjects)} people",
+            ))
+        return warnings
+
+
+_DIARIZATION_SPECS = {
+    "n_shared_tracks_diarized": ("Shared audio files read for voices; 0 when every person has their own track.", "count"),
+    "n_voices_found": ("Distinct voices the diarizer found on the shared track.", "count"),
+    "overlapped_speech_fraction": ("Share of the time anyone speaks during which two or more voices do.", None),
+}
+
+
+def overlapped_fraction(turns: pd.DataFrame) -> float:
+    spans = turns[~turns["exclusive"].astype(bool)]
+    if spans.empty:
+        return float("nan")
+    edges = np.concatenate([spans["t_start"].to_numpy(dtype=float), spans["t_end"].to_numpy(dtype=float)])
+    steps = np.concatenate([np.ones(len(spans)), -np.ones(len(spans))])
+    order = np.lexsort((steps, edges))
+    edges, active = edges[order], np.cumsum(steps[order])
+    widths = np.diff(edges)
+    speaking = float(widths[active[:-1] >= 1].sum())
+    return float(widths[active[:-1] >= 2].sum()) / speaking if speaking > 0 else float("nan")
+
+
+def describe_voices(turns: pd.DataFrame, track_path: Path, t_origin_s: float, workspace: Path) -> dict:
+    """Per voice its total speech and a few clips to listen to, cut from its longest turns alone."""
+    samples, sr = load_audio(Path(track_path))
+    exclusive = turns[turns["exclusive"].astype(bool)]
+    voices = {}
+    for label, own in exclusive.groupby("label", observed=True):
+        longest = own.assign(length=own["t_end"] - own["t_start"]).nlargest(_CLIPS_PER_VOICE, "length").sort_values("t_start")
+        clips = []
+        for index, turn in enumerate(longest.itertuples(index=False), start=1):
+            middle = (turn.t_start + turn.t_end) / 2
+            start = max(turn.t_start, middle - _CLIP_S / 2)
+            end = min(turn.t_end, middle + _CLIP_S / 2)
+            name = f"clip_{label}_{index}.wav"
+            _write_wav(workspace / name, samples, sr, start - t_origin_s, end - t_origin_s)
+            clips.append({"file": name, "t_start": float(start), "t_end": float(end)})
+        voices[str(label)] = {
+            "speech_s": float((own["t_end"] - own["t_start"]).sum()),
+            "first_s": float(own["t_start"].min()),
+            "clips": clips,
+        }
+    return voices
+
+
+def _write_wav(path: Path, samples: np.ndarray, sr: float, t_start: float, t_end: float) -> None:
+    first, last = max(int(t_start * sr), 0), min(int(t_end * sr), samples.size)
+    pcm = (np.clip(samples[first:last], -1.0, 1.0) * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(int(sr))
+        out.writeframes(pcm.tobytes())
+
+
+def _write_json(path: Path, payload) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+def read_voices(config, recording_id: str) -> dict:
+    path = layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / VOICES_NAME
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def read_diarization(config, recording_id: str) -> pd.DataFrame:
+    path = layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / DIARIZATION_NAME
+    if not path.is_file():
+        raise InputNotFoundError(f"{recording_id}: {path} is missing, run {DiarizationExtractor.name} first")
+    return pd.read_parquet(path)
+
+
+def read_voice_owners(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def voice_names(config, recording_id: str) -> dict[str, str | None]:
+    """Each voice's person as a person named it, None for a voice left out; empty until someone has."""
+    named = read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id))
+    return {label: (None if who == NO_ONE else who) for label, who in named.get("people", {}).items()}
+
+
+@register_extractor
+class SpeakerReviewGate(Gate):
+    """Held on a shared microphone until a person has said which voice is whom."""
+
+    name = "text.review"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "text"
+    config_sections = ("text.diarization",)
+    requires = (DiarizationExtractor.name,)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        return []
+
+    def pending(self, recording: Recording) -> str | None:
+        if self.config.text.diarization != SHARED_MODE:
+            return None
+        rid = recording.recording_id
+        voices = read_voices(self.config, rid)
+        if set(voice_names(self.config, rid)) == set(voices):
+            return None
+        from macaw.extractors.audio.content.speaker_id import describe_suggestion, suggest_voices
+
+        clips = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name)
+        suggestion = suggest_voices(self.config, recording)
+        hint = (
+            f"; from mouth movement {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`"
+            if suggestion else "; with face.movement run on each person's camera a suggestion appears here"
+        )
+        return (
+            f"nobody has said which voice is whom ({', '.join(sorted(voices)) or 'none found'}): listen to the clips "
+            f"in {clips}{hint}, or name them with `macaw accept-voices -r {rid} --rename LABEL=PERSON,...` "
+            f"({NO_ONE} leaves a voice out)"
+        )

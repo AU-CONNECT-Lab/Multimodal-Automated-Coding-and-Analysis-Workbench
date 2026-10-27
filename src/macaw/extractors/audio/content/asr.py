@@ -10,10 +10,18 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.content.diarization import (
     BACKEND_GROUP as DIARIZATION_GROUP,
+    DIARIZATION_NAME,
+    SHARED_MODE,
+    DiarizationExtractor,
+    SpeakerReviewGate,
+    read_diarization,
     resolve_diarization,
+    shared_track,
+    voice_names,
 )
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -55,6 +63,8 @@ WORD_SCHEMA: dict[str, str] = {
 WHISPERX_BATCH_SIZE = 8
 
 _CROSSTALK_WARN_FRACTION = 0.5
+# a word just outside every diarized turn still belongs to the nearest one within this
+_WORD_REACH_S = 0.5
 
 
 def resolve_device(device: str) -> str:
@@ -284,14 +294,14 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
         "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.compute_type",
         "text.diarization", "text.crosstalk_margin_db", "text.word_timestamps", "segment",
     )
-    requires = (MediaPrepExtractor.name,)
+    requires = (MediaPrepExtractor.name, SpeakerReviewGate.name)
     resource_profile = "gpu_standard"
 
     def __init__(self, config):
@@ -316,7 +326,11 @@ class ASRExtractor(Extractor):
         from macaw.extractors import get_backend
 
         self.backend()
-        get_backend(DIARIZATION_GROUP, self.config.text.diarization)().check_available()
+        if self.config.text.diarization != SHARED_MODE:
+            get_backend(DIARIZATION_GROUP, self.config.text.diarization)().check_available()
+
+    def _shared(self) -> bool:
+        return self.config.text.diarization == SHARED_MODE
 
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = self.backend()
@@ -324,15 +338,80 @@ class ASRExtractor(Extractor):
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         prep = load_prep(self.config, recording.recording_id)
-        return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
+        if not self._shared():
+            return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
+        layout = layout_for(self.config, create=False)
+        return [
+            prep.shared_track_path(shared_track(prep, recording.recording_id)),
+            layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
+            layout.voice_owners_path(recording.recording_id),
+        ]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        cfg = self.config.text
         prep = load_prep(self.config, recording.recording_id)
         backend = self.backend()
-        tracks = {subject_id: prep.track_path(subject_id) for subject_id in prep.tracks}
-
         warnings: list[QCWarning] = []
+        if self._shared():
+            utterances, words = self._from_shared_track(recording, prep, backend, warnings)
+        else:
+            utterances, words = self._from_own_tracks(recording, prep, backend, warnings)
+
+        utterances = utterances.reset_index(drop=True)
+        utterances["n_words"] = (
+            utterances["text"].fillna("").astype(str).str.split().str.len().astype("int64")
+        )
+        # ASR times are on the prepared track, whose sample 0 sits at t_origin_s
+        for frame in (utterances, words):
+            frame["t_start"] = frame["t_start"] + prep.t_origin_s
+            frame["t_end"] = frame["t_end"] + prep.t_origin_s
+
+        artifacts = {
+            TRANSCRIPT_NAME: write_transcript(utterances, workspace / TRANSCRIPT_NAME),
+            WORDS_NAME: _io.write_file(words, workspace / WORDS_NAME, WORD_SCHEMA, "words"),
+        }
+
+        warnings += self._quality_warnings(recording, utterances, prep)
+        return ExtractorResult(
+            rows=self._rows(recording, utterances, prep),
+            specs=self._specs(backend),
+            artifacts=artifacts,
+            warnings=warnings,
+        )
+
+    def _from_shared_track(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
+        """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
+        cfg = self.config.text
+        rid = recording.recording_id
+        utterances, words = backend.transcribe(
+            prep.shared_track_path(shared_track(prep, rid)), language=cfg.language, word_timestamps=True
+        )
+        utterances, words, outside = within_track(utterances, words, prep.duration_s)
+        if outside:
+            warnings.append(
+                QCWarning(
+                    check="asr_outside_track", recording_id=rid, subject_id=None, severity="info",
+                    message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
+                )
+            )
+        turns = read_diarization(self.config, rid)
+        turns = turns[turns["exclusive"].astype(bool)].assign(
+            t_start=lambda frame: frame["t_start"] - prep.t_origin_s, t_end=lambda frame: frame["t_end"] - prep.t_origin_s
+        )
+        utterances, words, unplaced = split_by_voice(utterances, words, turns, voice_names(self.config, rid))
+        if unplaced:
+            warnings.append(
+                QCWarning(
+                    check="asr_unplaced_words", recording_id=rid, subject_id=None, severity="info",
+                    message=f"{unplaced} word(s) fell outside every named voice and were left out.",
+                )
+            )
+        for frame in (utterances, words):
+            frame["recording_id"] = rid
+        return _concat([utterances], TRANSCRIPT_SCHEMA, drop={"n_words"}), _concat([words], WORD_SCHEMA)
+
+    def _from_own_tracks(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
+        cfg = self.config.text
+        tracks = {subject_id: prep.track_path(subject_id) for subject_id in prep.tracks}
         utterance_parts: list[pd.DataFrame] = []
         word_parts: list[pd.DataFrame] = []
 
@@ -382,29 +461,7 @@ class ASRExtractor(Extractor):
         warnings += self._crosstalk_warnings(recording, flagged)
 
         utterances = flagged[~flagged["is_crosstalk"].astype(bool)].drop(columns=["is_crosstalk"])
-        words = _keep_utterances(words, utterances)
-
-        utterances = utterances.reset_index(drop=True)
-        utterances["n_words"] = (
-            utterances["text"].fillna("").astype(str).str.split().str.len().astype("int64")
-        )
-        # ASR times are on the prepared track, whose sample 0 sits at t_origin_s
-        for frame in (utterances, words):
-            frame["t_start"] = frame["t_start"] + prep.t_origin_s
-            frame["t_end"] = frame["t_end"] + prep.t_origin_s
-
-        artifacts = {
-            TRANSCRIPT_NAME: write_transcript(utterances, workspace / TRANSCRIPT_NAME),
-            WORDS_NAME: _io.write_file(words, workspace / WORDS_NAME, WORD_SCHEMA, "words"),
-        }
-
-        warnings += self._quality_warnings(recording, utterances, prep)
-        return ExtractorResult(
-            rows=self._rows(recording, utterances, prep),
-            specs=self._specs(backend),
-            artifacts=artifacts,
-            warnings=warnings,
-        )
+        return utterances, _keep_utterances(words, utterances)
 
     def _crosstalk_warnings(self, recording: Recording, flagged: pd.DataFrame) -> list[QCWarning]:
         warnings = []
@@ -433,7 +490,7 @@ class ASRExtractor(Extractor):
         span = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
 
         for subject in recording.subjects:
-            if subject.subject_id not in prep.tracks:
+            if subject.subject_id not in prep.tracks and not self._shared():
                 continue
             mine = utterances[utterances["subject_id"] == subject.subject_id]
             if mine.empty:
@@ -443,7 +500,7 @@ class ASRExtractor(Extractor):
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
                         severity="warn",
-                        message="No speech was transcribed on this track.",
+                        message="No speech was transcribed for them.",
                         t_start=span[0],
                         t_end=span[1],
                     )
@@ -634,3 +691,66 @@ def load_transcript(config, recording_id: str) -> pd.DataFrame:
         recording_id, ASRExtractor.name
     )
     return read_transcript(root / TRANSCRIPT_NAME)
+
+
+def split_by_voice(
+    utterances: pd.DataFrame, words: pd.DataFrame, turns: pd.DataFrame, names: dict[str, str | None]
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Each word goes to the voice turn it overlaps most, or the nearest within reach; a run of
+    one person's words inside a recogniser segment is one utterance. Returns the unplaced word count."""
+    columns = [column for column in utterances.columns if column not in {"utterance_index", "t_start", "t_end", "text", "confidence"}]
+    if words.empty:
+        # a backend without word times can only be split at its segments
+        placed = assign_voices(utterances, turns)
+        placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
+        kept = placed[placed["subject_id"].notna()].copy()
+        kept["utterance_index"] = kept.sort_values("t_start").groupby("subject_id").cumcount()
+        return kept, words.assign(subject_id=pd.Series(dtype="string")), int(len(placed) - len(kept))
+
+    placed = assign_voices(words, turns)
+    placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
+    unplaced = int(placed["subject_id"].isna().sum())
+    placed = placed[placed["subject_id"].notna()].sort_values(["t_start", "t_end"]).reset_index(drop=True)
+    # a new utterance starts wherever the speaker or the recogniser segment changes
+    run = (placed["subject_id"] != placed["subject_id"].shift()) | (placed["utterance_index"] != placed["utterance_index"].shift())
+    placed["run"] = run.cumsum()
+    parent = utterances.set_index("utterance_index")
+    rows = []
+    for _, part in placed.groupby("run", sort=True):
+        source = parent.loc[int(part["utterance_index"].iloc[0])]
+        rows.append({
+            "subject_id": part["subject_id"].iloc[0],
+            "run": int(part["run"].iloc[0]),
+            "t_start": float(part["t_start"].min()),
+            "t_end": float(part["t_end"].max()),
+            "text": " ".join(part["word"].astype(str)),
+            "confidence": float(part["score"].mean()) if part["score"].notna().any() else np.nan,
+            **{column: source[column] for column in columns},
+        })
+    split = pd.DataFrame(rows)
+    split["utterance_index"] = split.groupby("subject_id").cumcount()
+    index = split.set_index("run")["utterance_index"]
+    placed["utterance_index"] = placed["run"].map(index)
+    return split.drop(columns=["run"]), placed.drop(columns=["run"]), unplaced
+
+
+def assign_voices(spans: pd.DataFrame, turns: pd.DataFrame) -> pd.DataFrame:
+    """Add label: the turn each span overlaps most, else the nearest turn within reach, else None."""
+    out = spans.copy()
+    if turns.empty:
+        out["label"] = None
+        return out
+    starts = turns["t_start"].to_numpy(dtype=float)
+    ends = turns["t_end"].to_numpy(dtype=float)
+    labels = turns["label"].astype(str).to_numpy()
+    picked = []
+    for t_start, t_end in zip(out["t_start"].to_numpy(dtype=float), out["t_end"].to_numpy(dtype=float)):
+        overlap = np.minimum(ends, t_end) - np.maximum(starts, t_start)
+        best = int(np.argmax(overlap))
+        if overlap[best] > 0:
+            picked.append(labels[best])
+            continue
+        # negative overlap is the gap to that turn
+        picked.append(labels[best] if -overlap[best] <= _WORD_REACH_S else None)
+    out["label"] = picked
+    return out
