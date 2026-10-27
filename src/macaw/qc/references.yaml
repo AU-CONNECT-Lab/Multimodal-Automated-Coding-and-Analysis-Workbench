@@ -64,6 +64,13 @@ bain2023:
   booktitle: Proceedings of Interspeech 2023
   pages: 4489--4493
   year: 2023
+bredin2023:
+  type: inproceedings
+  author: "Bredin, Hervé"
+  title: "pyannote.audio 2.1 speaker diarization pipeline: principle, benchmark, and recipe"
+  booktitle: Proceedings of Interspeech 2023
+  pages: 1983--1987
+  year: 2023
 heldner2010:
   type: article
   author: "Heldner, Mattias and Edlund, Jens"

@@ -17,7 +17,7 @@ BIB_NAME = "references.bib"
 
 # extractors in the order a reader meets them; anything else (plugins) follows
 ORDER = (
-    "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.asr", "text.features",
+    "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "pose.detect", "pose.keypoints",
     "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
@@ -54,6 +54,8 @@ def describe(manifest: FeatureManifest, config) -> dict[str, list[str]]:
     for name in names:
         specs = by_extractor[name]
         text = _WRITERS.get(name, _plugin)(config, specs[0], {spec.name for spec in specs})
+        if not text:
+            continue
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     return sections
 
@@ -223,9 +225,25 @@ _ASR = {
 }
 
 
+def _diarize(config, spec, names) -> str:
+    if "n_voices_found" not in names:
+        return ""
+    return (
+        f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
+        f"{spec.params.get('model')} pipeline, with the number of speakers set to the number of participants. A "
+        "researcher listened to clips of each voice found and named the participant it belonged to."
+    )
+
+
 def _asr(config, spec, names) -> str:
     text_cfg = config.text
     language = f" in {text_cfg.language}" if text_cfg.language else ""
+    if text_cfg.diarization == "pyannote":
+        return (
+            f"The shared microphone was transcribed{language} with {_backend(_ASR, spec, model=text_cfg.asr_model)}. "
+            "Each word was given to the voice whose diarized turn it overlapped most, and consecutive words of one "
+            "participant within a recogniser segment formed an utterance."
+        )
     return (
         f"Speech on each participant's own track was transcribed{language} with "
         f"{_backend(_ASR, spec, model=text_cfg.asr_model)}. After each microphone was normalised to its own level, an "
@@ -394,6 +412,7 @@ _WRITERS = {
     "prosody.frame": _frame,
     "prosody.voice_report": _voice_report,
     "prosody.standard_sets": _standard_sets,
+    "text.diarize": _diarize,
     "text.asr": _asr,
     "text.features": _text_features,
     "turns.structure": _turns,

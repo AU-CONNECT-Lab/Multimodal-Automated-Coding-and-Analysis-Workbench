@@ -110,3 +110,16 @@ def test_write_methods_writes_the_text_and_only_the_cited_entries(tmp_path):
     methods, bib = write_methods(manifest(spec("turns.transitions", "fto_s")), config(), tmp_path)
     assert "Heldner & Edlund, 2010" in methods.read_text(encoding="utf-8")
     assert bib.read_text(encoding="utf-8").count("@") == 1
+
+
+def test_a_shared_microphone_is_described_only_when_one_was_diarized():
+    own = render(describe(manifest(spec("text.diarize", "n_shared_tracks_diarized"), spec("text.asr", "n_words", "whisperx", "3.8")), config()), load_references())[0]
+    assert "diarized" not in own and "own track" in own
+    shared = manifest(
+        spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="pyannote/speaker-diarization-community-1"),
+        spec("text.asr", "n_words", "whisperx", "3.8"),
+    )
+    text, used = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    assert "pyannote.audio 4.0.7 (Bredin, 2023)" in text and "community-1 pipeline" in text
+    assert "The shared microphone was transcribed" in text and "cross-talk" not in text
+    assert "bredin2023" in used
