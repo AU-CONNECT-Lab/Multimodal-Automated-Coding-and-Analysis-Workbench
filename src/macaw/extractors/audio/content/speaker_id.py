@@ -106,10 +106,15 @@ def match_voices(turns: pd.DataFrame, mouth: pd.DataFrame) -> dict | None:
 
 
 def describe_suggestion(suggestion: dict) -> str:
-    shown = [
-        f"{label} is {who}" + (
-            f" (rho {suggestion['evidence'][who]['rho']:.2f}, z {suggestion['evidence'][who]['z']:.1f})" if who in suggestion["evidence"] else ""
-        )
-        for label, who in sorted(suggestion["people"].items())
-    ]
+    from macaw.qc.checks import _MOUTH_Z
+
+    shown = []
+    for label, who in sorted(suggestion["people"].items()):
+        evidence = suggestion["evidence"].get(who)
+        if evidence is None:
+            shown.append(f"{label} is {who}")
+            continue
+        # a mouth that barely follows the voice was matched by elimination, so it needs listening to
+        weak = "" if evidence["z"] >= _MOUTH_Z else ", weak: listen to it"
+        shown.append(f"{label} is {who} (rho {evidence['rho']:.2f}, z {evidence['z']:.1f}{weak})")
     return "; ".join(shown)

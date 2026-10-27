@@ -22,7 +22,7 @@ from macaw.extractors.audio.content.diarization import (
     describe_voices,
     overlapped_fraction,
 )
-from macaw.extractors.audio.content.speaker_id import match_voices
+from macaw.extractors.audio.content.speaker_id import describe_suggestion, match_voices
 from macaw.extractors.prep import MediaPrepExtractor, PrepInfo
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -123,6 +123,15 @@ def test_mouth_movement_names_the_voice_it_moves_with():
     suggestion = match_voices(found, mouth)
     assert suggestion["people"] == {"S0": "child", "S1": "parent"}
     assert suggestion["evidence"]["parent"]["rho"] > 0.5 > suggestion["evidence"]["parent"]["rival_rho"]
+
+
+def test_a_voice_matched_by_elimination_is_marked_for_listening():
+    suggestion = {
+        "people": {"S0": "parent", "S1": "child"},
+        "evidence": {"parent": {"rho": 0.5, "z": 6.0}, "child": {"rho": 0.0, "z": -0.1}},
+    }
+    shown = describe_suggestion(suggestion)
+    assert "S0 is parent (rho 0.50, z 6.0)" in shown and "S1 is child (rho 0.00, z -0.1, weak: listen to it)" in shown
 
 
 def talk_mask(found, label, t):
