@@ -300,3 +300,14 @@ class TestSummary:
         summary = queue_summary(build_queue(pd.DataFrame(), threshold=0.7))
         assert summary["n_items"] == 0
         assert summary["by_reason"] == {}
+
+
+def test_a_csv_queue_keeps_ids_that_look_like_numbers(tmp_path):
+    import pandas as pd
+
+    from macaw.coding.review_queue import REVIEW_QUEUE_SCHEMA, read_queue
+
+    path = tmp_path / "q.csv"
+    pd.DataFrame([{column: None for column in REVIEW_QUEUE_SCHEMA} | {"recording_id": "003", "subject_id": "01", "t_start": 1.0}]).to_csv(path, index=False)
+    queue = read_queue(path)
+    assert queue["recording_id"].tolist() == ["003"] and queue["subject_id"].tolist() == ["01"]

@@ -119,7 +119,9 @@ def read_queue(path: Path) -> pd.DataFrame:
     if not path.is_file():
         raise InputNotFoundError(f"{NAME} not found: {path}")
     if path.suffix.lower() == ".csv":
-        return coerce_frame(pd.read_csv(path), REVIEW_QUEUE_SCHEMA, NAME)
+        # ids such as 003 must stay text, not become the number 3
+        text = {column: "string" for column, kind in REVIEW_QUEUE_SCHEMA.items() if kind == "string"}
+        return coerce_frame(pd.read_csv(path, dtype=text), REVIEW_QUEUE_SCHEMA, NAME)
     return _io.read_file(path, REVIEW_QUEUE_SCHEMA, NAME)
 
 
