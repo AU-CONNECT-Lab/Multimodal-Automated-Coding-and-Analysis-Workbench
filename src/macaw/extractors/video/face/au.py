@@ -44,6 +44,12 @@ _POSE_SPECS = {
 }
 
 
+def _au_scale(backend: str, model: str) -> str:
+    if backend == "openface":
+        return "OpenFace intensity, 0 to 5, divided by 5"
+    return f"0 to 1 as the {backend} {model} model scores it"
+
+
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
@@ -112,6 +118,8 @@ class FaceExtractor(Extractor):
         backend = self.backend()
         per_subject, seen_frames, views = self.faces(recording, model=cfg.model, landmarks=cfg.landmarks, gaze=cfg.gaze)
         warnings: list[QCWarning] = []
+        if cfg.action_units and not getattr(backend, "provides_action_units", True):
+            warnings.append(self._warning(recording, None, "info", f"face.backend {backend.name} gives no action units, only head angles and landmarks"))
         frames, landmark_rows = [], []
         for subject, faces in per_subject.items():
             if seen_frames[subject] and len(faces) / seen_frames[subject] < _LOW_FACE_RATE:
@@ -154,7 +162,7 @@ class FaceExtractor(Extractor):
         if landmark_rows:
             pd.concat(landmark_rows, ignore_index=True).to_parquet(directory / LANDMARKS_NAME, index=False)
             artifacts[LANDMARKS_NAME] = directory / LANDMARKS_NAME
-        (directory / FACES_NAME).write_text(json.dumps({"views": views, "model": cfg.model or "v1"}, indent=2), encoding="utf-8")
+        (directory / FACES_NAME).write_text(json.dumps({"views": views, "model": cfg.model or ("v1" if backend.name == "pyfeat" else None)}, indent=2), encoding="utf-8")
         artifacts[FACES_NAME] = directory / FACES_NAME
         return ExtractorResult(
             rows=rows, specs=self._specs(set(rows["feature"]), backend), artifacts=artifacts, warnings=warnings
@@ -164,7 +172,7 @@ class FaceExtractor(Extractor):
         model = self.config.face.model or "v1"
         described = {
             **{
-                code.lower(): (f"Action unit {int(code[2:])} ({meaning}), 0 to 1 as the {backend.name} {model} model scores it.", None)
+                code.lower(): (f"Action unit {int(code[2:])} ({meaning}), {_au_scale(backend.name, model)}.", None)
                 for code, meaning in ACTION_UNITS.items()
             },
             **{name: (text, "deg") for name, text in _POSE_SPECS.items()},
@@ -198,6 +206,8 @@ class FaceAUCheckExtractor(FaceExtractor):
 
     def check_available(self) -> None:
         cfg = self.config.face
+        if cfg.backend != "pyfeat":
+            raise ConfigError(f"face.au_check compares the two py-feat models; face.backend is {cfg.backend}")
         if cfg.check_model is None:
             raise ConfigError("face.au_check runs a second face model to check face.au against; set face.check_model, e.g. v2")
         if cfg.check_model == (cfg.model or "v1"):

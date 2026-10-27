@@ -96,11 +96,16 @@ def run(
 
 
 def _echo_reporting(config, dag) -> None:
-    if "pose.detect" not in dag.nodes or config.pose.backend is None:
-        return
-    notice = get_backend(POSE_BACKENDS, config.pose.backend).reporting
-    if notice:
-        typer.echo(f"note: {notice}")
+    from macaw.extractors.video.face.backends import BACKEND_GROUP as FACE_BACKENDS
+
+    notices = []
+    if "pose.detect" in dag.nodes and config.pose.backend is not None:
+        notices.append(get_backend(POSE_BACKENDS, config.pose.backend).reporting)
+    if "face.au" in dag.nodes:
+        notices.append(get_backend(FACE_BACKENDS, config.face.backend).reporting)
+    for notice in notices:
+        if notice:
+            typer.echo(f"note: {notice}")
 
 
 def _echo_waiting(waiting) -> None:

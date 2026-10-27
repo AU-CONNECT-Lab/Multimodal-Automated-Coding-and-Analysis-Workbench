@@ -81,8 +81,8 @@ kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
 
 face:
-  backend: pyfeat                    # pyfeat (not bundled: most of its model weights are for non-commercial research)
-  model: null                        # pyfeat: v1 (default; modular, xgb action units) | v2 (one multitask model)
+  backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface
+  model: null                        # pyfeat: v1 (default) or v2 | mediapipe: path to face_landmarker.task, or set MACAW_FACE_MODEL
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the face model takes at once
   action_units: true                 # 20 action units per frame, 0 to 1

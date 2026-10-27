@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -177,3 +178,66 @@ def test_the_check_model_must_be_set_and_differ(check_model, message):
     extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(check_model=check_model)))
     with pytest.raises(ConfigError, match=message):
         extractor.check_available()
+
+
+def test_au_check_compares_py_feat_models_only():
+    from macaw.exceptions import ConfigError
+
+    extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(backend="mediapipe", check_model="v2")))
+    with pytest.raises(ConfigError, match="py-feat"):
+        extractor.check_available()
+
+
+class TestMediaPipeFace:
+    def test_a_head_turned_to_its_own_right_has_a_positive_yaw_and_a_raised_one_a_positive_pitch(self):
+        import numpy as np
+
+        from macaw.extractors.video.face.backends import head_angles
+
+        assert head_angles(np.eye(4)) == pytest.approx((0.0, 0.0, 0.0))
+        turn = np.radians(30.0)
+        about_y = np.array([[np.cos(turn), 0, np.sin(turn)], [0, 1, 0], [-np.sin(turn), 0, np.cos(turn)]])
+        pitch, roll, yaw = head_angles(about_y.T)
+        assert yaw == pytest.approx(30.0) and pitch == pytest.approx(0.0, abs=1e-9)
+        about_x = np.array([[1, 0, 0], [0, np.cos(turn), -np.sin(turn)], [0, np.sin(turn), np.cos(turn)]])
+        assert head_angles(about_x)[0] == pytest.approx(-30.0)
+
+    def test_the_mesh_becomes_68_points_in_pixels_and_a_box(self):
+        from macaw.extractors.video.face.backends import FACE_COLUMNS, MEDIAPIPE_TO_68, mediapipe_face_rows
+
+        points = [SimpleNamespace(x=index / 478.0, y=0.5) for index in range(478)]
+        rows = mediapipe_face_rows([points], [np.eye(4)], frame_index=7, width=478, height=100, keep_landmarks=True)
+        row = rows[0]
+        assert set(FACE_COLUMNS) <= set(row) and row["frame"] == 7
+        assert row["x_33"] == pytest.approx(MEDIAPIPE_TO_68[33]) and row["y_33"] == pytest.approx(50.0)
+        assert row["face_width"] == pytest.approx(477.0) and "x_68" not in row
+        assert "x_0" not in mediapipe_face_rows([points], [np.eye(4)], frame_index=7, width=478, height=100, keep_landmarks=False)[0]
+
+
+def test_openface_csv_becomes_the_backend_contract():
+    from macaw.extractors.video.face.backends import FACE_COLUMNS, GAZE_COLUMNS, openface_rows
+
+    row = {"frame": 1, "face_id": 0, "confidence": 0.9, "success": 1, "pose_Rx": 0.1, "pose_Ry": 0.2, "pose_Rz": 0.3,
+           "gaze_angle_x": 0.05, "gaze_angle_y": -0.1, "AU12_r": 2.5, "AU45_r": 1.0}
+    row.update({f"x_{i}": 10.0 + i for i in range(68)})
+    row.update({f"y_{i}": 20.0 + i for i in range(68)})
+    found = pd.DataFrame([row, {**row, "frame": 2, "success": 0}])
+    out = openface_rows(found, offset=100, landmarks=True, gaze=True, action_units={"AU12", "AU43"})
+    assert out["frame"].tolist() == [100] and set(FACE_COLUMNS) | set(GAZE_COLUMNS) <= set(out.columns)
+    assert out.at[0, "AU12"] == pytest.approx(0.5) and "AU45" not in out and "AU43" not in out
+    assert out.at[0, "pitch"] == pytest.approx(-np.degrees(0.1)) and out.at[0, "yaw"] == pytest.approx(np.degrees(0.2))
+    assert out.at[0, "gaze_pitch"] == pytest.approx(np.degrees(0.1)) and out.at[0, "face_width"] == pytest.approx(67.0)
+    assert out.at[0, "x_67"] == pytest.approx(77.0)
+    assert "x_0" not in openface_rows(found, offset=0, landmarks=False, gaze=False, action_units=set())
+
+
+def test_openface_is_found_through_its_folder(tmp_path, monkeypatch):
+    from macaw.exceptions import BackendNotAvailableError
+    from macaw.extractors.video.face.backends import OPENFACE_ENV_VAR, OpenFaceBackend
+
+    monkeypatch.setenv(OPENFACE_ENV_VAR, str(tmp_path))
+    monkeypatch.setenv("PATH", "")
+    with pytest.raises(BackendNotAvailableError, match="academic"):
+        OpenFaceBackend().check_available()
+    (tmp_path / "FaceLandmarkVidMulti.exe").write_bytes(b"")
+    OpenFaceBackend().check_available()
