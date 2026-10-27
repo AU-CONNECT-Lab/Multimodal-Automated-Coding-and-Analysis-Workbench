@@ -144,3 +144,36 @@ def test_gaze_needs_a_backend_that_gives_it(monkeypatch):
     monkeypatch.setattr(au_module, "resolve_backend", lambda name: SimpleNamespace(name="plain", provides_gaze=False))
     with pytest.raises(BackendNotAvailableError, match="no gaze direction"):
         FaceExtractor(SimpleNamespace(face=FaceSection(gaze=True))).check_available()
+
+
+class TestAgreement:
+    def frames(self, values_a, values_b, fps=10.0):
+        t = pd.Series(range(len(values_a))) / fps
+        return pd.DataFrame({"t": t, "au12": values_a}), pd.DataFrame({"t": t, "au12": values_b})
+
+    def test_two_calibrations_of_the_same_movement_agree(self):
+        import numpy as np
+
+        rise = np.repeat(np.arange(30) % 7, 10).astype(float)
+        a, b = self.frames(rise, 0.1 + rise ** 2 / 50)
+        assert au_module.au_agreement(a, b)["au12"] == pytest.approx(1.0)
+
+    def test_unrelated_series_do_not(self):
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        a, b = self.frames(rng.random(400), rng.random(400))
+        assert abs(au_module.au_agreement(a, b)["au12"]) < 0.4
+
+    def test_too_little_overlap_is_missing(self):
+        a, b = self.frames([0.1, 0.2] * 20, [0.3, 0.1] * 20)
+        assert pd.isna(au_module.au_agreement(a, b)["au12"])
+
+
+@pytest.mark.parametrize("check_model, message", [(None, "set face.check_model"), ("v1", "already uses")])
+def test_the_check_model_must_be_set_and_differ(check_model, message):
+    from macaw.exceptions import ConfigError
+
+    extractor = au_module.FaceAUCheckExtractor(SimpleNamespace(face=FaceSection(check_model=check_model)))
+    with pytest.raises(ConfigError, match=message):
+        extractor.check_available()

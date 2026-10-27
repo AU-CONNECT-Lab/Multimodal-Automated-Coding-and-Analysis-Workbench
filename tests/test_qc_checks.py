@@ -501,3 +501,33 @@ class TestMouthMatch:
         path = two_person_transcript(tmp_path / "t.parquet", talk_turns())
         results = SimpleNamespace(artifact=lambda e, n: path, long_table=lambda source, features=None: empty_frame(LONG_TABLE_SCHEMA))
         assert "face.movement" in check_mouth_match(RECORDING, None, results).skipped
+
+
+class TestAUAgreement:
+    def results(self, rho_by_subject):
+        rows = pd.concat(
+            [
+                build_long_rows(
+                    recording_id=RID, source="face.au_check", scale=Scale.RECORDING, subject_id=subject,
+                    values=pd.DataFrame({"t_start": [0.0], **{f"{unit}_agreement": [value] for unit, value in rho.items()},
+                                         "au_agreement_median": [0.0]}),
+                )
+                for subject, rho in rho_by_subject.items()
+            ],
+            ignore_index=True,
+        )
+        return SimpleNamespace(long_table=lambda source, features=None: rows)
+
+    def test_each_person_hears_which_units_the_models_agree_on(self):
+        from macaw.qc.checks import check_au_agreement
+
+        result = check_au_agreement(RECORDING, None, self.results({"a": {"au43": 0.8, "au12": 0.5, "au09": -0.2}, "b": {"au43": 0.7, "au09": 0.1, "au11": 0.0}}))
+        by = {w.subject_id: w for w in result.warnings}
+        assert by["a"].severity == "info" and "2 of 3 action units (au12, au43); read au09 with care" in by["a"].message
+        assert by["b"].severity == "warn"
+
+    def test_without_the_second_model_it_says_how_to_get_one(self):
+        from macaw.qc.checks import check_au_agreement
+
+        empty = SimpleNamespace(long_table=lambda source, features=None: empty_frame(LONG_TABLE_SCHEMA))
+        assert "face.check_model" in check_au_agreement(RECORDING, None, empty).skipped

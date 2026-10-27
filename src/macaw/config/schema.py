@@ -107,7 +107,7 @@ class FaceSection(_Section):
     blink_min_eye_px: float = 5.0
     gaze: bool = False
     mutual_gaze_angle_deg: float = 15.0
-    cross_backend_check: str | None = None
+    check_model: str | None = None
 
 
 class MotionSection(_Section):
@@ -160,6 +160,7 @@ class QCSection(_Section):
             "track_quality",
             "octave_error",
             "motion_energy",
+            "au_agreement",
         ]
     )
     fail_fast: bool = False

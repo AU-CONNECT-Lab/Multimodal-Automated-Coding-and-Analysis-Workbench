@@ -31,6 +31,7 @@ PROSODY_SOURCE = "prosody.frame"
 MEA_SOURCE = "motion.mea"
 ASR_SOURCE = "text.asr"
 MOUTH_SOURCE = "face.movement"
+AU_CHECK_SOURCE = "face.au_check"
 
 CANDIDATE_SCHEMA: dict[str, str] = {
     "recording_id": "string",
@@ -68,6 +69,8 @@ _MOUTH_Z = 1.5
 _FROZEN_S = 1.0
 # nothing at all moving in a person's region for this long: they left it, or it is drawn on a wall
 _STILL_S = 10.0
+# two face models whose rank correlation on an action unit is below this are not reading the same thing
+_AU_AGREE = 0.4
 
 _CHECKS: dict[str, Callable] = {}
 
@@ -563,6 +566,32 @@ def check_motion_energy(recording: Recording, config: MacawConfig, results) -> C
     candidates = _concat_candidates(pieces)
     return CheckResult(warnings=_summary("motion_energy", rid, candidates), candidates=candidates)
 
+
+@register_check("au_agreement")
+def check_au_agreement(recording: Recording, config: MacawConfig, results) -> CheckResult:
+    """Two face models reading the same face should rise and fall together on an action unit; one they
+    disagree on is not dependable. No moments: within a short window a still face drives the agreement down."""
+    summary = results.long_table(AU_CHECK_SOURCE)
+    if summary.empty:
+        return CheckResult(skipped=f"no {AU_CHECK_SOURCE} output; set face.check_model to run it")
+    rid = recording.recording_id
+    summary = summary[summary["feature"].str.match(r"^au\d+_agreement$")]
+    warnings = []
+    for subject_id, rows in summary.groupby("subject_id", observed=True):
+        rho = dict(zip(rows["feature"].str.removesuffix("_agreement"), rows["value"]))
+        agreed = sorted(unit for unit, value in rho.items() if value >= _AU_AGREE)
+        others = sorted(unit for unit in rho if unit not in agreed)
+        warnings.append(
+            QCWarning(
+                check="au_agreement", recording_id=rid, subject_id=str(subject_id),
+                severity="warn" if len(agreed) < len(others) else "info",
+                message=f"the two face models agree on {len(agreed)} of {len(rho)} action units"
+                + (f" ({', '.join(agreed)})" if agreed else "")
+                + (f"; read {', '.join(others)} with care" if others else ""),
+                details={"rho": rho},
+            )
+        )
+    return CheckResult(warnings=warnings)
 
 def _lasting(candidates: pd.DataFrame, at_least_s: float) -> pd.DataFrame:
     """Spans at least this long, scored by how long they last."""

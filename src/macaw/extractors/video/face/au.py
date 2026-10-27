@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import BackendNotAvailableError, UnreadableMediaError
+from macaw.exceptions import BackendNotAvailableError, ConfigError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
@@ -16,13 +16,16 @@ from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import keypoints as keypoints_store
-from macaw.store.longtable import build_long_rows, concat_long_tables
+from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import Scale
 
 # a face is a person's when one of these of theirs lies inside its box
 NAMING_JOINTS = ("nose", "left_eye", "right_eye")
 LANDMARKS_NAME = "landmarks.parquet"
 FACES_NAME = "faces.json"
+AU_CHECK_NAME = "au_check.parquet"
+AGREEMENT_BIN_S = 1.0
+_MIN_AGREEMENT_BINS = 10
 _LOW_FACE_RATE = 0.5
 
 ACTION_UNITS = {
@@ -69,8 +72,8 @@ class FaceExtractor(Extractor):
         """Faces are named through the people pose named, so the keypoints are the input that matters."""
         return [_keypoints_file(self.config, recording.recording_id)]
 
-    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        """Emits a warning on child data: AU models are trained on adults."""
+    def faces(self, recording: Recording, *, model: str | None, landmarks: bool, gaze: bool):
+        """(each person's named faces with a time column, frames each person was seen in, each person's view)."""
         cfg = self.config.face
         backend = self.backend()
         prep = apply_prep_timing(self.config, recording)
@@ -80,7 +83,6 @@ class FaceExtractor(Extractor):
         )
         views = primary_views(keypoints, recording)
         by_name = {item.path.name: item for item in recording.media if item.kind == "video"}
-        warnings: list[QCWarning] = []
         per_subject: dict[str, pd.DataFrame] = {}
         seen_frames: dict[str, int] = {}
         for video in sorted(set(views.values())):
@@ -90,19 +92,26 @@ class FaceExtractor(Extractor):
                 raise UnreadableMediaError(f"{item.path}: no frame rate to convert frames to time")
             first = max(math.floor((start - item.offset_s) * fps), 0)
             stop = math.ceil((end - item.offset_s) * fps) + 1
-            faces = backend.infer(
-                item.path, frames=(first, stop), device=cfg.device, model=cfg.model,
-                batch_size=cfg.batch_size, landmarks=cfg.landmarks, gaze=cfg.gaze,
+            found = backend.infer(
+                item.path, frames=(first, stop), device=cfg.device, model=model,
+                batch_size=cfg.batch_size, landmarks=landmarks, gaze=gaze,
             )
             subjects = [subject for subject, view in views.items() if view == video]
-            named = name_faces(faces, keypoints[keypoints["video"] == video], subjects)
+            named = name_faces(found, keypoints[keypoints["video"] == video], subjects)
             named["t"] = named["frame"] / fps + item.offset_s
             named = named[(named["t"] >= start) & (named["t"] <= end)]
             on_camera = keypoints[(keypoints["video"] == video) & keypoints["x"].notna()]
             for subject in subjects:
                 per_subject[subject] = named[named["subject_id"] == subject]
                 seen_frames[subject] = int(on_camera.loc[on_camera["subject_id"] == subject, "frame"].nunique())
+        return per_subject, seen_frames, views
 
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        """Emits a warning on child data: AU models are trained on adults."""
+        cfg = self.config.face
+        backend = self.backend()
+        per_subject, seen_frames, views = self.faces(recording, model=cfg.model, landmarks=cfg.landmarks, gaze=cfg.gaze)
+        warnings: list[QCWarning] = []
         frames, landmark_rows = [], []
         for subject, faces in per_subject.items():
             if seen_frames[subject] and len(faces) / seen_frames[subject] < _LOW_FACE_RATE:
@@ -177,6 +186,85 @@ class FaceExtractor(Extractor):
         )
 
 
+@register_extractor
+class FaceAUCheckExtractor(FaceExtractor):
+    """A second face model on the same faces, run only to see whether the two agree on each action unit."""
+
+    name = "face.au_check"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    config_sections = ("face.backend", "face.model", "face.check_model", "face.device", "segment")
+    requires = (FaceExtractor.name,)
+
+    def check_available(self) -> None:
+        cfg = self.config.face
+        if cfg.check_model is None:
+            raise ConfigError("face.au_check runs a second face model to check face.au against; set face.check_model, e.g. v2")
+        if cfg.check_model == (cfg.model or "v1"):
+            raise ConfigError(f"face.check_model is {cfg.check_model}, the model face.au already uses; pick the other one")
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        return super().inputs_for(recording) + [_face_rows_file(self.config, recording.recording_id)]
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        cfg = self.config.face
+        per_subject, _, _ = self.faces(recording, model=cfg.check_model, landmarks=False, gaze=False)
+        reference = read_long_table(_face_rows_file(self.config, recording.recording_id), recording_id=recording.recording_id)
+        names = [code.lower() for code in ACTION_UNITS]
+        reference = reference[reference["feature"].isin(names)]
+        frames, checked = [], []
+        for subject, faces in per_subject.items():
+            mine = reference[reference["subject_id"] == subject]
+            if faces.empty or mine.empty:
+                continue
+            check = faces[["t", *[code for code in ACTION_UNITS if code in faces.columns]]].rename(columns=str.lower)
+            checked.append(check.assign(subject_id=subject))
+            wide = mine.pivot_table(index="t_start", columns="feature", values="value", observed=True).reset_index()
+            agreement = au_agreement(wide.rename(columns={"t_start": "t"}), check)
+            values = {f"{au}_agreement": [rho] for au, rho in agreement.items()}
+            values["au_agreement_median"] = [float(pd.Series(agreement).median())]
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame({"t_start": [faces["t"].min()], "t_end": [faces["t"].max()], **values}),
+                    scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
+                    entities=recording.entities(), subject_id=subject,
+                )
+            )
+        directory = workspace / self.name
+        directory.mkdir(parents=True, exist_ok=True)
+        artifacts = {}
+        if checked:
+            pd.concat(checked, ignore_index=True).to_parquet(directory / AU_CHECK_NAME, index=False)
+            artifacts[AU_CHECK_NAME] = directory / AU_CHECK_NAME
+        rows = concat_long_tables(frames)
+        return ExtractorResult(rows=rows, specs=self._check_specs(set(rows["feature"])), artifacts=artifacts)
+
+    def _check_specs(self, emitted: set[str]) -> list[FeatureSpec]:
+        backend, cfg = self.backend(), self.config.face
+        models = f"the {cfg.model or 'v1'} and {cfg.check_model} models"
+        described = {
+            **{
+                f"{code.lower()}_agreement": f"Spearman correlation of action unit {int(code[2:])} between {models} over {AGREEMENT_BIN_S:g} s means."
+                for code in ACTION_UNITS
+            },
+            "au_agreement_median": f"Median over action units of the agreement between {models}; low means the face signal is not dependable.",
+        }
+        return [
+            FeatureSpec(
+                name=name, description=description, unit=None, scale=Scale.RECORDING, group=self.group,
+                extractor=self.name, extractor_version=self.version, backend=backend.name,
+                backend_version=backend.version, params={"model": cfg.model or "v1", "check_model": cfg.check_model},
+                aggregation="mean", validation="none",
+            )
+            for name, description in described.items()
+            if name in emitted
+        ]
+
+
+def _face_rows_file(config, recording_id: str) -> Path:
+    return layout_for(config, create=False).long_table_path(recording_id) / f"{FaceExtractor.name}.parquet"
+
+
 def name_faces(faces: pd.DataFrame, keypoints: pd.DataFrame, subjects: list[str]) -> pd.DataFrame:
     """Each face goes to the person whose nose or eyes lie inside its box; a person keeps one face
     per frame, the most confident, and a face no one's head is in stays out."""
@@ -201,6 +289,18 @@ def _keypoints_file(config, recording_id: str) -> Path:
     return layout_for(config, create=False).keypoints_path(recording_id) / f"{PoseExtractor.name}.parquet"
 
 
-def cross_backend_agreement(au_a: pd.DataFrame, au_b: pd.DataFrame) -> pd.DataFrame:
-    """QC only. AU values are never merged across backends; different intensity calibration."""
-    raise NotImplementedError
+def au_agreement(reference: pd.DataFrame, check: pd.DataFrame, *, bin_s: float = AGREEMENT_BIN_S) -> dict[str, float]:
+    """Spearman per action unit between two models over bin means, so the two calibrations need not match;
+    both frames hold t and lower-case AU columns. NaN where too few bins overlap."""
+    columns = [column for column in reference.columns if column in check.columns and column != "t"]
+    binned = [
+        frame.assign(bin=(frame["t"].to_numpy(dtype=float) // bin_s).astype(int)).groupby("bin")[columns].mean()
+        for frame in (reference, check)
+    ]
+    both = binned[0].join(binned[1], lsuffix="_a", rsuffix="_b", how="inner")
+    agreement = {}
+    for column in columns:
+        pair = both[[f"{column}_a", f"{column}_b"]].dropna()
+        enough = len(pair) >= _MIN_AGREEMENT_BINS and pair.nunique().min() > 1
+        agreement[column] = float(pair.corr(method="spearman").iloc[0, 1]) if enough else float("nan")
+    return agreement

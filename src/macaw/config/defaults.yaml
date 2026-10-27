@@ -85,7 +85,7 @@ face:
   blink_min_eye_px: 5.0              # px; eyes narrower than this in the picture are not read for blinks
   gaze: false                        # gaze direction per frame as well (pyfeat: v1 adds L2CS-Net, v2 has it built in)
   mutual_gaze_angle_deg: 15.0        # deg; angular tolerance for calling two gazes mutual
-  cross_backend_check: null          # second backend name; runs the AU agreement QC only
+  check_model: null                  # a second model (v1 or v2) for face.au_check, which only checks AU agreement
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera, else the first shared one; required by motion.mea
@@ -126,6 +126,7 @@ qc:
     - track_quality
     - octave_error
     - motion_energy
+    - au_agreement
   fail_fast: false                   # true aborts the run on the first failed check
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
   review_max_candidates: 40          # frames the checks pointed at, spread across reasons

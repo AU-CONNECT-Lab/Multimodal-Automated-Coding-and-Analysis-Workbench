@@ -43,6 +43,7 @@ EVERYTHING = manifest(
     spec("pose.kinematics", "hand_distance"), spec("motion.mea", "motion_energy"),
     spec("face.au", "au01", "pyfeat", "2.1.5", model="v1"), spec("face.au", "face_yaw_deg", "pyfeat", "2.1.5", model="v1"),
     spec("face.au", "gaze_yaw_deg", "pyfeat", "2.1.5", model="v1"),
+    spec("face.au_check", "au12_agreement", "pyfeat", "2.1.5", model="v1", check_model="v2"),
     spec("face.movement", "mouth_opening"),
     spec("my.plugin", "thing", "mine", "1.0"),
 )
@@ -63,6 +64,7 @@ def test_every_step_renders_and_every_citation_is_in_the_reference_list():
     assert {"bain2023", "radford2023", "eyben2016", "schuller2016", "reimers2019", "abdelrahman2023", "zhang2022"} <= set(used)
     assert "from 30 s to 630 s" in text and "child 150 to 600 Hz" in text and "yolo11x-pose.pt" in text
     assert "my.plugin 0.1.0 extractor, backend mine 1.0" in text
+    assert "v2 models were run on the same faces" in text
 
 
 def test_only_what_ran_is_described():

@@ -19,7 +19,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.asr", "text.features",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "motion.mea", "face.au", "face.movement",
+    "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -354,6 +354,14 @@ def _face(config, spec, names) -> str:
     return text
 
 
+def _au_check(config, spec, names) -> str:
+    return (
+        f"As a check on the action units, Py-Feat's {spec.params.get('check_model')} models were run on the same faces "
+        f"and each action unit's agreement with the {spec.params.get('model')} models was measured as the Spearman "
+        "correlation of their 1 s means."
+    )
+
+
 def _movement(config, spec, names) -> str:
     return (
         "From the face landmarks, mouth opening (the gap between the inner lips over the distance from the eyes to the "
@@ -384,5 +392,6 @@ _WRITERS = {
     "pose.kinematics": _kinematics,
     "motion.mea": _mea,
     "face.au": _face,
+    "face.au_check": _au_check,
     "face.movement": _movement,
 }
