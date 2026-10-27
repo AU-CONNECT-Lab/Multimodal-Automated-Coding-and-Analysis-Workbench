@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.extractors import register_extractor
+from macaw.extractors.audio.content.diarization import SpeakerReviewGate, inside, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import (
     ProsodyBackend,
     frame_times,
@@ -64,11 +65,11 @@ _SUMMARY_SPECS = {
 @register_extractor
 class FrameProsodyExtractor(Extractor):
     name = "prosody.frame"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "prosody"
-    config_sections = ("prosody", "segment")
-    requires = (MediaPrepExtractor.name,)
+    config_sections = ("prosody", "segment", "text.diarization")
+    requires = (MediaPrepExtractor.name, SpeakerReviewGate.name)
 
     def __init__(self, config):
         super().__init__(config)
@@ -92,8 +93,7 @@ class FrameProsodyExtractor(Extractor):
         return (backend.name, str(backend.version))
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        prep = load_prep(self.config, recording.recording_id)
-        return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
+        return voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id))
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.prosody
@@ -105,12 +105,22 @@ class FrameProsodyExtractor(Extractor):
         entities = recording.entities()
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
 
+        sources = voice_sources(self.config, recording, prep)
+        measured: dict[tuple, pd.DataFrame] = {}
         for subject in recording.subjects:
-            if subject.subject_id not in prep.tracks:
+            if subject.subject_id not in sources:
                 continue
-            audio, sr = load_audio(prep.track_path(subject.subject_id))
+            path, spans = sources[subject.subject_id]
             f0_min, f0_max = f0_range(cfg, subject)
-            contours = self._contours(backend, audio, sr, cfg.frame_step_s, f0_min, f0_max)
+            # a shared track is measured once per pitch range and then cut to each person's solo spans
+            key = (path, f0_min, f0_max)
+            if key not in measured:
+                audio, sr = load_audio(path)
+                measured[key] = self._contours(backend, audio, sr, cfg.frame_step_s, f0_min, f0_max)
+            contours = measured[key].copy()
+            if spans is not None:
+                alone = inside(contours["t_start"].to_numpy(dtype=float) + prep.t_origin_s, spans)
+                contours.loc[~alone, [column for column in contours.columns if column != "t_start"]] = np.nan
 
             voiced = contours["f0_hz"].to_numpy(dtype=float)
             median = float(np.nanmedian(voiced)) if np.any(np.isfinite(voiced)) else np.nan

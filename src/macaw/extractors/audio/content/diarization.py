@@ -476,3 +476,53 @@ class SpeakerReviewGate(Gate):
             f"in {clips}{hint}, or name them with `macaw accept-voices -r {rid} --rename LABEL=PERSON,...` "
             f"({NO_ONE} leaves a voice out)"
         )
+
+
+def solo_spans(turns: pd.DataFrame, names: dict[str, str | None]) -> dict[str, pd.DataFrame]:
+    """Per named person, the stretches where their voice is the only one, so a measure taken
+    off the shared microphone there is theirs alone."""
+    regular = turns[~turns["exclusive"].astype(bool)]
+    edges = np.unique(np.concatenate([regular["t_start"].to_numpy(dtype=float), regular["t_end"].to_numpy(dtype=float)]))
+    found: dict[str, list[tuple[float, float]]] = {}
+    for start, end in zip(edges[:-1], edges[1:]):
+        middle = (start + end) / 2
+        speaking = regular[(regular["t_start"] <= middle) & (regular["t_end"] > middle)]["label"].astype(str).unique()
+        if len(speaking) != 1 or names.get(speaking[0]) is None:
+            continue
+        spans = found.setdefault(names[speaking[0]], [])
+        if spans and spans[-1][1] == start:
+            spans[-1] = (spans[-1][0], end)
+        else:
+            spans.append((start, end))
+    return {who: pd.DataFrame(spans, columns=["t_start", "t_end"]) for who, spans in found.items()}
+
+
+def inside(t: np.ndarray, spans: pd.DataFrame) -> np.ndarray:
+    """Which times fall in one of the spans; the spans must not overlap."""
+    starts = spans["t_start"].to_numpy(dtype=float)
+    ends = spans["t_end"].to_numpy(dtype=float)
+    order = np.argsort(starts)
+    starts, ends = starts[order], ends[order]
+    index = np.searchsorted(starts, t, side="right") - 1
+    return (index >= 0) & (t < ends[np.clip(index, 0, None)])
+
+
+def voice_sources(config, recording: Recording, prep) -> dict[str, tuple[Path, pd.DataFrame | None]]:
+    """Where each person's voice is: their own track whole, or the shared track within their solo spans."""
+    if config.text.diarization != SHARED_MODE:
+        return {subject_id: (prep.track_path(subject_id), None) for subject_id in prep.tracks}
+    path = prep.shared_track_path(shared_track(prep, recording.recording_id))
+    spans = solo_spans(read_diarization(config, recording.recording_id), voice_names(config, recording.recording_id))
+    return {who: (path, found) for who, found in spans.items()}
+
+
+def voice_inputs(config, recording: Recording, prep) -> list[Path]:
+    """What voice_sources reads, for a cache key."""
+    if config.text.diarization != SHARED_MODE:
+        return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
+    layout = layout_for(config, create=False)
+    return [
+        prep.shared_track_path(shared_track(prep, recording.recording_id)),
+        layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
+        layout.voice_owners_path(recording.recording_id),
+    ]

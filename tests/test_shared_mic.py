@@ -17,6 +17,8 @@ from macaw.extractors.audio.content import diarization as diarization_module
 from macaw.extractors.audio.content.asr import assign_voices, split_by_voice
 from macaw.extractors.audio.content.diarization import (
     VOICES_NAME,
+    inside,
+    solo_spans,
     DiarizationExtractor,
     SpeakerReviewGate,
     describe_voices,
@@ -197,3 +199,31 @@ def test_with_own_microphones_diarization_reads_nothing(project, monkeypatch, tm
 def test_transcripts_wait_for_the_voices_to_be_named():
     assert SpeakerReviewGate.name in get_extractor("text.asr").requires
     assert get_extractor("text.review").requires == (DiarizationExtractor.name,)
+
+
+def test_solo_spans_leave_out_overlap_and_unnamed_voices():
+    found = turns(("S0", 0.0, 4.0), ("S1", 3.0, 6.0), ("S2", 7.0, 8.0), ("S0", 6.0, 6.5), exclusive=False)
+    spans = solo_spans(found, {"S0": "parent", "S1": "child", "S2": None})
+    assert spans["parent"].values.tolist() == [[0.0, 3.0], [6.0, 6.5]]
+    assert spans["child"].values.tolist() == [[4.0, 6.0]]
+    assert inside(np.array([2.9, 3.5, 6.2, 7.5]), spans["parent"]).tolist() == [True, False, True, False]
+
+
+def test_pitch_off_a_shared_microphone_is_each_persons_own_solo_stretch(project, monkeypatch, tmp_path, write_wav):
+    from macaw.extractors.audio.prosody import frame as frame_module
+    from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
+
+    t = np.arange(4 * SAMPLE_RATE) / SAMPLE_RATE
+    voice = np.where(t < 2.0, 0.3 * np.sin(2 * np.pi * 120.0 * t), 0.3 * np.sin(2 * np.pi * 300.0 * t))
+    track = write_wav(tmp_path / "shared.wav", voice)
+    config = project.resolved().model_copy(update={"prosody": project.resolved().prosody.model_copy(update={"backend": "builtin"})})
+    spans = {"parent": pd.DataFrame({"t_start": [10.2], "t_end": [11.8]}), "child": pd.DataFrame({"t_start": [12.2], "t_end": [13.8]})}
+    prep = PrepInfo(recording_id="003", t_origin_s=10.0, duration_s=4.0, sample_rate=SAMPLE_RATE)
+    monkeypatch.setattr(frame_module, "load_prep", lambda config, rid: prep)
+    monkeypatch.setattr(frame_module, "voice_sources", lambda config, recording, prep: {who: (track, found) for who, found in spans.items()})
+    rows = FrameProsodyExtractor(config).run(build_recording("003", config), tmp_path).rows
+    median = rows[rows.feature == "f0_median_hz"].set_index("subject_id").value
+    assert median["parent"] == pytest.approx(120.0, rel=0.05) and median["child"] == pytest.approx(300.0, rel=0.05)
+    pitch = rows[rows.feature == "f0_hz"]
+    parent = pitch[pitch.subject_id == "parent"]
+    assert parent.t_start.min() >= 10.2 and parent.t_start.max() < 11.8

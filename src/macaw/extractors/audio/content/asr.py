@@ -10,19 +10,17 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.content.diarization import (
     BACKEND_GROUP as DIARIZATION_GROUP,
-    DIARIZATION_NAME,
     SHARED_MODE,
-    DiarizationExtractor,
     SpeakerReviewGate,
     read_diarization,
     resolve_diarization,
     shared_track,
+    voice_inputs,
     voice_names,
 )
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
-from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store import _io
@@ -341,15 +339,7 @@ class ASRExtractor(Extractor):
         return (backend.name, str(backend.version))
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        prep = load_prep(self.config, recording.recording_id)
-        if not self._shared():
-            return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
-        layout = layout_for(self.config, create=False)
-        return [
-            prep.shared_track_path(shared_track(prep, recording.recording_id)),
-            layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
-            layout.voice_owners_path(recording.recording_id),
-        ]
+        return voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id))
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)
