@@ -10,6 +10,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
+from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
@@ -36,10 +37,10 @@ _INSTALL = (
 @register_extractor
 class StandardSetExtractor(Extractor):
     name = "prosody.standard_sets"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "prosody"
-    config_sections = ("prosody.standard_sets", "turns", "segment")
+    config_sections = ("prosody.standard_sets", "turns", "segment", "text.diarization")
     requires = (TurnStructureExtractor.name, MediaPrepExtractor.name)
 
     def check_available(self) -> None:
@@ -52,7 +53,7 @@ class StandardSetExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
         turns = layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME
-        return [turns] + [prep.track_path(subject) for subject in sorted(prep.tracks)]
+        return [turns, *voice_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         import opensmile
@@ -61,15 +62,18 @@ class StandardSetExtractor(Extractor):
         turns = load_turns(self.config, recording.recording_id)
         warnings: list[QCWarning] = []
         frames, names = [], {}
+        sources = voice_sources(self.config, recording, prep)
         for subject_id, spoken in turns.groupby("subject_id", observed=True):
             subject_id = str(subject_id)
-            if subject_id not in prep.tracks:
+            if subject_id not in sources:
                 continue
-            audio, rate = load_audio(prep.track_path(subject_id))
-            starts = spoken["t_start"].to_numpy(dtype=float) - prep.t_origin_s
-            ends = spoken["t_end"].to_numpy(dtype=float) - prep.t_origin_s
+            path, spans = sources[subject_id]
+            audio, rate = load_audio(path)
+            pieces, _ = turn_pieces(
+                audio, rate, prep.t_origin_s, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float), spans
+            )
             for feature_set in self.config.prosody.standard_sets:
-                values, too_short = functionals(audio, rate, starts, ends, feature_set)
+                values, too_short = functionals(pieces, rate, feature_set)
                 names[feature_set] = list(values.columns)
                 values.insert(0, "t_start", spoken["t_start"].to_numpy(dtype=float))
                 values.insert(1, "t_end", spoken["t_end"].to_numpy(dtype=float))
@@ -93,7 +97,7 @@ class StandardSetExtractor(Extractor):
         return [
             FeatureSpec(
                 name=name,
-                description=f"openSMILE {feature_set} functional {name.split('_', 1)[1]}, over the turn on the speaker's own track.",
+                description=f"openSMILE {feature_set} functional {name.split('_', 1)[1]}, over the turn in the speaker's own voice: their track, or their solo stretches of a shared one.",
                 unit=None,
                 scale=Scale.EVENT,
                 group=self.group,
@@ -111,18 +115,16 @@ class StandardSetExtractor(Extractor):
         ]
 
 
-def functionals(
-    audio: np.ndarray, rate: float, starts: np.ndarray, ends: np.ndarray, feature_set: str
-) -> tuple[pd.DataFrame, int]:
-    """(one row of functionals per segment, how many were too short to measure); times in seconds into audio."""
+def functionals(pieces: list[np.ndarray], rate: float, feature_set: str) -> tuple[pd.DataFrame, int]:
+    """(one row of functionals per piece of audio, how many were too short to measure)."""
     import opensmile
 
     smile = opensmile.Smile(
         feature_set=getattr(opensmile.FeatureSet, feature_set), feature_level=opensmile.FeatureLevel.Functionals
     )
     rows, too_short = [], 0
-    for start, end in zip(starts, ends):
-        piece = audio[max(int(start * rate), 0) : max(int(end * rate), 0)].astype(np.float32)
+    for piece in pieces:
+        piece = piece.astype(np.float32)
         with python_warnings.catch_warnings(record=True) as caught:
             python_warnings.simplefilter("always")
             row = smile.process_signal(piece, rate) if piece.size else None

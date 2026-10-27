@@ -19,6 +19,7 @@ from macaw.extractors.audio.content.diarization import (
     VOICES_NAME,
     inside,
     solo_spans,
+    turn_pieces,
     DiarizationExtractor,
     SpeakerReviewGate,
     describe_voices,
@@ -227,3 +228,13 @@ def test_pitch_off_a_shared_microphone_is_each_persons_own_solo_stretch(project,
     pitch = rows[rows.feature == "f0_hz"]
     parent = pitch[pitch.subject_id == "parent"]
     assert parent.t_start.min() >= 10.2 and parent.t_start.max() < 11.8
+
+
+def test_a_turn_off_a_shared_microphone_keeps_only_its_solo_stretches():
+    audio = np.arange(10 * 100, dtype=float)
+    spans = pd.DataFrame({"t_start": [10.0, 14.0], "t_end": [12.0, 15.0]})
+    pieces, kept = turn_pieces(audio, 100.0, 10.0, np.array([11.0, 16.0]), np.array([15.0, 17.0]), spans)
+    assert pieces[0].tolist() == list(range(100, 200)) + list(range(400, 500))
+    assert kept == [0.5, 0.0] and pieces[1].size == 0
+    whole, share = turn_pieces(audio, 100.0, 10.0, np.array([11.0]), np.array([12.0]), None)
+    assert whole[0].size == 100 and share == [1.0]

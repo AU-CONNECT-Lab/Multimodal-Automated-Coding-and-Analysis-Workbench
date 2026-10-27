@@ -526,3 +526,21 @@ def voice_inputs(config, recording: Recording, prep) -> list[Path]:
         layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
         layout.voice_owners_path(recording.recording_id),
     ]
+
+
+def turn_pieces(
+    audio: np.ndarray, rate: float, t_origin_s: float, starts: np.ndarray, ends: np.ndarray, spans: pd.DataFrame | None
+) -> tuple[list[np.ndarray], list[float]]:
+    """Each turn's samples, recording-clock times; with spans, only its solo stretches joined end to end.
+    Also the share of each turn that was kept."""
+    pieces, kept = [], []
+    for start, end in zip(starts, ends):
+        if spans is None:
+            parts = [(start, end)]
+        else:
+            overlapping = spans[(spans["t_end"] > start) & (spans["t_start"] < end)]
+            parts = [(max(a, start), min(b, end)) for a, b in zip(overlapping["t_start"], overlapping["t_end"])]
+        cut = [audio[max(int((a - t_origin_s) * rate), 0) : max(int((b - t_origin_s) * rate), 0)] for a, b in parts]
+        pieces.append(np.concatenate(cut) if cut else audio[:0])
+        kept.append(sum(b - a for a, b in parts) / (end - start) if end > start else 0.0)
+    return pieces, kept
