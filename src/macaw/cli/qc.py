@@ -283,9 +283,15 @@ def accept_voices(
             suggestion = suggest_voices(resolved, recording)
             if suggestion is None:
                 raise MacawError(
-                    f"{recording_id}: no suggestion without face.movement on each person's camera; name the voices with --rename"
+                    f"{recording_id}: no suggestion without each person's own mic or face.movement on their camera; name the voices with --rename"
                 )
             people = suggestion["people"]
+            undecided = sorted(label for label, who in people.items() if who is None)
+            if undecided:
+                raise MacawError(
+                    f"{recording_id}: the suggestion leaves {', '.join(undecided)} undecided between "
+                    f"{', '.join(suggestion['unheard'])}; listen to the clips and name all voices with --rename"
+                )
         _write_json(layout.voice_owners_path(recording_id), {"people": people, "by": stamp})
         named = "; ".join(f"{label} is {who}" for label, who in sorted(people.items()))
         typer.echo(f"{recording_id}: {named}; apply it with `macaw run -r {recording_id}`")
