@@ -202,6 +202,40 @@ class TestReview:
         self.voices(project, "SPEAKER_00")
         assert "--rename" in str(self.accept(project).exception)
 
+    def review(self, project, mode, people, monkeypatch):
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data["text"]["voice_review"] = mode
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        from macaw.extractors.audio.content import speaker_id
+
+        monkeypatch.setattr(speaker_id, "suggest_voices", lambda config, recording: {"people": people, "evidence": {}, "unheard": []})
+        self.voices(project, *people)
+        config = project.resolved()
+        gate, recording = SpeakerReviewGate(config), build_recording("003", config)
+        gate.clear_by_itself(recording)
+        return gate, recording, layout_for(config).voice_owners_path("003")
+
+    def test_always_waits_for_a_person_even_with_a_complete_suggestion(self, project, monkeypatch):
+        gate, recording, path = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
+        assert not path.exists() and gate.pending(recording) is not None
+
+    def test_flagged_keeps_a_complete_suggestion_and_says_so(self, project, monkeypatch):
+        gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch)
+        assert gate.pending(recording) is None
+        assert json.loads(path.read_text(encoding="utf-8")) == {"people": {"S0": "child", "S1": "parent"}, "by": "automatic"}
+        assert [(note.check, note.severity) for note in gate.notes(recording)] == [("voices_unreviewed", "info")]
+
+    def test_flagged_waits_when_a_voice_is_undecided(self, project, monkeypatch):
+        gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": None}, monkeypatch)
+        assert not path.exists() and gate.pending(recording) is not None
+
+    def test_skip_leaves_an_undecided_voice_out_with_a_warning(self, project, monkeypatch):
+        gate, recording, path = self.review(project, "skip", {"S0": "child", "S1": None}, monkeypatch)
+        assert gate.pending(recording) is None
+        assert json.loads(path.read_text(encoding="utf-8"))["people"] == {"S0": "child", "S1": "none"}
+        note = gate.notes(recording)[0]
+        assert note.severity == "warn" and "S1" in note.message
+
     def test_own_microphones_never_wait(self, project):
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data["text"]["diarization"] = "per_track"

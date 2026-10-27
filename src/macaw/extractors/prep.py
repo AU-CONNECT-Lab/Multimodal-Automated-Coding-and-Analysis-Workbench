@@ -18,8 +18,8 @@ from macaw.media.align import (
     describe_drift,
     drift_flagged,
     low_confidence,
+    needs_person,
     read_offset_table,
-    review_reason,
 )
 from macaw.media.ffmpeg import run_ffmpeg
 from macaw.media.probe import probe
@@ -203,7 +203,7 @@ class AlignReviewGate(Gate):
         flagged = [
             f"{item.path.name} ({reason})"
             for item in recording.media
-            if (reason := review_reason(by_name[item.path.name], cfg)) is not None
+            if (reason := needs_person(by_name[item.path.name], cfg)) is not None
         ]
         if not flagged:
             return None

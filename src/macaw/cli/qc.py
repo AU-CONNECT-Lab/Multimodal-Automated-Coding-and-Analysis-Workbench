@@ -15,7 +15,7 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.extractors.audio.content.diarization import NO_ONE, read_voices
 from macaw.extractors.audio.content.speaker_id import suggest_voices
-from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file
+from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
 from macaw.logging_setup import get_logger
 from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
@@ -147,7 +147,7 @@ def identify_speakers(
 def accept_owner(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    media: list[str] = typer.Option(None, "--media", help="Camera file, repeatable. Default: every one in doubt."),
+    media: list[str] = typer.Option(None, "--media", help="Camera file, repeatable. Default: every one waiting for a person."),
     tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of one person, for one --media."),
     subject: str = typer.Option(None, "--subject", help="Whose tracks --tracks names. Default: the camera's own subject."),
     rename: str = typer.Option(
@@ -194,12 +194,13 @@ def accept_owner(
     matched = set()
     for recording_id in recording_ids:
         owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
+        waiting = set(waiting_cameras(resolved, recording_id, every=resolved.pose.review == "always"))
         chosen = {
-            name: owner for name, owner in owners.items() if (name in wanted if wanted else owner["doubt"])
+            name: owner for name, owner in owners.items() if (name in wanted if wanted else name in waiting)
         }
         matched.update(chosen)
         if not chosen:
-            typer.echo(f"{recording_id}: nothing in doubt")
+            typer.echo(f"{recording_id}: nothing waiting")
             continue
         path = layout.camera_owners_accepted_path(recording_id)
         entries = read_owner_file(path)

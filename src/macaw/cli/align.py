@@ -22,8 +22,8 @@ from macaw.media.align import (
     keep_accepted,
     keep_manual,
     low_confidence,
+    needs_person,
     read_offset_table,
-    review_reason,
     write_offset_table,
 )
 from macaw.media.probe import probe
@@ -78,9 +78,9 @@ def align(
         typer.echo(f"  table {path}")
         if any(figures.glob("*.png")):
             typer.echo(f"  figures {figures}")
-        if cfg.review == "required" and any(review_reason(result, cfg) for result in results):
+        if cfg.review != "skip" and any(needs_person(result, cfg) for result in results):
             typer.echo(
-                f"  flagged files hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
+                f"  files waiting for a person hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
                 "to keep them or `macaw set-offset` to change one"
             )
 
@@ -125,10 +125,10 @@ def set_offset(
 def accept_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    media: list[str] = typer.Option(None, "--media", help="File to keep, repeatable. Default: every flagged file."),
+    media: list[str] = typer.Option(None, "--media", help="File to keep, repeatable. Default: every file waiting for a person."),
     by: str = typer.Option(None, "--by", help="Who looked at them. Default: the login name."),
 ) -> None:
-    """Keep offsets flagged for review, after looking at their figures, so the run goes on."""
+    """Keep offsets waiting for review, after looking at their figures, so the run goes on."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
     wanted = set(media or ())
@@ -142,11 +142,11 @@ def accept_offset(
         results = read_offset_table(path)
         kept = [
             result for result in results
-            if (result.target in wanted if wanted else review_reason(result, resolved.align) is not None)
+            if (result.target in wanted if wanted else needs_person(result, resolved.align) is not None)
         ]
         matched.update(result.target for result in kept)
         if not kept:
-            typer.echo(f"{recording_id}: nothing flagged")
+            typer.echo(f"{recording_id}: nothing waiting")
             continue
         for result in kept:
             result.accepted = stamp

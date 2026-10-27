@@ -41,11 +41,11 @@ class AlignSection(_Section):
     drift_segment_s: float = 60.0
     max_drift_ppm: float = 200.0
     apply: Literal["offset_table", "recut"] = "offset_table"
-    review: Literal["required", "skip"] = "required"
+    review: Literal["always", "flagged", "skip"] = "flagged"
 
 
 class IdentitySection(_Section):
-    confirm: Literal["required", "skip"] = "required"
+    confirm: Literal["always", "skip"] = "always"
 
 
 class SegmentSection(_Section):
@@ -75,6 +75,7 @@ class TextSection(_Section):
     compute_type: str = "float16"
     diarization: str = "per_track"
     diarization_model: str = "pyannote/speaker-diarization-community-1"
+    voice_review: Literal["always", "flagged", "skip"] = "always"
     crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
     embedding_model: str | None = None
@@ -90,7 +91,7 @@ class PoseSection(_Section):
     device: str = "auto"
     min_confidence: float = 0.3
     input_size: int = 1280
-    review: Literal["required", "skip"] = "required"
+    review: Literal["always", "flagged", "skip"] = "flagged"
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
     identity_anchors: dict[str, float] = Field(default_factory=dict)

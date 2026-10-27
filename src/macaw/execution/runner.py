@@ -122,6 +122,8 @@ def check_gates(
             ] if finished is not None else []
             extractor = get_extractor(gate)(config)
             try:
+                if finished is not None and recording is not None and not missing:
+                    extractor.clear_by_itself(recording)
                 reason = (
                     unreadable if recording is None
                     else f"checked once {', '.join(missing)} has run" if missing

@@ -107,6 +107,16 @@ class TestAlignReview:
         configure(project, section, **values)
         assert align_pending(project) is None
 
+    def test_always_holds_a_clean_table_until_a_person_keeps_it(self, project):
+        configure(project, "align", review="always")
+        table(project, GOOD)
+        reason = align_pending(project)
+        assert "003_child.wav (not looked at yet)" in reason
+        assert "003_parent.wav" not in reason and "003_room.mp4" not in reason
+        outcome = CliRunner().invoke(app, ["accept-offset", "-c", str(project.config), "-r", "003", "--by", "ann"])
+        assert outcome.exit_code == 0, outcome.output
+        assert align_pending(project) is None
+
     def test_a_single_file_has_nothing_to_line_up(self, project):
         for name in ("003_child.wav", "003_room.mp4"):
             (project.raw / "003" / name).unlink()
@@ -218,6 +228,9 @@ def fake_line(monkeypatch):
 
         def notes(self, recording):
             return []
+
+        def clear_by_itself(self, recording):
+            return None
 
     def plain(name, requires, phase):
         return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": ()})

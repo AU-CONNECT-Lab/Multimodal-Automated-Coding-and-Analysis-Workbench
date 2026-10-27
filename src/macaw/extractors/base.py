@@ -97,6 +97,10 @@ class Gate(Extractor):
         """Warnings a cleared gate leaves behind, e.g. that a person was skipped."""
         return []
 
+    def clear_by_itself(self, recording: Recording) -> None:
+        """Record the software's own decision where the configuration lets it stand. Called by a run before pending."""
+        return None
+
     def check_available(self) -> None:
         return None
 

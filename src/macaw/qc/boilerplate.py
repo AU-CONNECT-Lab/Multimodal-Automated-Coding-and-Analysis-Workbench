@@ -152,7 +152,10 @@ def _prep(config, spec, names) -> str:
             f"±{align.search_window_s:g} s and refining the offset with the generalised cross-correlation with phase "
             "transform [knapp1976] within ±1 s"
         )
-        text += "; every offset flagged as uncertain was checked by a person before use." if align.review == "required" else "."
+        text += {
+            "always": "; every offset was checked by a person before use.",
+            "flagged": "; every offset flagged as uncertain was checked by a person before use.",
+        }.get(align.review, ".")
         if align.drift_check:
             text += f" Clock drift was estimated over {align.drift_segment_s:g} s segments."
     elif align.method == "manual":
@@ -230,9 +233,22 @@ def _diarize(config, spec, names) -> str:
         return ""
     return (
         f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
-        f"{spec.params.get('model')} pipeline, with the number of speakers set to the number of participants. A "
-        "researcher listened to clips of each voice found and named the participant it belonged to."
+        f"{spec.params.get('model')} pipeline, with the number of speakers set to the number of participants. "
+        + _VOICE_NAMING[config.text.voice_review]
     )
+
+
+_VOICE_NAMING = {
+    "always": "A researcher listened to clips of each voice found and named the participant it belonged to.",
+    "flagged": (
+        "Each voice was named from the loudness of the participants' own microphones or their mouth movement where "
+        "that decided every voice, and otherwise by a researcher who listened to clips of each voice."
+    ),
+    "skip": (
+        "Each voice was named from the loudness of the participants' own microphones or their mouth movement; "
+        "voices this could not decide were left out."
+    ),
+}
 
 
 def _asr(config, spec, names) -> str:
@@ -343,7 +359,10 @@ def _detect(config, spec, names) -> str:
 def _keypoints(config, spec, names) -> str:
     pose = config.pose
     text = "Detections were linked into tracks and each track was assigned to a participant automatically"
-    text += "; assignments the software could not make with confidence were confirmed by a person." if pose.review == "required" else "."
+    text += {
+        "always": "; every assignment was checked by a person.",
+        "flagged": "; assignments the software could not make with confidence were confirmed by a person.",
+    }.get(pose.review, ".")
     if pose.track_repair:
         text += f" Identity swaps between tracks across gaps of up to {_seconds(pose.track_repair_max_gap_s)} were repaired."
     return text

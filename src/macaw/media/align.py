@@ -238,6 +238,16 @@ def review_reason(result: AlignResult, cfg: AlignSection) -> str | None:
     return None
 
 
+def needs_person(result: AlignResult, cfg: AlignSection) -> str | None:
+    """Why this file waits for a person when align.review is always or flagged; None once nothing holds it."""
+    reason = review_reason(result, cfg)
+    if reason is None and cfg.review == "always" and not (
+        result.method == MANUAL or result.accepted or result.target == result.reference
+    ):
+        return "not looked at yet"
+    return reason
+
+
 def metadata_offset(reference: str | None, target: str | None) -> float | None:
     """Start-time difference from container tags, same sign as offset_s. A hint for a person
     only: device clocks are set by hand and some devices write local time labelled as UTC."""

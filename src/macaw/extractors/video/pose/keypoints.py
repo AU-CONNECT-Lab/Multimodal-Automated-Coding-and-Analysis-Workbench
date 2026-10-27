@@ -557,9 +557,21 @@ class PoseExtractor(Extractor):
         ]
 
 
+def waiting_cameras(config, recording_id: str, *, every: bool) -> list[str]:
+    """Cameras whose people no person has kept yet: those in doubt, or all of them with every."""
+    layout = layout_for(config, create=False)
+    owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
+    accepted = read_owner_file(layout.camera_owners_accepted_path(recording_id))
+    return [
+        file_name
+        for file_name, owner in owners.items()
+        if (every or owner["doubt"]) and accepted.get(file_name, {}).get("people") != owner["people"]
+    ]
+
+
 @register_extractor
 class PoseReviewGate(Gate):
-    """Held only where pose.keypoints was not sure whose camera it is or who is who."""
+    """Held where pose.keypoints was not sure whose camera it is or who is who, or on every camera with review always."""
 
     name = "pose.review"
     version = "0.1.0"
@@ -572,24 +584,18 @@ class PoseReviewGate(Gate):
         return []
 
     def _in_doubt(self, recording: Recording) -> list[str]:
-        layout = layout_for(self.config, create=False)
-        owners = read_owner_file(layout.artifacts_dir(recording.recording_id, PoseExtractor.name) / "owners")
-        accepted = read_owner_file(layout.camera_owners_accepted_path(recording.recording_id))
-        return [
-            file_name
-            for file_name, owner in owners.items()
-            if owner["doubt"] and accepted.get(file_name, {}).get("people") != owner["people"]
-        ]
+        return waiting_cameras(self.config, recording.recording_id, every=False)
 
     def pending(self, recording: Recording) -> str | None:
         if self.config.pose.review == "skip":
             return None
-        in_doubt = self._in_doubt(recording)
-        if not in_doubt:
+        waiting = waiting_cameras(self.config, recording.recording_id, every=self.config.pose.review == "always")
+        if not waiting:
             return None
         rid = recording.recording_id
+        why = "(pose.review is always)" if self.config.pose.review == "always" else "(the warnings say why)"
         return (
-            f"not sure who is on {', '.join(in_doubt)} (the warnings say why): look at "
+            f"who is on {', '.join(waiting)} waits for a person {why}: look at "
             f"`macaw qc -r {rid} --render`, then `macaw accept-owner -r {rid}` keeps the choice, "
             f"`--media FILE --rename SHOWN=RIGHT,...` corrects who is who, or "
             f"`--media FILE --tracks N,M [--subject S]` names a person's tracks"

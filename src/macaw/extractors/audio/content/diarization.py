@@ -29,6 +29,8 @@ SHARED_MODE = "pyannote"
 DIARIZATION_NAME = "diarization.parquet"
 VOICES_NAME = "voices.json"
 NO_ONE = "none"
+# who named the voices when the suggestion was kept without a person
+AUTOMATIC = "automatic"
 
 DIARIZATION_SCHEMA: dict[str, str] = {
     "track": "string",
@@ -444,19 +446,56 @@ def voice_names(config, recording_id: str) -> dict[str, str | None]:
 
 @register_extractor
 class SpeakerReviewGate(Gate):
-    """Held on a shared microphone until a person has said which voice is whom."""
+    """Held on a shared microphone until a person has said which voice is whom, unless text.voice_review lets the suggestion stand."""
 
     name = "text.review"
     version = "0.1.0"
     scale = Scale.RECORDING
     group = "text"
-    config_sections = ("text.diarization",)
+    config_sections = ("text.diarization", "text.voice_review")
     requires = (DiarizationExtractor.name,)
     # with faces read in the same run, the suggestion can use their mouths
     runs_after = ("face.movement",)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return []
+
+    def clear_by_itself(self, recording: Recording) -> None:
+        mode = self.config.text.voice_review
+        if mode == "always" or self.config.text.diarization != SHARED_MODE:
+            return
+        from macaw.extractors.audio.content.speaker_id import suggest_voices
+
+        rid = recording.recording_id
+        voices = read_voices(self.config, rid)
+        if not voices or set(voice_names(self.config, rid)) == set(voices):
+            return
+        suggestion = suggest_voices(self.config, recording)
+        if suggestion is None:
+            return
+        people = {label: suggestion["people"].get(label) for label in voices}
+        if mode == "flagged" and any(who is None for who in people.values()):
+            return
+        path = layout_for(self.config, create=False).voice_owners_path(rid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"people": {label: who or NO_ONE for label, who in people.items()}, "by": AUTOMATIC}
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def notes(self, recording: Recording) -> list[QCWarning]:
+        if self.config.text.diarization != SHARED_MODE:
+            return []
+        named = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(recording.recording_id))
+        if named.get("by") != AUTOMATIC:
+            return []
+        left_out = sorted(label for label, who in named.get("people", {}).items() if who == NO_ONE)
+        message = "the voices were named by the suggestion without a person listening"
+        message += f"; {', '.join(left_out)} could not be decided and were left out" if left_out else ""
+        return [
+            QCWarning(
+                check="voices_unreviewed", recording_id=recording.recording_id, subject_id=None,
+                severity="warn" if left_out else "info", message=message,
+            )
+        ]
 
     def pending(self, recording: Recording) -> str | None:
         if self.config.text.diarization != SHARED_MODE:

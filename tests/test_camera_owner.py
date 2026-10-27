@@ -209,6 +209,17 @@ class TestReviewGate:
         notes = PoseReviewGate(resolved).notes(build_recording("003", resolved))
         assert [note.check for note in notes] == ["camera_owner_unreviewed"]
 
+    def test_always_holds_every_camera_until_a_person_keeps_it(self, project):
+        project.owners({"003_parent.mp4": owner([1]), "003_child.mp4": owner([3], subject="child")})
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data.setdefault("pose", {})["review"] = "always"
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        reason = project.pending()
+        assert "003_parent.mp4" in reason and "003_child.mp4" in reason and "always" in reason
+        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--by", "ann")
+        assert outcome.exit_code == 0, outcome.output
+        assert project.pending() is None
+
 
 class TestAcceptOwner:
     def test_keeping_the_choice_clears_the_gate(self, project):
