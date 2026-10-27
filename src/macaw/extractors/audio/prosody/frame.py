@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.diarization import SpeakerReviewGate, inside, voice_inputs, voice_sources
+from macaw.extractors.audio.content.diarization import SHARED_MODE, SpeakerReviewGate, inside, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import (
     ProsodyBackend,
     frame_times,
@@ -69,7 +69,12 @@ class FrameProsodyExtractor(Extractor):
     scale = Scale.FRAME
     group = "prosody"
     config_sections = ("prosody", "segment", "text.diarization")
-    requires = (MediaPrepExtractor.name, SpeakerReviewGate.name)
+    requires = (MediaPrepExtractor.name,)
+
+    @classmethod
+    def dependencies(cls, config) -> tuple[str, ...]:
+        # on a shared microphone nothing is anyone's until a person has named the voices
+        return cls.requires + ((SpeakerReviewGate.name,) if config.text.diarization == SHARED_MODE else ())
 
     def __init__(self, config):
         super().__init__(config)

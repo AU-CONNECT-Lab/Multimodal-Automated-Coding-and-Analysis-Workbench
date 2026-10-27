@@ -61,6 +61,11 @@ class Extractor(ABC):
     def __init__(self, config: MacawConfig):
         self.config = config
 
+    @classmethod
+    def dependencies(cls, config: MacawConfig) -> tuple[str, ...]:
+        """requires, plus any step this project's settings put in front of this one."""
+        return cls.requires
+
     @abstractmethod
     def check_available(self) -> None:
         """Raise BackendNotAvailableError with install instructions if deps are missing."""

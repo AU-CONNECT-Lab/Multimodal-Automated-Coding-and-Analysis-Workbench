@@ -197,8 +197,12 @@ def test_with_own_microphones_diarization_reads_nothing(project, monkeypatch, tm
     assert result.rows.set_index("feature").value["n_shared_tracks_diarized"] == 0.0 and result.artifacts == {}
 
 
-def test_transcripts_wait_for_the_voices_to_be_named():
-    assert SpeakerReviewGate.name in get_extractor("text.asr").requires
+def test_voices_are_named_before_anything_is_anyones_only_on_a_shared_microphone(project):
+    shared = project.resolved()
+    own = shared.model_copy(update={"text": shared.text.model_copy(update={"diarization": "per_track"})})
+    for name in ("text.asr", "prosody.frame"):
+        assert SpeakerReviewGate.name in get_extractor(name).dependencies(shared)
+        assert SpeakerReviewGate.name not in get_extractor(name).dependencies(own)
     assert get_extractor("text.review").requires == (DiarizationExtractor.name,)
 
 

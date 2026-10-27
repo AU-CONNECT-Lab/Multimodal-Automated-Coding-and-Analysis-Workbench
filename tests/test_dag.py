@@ -25,6 +25,7 @@ def graph(monkeypatch):
                     "requires": tuple(requires),
                     "phase": phase,
                     "config_sections": (),
+                    "dependencies": classmethod(lambda cls, config: cls.requires),
                 },
             )
             for name, (requires, phase) in spec.items()

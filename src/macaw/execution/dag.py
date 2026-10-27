@@ -33,7 +33,7 @@ class DAG:
         if existing is not None:
             return existing
         cls = get_extractor(extractor)
-        node = TaskNode(extractor=extractor, phase=cls.phase, depends_on=set(cls.requires))
+        node = TaskNode(extractor=extractor, phase=cls.phase, depends_on=set(cls.dependencies(self.config)))
         self.nodes[extractor] = node
         return node
 

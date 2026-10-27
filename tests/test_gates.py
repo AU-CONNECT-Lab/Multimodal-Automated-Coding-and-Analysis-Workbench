@@ -208,6 +208,10 @@ def fake_line(monkeypatch):
         def __init__(self, config):
             pass
 
+        @classmethod
+        def dependencies(cls, config):
+            return cls.requires
+
         def pending(self, recording):
             return "look at it" if recording.recording_id == "rec2" else None
 
@@ -215,7 +219,7 @@ def fake_line(monkeypatch):
             return []
 
     def plain(name, requires, phase):
-        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": ()})
+        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires)})
 
     registry = {
         "prep": plain("prep", (), Phase.PREP),

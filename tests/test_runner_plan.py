@@ -18,7 +18,7 @@ def registry(monkeypatch):
             name: type(
                 "FakeExtractor",
                 (),
-                {"name": name, "requires": tuple(requires), "phase": phase, "config_sections": ()},
+                {"name": name, "requires": tuple(requires), "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires)},
             )
             for name, (requires, phase) in spec.items()
         }

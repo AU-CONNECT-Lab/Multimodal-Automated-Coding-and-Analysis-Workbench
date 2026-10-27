@@ -303,8 +303,13 @@ class ASRExtractor(Extractor):
         "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.compute_type",
         "text.diarization", "text.crosstalk_margin_db", "text.word_timestamps", "segment",
     )
-    requires = (MediaPrepExtractor.name, SpeakerReviewGate.name)
+    requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
+
+    @classmethod
+    def dependencies(cls, config) -> tuple[str, ...]:
+        # on a shared microphone nothing is anyone's until a person has named the voices
+        return cls.requires + ((SpeakerReviewGate.name,) if config.text.diarization == SHARED_MODE else ())
 
     def __init__(self, config):
         super().__init__(config)
