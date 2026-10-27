@@ -13,6 +13,7 @@ from macaw.extractors.audio.content.asr import (
     _concat,
     _keep_utterances,
     resolve_compute_type,
+    within_track,
 )
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame
 
@@ -69,6 +70,22 @@ class TestWordsFollowUtterances:
 
     def test_empty_words(self, utterances, words):
         assert len(_keep_utterances(words.iloc[:0], utterances)) == 0
+
+
+class TestWithinTrack:
+    def test_a_whole_session_transcript_is_cut_to_the_track(self):
+        utterances = pd.DataFrame({"utterance_index": [0, 1, 2, 3], "t_start": [-2.0, 5.0, 9.0, 12.0], "t_end": [1.0, 6.0, 11.0, 13.0]})
+        words = pd.DataFrame({"utterance_index": [0, 1, 2, 2, 3], "t_start": [-1.5, 5.0, 9.0, 10.5, 12.0], "t_end": [0.5, 6.0, 9.5, 11.0, 13.0]})
+        kept, kept_words, outside = within_track(utterances, words, 10.0)
+        assert outside == 1
+        assert kept.utterance_index.tolist() == [0, 1, 2]
+        assert kept.t_start.tolist() == [0.0, 5.0, 9.0] and kept.t_end.tolist() == [1.0, 6.0, 10.0]
+        assert kept_words.t_start.tolist() == [0.0, 5.0, 9.0]
+
+    def test_nothing_outside_changes_nothing(self):
+        utterances = pd.DataFrame({"utterance_index": [0], "t_start": [1.0], "t_end": [2.0]})
+        kept, words, outside = within_track(utterances, pd.DataFrame(), 10.0)
+        assert outside == 0 and kept.equals(utterances) and words.empty
 
 
 class TestEmptyTranscript:

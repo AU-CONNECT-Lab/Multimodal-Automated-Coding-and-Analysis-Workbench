@@ -284,7 +284,7 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = ("text", "segment")
@@ -354,6 +354,17 @@ class ASRExtractor(Extractor):
                 language=cfg.language,
                 word_timestamps=cfg.word_timestamps,
             )
+            utterances, words, outside = within_track(utterances, words, prep.duration_s)
+            if outside:
+                warnings.append(
+                    QCWarning(
+                        check="asr_outside_track",
+                        recording_id=recording.recording_id,
+                        subject_id=subject.subject_id,
+                        severity="info",
+                        message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
+                    )
+                )
             for frame in (utterances, words):
                 frame["recording_id"] = recording.recording_id
                 frame["subject_id"] = subject.subject_id
@@ -570,6 +581,25 @@ def _concat(parts: list[pd.DataFrame], schema: dict[str, str], drop: set[str] | 
         return empty_frame(schema).loc[:, columns]
     # a column only some recognisers give (avg_logprob, no_speech_prob) is empty for the others
     return pd.concat(parts, ignore_index=True).reindex(columns=columns)
+
+
+def within_track(
+    utterances: pd.DataFrame, words: pd.DataFrame, duration_s: float
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Clips to [0, duration_s]; a backend that reads an existing transcript can return the whole session."""
+    keep = (utterances["t_start"] < duration_s) & (utterances["t_end"] > 0)
+    outside = int((~keep).sum())
+    utterances = utterances[keep].copy()
+    utterances["t_start"] = utterances["t_start"].clip(lower=0.0)
+    utterances["t_end"] = utterances["t_end"].clip(upper=duration_s)
+    if not words.empty:
+        words = words[
+            words["utterance_index"].isin(utterances["utterance_index"])
+            & (words["t_start"] < duration_s) & (words["t_end"] > 0)
+        ].copy()
+        words["t_start"] = words["t_start"].clip(lower=0.0)
+        words["t_end"] = words["t_end"].clip(upper=duration_s)
+    return utterances, words, outside
 
 
 def _keep_utterances(words: pd.DataFrame, utterances: pd.DataFrame) -> pd.DataFrame:
