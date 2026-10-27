@@ -80,7 +80,7 @@ _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[a
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
