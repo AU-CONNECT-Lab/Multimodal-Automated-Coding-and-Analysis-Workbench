@@ -150,3 +150,39 @@ class TestConfigResolution:
         baseline = resolve_config(project)
         moved = resolve_config(project, work_dir=tmp_path / "somewhere_else")
         assert hash_full(baseline) == hash_full(moved)
+
+
+@needs_pydantic
+class TestNamesThatArePaths:
+    @pytest.fixture
+    def project(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(OUTPUT_DIR_ENV_VAR, raising=False)
+        monkeypatch.delenv(WORK_DIR_ENV_VAR, raising=False)
+        folder = tmp_path / "proj"
+        (folder / "raw").mkdir(parents=True)
+        (folder / "models").mkdir()
+        (folder / "models" / "pose.pt").write_bytes(b"weights")
+        (folder / "transcripts").mkdir()
+        config = folder / "project.yaml"
+        scaffold_project_config(config, name="demo", raw_dir=folder / "raw", output_dir=folder / "derivatives")
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + "\ntext:\n  asr_model: transcripts\n  syntax_model: en_core_web_sm\npose:\n  model: models/pose.pt\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def test_a_relative_model_next_to_project_yaml_follows_the_file(self, project, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        resolved = resolve_config(project)
+        assert resolved.pose.model == str(project.parent / "models" / "pose.pt")
+        assert resolved.text.asr_model == str(project.parent / "transcripts")
+        assert resolved.text.syntax_model == "en_core_web_sm"
+
+    def test_moving_the_project_keeps_the_hash(self, project, tmp_path):
+        import shutil
+
+        from macaw.config.hashing import hash_full
+
+        moved = shutil.copytree(project.parent, tmp_path / "moved")
+        assert hash_full(resolve_config(project)) == hash_full(resolve_config(moved / project.name))

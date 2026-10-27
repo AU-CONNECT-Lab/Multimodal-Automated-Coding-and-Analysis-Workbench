@@ -13,7 +13,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 from yaml.constructor import SafeConstructor
 
-from macaw.config.schema import RECORDING_OVERRIDABLE, MacawConfig
+from macaw.config.schema import NAME_OR_PATH_FIELDS, RECORDING_OVERRIDABLE, MacawConfig
 from macaw.exceptions import (
     ConfigError,
     ConfigValidationError,
@@ -241,6 +241,7 @@ def resolve_config(
     # relative paths follow project.yaml, not the shell's cwd, so a project directory
     # keeps working after being copied to another machine
     _absolutise(config, project_yaml.resolve().parent)
+    _anchor_names(config, project_yaml.resolve().parent)
 
     for field, explicit, env_var in (
         ("output_dir", output_dir, OUTPUT_DIR_ENV_VAR),
@@ -301,6 +302,15 @@ def _absolutise(model: BaseModel, base: Path) -> None:
             setattr(model, name, (base / value).resolve())
         elif isinstance(value, BaseModel):
             _absolutise(value, base)
+
+
+def _anchor_names(config: MacawConfig, base: Path) -> None:
+    for dotted in NAME_OR_PATH_FIELDS:
+        section, field = dotted.split(".")
+        owner = getattr(config, section)
+        value = getattr(owner, field)
+        if value and not Path(value).is_absolute() and (base / value).exists():
+            setattr(owner, field, str((base / value).resolve()))
 
 
 def load_config(path: Path) -> MacawConfig:

@@ -70,8 +70,13 @@ def _substitute_content(data: dict[str, Any], dotted: str) -> None:
     if value is None:
         return
     path = Path(value)
-    # a value that is not a file on disk is a backend-specific name, not a reference
-    cursor[parts[-1]] = hash_referenced_file(path) if path.is_file() else str(value)
+    # a value that is not on disk is a backend-specific name; a folder counts by its name, never its location
+    if path.is_file():
+        cursor[parts[-1]] = hash_referenced_file(path)
+    elif path.is_absolute() and path.is_dir():
+        cursor[parts[-1]] = path.name
+    else:
+        cursor[parts[-1]] = str(value)
 
 
 def _section_value(data: dict[str, Any], name: str) -> Any:

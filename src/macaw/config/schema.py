@@ -244,8 +244,18 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
 
 # Which config keys hold a path whose *contents* belong in the hash. Hashing the path
 # instead would let a changed codebook reuse a stale cache entry.
+# Keys that take a name or a file or folder; a relative one found next to project.yaml is read from there.
+NAME_OR_PATH_FIELDS: tuple[str, ...] = (
+    "text.asr_model",
+    "text.diarization_model",
+    "text.embedding_model",
+    "text.syntax_model",
+    "pose.model",
+    "face.model",
+)
+
 CONTENT_HASHED_PATHS: tuple[str, ...] = (
     "coding.codebook",
-    "pose.model",
     "execution.output_rules",
+    *NAME_OR_PATH_FIELDS,
 )
