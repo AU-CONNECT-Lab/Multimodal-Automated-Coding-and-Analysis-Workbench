@@ -95,16 +95,6 @@ class FrameProsodyExtractor(Extractor):
         prep = load_prep(self.config, recording.recording_id)
         return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
 
-    def _f0_range(self, subject: Subject) -> tuple[float, float]:
-        cfg = self.config.prosody
-        # a child and an adult do not share a plausible pitch range, and searching the wrong
-        # one is what produces octave errors
-        for key in (subject.role, subject.subject_id):
-            if key is not None and key in cfg.f0_range_by_role:
-                low, high = cfg.f0_range_by_role[key]
-                return float(low), float(high)
-        return float(cfg.f0_min_hz), float(cfg.f0_max_hz)
-
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.prosody
         prep = load_prep(self.config, recording.recording_id)
@@ -119,7 +109,7 @@ class FrameProsodyExtractor(Extractor):
             if subject.subject_id not in prep.tracks:
                 continue
             audio, sr = load_audio(prep.track_path(subject.subject_id))
-            f0_min, f0_max = self._f0_range(subject)
+            f0_min, f0_max = f0_range(cfg, subject)
             contours = self._contours(backend, audio, sr, cfg.frame_step_s, f0_min, f0_max)
 
             voiced = contours["f0_hz"].to_numpy(dtype=float)
@@ -272,6 +262,16 @@ class FrameProsodyExtractor(Extractor):
             for feature, (description, unit) in _SUMMARY_SPECS.items()
         ]
         return specs
+
+
+def f0_range(cfg, subject: Subject) -> tuple[float, float]:
+    # a child and an adult do not share a plausible pitch range, and searching the wrong
+    # one is what produces octave errors
+    for key in (subject.role, subject.subject_id):
+        if key is not None and key in cfg.f0_range_by_role:
+            low, high = cfg.f0_range_by_role[key]
+            return float(low), float(high)
+    return float(cfg.f0_min_hz), float(cfg.f0_max_hz)
 
 
 def _drop_missing(rows: pd.DataFrame) -> pd.DataFrame:

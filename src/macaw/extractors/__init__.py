@@ -27,6 +27,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.video.pose.kinematics",
     "macaw.extractors.video.motion.mea",
     "macaw.extractors.audio.prosody.standard_sets",
+    "macaw.extractors.audio.prosody.voice_report",
     "macaw.extractors.video.face.au",
     "macaw.extractors.video.face.movement",
 )
