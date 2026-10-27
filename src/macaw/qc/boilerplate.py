@@ -125,6 +125,10 @@ def _seconds(value: float) -> str:
     return f"{value:g} s"
 
 
+def _count(value: int) -> str:
+    return ("two", "three", "four", "five", "six", "seven", "eight", "nine")[value - 2] if 2 <= value <= 9 else str(value)
+
+
 def _listed(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
@@ -231,12 +235,21 @@ def _asr(config, spec, names) -> str:
 
 
 def _text_features(config, spec, names) -> str:
+    params = spec.params
+    counted = "words"
+    if params.get("first_use_words"):
+        counted = "words from a researcher-supplied list"
+    exclude = params.get("first_use_exclude", "none")
+    if exclude == "english_stopwords":
+        counted += ", excluding English function words, fillers and backchannels,"
+    elif exclude != "none":
+        counted += ", excluding a researcher-supplied list of words,"
     text = (
         "Lexical measures were computed for each speaker on lower-cased English word tokens: mean length of utterance "
-        "in words, type-token ratio, unigram entropy, and the share of the words used by at least two speakers that "
-        "the speaker said first."
+        f"in words, type-token ratio, unigram entropy, and, of the {counted} used by at least "
+        f"{_count(params.get('first_use_min_speakers', 2))} speakers, the share the speaker said first."
     )
-    model = spec.params.get("embedding_model")
+    model = params.get("embedding_model")
     if model:
         text += f" Each utterance was embedded with the {model} sentence-transformers model [reimers2019]."
     return text

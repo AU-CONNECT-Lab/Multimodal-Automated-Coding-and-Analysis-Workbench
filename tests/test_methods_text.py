@@ -93,6 +93,19 @@ def test_embeddings_are_mentioned_only_when_made(embedding, expected):
     assert ("sentence-transformers" in text) is expected
 
 
+@pytest.mark.parametrize(
+    "params, expected",
+    [
+        ({}, "of the words used by at least two speakers"),
+        ({"first_use_exclude": "english_stopwords"}, "excluding English function words, fillers and backchannels, used"),
+        ({"first_use_words": "topic.txt", "first_use_min_speakers": 3}, "researcher-supplied list used by at least three"),
+    ],
+)
+def test_the_first_use_rule_that_ran_is_described(params, expected):
+    text, _ = render(describe(manifest(spec("text.features", "first_use_share", **params)), config()), load_references())
+    assert expected in text
+
+
 def test_write_methods_writes_the_text_and_only_the_cited_entries(tmp_path):
     methods, bib = write_methods(manifest(spec("turns.transitions", "fto_s")), config(), tmp_path)
     assert "Heldner & Edlund, 2010" in methods.read_text(encoding="utf-8")

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from macaw.exceptions import BackendNotAvailableError
+from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript, resolve_device
 from macaw.extractors.base import Extractor, ExtractorResult
@@ -28,10 +29,13 @@ _SPECS = {
     "type_token_ratio": ("Distinct words over all words; it falls as a speaker talks more, so compare only equal amounts of talk.", None),
     "unigram_entropy_bits": ("Shannon entropy of this speaker's word frequencies; it also grows with the amount of talk.", "bit"),
     "first_use_share": (
-        "Of the words at least two speakers used, the share this speaker said first; who brings in the shared vocabulary.",
+        "Of the counted words at least text.first_use_min_speakers speakers used, the share this speaker said first; "
+        "who brings in the shared vocabulary.",
         None,
     ),
 }
+
+STOPWORDS = "english_stopwords"
 
 _INSTALL = (
     "text.embedding_model is set, which needs sentence-transformers. Install PyTorch for your "
@@ -42,13 +46,19 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "text"
-    config_sections = ("text.embedding_model", "text.device", "segment")
+    config_sections = (
+        "text.embedding_model", "text.device", "text.first_use_min_speakers", "text.first_use_exclude",
+        "text.first_use_words", "segment",
+    )
     requires = (ASRExtractor.name,)
 
     def check_available(self) -> None:
+        for path in self._word_lists():
+            if not path.is_file():
+                raise InputNotFoundError(f"word list {path} in text.first_use_exclude or text.first_use_words does not exist")
         if self.config.text.embedding_model is None:
             return
         try:
@@ -65,13 +75,23 @@ class TextFeatureExtractor(Extractor):
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         root = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, ASRExtractor.name)
-        return [root / TRANSCRIPT_NAME]
+        return [root / TRANSCRIPT_NAME, *self._word_lists()]
+
+    def _word_lists(self) -> list[Path]:
+        text = self.config.text
+        return [path for path in (text.first_use_exclude, text.first_use_words) if isinstance(path, Path)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         transcript = load_transcript(self.config, recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
         transcript = transcript.assign(tokens=transcript["text"].fillna("").astype(str).map(tokenize))
-        first = first_use_share(transcript)
+        text = self.config.text
+        first = first_use_share(
+            transcript,
+            min_speakers=text.first_use_min_speakers,
+            exclude=excluded_words(text.first_use_exclude),
+            only=None if text.first_use_words is None else read_word_list(text.first_use_words),
+        )
         frames = []
         for subject_id, spoken in transcript.groupby("subject_id", observed=True):
             tokens = [token for tokens in spoken["tokens"] for token in tokens]
@@ -113,7 +133,13 @@ class TextFeatureExtractor(Extractor):
                 group=self.group,
                 extractor=self.name,
                 extractor_version=self.version,
-                params={"tokenizer": "english_words", "embedding_model": self.config.text.embedding_model},
+                params={
+                    "tokenizer": "english_words",
+                    "embedding_model": self.config.text.embedding_model,
+                    "first_use_min_speakers": self.config.text.first_use_min_speakers,
+                    "first_use_exclude": _list_name(self.config.text.first_use_exclude),
+                    "first_use_words": _list_name(self.config.text.first_use_words),
+                },
                 validation="synthetic",
             )
             for name, (description, unit) in _SPECS.items()
@@ -142,15 +168,44 @@ def unigram_entropy(tokens: list[str]) -> float:
     return float(-(p * np.log2(p)).sum())
 
 
-def first_use_share(transcript: pd.DataFrame) -> dict[str, float]:
-    """Utterances in time order with a tokens column; words only one speaker ever used do not count."""
+def read_word_list(path: Path) -> frozenset[str]:
+    return word_list(path.read_text(encoding="utf-8"))
+
+
+def word_list(text: str) -> frozenset[str]:
+    """One word per line, # starts a comment; each line is tokenized like the transcript."""
+    return frozenset(token for line in text.splitlines() for token in tokenize(line.split("#", 1)[0]))
+
+
+def excluded_words(setting: str | Path) -> frozenset[str]:
+    if setting == "none":
+        return frozenset()
+    if setting == STOPWORDS:
+        return word_list(files("macaw.extractors.audio.content").joinpath("english_stopwords.txt").read_text(encoding="utf-8"))
+    return read_word_list(Path(setting))
+
+
+def _list_name(setting: str | Path | None) -> str | None:
+    return setting.name if isinstance(setting, Path) else setting
+
+
+def first_use_share(
+    transcript: pd.DataFrame,
+    *,
+    min_speakers: int = 2,
+    exclude: frozenset[str] = frozenset(),
+    only: frozenset[str] | None = None,
+) -> dict[str, float]:
+    """Utterances with a tokens column; a word counts once min_speakers speakers have used it."""
     first: dict[str, str] = {}
     users: dict[str, set[str]] = {}
     for subject_id, tokens in transcript.sort_values(["t_start", "t_end"])[["subject_id", "tokens"]].itertuples(index=False):
         for token in tokens:
+            if token in exclude or (only is not None and token not in only):
+                continue
             first.setdefault(token, str(subject_id))
             users.setdefault(token, set()).add(str(subject_id))
-    shared = [token for token, speakers in users.items() if len(speakers) > 1]
+    shared = [token for token, speakers in users.items() if len(speakers) >= min_speakers]
     speakers = {str(subject) for subject in transcript["subject_id"].unique()}
     if not shared:
         return {subject: np.nan for subject in speakers}

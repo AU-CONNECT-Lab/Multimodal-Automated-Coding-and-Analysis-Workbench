@@ -8,11 +8,12 @@ import pandas as pd
 import pytest
 
 from macaw.config.schema import TextSection
-from macaw.exceptions import BackendNotAvailableError
+from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors.audio.content import features as module
 from macaw.extractors.audio.content.features import (
     EMBEDDINGS_NAME,
     TextFeatureExtractor,
+    excluded_words,
     first_use_share,
     tokenize,
     type_token_ratio,
@@ -54,6 +55,19 @@ class TestFirstUse:
         share = first_use_share(spoken.assign(tokens=spoken.text.map(tokenize)))
         assert np.isnan(share["a"]) and np.isnan(share["b"])
 
+    def test_excluded_words_and_a_word_list_narrow_what_counts(self):
+        spoken = transcript([("a", 0.0, "the red box"), ("b", 2.0, "the red box"), ("c", 4.0, "red")])
+        tokens = spoken.assign(tokens=spoken.text.map(tokenize))
+        assert first_use_share(tokens, exclude=frozenset({"the"}))["a"] == pytest.approx(1.0)
+        assert first_use_share(tokens, min_speakers=3) == {"a": 1.0, "b": 0.0, "c": 0.0}
+        assert np.isnan(first_use_share(tokens, only=frozenset({"green"}))["a"])
+
+    def test_the_shipped_stopwords_drop_function_words_and_fillers_but_not_content(self):
+        stopwords = excluded_words("english_stopwords")
+        assert {"the", "i'm", "don't", "um", "yeah"} <= stopwords
+        assert not {"remote", "button", "design"} & stopwords
+        assert excluded_words("none") == frozenset()
+
 
 def run(monkeypatch, tmp_path, rows, **text):
     monkeypatch.setattr(module, "load_transcript", lambda config, rid: transcript(rows))
@@ -71,6 +85,30 @@ def test_the_extractor_writes_one_row_per_speaker_and_measure(monkeypatch, tmp_p
     assert values["a", "mlu_words"] == 2.0 and values["b", "mlu_words"] == 4.0
     assert values["a", "n_types"] == 4.0
     assert result.artifacts == {}
+
+
+def test_stopwords_are_dropped_by_default(monkeypatch, tmp_path):
+    # without the stopword list "the" would give b no share at all; with it b brought in "box"
+    _, result = run(monkeypatch, tmp_path, [("a", 0.0, "the red"), ("b", 2.0, "box the"), ("a", 4.0, "red box")])
+    values = result.rows.set_index(["subject_id", "feature"]).value
+    assert values["b", "first_use_share"] == 1.0
+    assert result.specs[0].params["first_use_exclude"] == "english_stopwords"
+
+
+def test_a_word_list_file_is_read_and_goes_into_the_cache_key(monkeypatch, tmp_path):
+    words = tmp_path / "topic.txt"
+    words.write_text("# task vocabulary\nRed\n", encoding="utf-8")
+    extractor, result = run(monkeypatch, tmp_path, [("a", 0.0, "box red"), ("b", 2.0, "box red")], first_use_words=words)
+    values = result.rows.set_index(["subject_id", "feature"]).value
+    assert values["a", "first_use_share"] == 1.0
+    assert words in extractor._word_lists()
+    assert result.specs[0].params["first_use_words"] == "topic.txt"
+
+
+def test_a_missing_word_list_stops_before_the_run(tmp_path):
+    extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(first_use_exclude=tmp_path / "gone.txt")))
+    with pytest.raises(InputNotFoundError, match="gone.txt"):
+        extractor.check_available()
 
 
 def test_embeddings_need_their_package_only_when_asked_for(monkeypatch):
