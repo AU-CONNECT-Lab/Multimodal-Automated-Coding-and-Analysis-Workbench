@@ -18,6 +18,7 @@
 - Correcting who is who no longer reruns the pose model, resuming notices changed settings or inputs, the quality report draws each person over time, mics hint at who is who on a shared camera, and speech and prosody backend templates (`macaw new-backend --kind`).
 - Motion energy per person from a hand-drawn region (`motion.mea`) with its own quality check and report figure, a shared camera read next to each person's own camera (`pose.read_shared`), which names its people by their movement and gives the distances between them, a check that a transcript belongs to the audio it is filed under, mic bleed judged fairly between mics recorded at different gains, every room camera read and named, talk exported as per-person and floor sequences, openSMILE feature sets per turn (`prosody.standard_sets`) and facial action units through py-feat (`face.au`), both installed by the user.
 - Mouth movement, eye opening and blinks per person from the face landmarks (`face.movement`), gaze direction per frame from the face model (`face.gaze`), and a check that each person's mouth moves when they are the one talking.
+- A voice report per turn (`prosody.voice_report`: pitch statistics and slope, jitter, shimmer, HNR, CPPS), lexical measures per speaker with optional sentence embeddings (`text.features`), a Methods section with its BibTeX for what a project ran (`macaw methods`), and a second face model to check the action units against (`face.check_model`, `au_agreement`); transcripts that reach past the recording are cut to it.
 
 ## [0.1.0-alpha] – 2026-08-13
 
