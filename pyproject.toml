@@ -71,6 +71,13 @@ all = [
   "pymacaw[audio,asr,text,vision,gui,report]",
 ]
 
+docs = [
+  "sphinx>=7.3",
+  "myst-parser>=3.0",
+  "furo>=2024.8.6",
+  "sphinx-design>=0.6",
+]
+
 dev = [
   "pytest",
   "pytest-cov",
