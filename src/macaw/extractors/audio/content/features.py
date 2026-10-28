@@ -73,6 +73,10 @@ class TextFeatureExtractor(Extractor):
 
         return ("sentence-transformers", sentence_transformers.__version__)
 
+    def prefetch(self) -> None:
+        if self.config.text.embedding_model is not None:
+            sentence_embeddings([], self.config.text.embedding_model, device=self.config.text.device)
+
     def inputs_for(self, recording: Recording) -> list[Path]:
         root = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, ASRExtractor.name)
         return [root / TRANSCRIPT_NAME, *self._word_lists()]

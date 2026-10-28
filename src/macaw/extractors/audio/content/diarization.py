@@ -306,6 +306,10 @@ class DiarizationExtractor(Extractor):
         if self.config.text.diarization == SHARED_MODE:
             resolve_diarizer(self.config)
 
+    def prefetch(self) -> None:
+        if self.config.text.diarization == SHARED_MODE:
+            resolve_diarizer(self.config)._load()
+
     def backend_info(self) -> tuple[str | None, str | None]:
         if self.config.text.diarization != SHARED_MODE:
             return (None, None)

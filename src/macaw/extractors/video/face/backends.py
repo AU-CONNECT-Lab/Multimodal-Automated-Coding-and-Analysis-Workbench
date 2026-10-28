@@ -39,6 +39,10 @@ class FaceBackend(Backend):
         (AU01, AU02, ...), and x_0, y_0, ... landmark and GAZE_COLUMNS when asked for."""
         raise NotImplementedError
 
+    def prefetch(self, *, model: str | None, gaze: bool) -> None:
+        """Fetch the weights infer would download; a backend whose models the user installs has none."""
+        return None
+
 
 @register_backend(BACKEND_GROUP)
 class PyFeatBackend(FaceBackend):
@@ -64,6 +68,9 @@ class PyFeatBackend(FaceBackend):
                 "of its model weights are for non-commercial research only. If that fits your use, install "
                 "PyTorch for your GPU first and then: pip install py-feat"
             ) from error
+
+    def prefetch(self, *, model: str | None, gaze: bool) -> None:
+        self.detector(model, "cpu", gaze)
 
     def detector(self, model: str | None, device: str, gaze: bool = False):
         from feat import Detectorv1, Detectorv2

@@ -44,13 +44,24 @@ class JudgementExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.EVENT
     group = "coding"
-    # turns: the turn table it codes when the unit is a turn
-    config_sections = ("coding.codebook", "coding.llm", "turns")
+    # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
+    # timeout_s) is the machine's business, so moving to a cluster does not code everything again
+    config_sections = (
+        "coding.codebook", "turns", *(f"coding.llm.{key}" for key in (
+            "provider", "model", "temperature", "max_tokens", "n_samples", "seed", "allow_abstain",
+            "review_threshold", "batch_size", "context_units",
+        )),
+    )
     requires = (ASRExtractor.name, TurnStructureExtractor.name)
 
     @classmethod
     def wanted_by_default(cls, config: MacawConfig) -> bool:
         return "B" in config.coding.layers
+
+    @classmethod
+    def resources(cls, config: MacawConfig) -> str:
+        # a model served inside the job needs the GPU; a remote one only the network
+        return "gpu_standard" if config.coding.llm.is_local() else cls.resource_profile
 
     def check_available(self) -> None:
         self._codebook()

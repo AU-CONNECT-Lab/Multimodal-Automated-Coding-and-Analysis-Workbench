@@ -121,6 +121,10 @@ class ASRBackend(Backend):
         """Returns (utterances, words); the words frame is empty unless asked for."""
         raise NotImplementedError
 
+    def prefetch(self, *, language: str, align: bool) -> None:
+        """Fetch the weights transcribe would download; a backend that reads existing transcripts has none."""
+        return None
+
 
 def _empty_parts() -> tuple[pd.DataFrame, pd.DataFrame]:
     utterances = empty_frame(TRANSCRIPT_SCHEMA).drop(columns=["recording_id", "subject_id"])
@@ -153,6 +157,13 @@ class WhisperXBackend(ASRBackend):
                 self.model, self.device, compute_type=self.compute_type
             )
         return self._model
+
+    def prefetch(self, *, language: str, align: bool) -> None:
+        import whisperx
+
+        self._load()
+        if align:
+            whisperx.load_align_model(language_code=language, device=self.device)
 
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
@@ -241,6 +252,9 @@ class FasterWhisperBackend(ASRBackend):
                 self.model, device=self.device, compute_type=self.compute_type
             )
         return self._model
+
+    def prefetch(self, *, language: str, align: bool) -> None:
+        self._load()
 
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
@@ -355,6 +369,11 @@ class ASRExtractor(Extractor):
         self.backend()
         if self.config.text.diarization != SHARED_MODE:
             get_backend(DIARIZATION_GROUP, self.config.text.diarization)().check_available()
+
+    def prefetch(self) -> None:
+        cfg = self.config.text
+        # the alignment model follows the language; English unless text.language names another
+        self.backend().prefetch(language=cfg.language or "en", align=cfg.word_timestamps)
 
     def _shared(self) -> bool:
         return self.config.text.diarization == SHARED_MODE

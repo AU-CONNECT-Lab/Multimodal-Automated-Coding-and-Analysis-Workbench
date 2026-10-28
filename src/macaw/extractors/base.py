@@ -73,6 +73,15 @@ class Extractor(ABC):
         """Whether a run that names no steps includes this one."""
         return True
 
+    @classmethod
+    def resources(cls, config: MacawConfig) -> str:
+        """The hpc.yaml tier a cluster job running this step asks for."""
+        return cls.resource_profile
+
+    def prefetch(self) -> None:
+        """Download whatever model this step would otherwise fetch while it runs."""
+        return None
+
     @abstractmethod
     def check_available(self) -> None:
         """Raise BackendNotAvailableError with install instructions if deps are missing."""

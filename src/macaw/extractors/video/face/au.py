@@ -74,6 +74,9 @@ class FaceExtractor(Extractor):
         if self.config.face.gaze and not backend.provides_gaze:
             raise BackendNotAvailableError(f"face.gaze is on but face.backend {backend.name} gives no gaze direction")
 
+    def prefetch(self) -> None:
+        self.backend().prefetch(model=self.config.face.model, gaze=self.config.face.gaze)
+
     def inputs_for(self, recording: Recording) -> list[Path]:
         """Faces are named through the people pose named, so the keypoints are the input that matters."""
         return [_keypoints_file(self.config, recording.recording_id)]
@@ -206,6 +209,9 @@ class FaceAUCheckExtractor(FaceExtractor):
 
     def check_backend(self):
         return resolve_backend(self.config.face.check_backend or self.config.face.backend)
+
+    def prefetch(self) -> None:
+        self.check_backend().prefetch(model=self.config.face.check_model, gaze=False)
 
     def check_available(self) -> None:
         cfg = self.config.face

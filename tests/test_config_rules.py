@@ -32,3 +32,9 @@ def test_a_backchannel_word_leaves_the_language_model_alone(project):
     after = resolve_config(project, cli_overrides=["coding.backchannel_lexicon=[mm]"])
     assert hash_extractor_config(before, "coding.judge") == hash_extractor_config(after, "coding.judge")
     assert hash_extractor_config(before, "coding.layer_a") != hash_extractor_config(after, "coding.layer_a")
+
+
+def test_where_the_language_model_answers_leaves_its_coding_alone(project):
+    before = resolve_config(project)
+    after = resolve_config(project, cli_overrides=["coding.llm.base_url=http://gpu-node:11434/v1", "coding.llm.timeout_s=900"])
+    assert hash_extractor_config(before, "coding.judge") == hash_extractor_config(after, "coding.judge")
