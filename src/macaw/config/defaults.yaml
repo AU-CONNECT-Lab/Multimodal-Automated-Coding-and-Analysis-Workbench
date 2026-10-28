@@ -45,7 +45,7 @@ video:
   normalise: true                    # false reads the originals as they are and only warns about what would have been fixed
   fps: null                          # fps; one rate for every video, e.g. 30 from 60. Must divide each file's rate by a whole number
   quality: 17                        # 0-51; lower keeps more detail in bigger files. 17 is hard to tell from the source
-  encoder: libx264                   # libx264 (any machine, same frames everywhere) | h264_nvenc (NVIDIA GPU, much faster)
+  encoder: libx264                   # libx264 (any machine, same frames everywhere) | h264_nvenc (NVIDIA GPU; about twice as fast, bigger files)
 
 prosody:
   backend: parselmouth               # parselmouth | librosa | builtin
