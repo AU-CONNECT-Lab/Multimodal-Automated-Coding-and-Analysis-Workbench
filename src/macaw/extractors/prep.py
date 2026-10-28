@@ -117,14 +117,15 @@ def _extract_track(
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    args: list[str] = []
-    filters: list[str] = []
+    # counted in samples from the first one decoded, the clock alignment measured on; seeking
+    # with -ss lands elsewhere when a file's sound and pictures start at different times
+    filters = [f"aresample={sample_rate}"]
     if start_s >= 0:
-        args += ["-ss", f"{start_s:.6f}"]
+        filters += [f"atrim=start_sample={int(round(start_s * sample_rate))}", "asetpts=PTS-STARTPTS"]
     else:
         filters.append(f"adelay={int(round(-start_s * 1000))}:all=1")
     filters.append("apad")              # a source shorter than the window still fills it
-    args += [
+    args = [
         "-i", str(src),
         "-vn",
         "-ac", "1",
@@ -257,7 +258,7 @@ class IdentityConfirmGate(Gate):
 @register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
