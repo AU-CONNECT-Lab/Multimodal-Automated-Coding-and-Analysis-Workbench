@@ -17,7 +17,7 @@ BIB_NAME = "references.bib"
 
 # extractors in the order a reader meets them; anything else (plugins) follows
 ORDER = (
-    "prep.media", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
+    "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
@@ -163,6 +163,18 @@ def _prep(config, spec, names) -> str:
     else:
         text += " Devices were treated as already synchronised."
     return text
+
+
+def _video(config, spec, names) -> str:
+    video = config.video
+    if not video.normalise:
+        return "Videos were read as recorded, at their average frame rate."
+    rate = f"a constant {video.fps:g} frames per second" if video.fps else "a constant frame rate, the one it was recorded at"
+    return (
+        f"Before any video measure, each video was re-encoded once with FFmpeg as H.264 ({video.encoder}, quality "
+        f"{video.quality}) at {rate}, upright, with square pixels and deinterlaced where needed, its first frame placed "
+        "at the first audio sample of its file."
+    )
 
 
 def _backend(phrases: dict[str, str], spec: FeatureSpec, **extra) -> str:
@@ -478,6 +490,7 @@ def _plugin(config, spec, names) -> str:
 
 _WRITERS = {
     "prep.media": _prep,
+    "prep.video": _video,
     "prosody.frame": _frame,
     "prosody.voice_report": _voice_report,
     "prosody.standard_sets": _standard_sets,

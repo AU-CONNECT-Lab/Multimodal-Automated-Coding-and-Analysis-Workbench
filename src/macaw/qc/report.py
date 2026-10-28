@@ -222,6 +222,9 @@ def _decisions(
             "decided": f"{len(alignment)} file(s): {kept} kept by a person, {manual} set by hand, {automatic} automatic",
             "by": "person" if not automatic else "software", "href": "#Alignment",
         })
+    video = _prepared_video(config, recording_id)
+    if video is not None:
+        rows.append(video)
     if cameras:
         kept = sum(1 for camera in cameras if camera["accepted"])
         doubt = sum(1 for camera in cameras if camera["doubt"] and not camera["accepted"])
@@ -268,6 +271,51 @@ def _decisions(
     if coded is not None:
         rows.append(coded)
     return rows
+
+
+def _prepared_video(config: MacawConfig, recording_id: str) -> dict | None:
+    from macaw.extractors.prep import load_video_prep
+
+    videos = list(load_video_prep(config, recording_id).values())
+    if not videos:
+        return None
+    made = [video for video in videos if video["file"]]
+    if not made:
+        return {"what": "Video", "decided": f"{len(videos)} file(s) read as recorded (video.normalise: false)", "by": "software", "href": "#Warnings"}
+    rates = ", ".join(sorted({f"{video['fps']:g}" for video in made}, key=float))
+    variable = sum(video["variable_rate"] for video in made)
+    repeated = sum(video["frames_repeated"] or 0 for video in made)
+    dropped = sum(video["frames_dropped"] or 0 for video in made)
+    return {
+        "what": "Video",
+        "decided": f"{len(made)} file(s) re-encoded at a constant {rates} fps, upright, with square pixels and frame 0 at their first sound"
+        + (f"; {variable} had a variable frame rate" if variable else "")
+        + f"; {repeated} frame(s) repeated and {dropped} left out",
+        "by": "software", "href": "#Warnings",
+    }
+
+
+def _frame_rates(config: MacawConfig, recording_ids) -> list[dict]:
+    """Each frame rate the project's videos are read at, with how many videos and recordings; empty when there is only one."""
+    from macaw.extractors.prep import load_video_prep
+
+    videos: Counter = Counter()
+    recordings: dict[float, set[str]] = {}
+    for recording_id in recording_ids:
+        for video in load_video_prep(config, recording_id).values():
+            rate = round(float(video["fps"]), 3)
+            videos[rate] += 1
+            recordings.setdefault(rate, set()).add(recording_id)
+    if len(videos) < 2:
+        return []
+    return [{"fps": f"{rate:g}", "videos": videos[rate], "recordings": len(recordings[rate])} for rate in sorted(videos)]
+
+
+def _common_rate(rates: list[float]) -> float | None:
+    """The lowest rate when every other one is a whole multiple of it, so video.fps can bring them all to it."""
+    lowest = min(rates)
+    whole = all(abs(rate / lowest - round(rate / lowest)) <= 1e-3 * round(rate / lowest) for rate in rates)
+    return lowest if whole else None
 
 
 def _model_coding(layout, recording_id: str) -> dict | None:
@@ -496,11 +544,14 @@ def write_project_report(config: MacawConfig, pages: dict[str, tuple[Path, dict]
         {"recording_id": recording_id, "href": _href(path, page), **summary}
         for recording_id, (path, summary) in sorted(pages.items())
     ]
+    rates = _frame_rates(config, sorted(pages))
     context = _base(
         f"QC {config.project.name}", f"Quality review: {config.project.name}", f"{len(rows)} recording(s)",
-        [("Recordings", "Recordings")],
+        [("Recordings", "Recordings")] + ([("Rates", "Frame rates")] if rates else []),
     )
     context["recordings"] = rows
+    context["frame_rates"] = rates
+    context["common_rate"] = _common_rate([float(row["fps"]) for row in rates]) if rates else None
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(_environment().get_template("project.html.j2").render(**context), encoding="utf-8")
     return page

@@ -35,7 +35,7 @@ def face_check(spec_, backend):
 
 
 EVERYTHING = manifest(
-    spec("prep.media", "n_media"),
+    spec("prep.media", "n_media"), spec("prep.video", "n_videos"),
     spec("prosody.frame", "f0_hz", "parselmouth", "0.4.7"), spec("prosody.frame", "hnr_db", "parselmouth", "0.4.7"),
     spec("prosody.frame", "f1_hz", "parselmouth", "0.4.7"),
     spec("prosody.voice_report", "jitter_local", "parselmouth", "0.4.7", praat_version="6.1.38"),
@@ -145,3 +145,16 @@ def test_the_face_backend_that_ran_is_the_one_named():
     assert "OpenFace 2.2.0" in text and "Py-Feat" in text.split("As a check")[1]
     assert "Py-Feat (Cheong et al., 2023) was run on the same faces" in text and "agreement with OpenFace" in text
     assert {"baltrusaitis2018", "cheong2023"} <= set(used)
+
+
+@pytest.mark.parametrize(
+    ("video", "expected"),
+    [
+        ({}, "constant frame rate, the one it was recorded at"),
+        ({"fps": 15}, "constant 15 frames per second"),
+        ({"normalise": False}, "read as recorded"),
+    ],
+)
+def test_how_the_videos_were_prepared_is_described(video, expected):
+    text, _ = render(describe(manifest(spec("prep.video", "n_videos")), config(video=video)), load_references())
+    assert expected in text

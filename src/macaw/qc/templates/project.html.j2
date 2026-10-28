@@ -14,4 +14,16 @@
   {%- endfor %}
   </tbody>
 </table>
+{% if frame_rates %}
+<h2 id="Rates">Frame rates</h2>
+<p class="desc"><span class="warn">The videos run at different frame rates.</span> Motion energy counts what changed from one frame to the next, so the same movement gives less of it at a higher rate: compare it only between videos at one rate{% if common_rate %}, or set video.fps: {{ "%g" | format(common_rate) }} to bring every video to that rate{% else %}; no one rate divides all of them by a whole number, so video.fps cannot bring them together{% endif %}.</p>
+<table class="flat">
+  <thead><tr><th class="num">Frames per second</th><th class="num">Videos</th><th class="num">Recordings</th></tr></thead>
+  <tbody>
+  {%- for row in frame_rates %}
+  <tr><td class="num">{{ row.fps }}</td><td class="num">{{ row.videos }}</td><td class="num">{{ row.recordings }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}
