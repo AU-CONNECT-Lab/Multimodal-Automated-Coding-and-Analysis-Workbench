@@ -71,6 +71,43 @@ def test_prep_cuts_the_shared_microphone_on_the_same_clock(project, monkeypatch,
     assert {warning.severity for warning in missing} == {"info"}
 
 
+@pytest.mark.parametrize(
+    "files, camera_has_sound, shared",
+    [
+        (["003_room.mp4"], True, {"003_room.mp4": "shared_003_room.wav"}),
+        (["003_room.mp4"], False, {}),
+        (["003_room.mp4", "003_parent.wav", "003_child.wav"], True, {}),
+        (["003_room.mp4", "003_room.wav"], True, {"003_room.wav": "shared_003_room.wav"}),
+    ],
+    ids=["camera-stands-in", "silent-camera", "everyone-has-a-mic", "room-mic-first"],
+)
+def test_the_cameras_sound_is_the_shared_microphone_only_when_there_is_none(
+    project, monkeypatch, tmp_path, files, camera_has_sound, shared
+):
+    raw = tmp_path / "raw" / "003"
+    (raw / "003_room.wav").unlink()
+    for name in files:
+        (raw / name).write_bytes(b"")
+    config = project.resolved()
+    recording = build_recording("003", config)
+    (tmp_path / "work").mkdir()
+
+    def probe(recording):
+        for item in recording.media:
+            item.sample_rate = 48000.0 if item.kind == "audio" or camera_has_sound else None
+
+    extractor = MediaPrepExtractor(config)
+    monkeypatch.setattr(extractor, "_probe_media", probe)
+    monkeypatch.setattr(extractor, "_apply_offsets", lambda recording, warnings: None)
+    monkeypatch.setattr(prep_module, "_window", lambda recording: (0.0, 10.0))
+    monkeypatch.setattr(prep_module, "_extract_track", lambda src, dest, **kwargs: None)
+    result = extractor.run(recording, tmp_path / "work")
+    info = json.loads((tmp_path / "work" / "prep.json").read_text(encoding="utf-8"))
+    assert info["shared_tracks"] == shared
+    stand_in = [warning.message for warning in result.warnings if warning.check == "prep_camera_sound"]
+    assert stand_in == (["No shared audio file; the sound of 003_room.mp4 is the shared microphone."] if "003_room.mp4" in shared else [])
+
+
 def test_overlap_is_a_share_of_the_time_anyone_talks():
     assert overlapped_fraction(turns(("A", 0.0, 4.0), ("B", 2.0, 6.0), exclusive=False)) == pytest.approx(1 / 3)
 

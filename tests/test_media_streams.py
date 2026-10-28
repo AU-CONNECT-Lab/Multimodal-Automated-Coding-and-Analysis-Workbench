@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import wave
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,12 +9,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import VideoSection
 from macaw.exceptions import ConfigError, ExternalToolError
-from macaw.extractors.prep import VideoPrepExtractor, _extract_track
+from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, _extract_track
 from macaw.media.ffmpeg import decode_audio, run_ffmpeg
 from macaw.media.probe import probe, require_ffmpeg, require_ffprobe
-from macaw.project.recording import MediaFile
+from macaw.project.recording import MediaFile, build_recording
 
 try:
     require_ffmpeg()
@@ -81,6 +83,23 @@ class TestPreparedTrack:
         expected = beep_at(decode_audio(sources["late_sound"], sample_rate=RATE)) + 0.5
         track = _extract_track(sources["late_sound"], tmp_path / "track.wav", start_s=-0.5, duration_s=3.0, sample_rate=RATE)
         assert beep_at(read_wav(track)) == pytest.approx(expected, abs=1e-3)
+
+    @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("variable", False)])
+    def test_a_lone_camera_gives_its_sound_as_the_shared_track(self, sources, tmp_path, which, sounding):
+        raw = tmp_path / "raw" / "003"
+        raw.mkdir(parents=True)
+        shutil.copy(sources[which], raw / "003_room.mp4")
+        project = tmp_path / "project.yaml"
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        config = resolve_config(project)
+        (tmp_path / "work").mkdir()
+        MediaPrepExtractor(config).run(build_recording("003", config), tmp_path / "work")
+        shared = json.loads((tmp_path / "work" / "prep.json").read_text(encoding="utf-8"))["shared_tracks"]
+        if not sounding:
+            assert shared == {}
+            return
+        expected = beep_at(decode_audio(sources[which], sample_rate=RATE))
+        assert beep_at(read_wav(tmp_path / "work" / shared["003_room.mp4"])) == pytest.approx(expected, abs=1e-3)
 
 
 def prepare(path: Path, workspace: Path, **settings):

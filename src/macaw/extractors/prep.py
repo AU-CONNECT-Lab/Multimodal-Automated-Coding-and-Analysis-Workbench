@@ -28,7 +28,7 @@ from macaw.media.probe import frame_rate, is_variable_rate, probe
 from macaw.project.identity import identity_basis, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
-from macaw.project.recording import Recording
+from macaw.project.recording import MediaFile, Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
 
@@ -49,7 +49,7 @@ class PrepInfo:
     sample_rate: int
     tracks: dict[str, str] = field(default_factory=dict)      # subject_id -> file name
     shared: list[str] = field(default_factory=list)
-    shared_tracks: dict[str, str] = field(default_factory=dict)  # shared audio file -> prepared file name
+    shared_tracks: dict[str, str] = field(default_factory=dict)  # shared audio file, or the camera standing in -> prepared file name
     media: list[dict] = field(default_factory=list)
     root: Path | None = None                # where the files above actually sit
 
@@ -280,7 +280,7 @@ class IdentityConfirmGate(Gate):
 @register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
@@ -321,6 +321,18 @@ class MediaPrepExtractor(Extractor):
             (item for item in recording.media if item.kind == "audio" and item.subject_id is None),
             key=lambda item: item.path.name,
         )
+        camera = None if shared_audio else _camera_sound(recording)
+        if camera is not None:
+            shared_audio = [camera]
+            warnings.append(
+                QCWarning(
+                    check="prep_camera_sound",
+                    recording_id=recording.recording_id,
+                    subject_id=None,
+                    severity="info",
+                    message=f"No shared audio file; the sound of {camera.path.name} is the shared microphone.",
+                )
+            )
         shared_tracks: dict[str, str] = {}
         for item in shared_audio:
             name = f"{SHARED_TRACK_PREFIX}{item.path.stem}.wav"
@@ -695,6 +707,17 @@ class VideoPrepExtractor(Extractor):
             )
             for name, (description, unit) in _VIDEO_SPECS.items()
         ]
+
+
+def _camera_sound(recording: Recording) -> MediaFile | None:
+    """The shared camera whose sound stands in for a room microphone when someone has no mic of their own."""
+    if all(recording.audio_for(subject.subject_id) is not None for subject in recording.subjects):
+        return None
+    sounding = [
+        item for item in recording.media
+        if item.kind == "video" and item.subject_id is None and item.sample_rate is not None
+    ]
+    return recording.reference_media(among=sounding) if sounding else None
 
 
 def _media_entry(item) -> dict:
