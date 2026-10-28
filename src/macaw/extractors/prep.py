@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import UnreadableMediaError
+from macaw.exceptions import ConfigError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, Phase, QCWarning
 from macaw.media.align import (
@@ -21,8 +23,8 @@ from macaw.media.align import (
     needs_person,
     read_offset_table,
 )
-from macaw.media.ffmpeg import run_ffmpeg
-from macaw.media.probe import probe
+from macaw.media.ffmpeg import normalise_video, run_ffmpeg
+from macaw.media.probe import frame_rate, is_variable_rate, probe
 from macaw.project.identity import identity_basis, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -33,6 +35,7 @@ from macaw.store.schema import Scale
 # every prepared track is written at this rate so downstream extractors never resample
 PREP_SAMPLE_RATE = 16000
 PREP_INFO_NAME = "prep.json"
+VIDEO_INFO_NAME = "video.json"
 SHARED_TRACK_PREFIX = "shared_"
 
 
@@ -88,12 +91,25 @@ def load_prep(config, recording_id: str) -> PrepInfo:
     return PrepInfo(root=root, **payload)
 
 
+def load_video_prep(config, recording_id: str) -> dict[str, dict]:
+    """prep.video's record of each video by file name, with the path of its copy; empty before it has run."""
+    root = layout_for(config, create=False).artifacts_dir(recording_id, VideoPrepExtractor.name)
+    path = root / VIDEO_INFO_NAME
+    if not path.is_file():
+        return {}
+    return {
+        entry["name"]: {**entry, "path": root / entry["file"] if entry["file"] else None}
+        for entry in json.loads(path.read_text(encoding="utf-8"))
+    }
+
+
 def apply_prep_timing(config, recording: Recording) -> PrepInfo:
     """Give each media file the frame rate and offset prep.media found for it, so a later
     process reads the same clock without probing again. Video starts here the way audio starts
     at the prepared tracks."""
     prep = load_prep(config, recording.recording_id)
     entries = {entry["name"]: entry for entry in prep.media}
+    videos = load_video_prep(config, recording.recording_id)
     for item in recording.media:
         entry = entries.get(item.path.name)
         if entry is None:
@@ -104,6 +120,12 @@ def apply_prep_timing(config, recording: Recording) -> PrepInfo:
         item.offset_s = entry["offset_s"]
         item.drift_ppm = entry["drift_ppm"]
         item.offset_confidence = entry["offset_confidence"]
+        video = videos.get(item.path.name)
+        if video is not None:
+            item.fps = video["fps"]
+            # from here on offset_s places frame 0 of the file the video steps read
+            item.offset_s += video["frames_start_s"]
+            item.prepared_video = video["path"]
     return prep
 
 
@@ -493,6 +515,185 @@ class MediaPrepExtractor(Extractor):
                 validation="none",
             )
             for name, (description, unit) in _SPECS.items()
+        ]
+
+
+_VIDEO_SPECS = {
+    "n_videos": ("Video files prepared.", "count"),
+    "n_variable_rate_videos": ("Videos recorded at a variable frame rate.", "count"),
+    "video_frames_repeated": ("Frames repeated to give the videos a constant rate and start them with their sound.", "count"),
+    "video_frames_dropped": ("Frames left out for the same reasons, or to reach video.fps.", "count"),
+}
+_INTERLACED = {"tt", "bb", "tb", "bt"}
+
+
+@register_extractor
+class VideoPrepExtractor(Extractor):
+    """Each video re-encoded once, so every video step reads the same frames on the same clock."""
+
+    name = "prep.video"
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "prep"
+    phase = Phase.PREP
+    config_sections = ("video",)
+    resource_profile = "light_short"
+    cached = False                      # whole videos; only a changed setting remakes them
+
+    @classmethod
+    def wanted_by_default(cls, config) -> bool:
+        return False                    # the steps that read video pull it in
+
+    def check_available(self) -> None:
+        from macaw.media.probe import require_ffmpeg, require_ffprobe
+
+        require_ffmpeg()
+        require_ffprobe()
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        return sorted(item.path for item in recording.media if item.kind == "video")
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        entries, warnings = [], []
+        for item in sorted((item for item in recording.media if item.kind == "video"), key=lambda item: item.path.name):
+            entry = self._prepare(item, workspace)
+            entries.append(entry)
+            warnings += self._notes(recording, item, entry)
+        info_path = workspace / VIDEO_INFO_NAME
+        info_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        artifacts = {VIDEO_INFO_NAME: info_path, **{entry["file"]: workspace / entry["file"] for entry in entries if entry["file"]}}
+        return ExtractorResult(rows=self._rows(recording, entries), specs=self._specs(), artifacts=artifacts, warnings=warnings)
+
+    def _prepare(self, item, workspace: Path) -> dict:
+        cfg = self.config.video
+        info = probe(item.path)
+        if not info.video_streams():
+            raise UnreadableMediaError(f"{item.path}: no video stream")
+        stream = info.video_streams()[0]
+        rate = frame_rate(stream)
+        if rate is None:
+            raise UnreadableMediaError(f"{item.path}: no frame rate to count frames by")
+        # a file's clock is its sound's, the one alignment measures on; a silent file's is its pictures'
+        pictures = stream.start_s if stream.start_s is not None else info.start_s
+        sound = info.audio_streams()[0].start_s if info.audio_streams() else None
+        clock = sound if sound is not None else pictures
+        target = rate if cfg.fps is None else self._target(item, rate)
+        entry = {
+            "name": item.path.name,
+            "file": None,
+            "fps": float(target) if cfg.normalise else stream.fps,
+            "frames_start_s": 0.0 if cfg.normalise else pictures - clock,
+            "first_picture_s": pictures - clock,
+            "source_fps": float(rate),
+            "average_fps": float(stream.average_fps) if stream.average_fps else None,
+            "declared_fps": float(stream.declared_fps) if stream.declared_fps else None,
+            "variable_rate": is_variable_rate(stream),
+            "rotation": stream.rotation,
+            "pixel_aspect": str(stream.pixel_aspect) if stream.pixel_aspect else None,
+            "field_order": stream.field_order,
+            "codec": stream.codec_name,
+            "size": [stream.width, stream.height],
+            "prepared_size": None,
+            "frames_repeated": None,
+            "frames_dropped": None,
+        }
+        if cfg.normalise:
+            name = f"{item.path.name}.mp4"
+            counts = normalise_video(
+                item.path, workspace / name, fps=target, start_s=clock - info.start_s, quality=cfg.quality, encoder=cfg.encoder,
+            )
+            prepared = probe(workspace / name).video_streams()[0]
+            entry.update(file=name, prepared_size=[prepared.width, prepared.height])
+            if counts is not None:
+                entry.update(frames_repeated=counts[0], frames_dropped=counts[1])
+        return entry
+
+    def _target(self, item, rate: Fraction) -> Fraction:
+        wanted = Fraction(self.config.video.fps).limit_denominator(1001)
+        step = rate / wanted
+        every = round(step)
+        if every < 1 or abs(step - every) > Fraction(1, 1000) * every:
+            choices = ", ".join(f"{float(rate / k):g}" for k in range(1, 5))
+            raise ConfigError(
+                f"{item.path.name} runs at {float(rate):g} fps, which video.fps {float(wanted):g} does not divide by a whole "
+                f"number, so frames would be kept unevenly; rates this file can take: {choices}"
+            )
+        return rate / every
+
+    def _notes(self, recording: Recording, item, entry: dict) -> list[QCWarning]:
+        fixed = entry["file"] is not None
+        notes: list[QCWarning] = []
+
+        def note(check: str, message: str, severity: str | None = None) -> None:
+            notes.append(
+                QCWarning(
+                    check=check, recording_id=recording.recording_id, subject_id=item.subject_id,
+                    severity=severity or ("info" if fixed else "warn"), message=f"{item.path.name}: {message}",
+                )
+            )
+
+        if entry["variable_rate"]:
+            rates = f"variable frame rate (on average {entry['average_fps']:.3g} fps, stated {entry['declared_fps']:g})"
+            note("video_variable_rate", f"{rates}; made constant at {entry['fps']:g} fps" if fixed else (
+                f"{rates}; frame times are counted at the average rate and drift from the sound where the rate changed. "
+                "video.normalise makes it constant"
+            ))
+        if entry["rotation"] % 360:
+            turn = abs(entry["rotation"])
+            note("video_rotated", f"turned {turn:g} degrees upright, as the file asks players to" if fixed else (
+                f"asks players to turn it {turn:g} degrees, which some tools do and some do not, so regions and positions "
+                "may not match the picture. video.normalise turns it upright"
+            ))
+        if entry["field_order"] in _INTERLACED:
+            note("video_interlaced", f"interlaced ({entry['field_order']}), deinterlaced" if fixed else (
+                f"interlaced ({entry['field_order']}); the comb between its two fields disturbs face and body detection "
+                "and frame differences. video.normalise deinterlaces it"
+            ))
+        if entry["pixel_aspect"] not in (None, "1"):
+            shape = f"pixels {entry['pixel_aspect']} as wide as they are tall"
+            note("video_pixel_shape", (
+                f"{shape}, stretched to square ({'x'.join(map(str, entry['size']))} to {'x'.join(map(str, entry['prepared_size']))})"
+            ) if fixed else f"{shape}: distances across and down the picture are on different scales. video.normalise makes them square")
+        lead = entry["first_picture_s"]
+        if abs(lead) >= 0.5 / entry["source_fps"]:
+            if not fixed:
+                note("video_start", f"its pictures start {lead:+.3f} s from its sound; frame times allow for it", "info")
+            elif lead > 0:
+                note("video_start", f"its pictures start {lead:.3f} s after its sound; the first is repeated so frame 0 is the sound's first instant")
+            else:
+                note("video_start", f"its pictures start {-lead:.3f} s before its sound; those frames were left out so frame 0 is the sound's first instant")
+        if fixed and not math.isclose(entry["fps"], entry["source_fps"]):
+            note("video_rate_changed", f"one frame in {round(entry['source_fps'] / entry['fps'])} kept, {entry['source_fps']:g} to {entry['fps']:g} fps (video.fps)")
+        return notes
+
+    def _rows(self, recording: Recording, entries: list[dict]) -> pd.DataFrame:
+        def total(key: str) -> float:
+            values = [entry[key] for entry in entries]
+            return float(sum(values)) if values and None not in values else float("nan")
+
+        values = pd.DataFrame(
+            {
+                "t_start": [0.0],
+                "n_videos": [float(len(entries))],
+                "n_variable_rate_videos": [float(sum(entry["variable_rate"] for entry in entries))],
+                "video_frames_repeated": [total("frames_repeated")],
+                "video_frames_dropped": [total("frames_dropped")],
+            }
+        )
+        return build_long_rows(
+            values=values, recording_id=recording.recording_id, source=self.name, scale=Scale.RECORDING,
+            entities=recording.entities(),
+        )
+
+    def _specs(self) -> list[FeatureSpec]:
+        cfg = self.config.video
+        return [
+            FeatureSpec(
+                name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
+                extractor=self.name, extractor_version=self.version, validation="none",
+                params={"normalise": cfg.normalise, "fps": cfg.fps, "quality": cfg.quality, "encoder": cfg.encoder},
+            )
+            for name, (description, unit) in _VIDEO_SPECS.items()
         ]
 
 

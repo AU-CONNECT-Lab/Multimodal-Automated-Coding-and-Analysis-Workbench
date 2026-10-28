@@ -25,7 +25,12 @@ def prepared(monkeypatch):
         media=[entry("room.mp4", fps=25.0, offset_s=1.5), entry("mic.wav")],
     )
     monkeypatch.setattr(prep_module, "load_prep", lambda config, rid: info)
+    monkeypatch.setattr(prep_module, "load_video_prep", lambda config, rid: {})
     return info
+
+
+def video_entry(*, fps, frames_start_s, copy):
+    return {"fps": fps, "frames_start_s": frames_start_s, "path": Path(copy) if copy else None}
 
 
 def test_media_get_the_timing_prep_found(prepared):
@@ -50,3 +55,29 @@ def test_a_file_prep_never_saw_is_left_alone(prepared):
 
 def test_the_prep_record_is_returned_for_its_window(prepared):
     assert apply_prep_timing(None, SimpleNamespace(recording_id="r1", media=[])).t_origin_s == 10.0
+
+
+def test_a_prepared_video_is_read_from_its_copy_at_its_rate(prepared, monkeypatch):
+    monkeypatch.setattr(
+        prep_module, "load_video_prep", lambda config, rid: {"room.mp4": video_entry(fps=30.0, frames_start_s=0.0, copy="prep/room.mp4.mp4")}
+    )
+    room = MediaFile(path=Path("raw/r1/room.mp4"), kind="video")
+    apply_prep_timing(None, SimpleNamespace(recording_id="r1", media=[room]))
+    assert (room.frames_path, room.fps, room.offset_s, room.path.name) == (Path("prep/room.mp4.mp4"), 30.0, 1.5, "room.mp4")
+
+
+def test_a_video_read_as_recorded_counts_from_its_first_picture(prepared, monkeypatch):
+    """Its pictures start 0.2 s after its sound, and the file's offset was measured on the sound."""
+    monkeypatch.setattr(prep_module, "load_video_prep", lambda config, rid: {"room.mp4": video_entry(fps=25.0, frames_start_s=0.2, copy=None)})
+    room = MediaFile(path=Path("raw/r1/room.mp4"), kind="video")
+    apply_prep_timing(None, SimpleNamespace(recording_id="r1", media=[room]))
+    assert room.frames_path == room.path
+    assert room.offset_s == pytest.approx(1.7)
+
+
+def test_applying_the_timing_twice_does_not_add_the_start_twice(prepared, monkeypatch):
+    monkeypatch.setattr(prep_module, "load_video_prep", lambda config, rid: {"room.mp4": video_entry(fps=25.0, frames_start_s=0.2, copy=None)})
+    room = MediaFile(path=Path("raw/r1/room.mp4"), kind="video")
+    for _ in range(2):
+        apply_prep_timing(None, SimpleNamespace(recording_id="r1", media=[room]))
+    assert room.offset_s == pytest.approx(1.7)

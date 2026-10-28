@@ -54,6 +54,19 @@ class IdentitySection(_Section):
     confirm: Literal["always", "skip"] = "always"
 
 
+class VideoSection(_Section):
+    normalise: bool = True
+    fps: float | None = Field(default=None, gt=0)
+    quality: int = Field(default=17, ge=0, le=51)
+    encoder: Literal["libx264", "h264_nvenc"] = "libx264"
+
+    @model_validator(mode="after")
+    def _fps_needs_normalise(self) -> "VideoSection":
+        if self.fps is not None and not self.normalise:
+            raise ValueError("video.fps changes the frame rate while re-encoding, so it needs video.normalise: true")
+        return self
+
+
 class SegmentSection(_Section):
     task_start_s: float | None = None
     task_end_s: float | None = None
@@ -217,6 +230,7 @@ class MacawConfig(_Section):
     align: AlignSection = Field(default_factory=AlignSection)
     identity: IdentitySection = Field(default_factory=IdentitySection)
     segment: SegmentSection = Field(default_factory=SegmentSection)
+    video: VideoSection = Field(default_factory=VideoSection)
     prosody: ProsodySection = Field(default_factory=ProsodySection)
     text: TextSection = Field(default_factory=TextSection)
     pose: PoseSection = Field(default_factory=PoseSection)

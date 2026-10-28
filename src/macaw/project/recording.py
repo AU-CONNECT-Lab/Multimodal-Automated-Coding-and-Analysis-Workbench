@@ -32,6 +32,12 @@ class MediaFile:
     offset_s: float = 0.0              # seconds to add to this file's clock to reach recording time
     drift_ppm: float | None = None
     offset_confidence: float | None = None
+    prepared_video: Path | None = None  # prep.video's re-encoded copy
+
+    @property
+    def frames_path(self) -> Path:
+        """The file video steps decode frames from."""
+        return self.prepared_video or self.path
 
 
 @dataclass

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +111,42 @@ def resample_for_drift(src: Path, dest: Path, *, drift_ppm: float) -> Path:
         ]
     )
     return dest
+
+
+_FPS_COUNTS = re.compile(r"(\d+) frames in, (\d+) frames out; (\d+) frames dropped, (\d+) frames duplicated")
+_ENCODERS = {
+    "libx264": lambda quality: ["-c:v", "libx264", "-preset", "fast", "-crf", str(quality)],
+    "h264_nvenc": lambda quality: ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(quality), "-b:v", "0"],
+}
+
+
+def normalise_video(
+    src: Path, dest: Path, *, fps: Fraction, start_s: float, quality: int, encoder: str = "libx264"
+) -> tuple[int, int] | None:
+    """Constant-rate, upright, progressive, square-pixel H.264 with frame 0 at start_s on the container's timeline; returns (repeated, dropped)."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    filters = [
+        "bwdif=mode=send_frame:parity=auto:deint=interlaced",
+        "scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1",
+        # shifted first so the constant-rate grid starts exactly at start_s rather than at the nearest frame slot
+        f"setpts=PTS-{start_s:.6f}/TB",
+        f"fps=fps={fps.numerator}/{fps.denominator}:start_time=0",
+    ]
+    command = [
+        require_ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-loglevel", "verbose", "-y",
+        "-i", str(src), "-map", "0:v:0", "-an", "-sn", "-dn",
+        "-vf", ",".join(filters), "-fps_mode", "passthrough",
+        *_ENCODERS[encoder](quality), "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, errors="replace")
+    if result.returncode != 0:
+        raise ExternalToolError(f"ffmpeg could not re-encode {src}\n{result.stderr.strip()[-2000:]}")
+    counts = _FPS_COUNTS.findall(result.stderr)
+    if not counts:
+        return None
+    _, _, dropped, repeated = (int(value) for value in counts[-1])
+    return repeated, dropped
 
 
 def extract_thumbnails(src: Path, dest_dir: Path, *, every_s: float = 10.0) -> list[Path]:

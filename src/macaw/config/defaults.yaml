@@ -38,6 +38,15 @@ segment:
   task_end_s: null                   # s; null = keep to end of media
   researcher_exit_marker: null       # transcript phrase marking the researcher leaving
 
+# Before any video step, each video is re-encoded once: a constant frame rate, upright, square
+# pixels, progressive, and frame 0 at the first sound of its file. The copies take about as much
+# disk as the originals again. Frame rate and picture size stay as recorded unless set here.
+video:
+  normalise: true                    # false reads the originals as they are and only warns about what would have been fixed
+  fps: null                          # fps; one rate for every video, e.g. 30 from 60. Must divide each file's rate by a whole number
+  quality: 17                        # 0-51; lower keeps more detail in bigger files. 17 is hard to tell from the source
+  encoder: libx264                   # libx264 (any machine, same frames everywhere) | h264_nvenc (NVIDIA GPU, much faster)
+
 prosody:
   backend: parselmouth               # parselmouth | librosa | builtin
   fallback_chain: [parselmouth, librosa, builtin]   # tried in order when one fails
@@ -94,7 +103,7 @@ face:
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
 
 motion:
-  rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera, else the first shared one; required by motion.mea
+  rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea
   threshold: 10                      # 0-255; per-pixel difference counted as motion
   smoothing_s: 0.0                   # s; moving-average window. 0 = raw
 
