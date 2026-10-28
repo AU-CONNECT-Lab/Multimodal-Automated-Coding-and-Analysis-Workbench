@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 from macaw.exceptions import ExternalToolError, UnreadableMediaError
@@ -31,6 +32,12 @@ class StreamInfo:
     width: int | None = None
     height: int | None = None
     duration_s: float | None = None
+    start_s: float | None = None
+    declared_fps: Fraction | None = None    # the rate the container states
+    average_fps: Fraction | None = None     # frames over duration
+    rotation: float = 0.0                   # degrees players turn the picture
+    pixel_aspect: Fraction | None = None    # width of a pixel over its height; None when unstated
+    field_order: str | None = None          # progressive, or tt / bb / tb / bt for interlaced
 
 
 @dataclass
@@ -40,6 +47,7 @@ class MediaInfo:
     streams: list[StreamInfo]
     variable_frame_rate: bool = False
     creation_time: str | None = None    # as the device wrote it; its clock and time zone are unchecked
+    start_s: float = 0.0                # where the container's own timeline starts
 
     def video_streams(self) -> list[StreamInfo]:
         return [stream for stream in self.streams if stream.codec_type == "video"]
@@ -94,6 +102,50 @@ def _number(value) -> float | None:
         return None
 
 
+def _fraction(value: str | None, separator: str = "/") -> Fraction | None:
+    """"30000/1001", or "32:27" with separator ":"; None for 0/0, N/A and a zero numerator."""
+    try:
+        numerator, _, denominator = str(value).partition(separator)
+        found = Fraction(int(numerator), int(denominator or 1))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return found or None
+
+
+# the rates cameras record at; a variable-rate file is made constant at the nearest one
+STANDARD_RATES = tuple(
+    Fraction(rate) for rate in ("10", "12", "15", "20", "24000/1001", "24", "25", "30000/1001", "30", "48", "50",
+                                "60000/1001", "60", "100", "120000/1001", "120")
+)
+
+
+def _multiple(declared: Fraction, average: Fraction) -> int | None:
+    """k when the declared rate is k times the average one, as with interlaced files that state the field rate."""
+    ratio = declared / average
+    k = round(ratio)
+    return k if k >= 1 and abs(ratio - k) <= Fraction(1, 1000) * k else None
+
+
+def is_variable_rate(stream: StreamInfo) -> bool:
+    if stream.declared_fps is None or stream.average_fps is None:
+        return False
+    return _multiple(stream.declared_fps, stream.average_fps) is None
+
+
+def frame_rate(stream: StreamInfo) -> Fraction | None:
+    """The constant rate the camera meant; for a variable-rate file the plausible declared rate or the average, snapped to a standard one."""
+    declared, average = stream.declared_fps, stream.average_fps
+    if declared is None or average is None:
+        return declared or average
+    k = _multiple(declared, average)
+    if k is not None:
+        return declared / k
+    # some containers declare their time base, e.g. 1000 or 90000
+    base = declared if declared <= 2 * average else average
+    nearest = min(STANDARD_RATES, key=lambda rate: abs(rate - base))
+    return nearest if abs(nearest - base) <= Fraction(15, 1000) * base else base.limit_denominator(1001)
+
+
 def probe(path: Path) -> MediaInfo:
     path = Path(path)
     if not path.is_file():
@@ -106,14 +158,11 @@ def probe(path: Path) -> MediaInfo:
     )
 
     streams: list[StreamInfo] = []
-    variable = False
     for raw in payload.get("streams", []):
         average = _ratio(raw.get("avg_frame_rate"))
         nominal = _ratio(raw.get("r_frame_rate"))
-        if raw.get("codec_type") == "video" and average and nominal:
-            # a container that declares one rate and delivers another is VFR; timestamps
-            # then have to be read per frame instead of assumed
-            variable = variable or abs(average - nominal) / nominal > 0.001
+        video = raw.get("codec_type") == "video"
+        rotations = [item["rotation"] for item in raw.get("side_data_list", []) if "rotation" in item]
         streams.append(
             StreamInfo(
                 index=int(raw.get("index", 0)),
@@ -125,8 +174,16 @@ def probe(path: Path) -> MediaInfo:
                 width=raw.get("width"),
                 height=raw.get("height"),
                 duration_s=_number(raw.get("duration")),
+                start_s=_number(raw.get("start_time")),
+                declared_fps=_fraction(raw.get("r_frame_rate")) if video else None,
+                average_fps=_fraction(raw.get("avg_frame_rate")) if video else None,
+                rotation=float(rotations[0]) if rotations else 0.0,
+                pixel_aspect=_fraction(raw.get("sample_aspect_ratio"), ":") if video else None,
+                field_order=raw.get("field_order"),
             )
         )
+    # a container that declares one rate and delivers another has frame times that cannot be counted
+    variable = any(is_variable_rate(stream) for stream in streams if stream.codec_type == "video")
 
     duration = _number(payload.get("format", {}).get("duration"))
     if duration is None:
@@ -140,7 +197,8 @@ def probe(path: Path) -> MediaInfo:
         (item["tags"]["creation_time"] for item in tagged if "creation_time" in (item.get("tags") or {})), None
     )
     return MediaInfo(
-        path=path, duration_s=duration, streams=streams, variable_frame_rate=variable, creation_time=creation
+        path=path, duration_s=duration, streams=streams, variable_frame_rate=variable, creation_time=creation,
+        start_s=_number(payload.get("format", {}).get("start_time")) or 0.0,
     )
 
 
