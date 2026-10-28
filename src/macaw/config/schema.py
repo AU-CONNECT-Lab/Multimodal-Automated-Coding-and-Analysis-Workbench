@@ -168,9 +168,6 @@ class LLMSection(_Section):
     review_threshold: float = 0.7
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
-    # lines that bring a local server up inside a cluster job, plus how long to wait for it
-    launch: list[str] = Field(default_factory=list)
-    ready_timeout_s: int = 300
 
     def is_local(self) -> bool:
         from macaw.coding.llm.backends import BACKEND_GROUP
@@ -207,7 +204,6 @@ class QCSection(_Section):
 
 
 class ExecutionSection(_Section):
-    backend: Literal["local", "slurm"] = "local"
     n_workers: int = 4
     cache: bool = True
     cache_dir: Path | None = None

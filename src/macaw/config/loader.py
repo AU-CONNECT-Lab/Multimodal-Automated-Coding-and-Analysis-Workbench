@@ -50,7 +50,6 @@ project:
 
 # Cluster resources are configured separately; see hpc.yaml.
 execution:
-  backend: local
   n_workers: 4
 """
 

@@ -62,3 +62,12 @@ env_activate: []                     # lines that activate the Python environmen
 # Shared model cache. Compute nodes usually have no outbound network, so weights must
 # already be here before submission; see `macaw hpc prefetch-models`.
 hf_home: null
+
+# Lines that start a local language model server inside the job that runs coding.judge,
+# left running in the background (end them with &), e.g.
+#   - export OLLAMA_MODELS=/shared/ollama
+#   - ollama serve > ollama.log 2>&1 &
+# The job then waits up to llm_ready_timeout_s for coding.llm.base_url to answer, and stops
+# the server when it ends. Pull the model into that directory beforehand.
+llm_server: []
+llm_ready_timeout_s: 300

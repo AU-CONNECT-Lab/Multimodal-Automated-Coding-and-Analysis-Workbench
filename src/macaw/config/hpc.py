@@ -40,6 +40,8 @@ class HPCConfig(_Section):
     module_load: list[str] = Field(default_factory=list)
     env_activate: list[str] = Field(default_factory=list)
     hf_home: Path | None = None
+    llm_server: list[str] = Field(default_factory=list)
+    llm_ready_timeout_s: int = 300
 
 
 def find_hpc_config(explicit: Path | None = None, project_yaml: Path | None = None) -> Path:

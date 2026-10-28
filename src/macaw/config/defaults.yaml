@@ -135,8 +135,6 @@ coding:
     review_threshold: 0.7            # 0-1; below this the unit enters the human review queue
     batch_size: 20                   # units per request
     context_units: 5                 # earlier units shown before each batch, not coded
-    launch: []                       # lines starting a local server inside a cluster job
-    ready_timeout_s: 300             # s; how long to wait for that server to answer
 
 qc:
   checks:
@@ -155,13 +153,12 @@ qc:
 # Cluster resources are not configured here. They describe the machine rather than the
 # study, so they live in a separate hpc.yaml that never enters the config hash.
 execution:
-  backend: local                     # local | slurm
-  n_workers: 4                       # local only; parallel recordings, not threads per recording
+  n_workers: 4                       # tasks run side by side; on a cluster, within one recording
   cache: true                        # content-addressed cache for resumable runs
   cache_dir: null                    # null = <output_dir>/.cache
   check_outputs: true                # validate declared outputs after a task reports success
   output_rules: null                 # path to results_check.yaml; null = packaged rules
-  job_name_prefix: macaw             # prefix for submitted job names
+  job_name_prefix: macaw             # prefix for cluster job names
 
 gui:
   mode: window                       # window (pywebview) | browser | server

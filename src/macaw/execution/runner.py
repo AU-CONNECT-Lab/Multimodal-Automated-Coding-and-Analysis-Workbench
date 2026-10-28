@@ -13,7 +13,8 @@ from pathlib import Path
 from macaw.config.hashing import hash_extractor_config
 from macaw.config.schema import MacawConfig
 from macaw.exceptions import MacawError
-from macaw.execution.backends.base import JobSpec, get_backend
+from macaw.execution.backends.base import JobSpec
+from macaw.execution.backends.local import LocalBackend
 from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB, JobRecord, now
 from macaw.execution.lock import run_lock
@@ -237,9 +238,24 @@ def run(
         return _run(config, recordings, extractors, resume, dry_run)
 
 
-def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
+def run_recording(
+    config: MacawConfig, config_path: Path, recording_id: str, extractors: list[str], execution_id: str
+) -> RunSummary:
+    """One recording as a cluster array element: locked on its own folder, so the others run beside it.
+    Whoever wrote the job archived config_path and merges the manifest afterwards."""
+    with run_lock(layout_for(config).recording_dir(recording_id)):
+        return _run(
+            config, [recording_id], extractors, True, False, execution_id=execution_id, config_path=config_path,
+            shared_files=False,
+        )
+
+
+def _run(
+    config, recordings, extractors, resume, dry_run, *, execution_id=None, config_path=None, shared_files=True
+) -> RunSummary:
     layout = layout_for(config)
-    execution_id = new_execution_id()
+    execution_id = execution_id or new_execution_id()
+    config_path = config_path or layout_for(config, create=False).resolved_config_path
 
     recording_ids = recordings if recordings is not None else resolve_recordings(config, None)
     dag = build_dag(config, extractors or None)
@@ -255,7 +271,7 @@ def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
     # a gate that reads what this run produces is checked between waves, once that is there
     while True:
         waiting, blocked, notes = check_gates(config, dag, recording_ids, finished)
-        specs = _wave(config, layout, dag, order, gates, recording_ids, execution_id,
+        specs = _wave(config_path, layout, dag, order, gates, recording_ids, execution_id,
                       finished | attempted | blocked, finished, attempted)
         if dry_run:
             return RunSummary(
@@ -271,7 +287,8 @@ def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
         if database is None:
             from macaw.config.loader import archive_resolved
 
-            archive_resolved(config, layout.output_dir)
+            if shared_files:
+                archive_resolved(config, layout.output_dir)
             database = JobDB(layout.job_db_path)
             database.initialise()
         for (recording_id, gate), gate_notes in notes.items():
@@ -290,7 +307,7 @@ def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
                     log_path=str(spec.log_path),
                 )
             )
-        backend = get_backend(config.execution.backend, config.execution, job_db=database)
+        backend = LocalBackend(n_workers=config.execution.n_workers, job_db=database)
         backend.wait(backend.submit(specs))
         n_tasks += len(specs)
         attempted |= {spec.task_id for spec in specs}
@@ -301,7 +318,8 @@ def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
         }
 
     counts = database.summary(execution_id)
-    _merge_manifest_fragments(layout, recording_ids)
+    if shared_files:
+        _merge_manifest_fragments(layout, recording_ids)
     return RunSummary(
         execution_id=execution_id,
         n_tasks=n_tasks,
@@ -314,7 +332,7 @@ def _run(config, recordings, extractors, resume, dry_run) -> RunSummary:
     )
 
 
-def _wave(config, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):
+def _wave(config_path, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):
     """Tasks that can run now; one whose upstream already failed in this run is left out."""
     specs: list[JobSpec] = []
     for name in order:
@@ -335,7 +353,7 @@ def _wave(config, layout, dag, order, gates, recording_ids, execution_id, skip, 
                     task_id=task_id,
                     recording_id=recording_id,
                     extractor=name,
-                    command=_task_command(config, recording_id, name, execution_id),
+                    command=_task_command(config_path, recording_id, name, execution_id),
                     resources=None,
                     log_path=layout.logs_dir / execution_id / f"{_slug(task_id)}.log",
                     depends_on=[task for task in needed if task not in finished],
@@ -348,15 +366,13 @@ def _slug(task_id: str) -> str:
     return task_id.replace(":", "__").replace("/", "_")
 
 
-def _task_command(
-    config: MacawConfig, recording_id: str, extractor: str, execution_id: str
-) -> list[str]:
+def _task_command(config_path: Path, recording_id: str, extractor: str, execution_id: str) -> list[str]:
     # python -m rather than the console script: a cluster job script activates an
     # environment but the bin directory is not always on PATH by then
     return [
         sys.executable, "-m", "macaw",
         "run-task",
-        "--config", str(layout_for(config, create=False).resolved_config_path),
+        "--config", str(config_path),
         "--recording", recording_id,
         "--extractor", extractor,
         "--execution-id", execution_id,
