@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Section(BaseModel):
@@ -30,6 +30,12 @@ class ProjectSection(_Section):
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
+
+    @model_validator(mode="after")
+    def _one_role_per_person(self) -> "ProjectSection":
+        if len(self.roles) != self.n_subjects:
+            raise ValueError(f"roles has {len(self.roles)} entries but n_subjects is {self.n_subjects}; give one role per person")
+        return self
 
 
 class AlignSection(_Section):

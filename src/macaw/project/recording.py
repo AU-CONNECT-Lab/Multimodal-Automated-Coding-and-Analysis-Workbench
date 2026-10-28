@@ -255,9 +255,8 @@ def build_recording(recording_id: str, config: MacawConfig) -> Recording:
     if not root.is_dir():
         raise RecordingNotFoundError(f"{recording_id}: no directory at {root}")
 
-    roles = config.project.roles[: config.project.n_subjects]
     subjects = [
-        Subject(subject_id=role, role=role, roi=config.motion.rois.get(role)) for role in roles
+        Subject(subject_id=role, role=role, roi=config.motion.rois.get(role)) for role in config.project.roles
     ]
 
     return Recording(

@@ -15,7 +15,7 @@ def identity_basis(config: MacawConfig) -> dict:
     """What a confirmation covers: the naming rule and the people, so new recordings that follow it need no new one."""
     return {
         "media_pattern": config.project.media_pattern,
-        "subjects": list(config.project.roles[: config.project.n_subjects]),
+        "subjects": list(config.project.roles),
     }
 
 
