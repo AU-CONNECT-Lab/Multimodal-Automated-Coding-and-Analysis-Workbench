@@ -395,7 +395,8 @@ def run_task(
 
         key = _make_key(config, cls, extractor, recording, config_hash)
         cache_root = _cache_root(config, layout)
-        entry = cache_store.lookup(cache_root, key) if config.execution.cache else None
+        caching = config.execution.cache and cls.cached
+        entry = cache_store.lookup(cache_root, key) if caching else None
         if entry is not None:
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
@@ -409,8 +410,8 @@ def run_task(
             result = extractor.run(recording, Path(workspace))
             payload = Path(workspace) / "_payload"
             _write_result(layout, recording_id, extractor_name, result, execution_id, config_hash)
-            _stage_payload(layout, recording_id, extractor_name, result, payload)
-            if config.execution.cache:
+            if caching:
+                _stage_payload(layout, recording_id, extractor_name, result, payload)
                 cache_store.store(cache_root, key, payload)
 
         _write_stamp(stamp, key)

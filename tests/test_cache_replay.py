@@ -321,3 +321,49 @@ class TestStaleArtifacts:
         runner._write_result(layout, RECORDING, EXTRACTOR, result, "exec-1", "cfg-1")
         assert not stale.exists()
         assert (layout.artifacts_dir(RECORDING, EXTRACTOR) / "swaps").is_file()
+
+
+class TestUncachedSteps:
+    @pytest.fixture
+    def task(self, tmp_path, monkeypatch):
+        """One step that writes an artifact, run through run_task with the cache on."""
+        import macaw.extractors as extractors
+        from macaw.config.loader import resolve_config, scaffold_project_config
+        from macaw.extractors.base import Extractor, ExtractorResult
+        from macaw.store.schema import Scale
+
+        source = _write(tmp_path / "input.txt", "one")
+
+        def step(cached):
+            def run(self, recording, workspace):
+                return ExtractorResult(rows=pd.DataFrame(), artifacts={"big.bin": _write(workspace / "big.bin", "frames")})
+
+            return type("Step", (Extractor,), {
+                "name": "step", "version": "0.1.0", "scale": Scale.RECORDING, "group": "test", "cached": cached,
+                "check_available": lambda self: None, "inputs_for": lambda self, recording: [source], "run": run,
+            })
+
+        monkeypatch.setattr(extractors, "_builtins_loaded", True)
+        monkeypatch.setattr(runner, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id))
+        monkeypatch.setattr(runner, "hash_extractor_config", lambda config, name: "c")
+        project = tmp_path / "project.yaml"
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        config = resolve_config(project)
+
+        def run_step(cached):
+            monkeypatch.setattr(extractors, "_REGISTRY", {"step": step(cached)})
+            runner.run_task(config, RECORDING, "step", "exec-1")
+            layout = runner.layout_for(config)
+            entries = list((runner._cache_root(config, layout) / "step").glob("*")) if runner._cache_root(config, layout).is_dir() else []
+            return layout, entries
+
+        return run_step
+
+    def test_a_cached_step_keeps_a_copy(self, task):
+        _, entries = task(True)
+        assert entries
+
+    def test_an_uncached_step_leaves_its_artifacts_and_no_copy(self, task):
+        layout, entries = task(False)
+        assert (layout.artifacts_dir(RECORDING, "step") / "big.bin").is_file()
+        assert entries == []

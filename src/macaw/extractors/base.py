@@ -58,6 +58,7 @@ class Extractor(ABC):
     requires: tuple[str, ...] = ()                  # other extractor names -> DAG edges
     runs_after: tuple[str, ...] = ()                # ordered after these when they run too, never pulled in by it
     resource_profile: str = "standard"              # tier name defined in hpc.yaml
+    cached: bool = True                             # whether the result cache keeps a copy to replay
 
     def __init__(self, config: MacawConfig):
         self.config = config
