@@ -177,6 +177,30 @@ def completed_on_disk(config: MacawConfig, dag, recording_ids: list[str]) -> set
     return current
 
 
+def task_states(config: MacawConfig, dag, recording_ids: list[str]) -> dict[str, str]:
+    """Each task as a resumed run would find it: current, held behind a gate waiting for a person,
+    stale (outputs made from something that has changed since) or new."""
+    layout = layout_for(config, create=False)
+    on_disk = completed_tasks(layout.output_dir, _output_rules(config))
+    current = completed_on_disk(config, dag, recording_ids)
+    waiting, _, _ = check_gates(config, dag, recording_ids, current)
+    held = {
+        task_id_for(wait.recording_id, name)
+        for wait in waiting if not wait.deferred
+        for name in dag.descendants(wait.gate)
+    }
+    gates = set(_gates(dag))
+    states = {}
+    for name in dag.topological_order():
+        for recording_id in recording_ids if name not in gates else ():
+            task_id = task_id_for(recording_id, name)
+            states[task_id] = (
+                "current" if task_id in current else "held" if task_id in held
+                else "stale" if task_id in on_disk else "new"
+            )
+    return states
+
+
 def task_key(config: MacawConfig, extractor_name: str, recording) -> str:
     cls = get_extractor(extractor_name)
     return _make_key(config, cls, cls(config), recording, hash_extractor_config(config, extractor_name)).as_dirname()

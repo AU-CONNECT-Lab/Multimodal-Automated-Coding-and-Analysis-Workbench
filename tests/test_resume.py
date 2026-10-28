@@ -9,7 +9,7 @@ from macaw.execution import runner as runner_module
 from macaw.exceptions import MacawError
 from macaw.execution.dag import build_dag
 from macaw.execution.lock import run_lock
-from macaw.execution.runner import _write_stamp, completed_on_disk
+from macaw.execution.runner import _write_stamp, completed_on_disk, task_states
 from macaw.extractors.base import Phase
 from macaw.project.layout import layout_for
 from macaw.store import cache as cache_store
@@ -79,6 +79,13 @@ class TestResume:
     def test_a_key_that_cannot_be_worked_out_runs_again(self, line):
         line.source.unlink()
         assert line.current() == set()
+
+    def test_each_task_says_how_a_resumed_run_finds_it(self, line):
+        dag = build_dag(line.config, ["second"])
+        assert task_states(line.config, dag, ["rec1"]) == {"rec1:first": "current", "rec1:second": "current"}
+        line.registry["second"].version = "0.2.0"
+        assert task_states(line.config, dag, ["rec1"]) == {"rec1:first": "current", "rec1:second": "stale"}
+        assert task_states(line.config, dag, ["rec2"]) == {"rec2:first": "new", "rec2:second": "new"}
 
 
 class TestRunLock:
