@@ -26,6 +26,7 @@
 - Videos are prepared once before any video step (`prep.video`): constant frame rate, upright, square pixels, deinterlaced, with frame 0 at the file's first sound, so every step reads the same frames on the same clock; `video.fps` brings all videos to one rate where it divides them evenly, the quality report lists differing frame rates, and audio tracks from files whose sound and pictures start apart now land on the aligned clock.
 - A recording filmed by one camera with no separate microphone is analysed from the camera's own sound, and `text.extra_voices` lets a shared microphone hold voices besides the participants (a researcher in the room) that are named `none` and left out. `segment.researcher_exit_marker`, which had no effect, is gone.
 - With `text.extra_voices`, voices named `none` take part in turn taking as one further speaker, `other`, and stay out of the people's language and voice measures; high dynamic range video (HLG, PQ) is tone-mapped to standard range by `prep.video`. On a Slurm cluster, `macaw hpc generate` writes job arrays for what is left to run and `macaw hpc prefetch-models` fetches model weights beforehand; **`execution.backend` and `coding.llm.launch` are gone, the model-server lines now go in `hpc.yaml`**.
+- A user guide for researchers, in plain words, published to GitHub Pages (`docs/`, built with `pip install ".[docs]"`).
 
 ## [0.1.0-alpha] – 2026-08-13
 
