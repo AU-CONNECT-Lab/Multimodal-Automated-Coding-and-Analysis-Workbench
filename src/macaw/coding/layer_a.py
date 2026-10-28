@@ -179,7 +179,8 @@ class LayerACodingExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.EVENT
     group = "coding"
-    config_sections = ("coding", "turns")
+    # only the coding keys it reads, so a language model setting leaves it alone
+    config_sections = ("coding.backchannel_lexicon", "coding.backchannel_max_s", "coding.min_turn_internal_pause_s", "turns")
     requires = (TransitionExtractor.name, TurnStructureExtractor.name, ASRExtractor.name)
 
     def check_available(self) -> None:

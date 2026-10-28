@@ -44,7 +44,8 @@ class JudgementExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.EVENT
     group = "coding"
-    config_sections = ("coding", "turns")
+    # turns: the turn table it codes when the unit is a turn
+    config_sections = ("coding.codebook", "coding.llm", "turns")
     requires = (ASRExtractor.name, TurnStructureExtractor.name)
 
     @classmethod
