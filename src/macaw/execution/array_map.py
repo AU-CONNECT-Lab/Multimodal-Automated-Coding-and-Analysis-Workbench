@@ -55,11 +55,3 @@ def array_spec(mapping: dict[str, int], *, max_concurrent: int | None = None) ->
         raise MacawError("Cannot build an array spec for zero recordings")
     spec = f"0-{max(mapping.values())}"
     return f"{spec}%{max_concurrent}" if max_concurrent else spec
-
-
-def rerun_spec(indices: list[int], *, max_concurrent: int | None = None) -> str:
-    """Renders 3,7,12 for reruns of failed elements."""
-    if not indices:
-        raise MacawError("Cannot build a rerun spec for zero failed indices")
-    spec = ",".join(str(index) for index in sorted(set(indices)))
-    return f"{spec}%{max_concurrent}" if max_concurrent else spec

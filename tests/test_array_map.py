@@ -8,7 +8,6 @@ from macaw.execution.array_map import (
     build_map,
     read_map,
     recording_for_index,
-    rerun_spec,
     write_map,
 )
 
@@ -82,16 +81,3 @@ class TestSpecs:
     def test_an_empty_map_is_an_error(self):
         with pytest.raises(MacawError, match="zero recordings"):
             array_spec({})
-
-    def test_a_rerun_lists_the_failed_indices(self):
-        assert rerun_spec([7, 3, 12]) == "3,7,12"
-
-    def test_a_rerun_deduplicates(self):
-        assert rerun_spec([3, 3, 7]) == "3,7"
-
-    def test_a_rerun_takes_a_concurrency_limit(self):
-        assert rerun_spec([3, 7], max_concurrent=2) == "3,7%2"
-
-    def test_a_rerun_with_nothing_to_rerun_is_an_error(self):
-        with pytest.raises(MacawError, match="zero failed"):
-            rerun_spec([])

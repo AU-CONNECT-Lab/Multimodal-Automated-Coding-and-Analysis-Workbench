@@ -34,11 +34,6 @@ class Layout:
         return self.work_dir / "logs"
 
     @property
-    def slurm_logs_dir(self) -> Path:
-        # what a job script points --output at, so scheduler output lands next to task logs
-        return self.logs_dir / "slurm"
-
-    @property
     def reports_dir(self) -> Path:
         return self.output_dir / "reports"
 
@@ -54,10 +49,6 @@ class Layout:
     def job_db_path(self) -> Path:
         # a directory of per-task files, not a database file; see execution/job_db.py
         return self.work_dir / "jobs"
-
-    @property
-    def array_map_path(self) -> Path:
-        return self.work_dir / "array_map.tsv"
 
     # manifest entries and QC warnings arrive from concurrent extractors just like feature
     # rows do, so they are written as fragments and merged by whoever reads them

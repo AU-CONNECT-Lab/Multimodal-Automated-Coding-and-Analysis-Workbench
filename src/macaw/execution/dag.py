@@ -100,23 +100,8 @@ class DAG:
         return [name for name in order if self.nodes[name].phase == phase]
 
     def interactive_gates(self) -> list[str]:
-        """Nodes a human must clear. Cluster scripts stop before these and resume after."""
+        """Nodes a human must clear; a run checks them in-process and never schedules them."""
         return self.by_phase(Phase.INTERACTIVE)
-
-    def batch_segments(self) -> list[list[str]]:
-        """Runs of automatic work split at each interactive gate, in order."""
-        segments: list[list[str]] = []
-        current: list[str] = []
-        for name in self.topological_order():
-            if self.nodes[name].phase == Phase.INTERACTIVE:
-                if current:
-                    segments.append(current)
-                    current = []
-                continue
-            current.append(name)
-        if current:
-            segments.append(current)
-        return segments
 
     def ready(self, completed: set[str]) -> list[str]:
         return sorted(

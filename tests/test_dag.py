@@ -112,22 +112,6 @@ class TestPhases:
         }
         assert graph(spec).interactive_gates() == ["align.review"]
 
-    def test_batch_segments_break_at_the_gate(self, graph):
-        """A cluster script stops here and prints what to run by hand; it cannot submit past it."""
-        spec = {
-            "prep": ((), Phase.PREP),
-            "align.review": (("prep",), Phase.INTERACTIVE),
-            "asr": (("align.review",), Phase.EXTRACT),
-        }
-        assert graph(spec).batch_segments() == [["prep"], ["asr"]]
-
-    def test_without_a_gate_everything_is_one_segment(self, graph):
-        assert graph(LINE).batch_segments() == [["prep", "asr", "turns"]]
-
-    def test_a_gate_at_the_front_leaves_one_segment(self, graph):
-        spec = {"review": ((), Phase.INTERACTIVE), "asr": (("review",), Phase.EXTRACT)}
-        assert graph(spec).batch_segments() == [["asr"]]
-
 
 class TestExport:
     def test_cytoscape_lists_every_node_and_edge(self, graph):

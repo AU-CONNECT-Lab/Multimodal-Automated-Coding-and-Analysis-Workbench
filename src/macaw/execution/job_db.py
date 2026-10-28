@@ -139,21 +139,3 @@ class JobDB:
 
     def executions(self) -> list[str]:
         return sorted(item.name for item in self.path.glob("*") if item.is_dir())
-
-    def array_indices_for_rerun(self, execution_id: str) -> list[int]:
-        """Turns the failed set into a --array=3,7,12 argument."""
-        from macaw.execution.array_map import read_map
-
-        map_path = self.path.parent / "array_map.tsv"
-        if not map_path.is_file():
-            raise MacawError(
-                f"No array_map.tsv beside {self.path}. Reruns need the mapping the original "
-                "submission used, because array indices must stay stable across arrays."
-            )
-        mapping = read_map(map_path)
-        indices = {
-            mapping[record.recording_id]
-            for record in self.failed(execution_id)
-            if record.recording_id in mapping
-        }
-        return sorted(indices)

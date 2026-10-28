@@ -7,7 +7,6 @@ import threading
 import pytest
 
 from macaw.exceptions import MacawError
-from macaw.execution.array_map import write_map
 from macaw.execution.job_db import STATUSES, JobDB, JobRecord
 
 
@@ -173,22 +172,3 @@ class TestConcurrentWriters:
         records = database.query(execution_id="exec-1")
         assert len(records) == n
         assert all(record.status == "done" for record in records)
-
-
-class TestRerunIndices:
-    def test_failed_recordings_become_array_indices(self, database, make_record):
-        write_map({"rec1": 0, "rec2": 1, "rec3": 2}, database.path.parent / "array_map.tsv")
-        database.upsert(make_record("rec1:prep.media", status="done"))
-        database.upsert(make_record("rec3:prep.media", status="failed"))
-        assert database.array_indices_for_rerun("exec-1") == [2]
-
-    def test_without_the_original_map_a_rerun_refuses(self, database, make_record):
-        """Reusing a fresh mapping would break the array-index pairing between arrays."""
-        database.upsert(make_record("rec1:prep.media", status="failed"))
-        with pytest.raises(MacawError, match="array_map.tsv"):
-            database.array_indices_for_rerun("exec-1")
-
-    def test_no_failures_gives_no_indices(self, database, make_record):
-        write_map({"rec1": 0}, database.path.parent / "array_map.tsv")
-        database.upsert(make_record("rec1:prep.media", status="done"))
-        assert database.array_indices_for_rerun("exec-1") == []

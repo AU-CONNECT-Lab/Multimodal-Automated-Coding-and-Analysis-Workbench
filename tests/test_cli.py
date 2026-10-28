@@ -435,7 +435,7 @@ class TestBlockedCommandsStayHonest:
     @pytest.mark.parametrize(
         "args",
         [
-            ["hpc", "generate", "-c", "project.yaml"],
+            ["refine-codebook", "-c", "project.yaml", "--codebook", "codebook.yaml", "--out", "refined.yaml"],
         ],
     )
     def test_they_do_not_report_success(self, args, project, monkeypatch):

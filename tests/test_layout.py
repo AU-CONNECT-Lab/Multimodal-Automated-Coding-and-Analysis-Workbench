@@ -21,7 +21,7 @@ needs_pydantic = pytest.mark.skipif(
     reason="real pydantic required; the conftest stub cannot validate a config",
 )
 
-WORK_PATHS = ("cache_dir", "logs_dir", "slurm_logs_dir", "job_db_path", "array_map_path")
+WORK_PATHS = ("cache_dir", "logs_dir", "job_db_path")
 OUTPUT_PATHS = ("reports_dir", "recordings_dir", "manifest_path", "resolved_config_path")
 
 
@@ -67,9 +67,6 @@ class TestSplitRoots:
 
     def test_artifacts_are_a_result(self, layout):
         assert _is_under(layout.artifacts_dir("rec1", "prep.media"), layout.output_dir)
-
-    def test_slurm_logs_sit_with_the_task_logs(self, layout):
-        assert layout.slurm_logs_dir.parent == layout.logs_dir
 
     def test_creating_makes_both_roots(self, tmp_path):
         layout = make_layout(tmp_path / "derivatives", tmp_path / "scratch")

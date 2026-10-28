@@ -317,7 +317,11 @@ def _run(
             if record.status in ("done", "cached")
         }
 
-    counts = database.summary(execution_id)
+    # the elements of a cluster run share one execution id, so only what this run tried counts
+    counts: dict[str, int] = {}
+    for record in database.query(execution_id=execution_id):
+        if record.task_id in attempted:
+            counts[record.status] = counts.get(record.status, 0) + 1
     if shared_files:
         _merge_manifest_fragments(layout, recording_ids)
     return RunSummary(
@@ -325,6 +329,25 @@ def _run(
         n_tasks=n_tasks,
         n_done=counts.get("done", 0),
         n_cached=counts.get("cached", 0) + len(already),
+        n_failed=counts.get("failed", 0) + counts.get("cancelled", 0),
+        warnings=_collect_warnings(layout, recording_ids),
+        output_dir=layout.output_dir,
+        waiting=[wait for wait in waiting if not wait.deferred],
+    )
+
+
+def finish(config: MacawConfig, recording_ids: list[str], extractors: list[str], execution_id: str) -> RunSummary:
+    """What a cluster run's arrays left once all are done, with the manifest merge they leave to this."""
+    layout = layout_for(config)
+    _merge_manifest_fragments(layout, recording_ids)
+    dag = build_dag(config, extractors or None)
+    waiting, _, _ = check_gates(config, dag, recording_ids, completed_on_disk(config, dag, recording_ids))
+    counts = JobDB(layout.job_db_path).summary(execution_id)
+    return RunSummary(
+        execution_id=execution_id,
+        n_tasks=sum(counts.values()),
+        n_done=counts.get("done", 0),
+        n_cached=counts.get("cached", 0),
         n_failed=counts.get("failed", 0) + counts.get("cancelled", 0),
         warnings=_collect_warnings(layout, recording_ids),
         output_dir=layout.output_dir,
