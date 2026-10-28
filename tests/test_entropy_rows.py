@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from macaw.config.schema import TurnsSection
+from macaw.config.schema import TextSection, TurnsSection
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame
 from macaw.turns.entropy import EntropyExtractor
 from macaw.turns.transitions import classify_overlaps, detect_transitions
@@ -57,7 +57,7 @@ def scene(make_turns, make_recording, make_prep, cfg):
 
 @pytest.fixture
 def extractor(cfg):
-    return EntropyExtractor(SimpleNamespace(turns=cfg))
+    return EntropyExtractor(SimpleNamespace(turns=cfg, text=TextSection()))
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ class TestWindowRows:
         self, make_turns, make_recording, make_prep, windowed_cfg
     ):
         scene = build_scene(make_turns, make_recording, make_prep, windowed_cfg)
-        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg))
+        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
         rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
 
         windowed = rows[rows.scale == "window"]
@@ -157,7 +157,7 @@ class TestWindowRows:
     ):
         """Conditional entropy needs more pairs than a window holds, so it stays out."""
         scene = build_scene(make_turns, make_recording, make_prep, windowed_cfg)
-        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg))
+        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
         rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
 
         emitted = set(rows[rows.scale == "window"].feature)
@@ -174,7 +174,7 @@ class TestWindowRows:
         """No turns inside means no estimate; a zero would read as perfect predictability."""
         quiet = [row for row in TURNS if row[1] < 25.0]
         scene = build_scene(make_turns, make_recording, make_prep, windowed_cfg, quiet)
-        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg))
+        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
         rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
 
         late = rows[(rows.scale == "window") & (rows.t_start >= 40.0)]
@@ -205,7 +205,7 @@ class TestWarnings:
         assert "entropy_too_few_windows" not in without
 
         windowed = build_scene(make_turns, make_recording, make_prep, windowed_cfg)
-        other = EntropyExtractor(SimpleNamespace(turns=windowed_cfg))
+        other = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
         checks = {
             w.check
             for w in other._warnings(

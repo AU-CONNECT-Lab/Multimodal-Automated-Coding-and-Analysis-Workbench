@@ -12,6 +12,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import InputNotFoundError, MacawError
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, ASRExtractor, read_transcript
+from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.interop.transcript_eaf import export_transcript_eaf, read_transcript_eaf
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -56,8 +57,7 @@ def import_(
     """Keep a corrected transcript; text.asr and everything after it use it from the next run."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
-    subjects = [subject.subject_id for subject in build_recording(recording, resolved).subjects]
-    corrected = read_transcript_eaf(eaf, subjects)
+    corrected = read_transcript_eaf(eaf, turn_takers(resolved, build_recording(recording, resolved)))
     target = layout.corrected_transcript_path(recording)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(eaf, target)

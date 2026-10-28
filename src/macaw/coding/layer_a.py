@@ -190,9 +190,9 @@ class LayerACodingExtractor(Extractor):
         return TransitionExtractor(self.config).inputs_for(recording)
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        turns = load_turns(self.config, recording.recording_id)
+        turns = load_turns(self.config, recording.recording_id, others=True)
         transitions = load_transitions(self.config, recording.recording_id)
-        transcript = load_transcript(self.config, recording.recording_id)
+        transcript = load_transcript(self.config, recording.recording_id, others=True)
 
         coded = {
             BACKCHANNEL_TIER: code_backchannels(turns, self.config.coding),

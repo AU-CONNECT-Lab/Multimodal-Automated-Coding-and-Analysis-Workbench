@@ -11,13 +11,15 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.content.diarization import (
     BACKEND_GROUP as DIARIZATION_GROUP,
+    OTHER,
     SHARED_MODE,
     SpeakerReviewGate,
     read_diarization,
     resolve_diarization,
     shared_track,
+    speaker_names,
+    turn_takers,
     voice_inputs,
-    voice_names,
 )
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
@@ -314,12 +316,12 @@ _SUMMARY_SPECS = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
         "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.compute_type",
-        "text.diarization", "text.crosstalk_margin_db", "text.word_timestamps", "segment",
+        "text.diarization", "text.extra_voices", "text.crosstalk_margin_db", "text.word_timestamps", "segment",
     )
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
@@ -415,9 +417,7 @@ class ASRExtractor(Extractor):
 
         layout = layout_for(self.config, create=False)
         rid = recording.recording_id
-        corrected = read_transcript_eaf(
-            layout.corrected_transcript_path(rid), [subject.subject_id for subject in recording.subjects]
-        )
+        corrected = read_transcript_eaf(layout.corrected_transcript_path(rid), turn_takers(self.config, recording))
         utterances = corrected.assign(
             recording_id=rid,
             utterance_index=corrected.groupby("subject_id").cumcount().astype("int64"),
@@ -456,7 +456,7 @@ class ASRExtractor(Extractor):
             )
         turns = _track_clock_turns(self.config, rid, prep)
         utterances, words, unplaced = split_by_voice(
-            utterances, words, turns, voice_names(self.config, rid), elsewhere=frozenset(prep.tracks)
+            utterances, words, turns, speaker_names(self.config, rid), elsewhere=frozenset(prep.tracks)
         )
         if unplaced:
             warnings.append(
@@ -472,7 +472,7 @@ class ASRExtractor(Extractor):
     def _drop_room_bleed(self, recording: Recording, prep, utterances: pd.DataFrame, warnings: list[QCWarning]) -> pd.DataFrame:
         """A person heard only on the shared microphone still leaks into the others' own microphones.
         An utterance is their bleed when it lies mostly in their voice and the owner's is all but absent."""
-        names = voice_names(self.config, recording.recording_id)
+        names = speaker_names(self.config, recording.recording_id)
         turns = _track_clock_turns(self.config, recording.recording_id, prep, exclusive=False)
         turns = turns.assign(subject_id=turns["label"].map(lambda label: names.get(label)))
         roomers = set(turns["subject_id"].dropna()) - set(prep.tracks)
@@ -794,14 +794,16 @@ def read_words(path: Path) -> pd.DataFrame:
     return _io.read_file(Path(path), WORD_SCHEMA, "words")
 
 
-def load_transcript(config, recording_id: str) -> pd.DataFrame:
-    """Where every downstream text extractor starts, the way audio ones start at load_prep."""
+def load_transcript(config, recording_id: str, *, others: bool = False) -> pd.DataFrame:
+    """Where every downstream text extractor starts, the way audio ones start at load_prep.
+    OTHER's utterances only with others, for turn-taking."""
     from macaw.project.layout import layout_for
 
     root = layout_for(config, create=False).artifacts_dir(
         recording_id, ASRExtractor.name
     )
-    return read_transcript(root / TRANSCRIPT_NAME)
+    transcript = read_transcript(root / TRANSCRIPT_NAME)
+    return transcript if others else transcript[transcript["subject_id"] != OTHER].reset_index(drop=True)
 
 
 def _track_clock_turns(config, recording_id: str, prep, *, exclusive: bool = True) -> pd.DataFrame:

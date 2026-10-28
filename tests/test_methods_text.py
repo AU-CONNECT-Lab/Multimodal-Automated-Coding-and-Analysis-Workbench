@@ -137,10 +137,10 @@ def test_a_shared_microphone_is_described_only_when_one_was_diarized():
     assert "set to the number of participants" in text
 
 
-def test_voices_besides_the_participants_are_described_as_left_out():
+def test_voices_besides_the_participants_are_described_as_one_further_speaker():
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m", extra_voices=1))
     text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
-    assert "allowing up to 1 voice besides the participants'" in text and "left out" in text
+    assert "allowing up to 1 voice besides the participants'" in text and "one further speaker" in text
     assert "set to the number of participants" not in text
 
 

@@ -28,6 +28,8 @@ def export_transcript_eaf(
         eaf.add_linguistic_type(kind)
     _link_media(eaf, recording, out_path)
     subjects = [subject.subject_id for subject in recording.subjects]
+    # a further speaker the transcript holds, such as other, keeps a tier of its own
+    subjects += sorted(set(transcript["subject_id"].dropna().astype(str)) - set(subjects))
     for kind, frame, name in ((TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped")):
         for subject_id in subjects:
             rows = frame[frame["subject_id"].astype(str) == subject_id]

@@ -35,6 +35,10 @@ class ProjectSection(_Section):
     def _one_role_per_person(self) -> "ProjectSection":
         if len(self.roles) != self.n_subjects:
             raise ValueError(f"roles has {len(self.roles)} entries but n_subjects is {self.n_subjects}; give one role per person")
+        # the names a voice on a shared microphone gets when it is no participant's
+        taken = sorted({"none", "other"} & set(self.roles))
+        if taken:
+            raise ValueError(f"{', '.join(taken)} cannot be a role: it names a voice that is not one of the people")
         return self
 
 

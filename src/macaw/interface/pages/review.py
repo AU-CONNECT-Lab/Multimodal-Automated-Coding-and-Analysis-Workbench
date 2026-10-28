@@ -141,7 +141,7 @@ def _people_on_camera(layout, results, rid):
 
 
 def _voices(config, layout, recording):
-    from macaw.extractors.audio.content.diarization import DiarizationExtractor, read_voice_owners, read_voices
+    from macaw.extractors.audio.content.diarization import DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
     from macaw.extractors.audio.content.speaker_id import suggest_voices
 
     rid = recording.recording_id
@@ -173,7 +173,10 @@ def _voices(config, layout, recording):
         ui.table(["Voice", "Speech", "Clips", "Person"], rows),
         status,
         html.Div(_button("Save these names", "accept-voices", primary=True), className="buttons"),
-        desc="Listen to the clips, then pick whose voice each is; none leaves a voice out.",
+        desc=(
+            "Listen to the clips, then pick whose voice each is; none leaves a voice out"
+            + (", and its words count as one further speaker, other, in turn-taking." if others_take_turns(config) else ".")
+        ),
     )
 
 

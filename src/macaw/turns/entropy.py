@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.extractors import register_extractor
+from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -171,7 +172,7 @@ class EntropyExtractor(Extractor):
     version = "0.2.0"
     scale = Scale.WINDOW
     group = "turns"
-    config_sections = ("turns",)
+    config_sections = ("turns", "text.diarization", "text.extra_voices")
     requires = (TransitionExtractor.name, TurnStructureExtractor.name, MediaPrepExtractor.name)
 
     def check_available(self) -> None:
@@ -187,7 +188,7 @@ class EntropyExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         """Warns when the task duration yields too few windows to interpret."""
-        turns = load_turns(self.config, recording.recording_id)
+        turns = load_turns(self.config, recording.recording_id, others=True)
         transitions = load_transitions(self.config, recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
 
@@ -244,7 +245,7 @@ class EntropyExtractor(Extractor):
         entities = recording.entities()
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-        subject_ids = [subject.subject_id for subject in recording.subjects]
+        subject_ids = turn_takers(self.config, recording)
         n_states = max(len(subject_ids), 1)
         frames = []
 
@@ -320,7 +321,7 @@ class EntropyExtractor(Extractor):
     def _warnings(self, recording: Recording, turns, transitions, prep) -> list[QCWarning]:
         cfg = self.config.turns
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-        n_states = max(len(recording.subjects), 1) ** 2
+        n_states = max(len(turn_takers(self.config, recording)), 1) ** 2
         n_transitions = max(len(turns) - 1, 0)
         fto = self._fto_series(transitions)
         patterns = max(len(fto) - cfg.permutation_entropy_order + 1, 0)

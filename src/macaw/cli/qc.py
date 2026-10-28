@@ -262,7 +262,7 @@ def accept_voices(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     rename: str = typer.Option(
-        None, "--rename", help=f"LABEL=PERSON pairs for every voice, comma-separated; PERSON {NO_ONE} leaves a voice out."
+        None, "--rename", help=f"LABEL=PERSON pairs for every voice, comma-separated; PERSON {NO_ONE} leaves a voice out (with text.extra_voices it takes turns as other)."
     ),
     by: str = typer.Option(None, "--by", help="Who listened. Default: the login name."),
 ) -> None:

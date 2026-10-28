@@ -245,8 +245,9 @@ def _diarize(config, spec, names) -> str:
         return ""
     extra = spec.params.get("extra_voices", 0)
     speakers = (
-        f"allowing up to {extra} voice{'s' if extra > 1 else ''} besides the participants'; voices of anyone else "
-        "were left out when the voices were named. "
+        f"allowing up to {extra} voice{'s' if extra > 1 else ''} besides the participants'. Speech in any other voice "
+        "was transcribed as one further speaker, who took turns and was a state of its own in the turn-taking "
+        "measures, but was left out of the participants' language and voice measures. "
         if extra else "with the number of speakers set to the number of participants. "
     )
     return (

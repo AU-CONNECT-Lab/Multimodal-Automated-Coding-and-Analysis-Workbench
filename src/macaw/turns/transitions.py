@@ -9,6 +9,7 @@ import pandas as pd
 
 from macaw.config.schema import TurnsSection
 from macaw.extractors import register_extractor
+from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -285,7 +286,7 @@ class TransitionExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.EVENT
     group = "turns"
-    config_sections = ("turns",)
+    config_sections = ("turns", "text.diarization", "text.extra_voices")
     requires = (TurnStructureExtractor.name, MediaPrepExtractor.name)
 
     def check_available(self) -> None:
@@ -299,7 +300,7 @@ class TransitionExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.turns
-        turns = load_turns(self.config, recording.recording_id)
+        turns = load_turns(self.config, recording.recording_id, others=True)
         prep = load_prep(self.config, recording.recording_id)
 
         transitions = classify_overlaps(
@@ -324,7 +325,7 @@ class TransitionExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         minutes = prep.duration_s / 60.0
-        subject_ids = [subject.subject_id for subject in recording.subjects]
+        subject_ids = turn_takers(self.config, recording)
         switches = transitions[_switch_mask(transitions)]
         frames = []
 

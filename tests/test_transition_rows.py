@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from macaw.config.schema import TurnsSection
+from macaw.config.schema import TextSection, TurnsSection
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame
 from macaw.turns.transitions import TransitionExtractor, classify_overlaps, detect_transitions
 
@@ -28,7 +28,7 @@ def cfg():
 
 @pytest.fixture
 def extractor(cfg):
-    return TransitionExtractor(SimpleNamespace(turns=cfg))
+    return TransitionExtractor(SimpleNamespace(turns=cfg, text=TextSection()))
 
 
 def build_scene(make_turns, make_recording, make_prep, cfg, rows):

@@ -29,6 +29,8 @@ SHARED_MODE = "pyannote"
 DIARIZATION_NAME = "diarization.parquet"
 VOICES_NAME = "voices.json"
 NO_ONE = "none"
+# the one further speaker every voice named none becomes once text.extra_voices lets the room hold others
+OTHER = "other"
 # who named the voices when the suggestion was kept without a person
 AUTOMATIC = "automatic"
 
@@ -464,6 +466,23 @@ def voice_names(config, recording_id: str) -> dict[str, str | None]:
     return {label: (None if who == NO_ONE else who) for label, who in named.get("people", {}).items()}
 
 
+def others_take_turns(config) -> bool:
+    return config.text.diarization == SHARED_MODE and config.text.extra_voices > 0
+
+
+def turn_takers(config, recording: Recording) -> list[str]:
+    """Everyone who can hold the floor: the people, then OTHER when others take turns."""
+    return [subject.subject_id for subject in recording.subjects] + ([OTHER] if others_take_turns(config) else [])
+
+
+def speaker_names(config, recording_id: str) -> dict[str, str | None]:
+    """voice_names, with a voice left out speaking as OTHER when others take turns."""
+    names = voice_names(config, recording_id)
+    if not others_take_turns(config):
+        return names
+    return {label: who or OTHER for label, who in names.items()}
+
+
 @register_extractor
 class SpeakerReviewGate(Gate):
     """Held on a shared microphone until a person has said which voice is whom, unless text.voice_review lets the suggestion stand."""
@@ -510,6 +529,7 @@ class SpeakerReviewGate(Gate):
         left_out = sorted(label for label, who in named.get("people", {}).items() if who == NO_ONE)
         message = "the voices were named by the suggestion without a person listening"
         message += f"; {', '.join(left_out)} could not be decided and were left out" if left_out else ""
+        message += f", their words taking turns as {OTHER}" if left_out and others_take_turns(self.config) else ""
         return [
             QCWarning(
                 check="voices_unreviewed", recording_id=recording.recording_id, subject_id=None,

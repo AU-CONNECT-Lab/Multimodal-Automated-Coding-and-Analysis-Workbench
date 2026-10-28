@@ -151,11 +151,12 @@ def _cameras(layout, results: RecordingResults, recording_id: str) -> list[dict]
 
 def _voices(config: MacawConfig, layout, recording_id: str, page: Path) -> list[dict]:
     """Each voice found on a shared microphone, whom it was given to, and its clips to listen to."""
-    from macaw.extractors.audio.content.diarization import NO_ONE, DiarizationExtractor, read_voice_owners, read_voices
+    from macaw.extractors.audio.content.diarization import NO_ONE, OTHER, DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
 
     voices = read_voices(config, recording_id)
     named = read_voice_owners(layout.voice_owners_path(recording_id))
     directory = layout.artifacts_dir(recording_id, DiarizationExtractor.name)
+    left_out = f"{OTHER} (left out of the people's measures)" if others_take_turns(config) else "left out"
     rows = []
     for label, voice in sorted(voices.items()):
         who = named.get("people", {}).get(label)
@@ -163,7 +164,7 @@ def _voices(config: MacawConfig, layout, recording_id: str, page: Path) -> list[
             {
                 "label": label,
                 "speech": f"{voice.get('speech_s', 0.0):.0f} s",
-                "person": None if who is None else ("left out" if who == NO_ONE else who),
+                "person": None if who is None else (left_out if who == NO_ONE else who),
                 "clips": [
                     {"href": _href(directory / clip["file"], page), "at": f"{clip['t_start']:.0f} s"}
                     for clip in voice.get("clips", [])

@@ -14,6 +14,7 @@ from macaw.extractors.audio.content.asr import (
     TRANSCRIPT_NAME,
     load_transcript,
 )
+from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import IdentityConfirmGate, MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -173,12 +174,14 @@ def read_turns(path: Path) -> pd.DataFrame:
     return _io.read_file(Path(path), TURN_SCHEMA, "turns")
 
 
-def load_turns(config, recording_id: str) -> pd.DataFrame:
-    """Where every downstream turn extractor starts, the way audio ones start at load_prep."""
+def load_turns(config, recording_id: str, *, others: bool = False) -> pd.DataFrame:
+    """Where every downstream turn extractor starts, the way audio ones start at load_prep.
+    OTHER's turns only with others, for turn-taking."""
     root = layout_for(config, create=False).artifacts_dir(
         recording_id, TurnStructureExtractor.name
     )
-    return read_turns(root / TURNS_NAME)
+    turns = read_turns(root / TURNS_NAME)
+    return turns if others else turns[turns["subject_id"] != OTHER].reset_index(drop=True)
 
 
 _TURN_SPECS = {
@@ -232,7 +235,7 @@ class TurnStructureExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.turns
-        transcript = load_transcript(self.config, recording.recording_id)
+        transcript = load_transcript(self.config, recording.recording_id, others=True)
         prep = load_prep(self.config, recording.recording_id)
 
         turns = utterances_to_turns(transcript, cfg)
