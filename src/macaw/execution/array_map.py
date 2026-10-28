@@ -1,8 +1,7 @@
 """Stable recording to array-index mapping.
 
-aftercorr pairs element N of one array with element N of the next, so the mapping must be
-identical across every array in a run. Cached recordings still occupy their index and run a
-task that exits immediately; indices are never compacted."""
+aftercorr pairs element N of one array with element N of the next, so every array of one
+submission reads the same mapping, written once beside its job scripts."""
 
 from __future__ import annotations
 
