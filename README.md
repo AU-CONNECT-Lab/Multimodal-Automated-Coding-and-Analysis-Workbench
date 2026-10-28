@@ -12,6 +12,8 @@ From one or more recordings of a natural two-person (or N-person) interaction to
 
 Status: pre-alpha. The audio and pose chains run end to end; the rest is in progress.
 
+The [user guide](https://au-connect-lab.github.io/Multimodal-Automated-Coding-and-Analysis-Workbench/) walks through a project step by step.
+
 ![MACAW workflow](docs/workflow.png)
 
 ## What it covers
