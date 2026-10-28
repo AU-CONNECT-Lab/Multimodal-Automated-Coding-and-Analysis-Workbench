@@ -11,6 +11,7 @@ from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.qc import overlay as overlay_module
 from macaw.qc.checks import CANDIDATE_SCHEMA
 from macaw.qc.overlay import BASELINE, REVIEW_SCHEMA, draw_overlay, render_review, review_sample
+from macaw.project.recording import MediaFile
 from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame, validate_frame
 
 RID = "sub-003_ses-12mo"
@@ -159,7 +160,7 @@ def write_video(path: Path, n_frames=10, fps=10.0):
 
 
 def media(path, subject_id=None, offset_s=0.0):
-    return SimpleNamespace(path=path, kind="video", subject_id=subject_id, fps=10.0, offset_s=offset_s)
+    return MediaFile(path=path, kind="video", subject_id=subject_id, fps=10.0, offset_s=offset_s)
 
 
 def recording(files):

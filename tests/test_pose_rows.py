@@ -13,6 +13,7 @@ from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
 from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtractor, inside_frame
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
+from macaw.project.recording import MediaFile
 from macaw.store.schema import (
     KEYPOINT_SCHEMA,
     LONG_TABLE_SCHEMA,
@@ -70,7 +71,7 @@ class FakeBackend:
 
 
 def media(name="room.mp4", *, subject_id=None, fps=FPS, offset_s=0.0, kind="video"):
-    return SimpleNamespace(
+    return MediaFile(
         path=Path(name),
         kind=kind,
         subject_id=subject_id,

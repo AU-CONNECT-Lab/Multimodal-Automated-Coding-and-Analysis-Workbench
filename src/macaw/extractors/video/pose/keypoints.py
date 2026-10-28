@@ -9,7 +9,7 @@ import pandas as pd
 from macaw.exceptions import InputNotFoundError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing, load_prep
+from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
 from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, speech_activity
 from macaw.extractors.video.pose.track_repair import (
@@ -129,9 +129,9 @@ class PoseDetectExtractor(Extractor):
     group = "pose"
     config_sections = (
         "pose.backend", "pose.model", "pose.device", "pose.min_confidence", "pose.input_size", "pose.read_shared",
-        "segment",
+        "segment", "video",
     )
-    requires = (MediaPrepExtractor.name,)
+    requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
     resource_profile = "gpu_standard"
 
     def backend(self):
@@ -198,7 +198,7 @@ class PoseDetectExtractor(Extractor):
             n_processed += math.floor((end - item.offset_s) * fps) - max(math.ceil((start - item.offset_s) * fps), 0) + 1
             expected = 1 if item.subject_id is not None else max(len(subjects), 1)
             frames = backend.infer(
-                item.path,
+                item.frames_path,
                 device=cfg.device,
                 min_confidence=cfg.min_confidence,
                 model=cfg.model,

@@ -172,7 +172,7 @@ def render_review(
     for job in jobs:
         by_video.setdefault(job[0].path, []).append(job)
     for path, work in by_video.items():
-        capture = cv2.VideoCapture(str(path))
+        capture = cv2.VideoCapture(str(work[0][0].frames_path))
         try:
             n_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             for item, frame, index, row in sorted(work, key=lambda job: job[1]):

@@ -57,7 +57,7 @@ class FaceExtractor(Extractor):
     scale = Scale.FRAME
     group = "face"
     config_sections = (
-        "face.backend", "face.model", "face.device", "face.action_units", "face.landmarks", "face.gaze", "segment",
+        "face.backend", "face.model", "face.device", "face.action_units", "face.landmarks", "face.gaze", "segment", "video",
     )
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
@@ -99,7 +99,7 @@ class FaceExtractor(Extractor):
             first = max(math.floor((start - item.offset_s) * fps), 0)
             stop = math.ceil((end - item.offset_s) * fps) + 1
             found = backend.infer(
-                item.path, frames=(first, stop), device=cfg.device, model=model,
+                item.frames_path, frames=(first, stop), device=cfg.device, model=model,
                 batch_size=cfg.batch_size, landmarks=landmarks, gaze=gaze,
             )
             subjects = [subject for subject, view in views.items() if view == video]
@@ -201,7 +201,7 @@ class FaceAUCheckExtractor(FaceExtractor):
     name = "face.au_check"
     version = "0.1.0"
     scale = Scale.RECORDING
-    config_sections = ("face.backend", "face.model", "face.check_backend", "face.check_model", "face.device", "segment")
+    config_sections = ("face.backend", "face.model", "face.check_backend", "face.check_model", "face.device", "segment", "video")
     requires = (FaceExtractor.name,)
 
     def check_backend(self):

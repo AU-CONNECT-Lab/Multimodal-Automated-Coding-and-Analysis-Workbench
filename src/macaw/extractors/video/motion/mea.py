@@ -11,7 +11,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, ConfigError, ExternalToolError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, apply_prep_timing
+from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -34,8 +34,8 @@ class MEAExtractor(Extractor):
     version = "0.2.0"
     scale = Scale.FRAME
     group = "motion"
-    config_sections = ("motion", "segment")
-    requires = (MediaPrepExtractor.name,)
+    config_sections = ("motion", "segment", "video")
+    requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
 
     def check_available(self) -> None:
         try:
@@ -93,7 +93,7 @@ class MEAExtractor(Extractor):
             stop = math.ceil((end - item.offset_s) * fps) + 1
             if stop <= first:
                 continue
-            energy, size = frame_difference_energy(path, rois, threshold=cfg.threshold, frames=(first, stop))
+            energy, size = frame_difference_energy(item.frames_path, rois, threshold=cfg.threshold, frames=(first, stop))
             energy["t"] = energy["frame"] / fps + item.offset_s
             energy = energy[(energy["t"] >= start) & (energy["t"] <= end)]
             pictures.append(energy[["frame", "t", "whole_picture", "identical"]].assign(video=path.name))

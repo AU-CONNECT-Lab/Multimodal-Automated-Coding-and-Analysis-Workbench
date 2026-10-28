@@ -13,6 +13,7 @@ from macaw.config.schema import MotionSection  # noqa: E402
 from macaw.exceptions import ConfigError  # noqa: E402
 from macaw.extractors.video.motion import mea as mea_module  # noqa: E402
 from macaw.extractors.video.motion.mea import MEAExtractor, frame_difference_energy, smooth  # noqa: E402
+from macaw.project.recording import MediaFile  # noqa: E402
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame  # noqa: E402
 
 FPS = 10.0
@@ -76,7 +77,7 @@ class TestSmooth:
 
 
 def media(path, subject_id=None, offset_s=0.0):
-    return SimpleNamespace(path=path, kind="video", subject_id=subject_id, fps=FPS, offset_s=offset_s)
+    return MediaFile(path=path, kind="video", subject_id=subject_id, fps=FPS, offset_s=offset_s)
 
 
 def recording(files, rois):

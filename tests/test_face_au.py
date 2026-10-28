@@ -11,6 +11,7 @@ from macaw.config.schema import FaceSection
 from macaw.extractors.video.face import au as au_module
 from macaw.extractors.video.face.au import FaceExtractor, name_faces
 from macaw.store.keypoints import write_keypoints
+from macaw.project.recording import MediaFile
 from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
 
 FPS = 10.0
@@ -88,7 +89,7 @@ def run(tmp_path, monkeypatch):
 
 
 def video(name, subject_id=None):
-    return SimpleNamespace(path=Path(name), kind="video", subject_id=subject_id, fps=FPS, offset_s=0.0)
+    return MediaFile(path=Path(name), kind="video", subject_id=subject_id, fps=FPS, offset_s=0.0)
 
 
 class TestExtractor:
