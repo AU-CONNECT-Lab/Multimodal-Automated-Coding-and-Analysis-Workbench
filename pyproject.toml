@@ -58,6 +58,7 @@ gui = [
   "dash-bootstrap-components>=2.0",
   "plotly>=5.22",
   "pywebview>=5.0",
+  "ruamel.yaml>=0.18",
 ]
 
 # review figures and the QC report

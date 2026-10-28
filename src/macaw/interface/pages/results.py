@@ -27,22 +27,24 @@ def layout(config_path: Path):
     recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
+            ui.page_head("Results", "What a run produced: the quality page, and any measure per person."),
             html.Div(
-                [dcc.Dropdown(recordings, recordings[0] if recordings else None, id="results-recording", clearable=False, className="picker")],
+                ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="results-recording", clearable=False, className="picker")),
                 className="toolbar",
             ),
-            ui.section(
+            ui.card(
                 "Quality review",
                 html.Div(id="results-report"),
-                html.Div(html.Button("Write the QC page", id="results-write-report", className="button"), className="buttons"),
                 html.Div(id="results-report-message"),
+                desc="The QC page lists what the checks flagged, the decisions the software made and where to look.",
+                actions=ui.button("Write the QC page", "results-write-report", icon_name="refresh"),
             ),
-            ui.section(
+            ui.card(
                 "Measures",
                 html.Div(
                     [
-                        dcc.Dropdown(id="results-source", placeholder="step", className="picker"),
-                        dcc.Dropdown(id="results-feature", placeholder="measure", className="picker wide"),
+                        ui.field("Step", dcc.Dropdown(id="results-source", placeholder="step", className="picker")),
+                        ui.field("Measure", dcc.Dropdown(id="results-feature", placeholder="measure", className="picker")),
                     ],
                     className="toolbar",
                 ),
@@ -76,14 +78,21 @@ def view(config_path: Path, rid: str, source: str, feature: str):
         t, y = min_max_downsample(group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float), config.qc.report_downsample_px)
         mode = "lines" if np.isfinite(y).sum() > 200 else "lines+markers"
         figure.add_trace(go.Scattergl(x=t, y=y, name=str(name), mode=mode, line={"width": 1, "color": COLOURS[index % len(COLOURS)]}))
+    # transparent with mid-grey text and grid, so the figure reads on the light and the dark page alike
+    axis = {"gridcolor": "rgba(128,128,128,0.2)", "zerolinecolor": "rgba(128,128,128,0.35)", "linecolor": "rgba(128,128,128,0.35)"}
     figure.update_layout(
         template="plotly_white", height=420, margin={"l": 50, "r": 20, "t": 20, "b": 40},
-        xaxis_title="recording time (s)", yaxis_title=feature, legend={"orientation": "h", "y": 1.08},
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90"},
+        xaxis={"title": "recording time (s)", **axis}, yaxis={"title": feature, **axis}, legend={"orientation": "h", "y": 1.08},
     )
     return dcc.Graph(figure=figure, config={"displaylogo": False})
 
 
 def register(app, config_path: Path) -> None:
+    @app.callback(Output("results-recording", "options"), Input("url", "pathname"))
+    def recordings(_):
+        return resolve_recordings(resolve_config(config_path), None)
+
     @app.callback(
         Output("results-report", "children"),
         Output("results-report-message", "children"),
@@ -99,10 +108,10 @@ def register(app, config_path: Path) -> None:
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         page = layout_for(resolve_config(config_path), create=False).qc_report_path(rid)
         link = (
-            html.P([
-                html.A("Open the QC page", href=file_url(page), target="_blank"),
-                html.Span(f" written {datetime.fromtimestamp(page.stat().st_mtime):%Y-%m-%d %H:%M}", className="hint"),
-            ])
+            html.Div([
+                html.A([ui.icon("open"), "Open the QC page"], href=file_url(page), target="_blank", className="button"),
+                html.Span(f"written {datetime.fromtimestamp(page.stat().st_mtime):%Y-%m-%d %H:%M}", className="hint"),
+            ], className="buttons")
             if page.is_file() else html.P("No QC page yet for this recording.", className="none")
         )
         return link, message

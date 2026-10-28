@@ -100,3 +100,9 @@ def poll_status(config_path: Path) -> tuple[str | None, dict[str, int]]:
     if not known:
         return None, {}
     return known[-1], database.summary(known[-1])
+
+
+def failed_last_time(config_path: Path) -> set[str]:
+    database = JobDB(layout_for(resolve_config(config_path), create=False).job_db_path)
+    known = database.executions()
+    return {record.task_id for record in database.failed(known[-1])} if known else set()

@@ -8,11 +8,13 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("dash")
+pytest.importorskip("ruamel.yaml")
 
 from macaw.config.loader import resolve_config, scaffold_project_config
+from macaw.exceptions import MacawError
 from macaw.extractors.video.pose.keypoints import PoseExtractor
-from macaw.interface import cli_bridge
-from macaw.interface.app import create_app
+from macaw.interface import cli_bridge, project_file
+from macaw.interface.app import build_layout, create_app, page_for
 from macaw.interface.files import file_url, path_from_url
 from macaw.interface.pages import results, review, run
 from macaw.project.layout import layout_for
@@ -41,6 +43,8 @@ def test_the_command_shown_is_one_a_terminal_takes(project):
     assert argv == ["macaw", "run", "-c", str(project), "-r", "003", "-e", "text.asr", "-e", "turns.structure"]
     every = run.run_command(project, ["003"], ["text.asr"], ["003"])
     assert "-r" not in every
+    plain = run.run_command(project, ["003"], ["text.asr"], ["003"], ["text.asr"])
+    assert plain == ["macaw", "run", "-c", str(project)]
 
 
 def test_a_short_command_runs_with_the_guis_own_interpreter():
@@ -131,3 +135,68 @@ def test_the_review_page_lists_uncertain_speech_acts_and_saves_a_pick(project):
     reviewed = pd.read_parquet(layout_for(config).annotations_path("003") / REVIEWED_NAME)
     assert reviewed[["annotator", "label", "t_start"]].values.tolist() == [["ann", "tell", 1.0]]
     assert "No coded unit is waiting" in text_of(review.body(project, "003"))
+
+
+def test_every_step_is_listed_with_how_a_run_would_find_it(project):
+    order, ran, counts, needs = run.step_states(project, ["003"])
+    assert ran and set(ran) <= set(order) and "prep.media" in order
+    assert counts["prep.media"] == {"held": 1} and "align.review" in needs["prep.media"]
+    assert all(set(counted) <= {"new", "held"} for counted in counts.values())
+    project.write_text(project.read_text(encoding="utf-8") + "\nalign:\n  method: none\n", encoding="utf-8")
+    assert run.step_states(project, ["003"])[2]["prep.media"] == {"new": 1}
+
+
+def test_pages_open_by_their_address():
+    assert [page_for(path) for path in ("/review", "/settings", "/", "/nowhere")] == ["review", "settings", "run", "run"]
+
+
+def test_the_whole_workbench_lays_out(project):
+    shown = text_of(build_layout(project.resolve()))
+    assert all(name in shown for name in ("run-steps", "review-body", "results-view", "settings-yaml", "theme-choice"))
+
+
+def test_a_file_that_does_not_check_still_opens_the_settings(project):
+    project.write_text(project.read_text(encoding="utf-8") + "\npose:\n  review: sometimes\n", encoding="utf-8")
+    shown = text_of(build_layout(project.resolve()))
+    assert "settings-yaml" in shown and "pose.review" in shown and "run-steps" not in shown
+
+
+def test_a_form_edit_keeps_the_files_comments(project):
+    text = project.read_text(encoding="utf-8")
+    edited = project_file.with_values(text, {"execution.n_workers": 2, "pose.backend": "yolo", "project.roles": ["a", "b"]})
+    assert "# short project name" in edited and "n_workers: 2" in edited and "roles: [a, b]" in edited
+    assert project_file.check(project, edited).pose.backend == "yolo"
+
+
+def test_changes_compare_the_form_with_the_file(project):
+    form = {key: project_file.to_form(key, value) for key, value in project_file.file_values(project).items()}
+    assert project_file.changes(project, form) == {}
+    form["execution.n_workers"] = 2
+    form["text.language"] = ""
+    assert project_file.changes(project, form) == {"execution.n_workers": (4, 2)}
+
+
+def test_a_setting_that_does_not_check_is_refused_and_leaves_nothing_behind(project):
+    before = sorted(project.parent.iterdir())
+    with pytest.raises(MacawError, match="pose.review"):
+        project_file.check(project, project_file.with_values(project.read_text(encoding="utf-8"), {"pose.review": "sometimes"}))
+    assert sorted(project.parent.iterdir()) == before
+
+
+def test_a_change_names_the_steps_whose_results_go_out_of_date(project):
+    after = project_file.check(project, project_file.with_values(project.read_text(encoding="utf-8"), {"turns.max_gap_s": 3.0}))
+    names = project_file.runs_again(resolve_config(project), after)
+    assert "turns.structure" in names and "turns.transitions" in names and "prep.media" not in names
+
+
+def test_saving_keeps_the_files_line_endings(tmp_path):
+    path = tmp_path / "project.yaml"
+    path.write_bytes(b"a: 1\r\n")
+    project_file.save(path, "a: 2\n")
+    assert path.read_bytes() == b"a: 2\r\n"
+
+
+def test_the_form_hints_come_from_the_packaged_comments():
+    hints = project_file.hints()
+    assert "ISO code" in hints["text.language"] and "report titles" in hints["project.name"]
+    assert project_file.control("align.review") == {"kind": "choice", "options": ["always", "flagged", "skip"], "optional": False}

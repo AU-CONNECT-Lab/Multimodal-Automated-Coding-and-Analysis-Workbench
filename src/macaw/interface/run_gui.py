@@ -26,7 +26,8 @@ def launch_window(config_path: Path, *, port: int = 8050, debug: bool = False) -
     app = _app(config_path)
     threading.Thread(target=lambda: app.run(host="127.0.0.1", port=port, debug=False), daemon=True).start()
     webview.create_window("macaw", f"http://127.0.0.1:{port}", width=1400, height=900)
-    webview.start(debug=debug)
+    # not private, so what a person chooses for themselves, such as dark mode, is still there next time
+    webview.start(debug=debug, private_mode=False)
 
 
 def launch_browser(config_path: Path, *, host: str = "127.0.0.1", port: int = 8050, debug: bool = False) -> None:

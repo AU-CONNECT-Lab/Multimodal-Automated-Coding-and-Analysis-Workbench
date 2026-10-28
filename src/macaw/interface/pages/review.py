@@ -32,12 +32,18 @@ def layout(config_path: Path):
     recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
+            ui.page_head(
+                "Review",
+                "What the software decided, for a person to check, one recording at a time. Every button runs the macaw command shown under it.",
+                [
+                    ui.button("Refresh", "review-refresh", icon_name="refresh"),
+                    dcc.Upload(ui.button("Import a corrected transcript (.eaf)", icon_name="upload"), id="review-upload", accept=".eaf"),
+                ],
+            ),
             html.Div(
                 [
-                    dcc.Dropdown(recordings, recordings[0] if recordings else None, id="review-recording", clearable=False, className="picker"),
-                    dcc.Input(id="review-by", value=getpass.getuser(), placeholder="your name", className="name"),
-                    html.Button("Refresh", id="review-refresh", className="button"),
-                    dcc.Upload(html.Button("Import a corrected transcript (.eaf)", className="button"), id="review-upload", accept=".eaf"),
+                    ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="review-recording", clearable=False, className="picker")),
+                    ui.field("Your name", dcc.Input(id="review-by", value=getpass.getuser(), placeholder="your name", debounce=True)),
                 ],
                 className="toolbar",
             ),
@@ -47,8 +53,8 @@ def layout(config_path: Path):
     )
 
 
-def _button(label: str, action: str, target: str = "", primary: bool = False):
-    return html.Button(label, id={"type": ACT, "action": action, "target": target}, className="button primary" if primary else "button")
+def _button(label: str, action: str, target: str = "", primary: bool = False, small: bool = False):
+    return ui.button(label, {"type": ACT, "action": action, "target": target}, primary=primary, small=small)
 
 
 def _identity(config, recording):
@@ -62,7 +68,7 @@ def _identity(config, recording):
         status = ui.note(f"Confirmed for the project by {confirmation.get('confirmed_by')} on {str(confirmation.get('confirmed_at', ''))[:10]}.", "ok")
     else:
         status = ui.note("Nobody has confirmed this yet.", "warn")
-    return ui.section(
+    return ui.card(
         "Which file is whose", ui.table(["Person", "Files"], rows), status,
         html.Div(_button("Confirm for the whole project", "identify", primary=True), className="buttons"),
         desc="Read from the file names by project.media_pattern. Confirming covers every recording in the project.",
@@ -77,12 +83,12 @@ def _offsets(config, layout, rid):
         [
             row["target"], row["offset"], row["confidence"], row["agreement"],
             ui.pill(row["flag"], "warn") if row["flag"] else ui.pill("kept by " + row["accepted"].split(" ")[0], "ok") if row["accepted"] else ui.pill("automatic"),
-            _button("Keep", "accept-offset", row["target"]) if not row["accepted"] and row["method"] != "manual" else "",
+            _button("Keep", "accept-offset", row["target"], small=True) if not row["accepted"] and row["method"] != "manual" else "",
         ]
         for row in rows
     ]
     figures = sorted((layout.renders_dir(rid) / "align").glob("*.png"))
-    return ui.section(
+    return ui.card(
         "Offsets between files",
         ui.table(["File", "Offset (s)", "Confidence", "Segments agreeing", "Status", ""], table_rows, numeric={"Offset (s)", "Confidence"}),
         html.Div([html.A(html.Img(src=file_url(path)), href=file_url(path), target="_blank") for path in figures], className="figures"),
@@ -108,9 +114,9 @@ def _people_on_camera(layout, results, rid):
                     html.P(people),
                     html.Div(
                         [
-                            _button("Keep", "accept-owner", camera["file"]),
+                            _button("Keep", "accept-owner", camera["file"], small=True),
                             dcc.Input(id={"type": "review-rename", "target": camera["file"]}, placeholder="SHOWN=RIGHT, ...", className="rename"),
-                            _button("Rename", "rename-owner", camera["file"]),
+                            _button("Rename", "rename-owner", camera["file"], small=True),
                         ],
                         className="buttons",
                     ),
@@ -125,7 +131,7 @@ def _people_on_camera(layout, results, rid):
                      html.Figcaption(f"{row.t:.1f} s, {row.video}, {str(row.reason).replace('_', ' ')}")])
         for row in shots.itertuples()
     ]
-    return ui.section(
+    return ui.card(
         "Who is on camera",
         *blocks,
         html.Div(_button("Draw review frames", "render"), className="buttons"),
@@ -162,7 +168,7 @@ def _voices(config, layout, recording):
         )
     by = named.get("by")
     status = ui.note(f"Named by {by.split(' ')[0]}." if by else "Not named yet; the choices shown are the suggestion.", "ok" if by else "warn")
-    return ui.section(
+    return ui.card(
         "Voices on the shared microphone",
         ui.table(["Voice", "Speech", "Clips", "Person"], rows),
         status,
@@ -174,7 +180,7 @@ def _voices(config, layout, recording):
 def _transcript(layout, rid):
     stamp = layout.corrected_transcript_stamp_path(rid)
     state = ui.note("The transcript in use is the one corrected by hand.", "ok") if stamp.is_file() else ui.note("The transcript in use is the recogniser's.")
-    return ui.section(
+    return ui.card(
         "Transcript",
         state,
         html.Div(
@@ -208,7 +214,7 @@ def _speech_acts(config, layout, recording):
     queue = _waiting_acts(config, rid)
     desc = "Units the model was unsure about. Pick the right code for each and save; your choice is kept beside the model's, which agreement then compares."
     if queue.empty:
-        return ui.section("Speech acts", ui.note("No coded unit is waiting for a person.", "ok"), desc=desc)
+        return ui.card("Speech acts", ui.note("No coded unit is waiting for a person.", "ok"), desc=desc)
     try:
         codebook = read_codebook(config.coding.codebook)
         codes = codebook.labels()
@@ -233,7 +239,7 @@ def _speech_acts(config, layout, recording):
             dcc.Dropdown(codes, None, id={"type": PICK, "key": key}, placeholder="code", className="picker small"),
         ])
     more = [ui.note(f"Showing the first {_MAX_ACTS} of {len(queue)}; save these to see the rest.")] if len(queue) > _MAX_ACTS else []
-    return ui.section(
+    return ui.card(
         "Speech acts",
         ui.table(["At (s)", "Who", "Words", "Model's answers", "Why", "Code"], rows, numeric={"At (s)"}),
         *more,
@@ -264,10 +270,10 @@ def body(config_path: Path, rid: str | None):
     results = RecordingResults(layout, rid)
     waiting = _waiting(config, recording)
     parts = [
-        ui.section(
+        ui.card(
             "Waiting for a person",
-            *[html.P([ui.pill("waiting", "warn"), " ", html.B(gate), ": ", message]) for gate, message in waiting]
-            or [html.P("Nothing is waiting on this recording.", className="none")],
+            html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(message, className="value")], className="what")]) for gate, message in waiting], className="status-list")
+            if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
         ),
         _identity(config, recording),
         _offsets(config, layout, rid),
@@ -309,6 +315,10 @@ def _transcript_command(config_path: Path, rid: str, action: str, upload: Path |
 
 
 def register(app, config_path: Path) -> None:
+    @app.callback(Output("review-recording", "options"), Input("url", "pathname"))
+    def recordings(_):
+        return resolve_recordings(resolve_config(config_path), None)
+
     @app.callback(
         Output("review-body", "children"),
         Output("review-message", "children"),
