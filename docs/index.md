@@ -51,34 +51,13 @@ Not there yet: who looks at whom, coding of gestures with speech, and distances 
 
 ## Where to begin
 
-Read [Before you start](before-you-start.md), then follow the seven steps in order. Each one is a short page.
+[Using MACAW](guide.md) takes you from what you need to the finished table in seven steps. [Questions](questions.md) covers privacy, run times and special cases.
 
 MACAW is an early version, so names and settings may still change. Questions and problems go to the [GitHub page](https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench/issues).
 
 ```{toctree}
 :hidden:
-:caption: Start here
 
-before-you-start
-```
-
-```{toctree}
-:hidden:
-:caption: Step by step
-
-recordings
-workbench
-settings
-run
-review
-results
-export
-```
-
-```{toctree}
-:hidden:
-:caption: More
-
-language-model-coding
+guide
 questions
 ```

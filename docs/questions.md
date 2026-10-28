@@ -32,7 +32,7 @@ The pitch range can be set separately for each role, for example a higher range 
 
 ## Can I fix mistakes in the transcript?
 
-Yes, in ELAN. See *Transcript* in [step 5](review.md). Everything that uses the transcript is updated on the next run.
+Yes, in ELAN. See {ref}`transcript`. Everything that uses the transcript is updated on the next run.
 
 ## We have hundreds of recordings.
 
