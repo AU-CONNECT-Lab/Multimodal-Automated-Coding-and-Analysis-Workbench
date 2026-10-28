@@ -173,7 +173,8 @@ def _video(config, spec, names) -> str:
     return (
         f"Before any video measure, each video was re-encoded once with FFmpeg as H.264 ({video.encoder}, quality "
         f"{video.quality}) at {rate}, upright, with square pixels and deinterlaced where needed, its first frame placed "
-        "at the first audio sample of its file."
+        "at the first audio sample of its file; video recorded in high dynamic range was tone-mapped to BT.709 with "
+        "FFmpeg's tonemap filter (Möbius curve)."
     )
 
 

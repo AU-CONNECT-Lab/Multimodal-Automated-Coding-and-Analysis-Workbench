@@ -38,7 +38,7 @@ segment:
   task_end_s: null                   # s; null = keep to end of media
 
 # Before any video step, each video is re-encoded once: a constant frame rate, upright, square
-# pixels, progressive, and frame 0 at the first sound of its file. The copies take about as much
+# pixels, progressive, standard dynamic range, and frame 0 at the first sound of its file. The copies take about as much
 # disk as the originals again. Frame rate and picture size stay as recorded unless set here.
 video:
   normalise: true                    # false reads the originals as they are and only warns about what would have been fixed

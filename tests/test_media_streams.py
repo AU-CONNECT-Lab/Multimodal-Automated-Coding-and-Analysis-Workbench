@@ -13,7 +13,7 @@ from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import VideoSection
 from macaw.exceptions import ConfigError, ExternalToolError
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, _extract_track
-from macaw.media.ffmpeg import decode_audio, run_ffmpeg
+from macaw.media.ffmpeg import decode_audio, has_filter, run_ffmpeg
 from macaw.media.probe import probe, require_ffmpeg, require_ffprobe
 from macaw.project.recording import MediaFile, build_recording
 
@@ -65,6 +65,14 @@ def sources(tmp_path_factory) -> dict[str, Path]:
          "-flags", "+ildct+ilme", "-x264opts", "tff=1")
     files["rotated"] = root / "rotated.mp4"
     run_ffmpeg(["-display_rotation", "90", "-i", str(pictures), "-c", "copy", str(files["rotated"])])
+    files["sdr"] = root / "sdr.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(files["sdr"])])
+    if has_filter("zscale"):
+        files["hlg"] = root / "hlg.mp4"
+        run_ffmpeg([
+            "-i", str(files["sdr"]), "-vf", "zscale=tin=bt709:pin=bt709:min=bt709:rin=tv:t=arib-std-b67:p=bt2020:m=bt2020nc,format=yuv420p10le",
+            "-c:v", "libx264", "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc", str(files["hlg"]),
+        ])
     return files
 
 
@@ -125,6 +133,15 @@ def flash_frame(path: Path) -> int:
         if image.mean() > 128:
             return index
         index += 1
+
+
+def saturation(path: Path) -> float:
+    cv2 = pytest.importorskip("cv2")
+    ok, image = cv2.VideoCapture(str(path)).read()
+    return float(cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[..., 1].mean())
+
+
+needs_hlg = pytest.mark.skipif(not has_filter("zscale"), reason="making a high dynamic range clip needs zscale")
 
 
 def checks(warnings) -> dict[str, str]:
@@ -190,3 +207,30 @@ class TestPreparedVideo:
     def test_a_rate_that_does_not_divide_the_file_is_refused(self, sources, tmp_path):
         with pytest.raises(ConfigError, match="25, 12.5"):
             prepare(sources["late_pictures"], tmp_path, fps=30)
+
+    @needs_hlg
+    def test_high_dynamic_range_is_tone_mapped_to_standard_range(self, sources, tmp_path):
+        entry, warnings, copy = prepare(sources["hlg"], tmp_path)
+        stream = probe(copy).video_streams()[0]
+        assert entry["transfer"] == "arib-std-b67" and entry["tone_mapped"]
+        assert (stream.color_transfer, stream.color_primaries) == ("bt709", "bt709")
+        assert checks(warnings)["video_hdr"] == "info"
+        # read without tone mapping the colours come out faded
+        assert saturation(sources["hlg"]) < 0.75 * saturation(sources["sdr"]) < saturation(copy)
+
+    @needs_hlg
+    def test_high_dynamic_range_without_zscale_is_a_warning(self, sources, tmp_path, monkeypatch):
+        from macaw.extractors import prep as prep_module
+
+        monkeypatch.setattr(prep_module, "has_filter", lambda name: False)
+        entry, warnings, _ = prepare(sources["hlg"], tmp_path)
+        assert not entry["tone_mapped"] and checks(warnings)["video_hdr"] == "warn"
+
+    @needs_hlg
+    def test_high_dynamic_range_read_as_recorded_is_a_warning(self, sources, tmp_path):
+        _, warnings, _ = prepare(sources["hlg"], tmp_path, normalise=False)
+        assert checks(warnings)["video_hdr"] == "warn"
+
+    def test_standard_range_is_left_alone(self, sources, tmp_path):
+        entry, warnings, _ = prepare(sources["sdr"], tmp_path)
+        assert not entry["tone_mapped"] and "video_hdr" not in checks(warnings)

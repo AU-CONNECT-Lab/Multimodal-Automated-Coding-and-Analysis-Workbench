@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import subprocess
 from fractions import Fraction
+from functools import cache
 from pathlib import Path
 
 import numpy as np
 
 from macaw.exceptions import ExternalToolError, UnreadableMediaError
-from macaw.media.probe import require_ffmpeg
+from macaw.media.probe import StreamInfo, require_ffmpeg
 
 # every call starts with these: no banner, errors only, never prompt to overwrite
 _BASE = ["-hide_banner", "-loglevel", "error", "-y"]
@@ -120,14 +121,39 @@ _ENCODERS = {
 }
 
 
+# transfer functions of high dynamic range video, as ffprobe names them
+HDR_TRANSFERS = {"arib-std-b67": "HLG", "smpte2084": "PQ"}
+
+
+@cache
+def has_filter(name: str) -> bool:
+    result = subprocess.run([require_ffmpeg(), "-hide_banner", "-filters"], capture_output=True, text=True, errors="replace")
+    return any(line.split()[1:2] == [name] for line in result.stdout.splitlines())
+
+
+def tone_map_filters(stream: StreamInfo) -> list[str]:
+    """High dynamic range to BT.709: a Mobius curve keeps the mid-tones and folds the highlights in under white."""
+    # stated in full, because a file whose tags are missing leaves zscale with no path between colour spaces
+    primaries = stream.color_primaries if stream.color_primaries not in (None, "unknown") else "bt2020"
+    matrix = stream.color_space if stream.color_space not in (None, "unknown") else "bt2020nc"
+    source = f"tin={stream.color_transfer}:pin={primaries}:min={matrix}:rin={stream.color_range or 'tv'}"
+    return [
+        f"zscale={source}:t=linear:npl=100:p={primaries}:m={matrix}", "format=gbrpf32le",
+        "zscale=p=bt709", "tonemap=tonemap=mobius:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p",
+    ]
+
+
 def normalise_video(
-    src: Path, dest: Path, *, fps: Fraction, start_s: float, quality: int, encoder: str = "libx264"
+    src: Path, dest: Path, *, fps: Fraction, start_s: float, quality: int, encoder: str = "libx264",
+    tone_map: StreamInfo | None = None,
 ) -> tuple[int, int] | None:
-    """Constant-rate, upright, progressive, square-pixel H.264 with frame 0 at start_s on the container's timeline; returns (repeated, dropped)."""
+    """Constant-rate, upright, progressive, square-pixel H.264 with frame 0 at start_s on the container's timeline,
+    tone-mapped from tone_map's high dynamic range when given; returns (repeated, dropped)."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     filters = [
         "bwdif=mode=send_frame:parity=auto:deint=interlaced",
+        *(tone_map_filters(tone_map) if tone_map else []),
         "scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1",
         # shifted first so the constant-rate grid starts exactly at start_s rather than at the nearest frame slot
         f"setpts=PTS-{start_s:.6f}/TB",
@@ -137,7 +163,9 @@ def normalise_video(
         require_ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-loglevel", "verbose", "-y",
         "-i", str(src), "-map", "0:v:0", "-an", "-sn", "-dn",
         "-vf", ",".join(filters), "-fps_mode", "passthrough",
-        *_ENCODERS[encoder](quality), "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest),
+        *_ENCODERS[encoder](quality), "-pix_fmt", "yuv420p",
+        *(["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"] if tone_map else []),
+        "-movflags", "+faststart", str(dest),
     ]
     result = subprocess.run(command, capture_output=True, text=True, errors="replace")
     if result.returncode != 0:

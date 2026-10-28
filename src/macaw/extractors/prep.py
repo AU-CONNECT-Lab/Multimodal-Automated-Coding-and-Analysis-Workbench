@@ -23,7 +23,7 @@ from macaw.media.align import (
     needs_person,
     read_offset_table,
 )
-from macaw.media.ffmpeg import normalise_video, run_ffmpeg
+from macaw.media.ffmpeg import HDR_TRANSFERS, has_filter, normalise_video, run_ffmpeg
 from macaw.media.probe import frame_rate, is_variable_rate, probe
 from macaw.project.identity import identity_basis, read_confirmation
 from macaw.project.layout import layout_for
@@ -535,6 +535,7 @@ _VIDEO_SPECS = {
     "n_variable_rate_videos": ("Videos recorded at a variable frame rate.", "count"),
     "video_frames_repeated": ("Frames repeated to give the videos a constant rate and start them with their sound.", "count"),
     "video_frames_dropped": ("Frames left out for the same reasons, or to reach video.fps.", "count"),
+    "n_tone_mapped_videos": ("Videos recorded in high dynamic range and tone-mapped to standard range.", "count"),
 }
 _INTERLACED = {"tt", "bb", "tb", "bt"}
 
@@ -544,7 +545,7 @@ class VideoPrepExtractor(Extractor):
     """Each video re-encoded once, so every video step reads the same frames on the same clock."""
 
     name = "prep.video"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
@@ -603,6 +604,8 @@ class VideoPrepExtractor(Extractor):
             "rotation": stream.rotation,
             "pixel_aspect": str(stream.pixel_aspect) if stream.pixel_aspect else None,
             "field_order": stream.field_order,
+            "transfer": stream.color_transfer,
+            "tone_mapped": False,
             "codec": stream.codec_name,
             "size": [stream.width, stream.height],
             "prepared_size": None,
@@ -611,11 +614,13 @@ class VideoPrepExtractor(Extractor):
         }
         if cfg.normalise:
             name = f"{item.path.name}.mp4"
+            tone_map = stream.color_transfer in HDR_TRANSFERS and has_filter("zscale")
             counts = normalise_video(
                 item.path, workspace / name, fps=target, start_s=clock - info.start_s, quality=cfg.quality, encoder=cfg.encoder,
+                tone_map=stream if tone_map else None,
             )
             prepared = probe(workspace / name).video_streams()[0]
-            entry.update(file=name, prepared_size=[prepared.width, prepared.height])
+            entry.update(file=name, prepared_size=[prepared.width, prepared.height], tone_mapped=tone_map)
             if counts is not None:
                 entry.update(frames_repeated=counts[0], frames_dropped=counts[1])
         return entry
@@ -666,6 +671,17 @@ class VideoPrepExtractor(Extractor):
             note("video_pixel_shape", (
                 f"{shape}, stretched to square ({'x'.join(map(str, entry['size']))} to {'x'.join(map(str, entry['prepared_size']))})"
             ) if fixed else f"{shape}: distances across and down the picture are on different scales. video.normalise makes them square")
+        if entry["transfer"] in HDR_TRANSFERS:
+            hdr = f"high dynamic range ({HDR_TRANSFERS[entry['transfer']]})"
+            if entry["tone_mapped"]:
+                note("video_hdr", f"{hdr}, tone-mapped to standard range (BT.709)")
+            elif fixed:
+                note("video_hdr", (
+                    f"{hdr}, but this FFmpeg has no zscale filter, so the copy keeps its values and looks washed out to "
+                    "every video step; use an FFmpeg built with libzimg"
+                ), "warn")
+            else:
+                note("video_hdr", f"{hdr}: video steps read it washed out. video.normalise tone-maps it to standard range")
         lead = entry["first_picture_s"]
         if abs(lead) >= 0.5 / entry["source_fps"]:
             if not fixed:
@@ -690,6 +706,7 @@ class VideoPrepExtractor(Extractor):
                 "n_variable_rate_videos": [float(sum(entry["variable_rate"] for entry in entries))],
                 "video_frames_repeated": [total("frames_repeated")],
                 "video_frames_dropped": [total("frames_dropped")],
+                "n_tone_mapped_videos": [float(sum(entry.get("tone_mapped", False) for entry in entries))],
             }
         )
         return build_long_rows(

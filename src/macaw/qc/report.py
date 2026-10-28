@@ -287,10 +287,12 @@ def _prepared_video(config: MacawConfig, recording_id: str) -> dict | None:
     variable = sum(video["variable_rate"] for video in made)
     repeated = sum(video["frames_repeated"] or 0 for video in made)
     dropped = sum(video["frames_dropped"] or 0 for video in made)
+    toned = sum(video.get("tone_mapped", False) for video in made)
     return {
         "what": "Video",
         "decided": f"{len(made)} file(s) re-encoded at a constant {rates} fps, upright, with square pixels and frame 0 at their first sound"
         + (f"; {variable} had a variable frame rate" if variable else "")
+        + (f"; {toned} tone-mapped from high dynamic range" if toned else "")
         + f"; {repeated} frame(s) repeated and {dropped} left out",
         "by": "software", "href": "#Warnings",
     }

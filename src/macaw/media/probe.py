@@ -38,6 +38,11 @@ class StreamInfo:
     rotation: float = 0.0                   # degrees players turn the picture
     pixel_aspect: Fraction | None = None    # width of a pixel over its height; None when unstated
     field_order: str | None = None          # progressive, or tt / bb / tb / bt for interlaced
+    # colour as ffprobe names it; transfer smpte2084 or arib-std-b67 is high dynamic range
+    color_transfer: str | None = None
+    color_primaries: str | None = None
+    color_space: str | None = None
+    color_range: str | None = None
 
 
 @dataclass
@@ -180,6 +185,10 @@ def probe(path: Path) -> MediaInfo:
                 rotation=float(rotations[0]) if rotations else 0.0,
                 pixel_aspect=_fraction(raw.get("sample_aspect_ratio"), ":") if video else None,
                 field_order=raw.get("field_order"),
+                color_transfer=raw.get("color_transfer") if video else None,
+                color_primaries=raw.get("color_primaries") if video else None,
+                color_space=raw.get("color_space") if video else None,
+                color_range=raw.get("color_range") if video else None,
             )
         )
     # a container that declares one rate and delivers another has frame times that cannot be counted
