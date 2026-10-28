@@ -70,7 +70,6 @@ class VideoSection(_Section):
 class SegmentSection(_Section):
     task_start_s: float | None = None
     task_end_s: float | None = None
-    researcher_exit_marker: str | None = None
 
 
 class ProsodySection(_Section):

@@ -36,7 +36,6 @@ identity:
 segment:
   task_start_s: null                 # s; trims the researcher's intro. null = keep from 0
   task_end_s: null                   # s; null = keep to end of media
-  researcher_exit_marker: null       # transcript phrase marking the researcher leaving
 
 # Before any video step, each video is re-encoded once: a constant frame rate, upright, square
 # pixels, progressive, and frame 0 at the first sound of its file. The copies take about as much
