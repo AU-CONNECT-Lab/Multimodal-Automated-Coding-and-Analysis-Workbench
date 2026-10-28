@@ -108,6 +108,32 @@ def test_the_cameras_sound_is_the_shared_microphone_only_when_there_is_none(
     assert stand_in == (["No shared audio file; the sound of 003_room.mp4 is the shared microphone."] if "003_room.mp4" in shared else [])
 
 
+class TestExtraVoices:
+    def test_pyannote_looks_for_the_people_and_up_to_the_extra_voices(self):
+        assert diarization_module.speaker_counts(2, 0) == {"num_speakers": 2}
+        assert diarization_module.speaker_counts(2, 1) == {"min_speakers": 2, "max_speakers": 3}
+
+    def test_the_setting_reaches_the_diarizer_and_the_manifest(self, project, monkeypatch, tmp_path):
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data["text"]["extra_voices"] = 1
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        config = project.resolved()
+        asked = []
+
+        class Fake:
+            def diarize(self, path, **counts):
+                asked.append(counts)
+                return turns(("SPEAKER_00", 0.0, 4.0), ("SPEAKER_01", 4.0, 8.0), ("SPEAKER_02", 8.0, 9.0))
+
+        prep = PrepInfo(recording_id="003", t_origin_s=0.0, duration_s=10.0, sample_rate=16000, shared_tracks={"003_room.wav": "shared_003_room.wav"}, root=tmp_path)
+        monkeypatch.setattr(diarization_module, "load_prep", lambda config, rid: prep)
+        monkeypatch.setattr(diarization_module, "resolve_diarizer", lambda config: Fake())
+        monkeypatch.setattr(diarization_module, "describe_voices", lambda turns, path, origin, workspace: {})
+        result = DiarizationExtractor(config).run(build_recording("003", config), tmp_path)
+        assert asked == [{"n_speakers": 2, "extra_speakers": 1}]
+        assert {spec.params["extra_voices"] for spec in result.specs} == {1}
+
+
 def test_overlap_is_a_share_of_the_time_anyone_talks():
     assert overlapped_fraction(turns(("A", 0.0, 4.0), ("B", 2.0, 6.0), exclusive=False)) == pytest.approx(1 / 3)
 

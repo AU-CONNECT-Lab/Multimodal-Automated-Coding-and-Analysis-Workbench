@@ -134,6 +134,14 @@ def test_a_shared_microphone_is_described_only_when_one_was_diarized():
     assert "pyannote.audio 4.0.7 (Bredin, 2023)" in text and "community-1 pipeline" in text
     assert "The shared microphone was transcribed" in text and "cross-talk" not in text
     assert "bredin2023" in used
+    assert "set to the number of participants" in text
+
+
+def test_voices_besides_the_participants_are_described_as_left_out():
+    shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m", extra_voices=1))
+    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    assert "allowing up to 1 voice besides the participants'" in text and "left out" in text
+    assert "set to the number of participants" not in text
 
 
 def test_the_face_backend_that_ran_is_the_one_named():

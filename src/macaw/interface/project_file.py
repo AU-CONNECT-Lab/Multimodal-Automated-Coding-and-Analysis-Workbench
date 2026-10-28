@@ -32,7 +32,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     )),
     ("Tools", "Which program does each kind of measurement, and with which model.", (
         "prosody.backend", "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.diarization",
-        "pose.backend", "pose.model", "face.backend", "face.model",
+        "text.extra_voices", "pose.backend", "pose.model", "face.backend", "face.model",
     )),
     ("Checks by a person", "Where the software waits for a person before going on: always, only when it is unsure, or never.", (
         "identity.confirm", "align.review", "pose.review", "text.voice_review",
@@ -62,6 +62,7 @@ LABELS = {
     "text.language": "Language",
     "text.device": "Transcription device",
     "text.diarization": "Microphones",
+    "text.extra_voices": "Other voices on a shared microphone",
     "pose.backend": "Body pose",
     "pose.model": "Body pose model",
     "face.backend": "Face",

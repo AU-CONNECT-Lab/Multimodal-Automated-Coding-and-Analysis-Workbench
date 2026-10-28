@@ -243,10 +243,15 @@ _ASR = {
 def _diarize(config, spec, names) -> str:
     if "n_voices_found" not in names:
         return ""
+    extra = spec.params.get("extra_voices", 0)
+    speakers = (
+        f"allowing up to {extra} voice{'s' if extra > 1 else ''} besides the participants'; voices of anyone else "
+        "were left out when the voices were named. "
+        if extra else "with the number of speakers set to the number of participants. "
+    )
     return (
         f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
-        f"{spec.params.get('model')} pipeline, with the number of speakers set to the number of participants. "
-        + _VOICE_NAMING[config.text.voice_review]
+        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review]
     )
 
 

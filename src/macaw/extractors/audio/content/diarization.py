@@ -56,9 +56,10 @@ _MAX_GAIN_GAP_DB = 30.0
 class DiarizationBackend(Backend):
     version = "0.1.0"
 
-    def diarize(self, audio_path: Path, *, n_speakers: int | None = None) -> pd.DataFrame:
+    def diarize(self, audio_path: Path, *, n_speakers: int | None = None, extra_speakers: int = 0) -> pd.DataFrame:
         """Speaker turns in one mixed recording: t_start, t_end, label, and exclusive, true on the
-        copy where overlapping speech is given to one speaker only."""
+        copy where overlapping speech is given to one speaker only. Up to extra_speakers voices
+        beyond n_speakers may be found."""
         raise NotImplementedError
 
     def attribute(
@@ -111,13 +112,13 @@ class PyannoteBackend(DiarizationBackend):
             self._pipeline = pipeline.to(torch.device(resolve_device(self.device)))
         return self._pipeline
 
-    def diarize(self, audio_path: Path, *, n_speakers: int | None = None) -> pd.DataFrame:
+    def diarize(self, audio_path: Path, *, n_speakers: int | None = None, extra_speakers: int = 0) -> pd.DataFrame:
         import torch
 
         samples, sr = load_audio(Path(audio_path))
         # handing over the samples skips pyannote's own decoder, which needs ffmpeg libraries on the path
         waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
-        output = self._load()({"waveform": waveform, "sample_rate": int(sr)}, num_speakers=n_speakers)
+        output = self._load()({"waveform": waveform, "sample_rate": int(sr)}, **speaker_counts(n_speakers, extra_speakers))
         rows = []
         for exclusive, annotation in (
             (False, output.speaker_diarization), (True, output.exclusive_speaker_diarization)
@@ -125,6 +126,13 @@ class PyannoteBackend(DiarizationBackend):
             for turn, label in annotation:
                 rows.append({"t_start": float(turn.start), "t_end": float(turn.end), "label": str(label), "exclusive": exclusive})
         return pd.DataFrame(rows, columns=["t_start", "t_end", "label", "exclusive"])
+
+
+def speaker_counts(n_speakers: int | None, extra_speakers: int) -> dict[str, int | None]:
+    """pyannote's speaker-count arguments: exactly n_speakers, or from n_speakers up to the extra voices more."""
+    if extra_speakers and n_speakers is not None:
+        return {"min_speakers": n_speakers, "max_speakers": n_speakers + extra_speakers}
+    return {"num_speakers": n_speakers}
 
 
 @register_backend(BACKEND_GROUP)
@@ -288,7 +296,7 @@ class DiarizationExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.RECORDING
     group = "text"
-    config_sections = ("text.diarization", "text.diarization_model", "text.device", "segment")
+    config_sections = ("text.diarization", "text.diarization_model", "text.extra_voices", "text.device", "segment")
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
@@ -313,7 +321,9 @@ class DiarizationExtractor(Extractor):
 
         track = shared_track(prep, recording.recording_id)
         path = prep.shared_track_path(track)
-        turns = resolve_diarizer(self.config).diarize(path, n_speakers=len(recording.subjects))
+        turns = resolve_diarizer(self.config).diarize(
+            path, n_speakers=len(recording.subjects), extra_speakers=self.config.text.extra_voices
+        )
         turns["t_start"] = turns["t_start"] + prep.t_origin_s
         turns["t_end"] = turns["t_end"] + prep.t_origin_s
         turns["track"] = track
@@ -345,7 +355,8 @@ class DiarizationExtractor(Extractor):
         )
 
     def _specs(self, values: dict[str, float]) -> list[FeatureSpec]:
-        params = {"model": self.config.text.diarization_model} if self.config.text.diarization == SHARED_MODE else {}
+        text = self.config.text
+        params = {"model": text.diarization_model, "extra_voices": text.extra_voices} if text.diarization == SHARED_MODE else {}
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,

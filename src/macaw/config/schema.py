@@ -94,6 +94,7 @@ class TextSection(_Section):
     compute_type: str = "float16"
     diarization: str = "per_track"
     diarization_model: str = "pyannote/speaker-diarization-community-1"
+    extra_voices: int = Field(default=0, ge=0)
     voice_review: Literal["always", "flagged", "skip"] = "always"
     crosstalk_margin_db: float = 6.0
     word_timestamps: bool = True
