@@ -179,3 +179,14 @@ def test_coding_only_some_people_and_other_voices_as_context_is_said():
     assert "Lines in other voices were shown in place as context" in text
     text, _ = render(describe(judged, config()), load_references())
     assert "other voices" not in text
+
+
+def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
+    ran = manifest(spec("pose.kinematics", "hand_distance"))
+    defined = config(kinematics={"measures": [
+        {"name": "hand_to_head", "person": "parent", "joints": ["left_wrist"], "to_person": "child", "to_joints": ["nose"]},
+    ]})
+    text, _ = render(describe(ran, defined), load_references())
+    assert "hand_to_head: Distance from parent's left_wrist to child's nose" in text
+    text, _ = render(describe(ran, config()), load_references())
+    assert "defined for this study" not in text

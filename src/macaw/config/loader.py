@@ -249,6 +249,10 @@ def resolve_config(
         override = _directory_override(explicit, env_var)
         if override is not None:
             setattr(config.project, field, override)
+
+    from macaw.project_scripts import load_project_scripts
+
+    load_project_scripts(config.project.scripts_dir)
     return config
 
 

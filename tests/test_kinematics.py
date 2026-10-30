@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from macaw.config.schema import KinematicsSection
+from macaw import project_scripts
+from macaw.config.schema import KinematicsSection, MeasureSection
+from macaw.exceptions import ConfigError, SchemaViolationError
 from macaw.extractors.video.pose import kinematics as kinematics_module
 from macaw.extractors.video.pose.kinematics import (
     KinematicsExtractor,
@@ -17,6 +19,7 @@ from macaw.extractors.video.pose.kinematics import (
     head_orientation,
     interpersonal_distance,
     jerk,
+    measure_values,
     postural_openness,
     velocity,
 )
@@ -398,3 +401,152 @@ class TestExtractor:
         extractor = KinematicsExtractor(SimpleNamespace(kinematics=KinematicsSection()))
         assert extractor.inputs_for(SimpleNamespace(recording_id="r1")) == [tmp_path / "r1"]
         assert extractor.config_sections == ("kinematics",)
+
+
+def measure(**fields):
+    return MeasureSection(**{"name": "m", "person": "parent", "to_person": "child", **fields})
+
+
+# the parent sits left of the child; the parent's left wrist is the one nearer the child
+PARENT = (150.0, 200.0)
+CHILD = (450.0, 220.0)
+
+
+class TestMeasureValues:
+    def test_distance_is_between_the_nearest_pair(self):
+        values = measure_values(
+            measure(joints=["left_wrist", "right_wrist"], to_joints=["nose"]), person("parent", centre=PARENT), person("child", centre=CHILD)
+        )
+        assert len(values) == 20
+        assert values.iloc[0] == pytest.approx(np.hypot(450.0 - 205.0, 160.0 - 320.0))
+
+    def test_a_centre_is_a_midpoint(self):
+        values = measure_values(
+            measure(joints=["shoulder_center"], to_joints=["hip_center"]), person("parent", centre=PARENT), person("child", centre=CHILD)
+        )
+        assert values.iloc[0] == pytest.approx(np.hypot(300.0, 170.0))
+
+    def test_per_body_size_divides_by_the_persons_shoulder_width(self):
+        a, b = person("parent", centre=PARENT, scale=2.0), person("child", centre=CHILD)
+        raw = measure_values(measure(joints=["nose"], to_joints=["nose"]), a, b)
+        scaled = measure_values(measure(joints=["nose"], to_joints=["nose"], per_body_size=True), a, b)
+        assert scaled.iloc[0] == pytest.approx(raw.iloc[0] / 160.0)
+
+    def test_approach_speed_is_positive_while_closing_in(self):
+        path = np.column_stack([205.0 + 3.0 * np.arange(20), np.full(20, 160.0)])
+        a = person("parent", centre=PARENT, moves={"left_wrist": path})
+        values = measure_values(measure(joints=["left_wrist"], to_joints=["nose"], method="approach_speed"), a, person("child", centre=CHILD))
+        assert values.to_numpy() == pytest.approx(np.full(20, 3.0 * FPS))
+
+    def test_offset_toward_is_signed_by_where_the_other_is(self):
+        toward = np.tile([CHILD[0] - 10.0, CHILD[1] - 60.0], (20, 1))
+        away = np.tile([CHILD[0] + 10.0, CHILD[1] - 60.0], (20, 1))
+        head = measure(person="child", to_person="parent", joints=["nose"], to_joints=["nose"], method="offset_toward")
+        assert measure_values(head, person("child", centre=CHILD, moves={"nose": toward}), person("parent", centre=PARENT)).iloc[0] == pytest.approx(10.0)
+        assert measure_values(head, person("child", centre=CHILD, moves={"nose": away}), person("parent", centre=PARENT)).iloc[0] == pytest.approx(-10.0)
+
+    def test_only_frames_with_both_count(self):
+        values = measure_values(measure(joints=["nose"], to_joints=["nose"]), person("parent", n_frames=20), person("child", n_frames=8))
+        assert list(values.index) == list(range(8))
+
+    def test_a_script_function_gets_both_skeletons_row_by_row(self):
+        def wrist_height_gap(a, b):
+            assert list(a.columns[:3]) == ["t", "nose_x", "nose_y"]
+            return a["left_wrist_y"] - b["left_wrist_y"]
+
+        values = measure_values(measure(method="lab.gap"), person("parent", centre=PARENT), person("child", centre=CHILD), function=wrist_height_gap)
+        assert values.iloc[0] == pytest.approx(-20.0)
+
+    def test_a_script_returning_the_wrong_length_is_refused(self):
+        with pytest.raises(SchemaViolationError, match="returned 1 values for 20 rows"):
+            measure_values(measure(method="lab.one"), person("parent"), person("child"), function=lambda a, b: [1.0])
+
+
+def measure_config(measures, scripts_dir=Path("scripts"), roles=("parent", "child")):
+    return SimpleNamespace(
+        kinematics=KinematicsSection(measures=measures),
+        project=SimpleNamespace(roles=list(roles), scripts_dir=scripts_dir),
+    )
+
+
+class TestMeasureChecks:
+    @pytest.mark.parametrize(
+        "fields, message",
+        [
+            ({"name": "hand_distance", "joints": ["nose"], "to_joints": ["nose"]}, "already has a feature"),
+            ({"person": "teacher", "joints": ["nose"], "to_joints": ["nose"]}, "name a role"),
+            ({"to_person": "teacher", "joints": ["nose"], "to_joints": ["nose"]}, "name a role"),
+            ({"joints": ["nose"]}, "needs joints and to_joints"),
+            ({"joints": ["thumb"], "to_joints": ["nose"]}, "no joint called thumb"),
+            ({"joints": ["nose", "left_eye"], "to_joints": ["nose"], "method": "offset_toward"}, "one joint and one to_joint"),
+            ({"method": "angle"}, "or file.function"),
+            ({"method": "missing.angle"}, "there is no"),
+        ],
+    )
+    def test_a_bad_measure_is_refused_before_running(self, tmp_path, fields, message):
+        extractor = KinematicsExtractor(measure_config([measure(**fields)], scripts_dir=tmp_path))
+        with pytest.raises(ConfigError, match=message):
+            extractor.check_available()
+
+    def test_self_is_a_target(self):
+        KinematicsExtractor(measure_config([measure(to_person="self", joints=["left_wrist"], to_joints=["nose"])])).check_available()
+
+    def test_two_measures_cannot_share_a_name(self):
+        with pytest.raises(ValueError, match="two measures are called m"):
+            KinematicsSection(measures=[measure(), measure()])
+
+
+@pytest.fixture
+def measured(tmp_path, monkeypatch):
+    def build(measures, keypoints=None, scripts_dir=None):
+        stored = tmp_path / "keypoints"
+        if keypoints is None:
+            keypoints = pd.concat([person("p1", centre=PARENT), person("c1", centre=CHILD)]).assign(video="room.mp4")
+        write_keypoints(keypoints, stored)
+        monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet")
+        recording = SimpleNamespace(
+            recording_id="sub-003_ses-12mo",
+            subjects=[SimpleNamespace(subject_id="p1", role="parent"), SimpleNamespace(subject_id="c1", role="child")],
+            media=[video("room.mp4")],
+            entities=lambda: {"group_id": "003", "session_id": "12mo", "task": None, "run": None},
+        )
+        extractor = KinematicsExtractor(measure_config(measures, scripts_dir=scripts_dir or tmp_path))
+        extractor.check_available()
+        return extractor.run(recording, tmp_path)
+
+    return build
+
+
+class TestMeasuresInTheRun:
+    def test_a_measure_between_people_is_a_directed_pair(self, measured):
+        result = measured([measure(name="hand_to_head", joints=["left_wrist", "right_wrist"], to_joints=["nose"])])
+        rows = result.rows[result.rows.feature == "hand_to_head"]
+        assert set(zip(rows.subject_id, rows.subject_id_b)) == {("p1", "c1")}
+        assert len(rows) == 20
+        spec = next(spec for spec in result.specs if spec.name == "hand_to_head")
+        assert spec.unit == "px"
+        assert spec.params["joints"] == ["left_wrist", "right_wrist"]
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+
+    def test_a_measure_within_a_person_has_no_second_subject(self, measured):
+        result = measured([measure(name="hand_to_face", person="child", to_person="self", joints=["left_wrist"], to_joints=["nose"])])
+        rows = result.rows[result.rows.feature == "hand_to_face"]
+        assert set(rows.subject_id) == {"c1"}
+        assert rows.subject_id_b.isna().all()
+        assert rows.value.iloc[0] == pytest.approx(np.hypot(55.0, 180.0))
+
+    def test_people_on_separate_cameras_are_not_measured_against_each_other(self, measured):
+        keypoints = pd.concat([person("p1", centre=PARENT), person("c1", centre=CHILD)])
+        result = measured([measure(name="apart", joints=["nose"], to_joints=["nose"])], keypoints=keypoints)
+        assert "apart" not in set(result.rows.feature)
+        assert any("never on one camera together" in warning.message for warning in result.warnings)
+
+    def test_a_script_measure_runs_from_the_scripts_folder(self, measured, tmp_path, monkeypatch):
+        monkeypatch.setattr(project_scripts, "_loaded", {})
+        monkeypatch.setattr(project_scripts, "_failed", {})
+        (tmp_path / "lab.py").write_text("def gap(a, b):\n    return a['nose_x'] - b['nose_x']\n", encoding="utf-8")
+        result = measured([measure(name="nose_gap", method="lab.gap")], scripts_dir=tmp_path)
+        rows = result.rows[result.rows.feature == "nose_gap"]
+        assert rows.value.iloc[0] == pytest.approx(-300.0)
+        extractor = KinematicsExtractor(measure_config([measure(name="nose_gap", method="lab.gap")], scripts_dir=tmp_path))
+        assert tmp_path / "lab.py" in extractor.inputs_for(SimpleNamespace(recording_id="r1"))

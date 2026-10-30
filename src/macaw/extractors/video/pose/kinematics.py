@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 
-from macaw.exceptions import SchemaViolationError
+from macaw.exceptions import ConfigError, SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, own_views, primary_views
@@ -18,6 +18,7 @@ from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project_scripts import script_function, script_path
 from macaw.store import keypoints as keypoints_store
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import UNITS_METRE, Scale
@@ -40,6 +41,11 @@ _ARM_JOINTS = (
 )
 _WRISTS = ("left_wrist", "right_wrist")
 _DERIVATIVES = (("speed", 1), ("acceleration", 2), ("jerk", 3))
+
+# points a measure may name besides the skeleton's joints
+_CENTRES = {"shoulder_center": ("left_shoulder", "right_shoulder"), "hip_center": ("left_hip", "right_hip")}
+SELF = "self"
+BUILTIN_MEASURES = ("distance", "approach_speed", "offset_toward")
 
 # description, unit ({length} is px or m), comparable across subjects; a length in pixels
 # depends on how far each person sits from the camera
@@ -93,7 +99,7 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -101,10 +107,36 @@ class KinematicsExtractor(Extractor):
     requires = (PoseReviewGate.name,)
 
     def check_available(self) -> None:
-        return None
+        roles = set(self.config.project.roles)
+        for measure in self.config.kinematics.measures:
+            where = f"kinematics.measures {measure.name}"
+            if measure.name in {**_SUBJECT_SPECS, **_PAIR_SPECS}:
+                raise ConfigError(f"{where}: pose.kinematics already has a feature of that name; choose another")
+            if measure.person not in roles or (measure.to_person not in roles and measure.to_person != SELF):
+                raise ConfigError(
+                    f"{where}: person and to_person name a role in project.roles ({', '.join(sorted(roles))}); "
+                    f"to_person may also be {SELF}"
+                )
+            if measure.method in BUILTIN_MEASURES:
+                _check_joints(where, measure)
+            elif "." in measure.method:
+                try:
+                    script_function(self.config.project.scripts_dir, measure.method)
+                except ConfigError as error:
+                    raise ConfigError(f"{where}: {error}") from None
+            else:
+                raise ConfigError(
+                    f"{where}: method is {', '.join(BUILTIN_MEASURES)}, or file.function for a function "
+                    f"in {self.config.project.scripts_dir}"
+                )
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return [_keypoints_file(self.config, recording.recording_id)]
+        scripts = [
+            script_path(self.config.project.scripts_dir, measure.method)
+            for measure in self.config.kinematics.measures
+            if measure.method not in BUILTIN_MEASURES
+        ]
+        return [_keypoints_file(self.config, recording.recording_id), *scripts]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         smoothing_s = self.config.kinematics.smoothing_s
@@ -165,6 +197,11 @@ class KinematicsExtractor(Extractor):
                     )
                 )
 
+        for measure in self.config.kinematics.measures:
+            pieces, notes = self._measure_rows(measure, recording, by_subject, shared, common)
+            frames += pieces
+            warnings += notes
+
         rows = concat_long_tables(frames)
         length_unit = _length_unit(keypoints)
         return ExtractorResult(
@@ -180,8 +217,11 @@ class KinematicsExtractor(Extractor):
             "polyorder": POLYORDER,
             "body_size_quantile": BODY_SIZE_QUANTILE,
         }
+        catalog = {name: (*spec, params) for name, spec in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        for measure in self.config.kinematics.measures:
+            catalog[measure.name] = (*measure_spec(measure), {**params, **measure.model_dump()})
         specs = []
-        for name, (description, unit, comparable) in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items():
+        for name, (description, unit, comparable, spec_params) in catalog.items():
             if name not in emitted:
                 continue
             specs.append(
@@ -193,7 +233,7 @@ class KinematicsExtractor(Extractor):
                     group=self.group,
                     extractor=self.name,
                     extractor_version=self.version,
-                    params=params,
+                    params=spec_params,
                     interpolation="none",
                     aggregation="mean",
                     comparable_across_subjects=comparable,
@@ -202,6 +242,39 @@ class KinematicsExtractor(Extractor):
                 )
             )
         return specs
+
+    def _measure_rows(self, measure, recording: Recording, by_subject, shared, common):
+        function = None
+        if measure.method not in BUILTIN_MEASURES:
+            function = script_function(self.config.project.scripts_dir, measure.method)
+        seen = [subject for subject in recording.subjects if subject.subject_id in by_subject]
+        rows, notes = [], []
+        for a in [subject.subject_id for subject in seen if subject.role == measure.person]:
+            others = [a] if measure.to_person == SELF else [
+                subject.subject_id for subject in seen if subject.role == measure.to_person and subject.subject_id != a
+            ]
+            for b in others:
+                if b == a:
+                    kp_a = kp_b = by_subject[a]
+                else:
+                    # one image plane for both, as for every pairwise quantity
+                    view = _pair_view(shared, a, b)
+                    if view is None:
+                        notes.append(self._warning(
+                            recording, a, "info", f"{measure.name}: {a} and {b} are never on one camera together"
+                        ))
+                        continue
+                    kp_a, kp_b = view[view["subject_id"] == a], view[view["subject_id"] == b]
+                values = measure_values(
+                    measure, kp_a, kp_b, smoothing_s=self.config.kinematics.smoothing_s, function=function
+                )
+                table = pd.DataFrame(
+                    {"t_start": _frame_times(kp_a).reindex(values.index).to_numpy(), measure.name: values.to_numpy()}
+                )
+                rows.append(build_long_rows(
+                    values=table, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common
+                ))
+        return rows, notes
 
     def _warning(self, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
         return QCWarning(
@@ -301,17 +374,18 @@ def hand_distance(kp: pd.DataFrame) -> pd.Series:
 
 
 def _derivative(kp: pd.DataFrame, joint: str, order: int, smoothing_s: float) -> pd.Series:
-    """No fit spans a missing frame, so a gap never turns into an apparent jump."""
     points = _points(kp, [joint])
-    frames = points.index.to_numpy()
-    xy = _xy(points, joint)
-    out = np.full(len(frames), np.nan)
-    step = _seconds_per_frame(kp)
-    if not step > 0:
-        return pd.Series(out, index=points.index)
+    fitted = _smoothed_derivative(_xy(points, joint), points.index.to_numpy(), _seconds_per_frame(kp), smoothing_s, order)
+    return pd.Series(np.hypot(fitted[:, 0], fitted[:, 1]), index=points.index)
 
+
+def _smoothed_derivative(values: np.ndarray, frames: np.ndarray, step: float, smoothing_s: float, order: int) -> np.ndarray:
+    """Per column; no fit spans a missing frame, so a gap never turns into an apparent jump."""
+    out = np.full(values.shape, np.nan)
+    if not step > 0:
+        return out
     window = _window_frames(smoothing_s, step)
-    valid = ~np.isnan(xy).any(axis=1)
+    valid = ~np.isnan(values).any(axis=1)
     starts = np.ones(len(frames), dtype=bool)
     starts[1:] = (np.diff(frames) != 1) | (valid[1:] != valid[:-1])
     run_id = np.cumsum(starts)
@@ -319,10 +393,8 @@ def _derivative(kp: pd.DataFrame, joint: str, order: int, smoothing_s: float) ->
         index = np.flatnonzero(run_id == run)
         if len(index) < window:
             continue
-        dx = savgol_filter(xy[index, 0], window, POLYORDER, deriv=order, delta=step)
-        dy = savgol_filter(xy[index, 1], window, POLYORDER, deriv=order, delta=step)
-        out[index] = np.hypot(dx, dy)
-    return pd.Series(out, index=points.index)
+        out[index] = savgol_filter(values[index], window, POLYORDER, deriv=order, delta=step, axis=0)
+    return out
 
 
 def velocity(kp: pd.DataFrame, joint: str, *, smoothing_s: float = DEFAULT_SMOOTHING_S) -> pd.Series:
@@ -368,9 +440,7 @@ def interpersonal_distance(kp_a: pd.DataFrame, kp_b: pd.DataFrame) -> pd.Series:
 
 def postural_openness(kp: pd.DataFrame) -> pd.Series:
     points = _points(kp, _ARM_JOINTS)
-    shoulders = _xy(points, "left_shoulder") - _xy(points, "right_shoulder")
-    width = np.hypot(shoulders[:, 0], shoulders[:, 1])
-    size = np.nanquantile(width, BODY_SIZE_QUANTILE) if np.isfinite(width).any() else float("nan")
+    size = _body_size(kp)
     if not size > 0:
         return pd.Series(np.nan, index=points.index)
 
@@ -379,6 +449,103 @@ def postural_openness(kp: pd.DataFrame) -> pd.Series:
     with np.errstate(invalid="ignore"):
         reach = x.max(axis=1) - x.min(axis=1)
     return pd.Series(reach / size, index=points.index)
+
+
+def _body_size(kp: pd.DataFrame) -> float:
+    points = _points(kp, ("left_shoulder", "right_shoulder"))
+    shoulders = _xy(points, "left_shoulder") - _xy(points, "right_shoulder")
+    width = np.hypot(shoulders[:, 0], shoulders[:, 1])
+    size = np.nanquantile(width, BODY_SIZE_QUANTILE) if np.isfinite(width).any() else float("nan")
+    return float(size) if size > 0 else float("nan")
+
+
+def measure_values(
+    measure, kp_a: pd.DataFrame, kp_b: pd.DataFrame, *, smoothing_s: float = DEFAULT_SMOOTHING_S, function=None
+) -> pd.Series:
+    """One value per frame both people were seen in; function stands in for a script method."""
+    frames = np.intersect1d(kp_a["frame"].unique(), kp_b["frame"].unique())
+    if function is not None:
+        values = _script_values(measure.method, function, kp_a, kp_b, frames)
+    elif measure.method == "offset_toward":
+        values = _offset_toward(kp_a, measure.joints[0], kp_b, measure.to_joints[0], frames)
+    else:
+        values = _nearest_distance(kp_a, measure.joints, kp_b, measure.to_joints, frames)
+        if measure.method == "approach_speed":
+            # a shrinking distance is an approach, so it reads positive
+            values = -_smoothed_derivative(values[:, None], frames, _seconds_per_frame(kp_a), smoothing_s, 1)[:, 0]
+    if measure.per_body_size:
+        values = values / _body_size(kp_a)
+    return pd.Series(values, index=pd.Index(frames, name="frame"))
+
+
+def _joint_xy(kp: pd.DataFrame, joints: Sequence[str], frames: np.ndarray) -> np.ndarray:
+    """(frame, joint, xy); a centre is the midpoint of its two joints."""
+    real = list(dict.fromkeys(part for joint in joints for part in _CENTRES.get(joint, (joint,))))
+    points = _points(kp, real).reindex(frames)
+    return np.stack(
+        [_midpoint(points, *_CENTRES[joint]) if joint in _CENTRES else _xy(points, joint) for joint in joints], axis=1
+    )
+
+
+def _nearest_distance(kp_a, joints, kp_b, to_joints, frames) -> np.ndarray:
+    a = _joint_xy(kp_a, joints, frames)[:, :, None, :]
+    b = _joint_xy(kp_b, to_joints, frames)[:, None, :, :]
+    gaps = np.hypot(a[..., 0] - b[..., 0], a[..., 1] - b[..., 1]).reshape(len(frames), -1)
+    return np.fmin.reduce(gaps, axis=1)
+
+
+def _offset_toward(kp_a, joint, kp_b, to_joint, frames) -> np.ndarray:
+    own = _joint_xy(kp_a, [joint, "shoulder_center"], frames)
+    centre = own[:, 1, 0]
+    target = _joint_xy(kp_b, [to_joint], frames)[:, 0, 0]
+    return (own[:, 0, 0] - centre) * np.sign(target - centre)
+
+
+def _script_values(reference: str, function, kp_a, kp_b, frames) -> np.ndarray:
+    values = np.asarray(function(_skeleton_table(kp_a, frames), _skeleton_table(kp_b, frames)), dtype=float).reshape(-1)
+    if len(values) != len(frames):
+        raise SchemaViolationError(f"{reference} returned {len(values)} values for {len(frames)} rows; give one per row")
+    return values
+
+
+def _skeleton_table(kp: pd.DataFrame, frames: np.ndarray) -> pd.DataFrame:
+    """What a script measure gets per person: a row per frame with t and each joint's x and y."""
+    points = _points(kp, STANDARD_JOINTS).reindex(frames)
+    columns = {"t": _frame_times(kp).reindex(frames).to_numpy()}
+    for joint in STANDARD_JOINTS:
+        columns[f"{joint}_x"] = points[("x", joint)].to_numpy()
+        columns[f"{joint}_y"] = points[("y", joint)].to_numpy()
+    return pd.DataFrame(columns, index=pd.Index(frames, name="frame"))
+
+
+def _check_joints(where: str, measure) -> None:
+    if not measure.joints or not measure.to_joints:
+        raise ConfigError(f"{where}: {measure.method} needs joints and to_joints")
+    unknown = sorted(set(measure.joints + measure.to_joints) - set(STANDARD_JOINTS) - set(_CENTRES))
+    if unknown:
+        raise ConfigError(
+            f"{where}: no joint called {', '.join(unknown)}; use {', '.join(STANDARD_JOINTS)}, {', '.join(_CENTRES)}"
+        )
+    if measure.method == "offset_toward" and (len(measure.joints) != 1 or len(measure.to_joints) != 1):
+        raise ConfigError(f"{where}: offset_toward takes one joint and one to_joint")
+
+
+def measure_spec(measure) -> tuple[str, str | None, bool]:
+    who = f"{measure.person}'s {', '.join(measure.joints)}"
+    owner = "their own" if measure.to_person == SELF else f"{measure.to_person}'s"
+    target = f"{owner} {', '.join(measure.to_joints)}"
+    if measure.method == "distance":
+        text, unit = f"Distance from {who} to {target}, the nearest pair where several are listed.", "{length}"
+    elif measure.method == "approach_speed":
+        text, unit = f"Rate at which the distance from {who} to {target} shrinks; positive while closing in.", "{length}/s"
+    elif measure.method == "offset_toward":
+        text, unit = f"Horizontal offset of {who} from their own shoulder midpoint, positive toward {target}.", "{length}"
+    else:
+        return f"Computed by the project script {measure.method}.", None, False
+    if measure.per_body_size:
+        text += f" In units of {measure.person}'s shoulder width."
+        unit = "1/s" if unit.endswith("/s") else None
+    return text, unit, measure.per_body_size
 
 
 def _boxes(kp: pd.DataFrame) -> pd.DataFrame:

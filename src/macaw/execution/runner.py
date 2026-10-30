@@ -27,6 +27,7 @@ from macaw.extractors.base import Phase, QCWarning
 from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
+from macaw.project_scripts import script_file_of
 from macaw.store import annotations as annotations_store
 from macaw.store import body_model as body_model_store
 from macaw.store import cache as cache_store
@@ -211,10 +212,11 @@ def task_key(config: MacawConfig, extractor_name: str, recording) -> str:
 
 
 def _make_key(config, cls, extractor, recording, config_hash):
+    script = script_file_of(cls)
     return cache_store.make_key(
         extractor=cls.name,
         extractor_version=cls.version,
-        inputs=extractor.inputs_for(recording),
+        inputs=[*extractor.inputs_for(recording), *([script] if script else [])],
         config_hash=config_hash,
     )
 

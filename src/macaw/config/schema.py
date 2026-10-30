@@ -27,6 +27,7 @@ class ProjectSection(_Section):
     media_pattern: str = "*_{subject_id}.*"
     recording_prefix: str = ""
     recording_config_dir: Path = Path("recordings")
+    scripts_dir: Path = Path("scripts")
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
@@ -121,8 +122,29 @@ class PoseSection(_Section):
     read_shared: bool = False
 
 
+class MeasureSection(_Section):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    person: str
+    joints: list[str] = Field(default_factory=list)
+    # "self" measures within the person
+    to_person: str
+    to_joints: list[str] = Field(default_factory=list)
+    # a built-in name, or file.function from project.scripts_dir
+    method: str = "distance"
+    per_body_size: bool = False
+
+
 class KinematicsSection(_Section):
     smoothing_s: float = 0.3
+    measures: list[MeasureSection] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _distinct_names(self) -> "KinematicsSection":
+        names = [measure.name for measure in self.measures]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"two measures are called {', '.join(repeated)}; give each its own name")
+        return self
 
 
 class FaceSection(_Section):

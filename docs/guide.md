@@ -240,3 +240,64 @@ Agreement
 : MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa.
 
 To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
+
+(measures)=
+## Your own body measures
+
+This is optional, and is written in `project.yaml` rather than in the workbench. Besides the body measures MACAW always makes, you can define your own: from a point on one person to a point on another person, or on the same person. Each one becomes a measure over time like any other, with its own name.
+
+```yaml
+kinematics:
+  measures:
+    - name: hand_to_child_head
+      person: parent
+      joints: [left_wrist, right_wrist]
+      to_person: child
+      to_joints: [nose]
+      method: distance
+      per_body_size: true
+    - name: head_toward_parent
+      person: child
+      joints: [nose]
+      to_person: parent
+      to_joints: [nose]
+      method: offset_toward
+      per_body_size: true
+```
+
+person, to_person
+: A role from your project's roles. `to_person: self` measures within one person, for example a hand to their own face.
+
+joints, to_joints
+: The skeleton's points (`nose`, `left_eye`, `right_eye`, `left_ear`, `right_ear`, `left_shoulder`, `right_shoulder`, `left_elbow`, `right_elbow`, `left_wrist`, `right_wrist`, `left_hip`, `right_hip`, `left_knee`, `right_knee`, `left_ankle`, `right_ankle`), plus `shoulder_center` and `hip_center`. With several listed, the nearest pair counts.
+
+method
+: `distance`; `approach_speed`, how fast that distance shrinks (positive while coming closer); `offset_toward`, how far one point sits from the person's own shoulder midpoint toward the other person, such as a head turned toward them; or a function of your own (below).
+
+per_body_size
+: Divides by the person's shoulder width, so a measure does not depend on how far from the camera they sit.
+
+Two people are measured only on a camera that shows both of them.
+
+### A method of your own
+
+Put a Python file in the `scripts` folder next to `project.yaml`, and name its function as `method: file.function`. The function receives two tables, one per person, with a row per video frame, a column `t` for the time, and `<joint>_x` and `<joint>_y` for every point. It returns one number per row.
+
+```python
+# scripts/my_measures.py
+def wrist_height_gap(person, other):
+    return other["left_wrist_y"] - person["left_wrist_y"]
+```
+
+```yaml
+    - name: wrist_height_gap
+      person: parent
+      to_person: child
+      method: my_measures.wrist_height_gap
+```
+
+When you change the file, the next run recomputes this measure. The `scripts` folder can also hold whole new steps or backends: `macaw new-extractor` and `macaw new-backend` write a working example, and copying its `extractor.py` or `backend.py` into `scripts` is enough, with nothing to install.
+
+:::{warning}
+Every file in `scripts` runs as Python whenever MACAW reads the project. Only put files there that you trust.
+:::

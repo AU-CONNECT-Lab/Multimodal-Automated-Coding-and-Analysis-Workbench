@@ -15,6 +15,7 @@ project:
   media_pattern: "*_{subject_id}.*"
   recording_prefix: ""               # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
   recording_config_dir: recordings   # dir of <recording_id>.yaml files overriding this config
+  scripts_dir: scripts               # your own .py files: measure functions, extractors, backends
   n_subjects: 2                      # people per recording; N-person is supported, 2 is tested
   roles: [parent, child]             # role labels; length must equal n_subjects
   excluded_recordings: []            # recording ids skipped by every command
@@ -88,6 +89,7 @@ pose:
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
+  measures: []                       # your own quantities between points on people; see the user guide
 
 face:
   backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface

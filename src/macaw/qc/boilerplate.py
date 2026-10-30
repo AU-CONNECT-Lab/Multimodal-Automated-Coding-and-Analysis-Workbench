@@ -418,7 +418,16 @@ def _kinematics(config, spec, names) -> str:
         "between the wrists, head yaw and roll from the eyes and nose, postural openness, the distance between two "
         "people's shoulder midpoints and the overlap of their body outlines were also derived. All are measured in the "
         "image plane, in pixels or relative to body size, not in metric units."
-    )
+    ) + _measures(config.kinematics.measures)
+
+
+def _measures(measures) -> str:
+    from macaw.extractors.video.pose.kinematics import measure_spec
+
+    if not measures:
+        return ""
+    described = [f"{measure.name}: {measure_spec(measure)[0].rstrip('.')}" for measure in measures]
+    return " Measures defined for this study were also derived (" + "; ".join(described) + ")."
 
 
 def _mea(config, spec, names) -> str:
