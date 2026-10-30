@@ -17,7 +17,7 @@ from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
 from macaw.coding.llm.parsing import parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
 from macaw.config.schema import LLMSection, MacawConfig
-from macaw.exceptions import BackendNotAvailableError, CodebookError
+from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
@@ -41,7 +41,7 @@ _SUBJECT_SPECS = {
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
@@ -49,7 +49,7 @@ class JudgementExtractor(Extractor):
     config_sections = (
         "coding.codebook", "turns", *(f"coding.llm.{key}" for key in (
             "provider", "model", "temperature", "max_tokens", "n_samples", "seed", "allow_abstain",
-            "review_threshold", "batch_size", "context_units",
+            "review_threshold", "batch_size", "context_units", "coded_roles",
         )),
     )
     requires = (ASRExtractor.name, TurnStructureExtractor.name)
@@ -65,6 +65,12 @@ class JudgementExtractor(Extractor):
 
     def check_available(self) -> None:
         self._codebook()
+        unknown = sorted(set(self.config.coding.llm.coded_roles) - set(self.config.project.roles))
+        if unknown:
+            raise ConfigError(
+                f"coding.llm.coded_roles names {', '.join(unknown)}, which project.roles does not have "
+                f"({', '.join(self.config.project.roles)})"
+            )
         resolve_llm_backend(self.config.coding.llm).check_available()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
@@ -78,8 +84,9 @@ class JudgementExtractor(Extractor):
         cfg = self.config.coding.llm
         codebook = self._codebook()
         backend = resolve_llm_backend(cfg)
-        units = coding_units(self.config, recording, codebook.unit)
-        samples = sample_labels(units, codebook, backend, cfg)
+        lines = coding_units(self.config, recording, codebook.unit, cfg.coded_roles)
+        samples = sample_labels(lines, codebook, backend, cfg)
+        units = lines[lines["unit_id"].notna()]
         judged = aggregate_samples(units, samples, cfg)
 
         path = workspace / SAMPLES_NAME
@@ -123,8 +130,11 @@ class JudgementExtractor(Extractor):
 
     def _rows(self, recording: Recording, judged: pd.DataFrame) -> pd.DataFrame:
         span = (float(judged["t_start"].min()), float(judged["t_end"].max())) if not judged.empty else (np.nan, np.nan)
+        coded = set(self.config.coding.llm.coded_roles)
         frames = []
         for subject in recording.subjects:
+            if coded and subject.subject_id not in coded:
+                continue
             mine = judged[judged["subject_id"] == subject.subject_id]
             n = len(mine)
             frames.append(
@@ -171,7 +181,7 @@ class JudgementExtractor(Extractor):
         params = {
             "codebook": codebook.name, "codebook_unit": codebook.unit, "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples,
             "temperature": cfg.temperature, "seed": cfg.seed, "review_threshold": cfg.review_threshold,
-            "batch_size": cfg.batch_size, "context_units": cfg.context_units,
+            "batch_size": cfg.batch_size, "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
         }
         return [
             FeatureSpec(
@@ -186,12 +196,11 @@ def _letter(index: int) -> str:
     return chr(ord("A") + index) if index < 26 else f"S{index + 1}"
 
 
-def coding_units(config: MacawConfig, recording: Recording, unit: str) -> pd.DataFrame:
-    """unit_id, subject_id, speaker letter, times, the pause or overlap before, and the words, in time order."""
-    if unit == "utterance":
-        source = load_transcript(config, recording.recording_id)
-    else:
-        source = load_turns(config, recording.recording_id)
+def coding_units(config: MacawConfig, recording: Recording, unit: str, coded_roles: list[str] | tuple = ()) -> pd.DataFrame:
+    """Every line in time order, other voices' too: subject_id, speaker letter, times, the pause or overlap
+    before, and the words. Lines to code (coded_roles, or everyone's when empty) have a unit_id, the rest none."""
+    loader = load_transcript if unit == "utterance" else load_turns
+    source = loader(config, recording.recording_id, others=True)
     frame = source[["subject_id", "t_start", "t_end", "text"]].copy()
     frame["subject_id"] = frame["subject_id"].astype(str)
     frame["text"] = frame["text"].astype("string").fillna("").str.strip()
@@ -200,24 +209,29 @@ def coding_units(config: MacawConfig, recording: Recording, unit: str) -> pd.Dat
     # letters, not subject ids, go to the model: nothing guarantees the ids are pseudonymous
     letters = {subject.subject_id: _letter(index) for index, subject in enumerate(recording.subjects)}
     frame["speaker"] = [letters.get(subject, subject) for subject in frame["subject_id"]]
-    frame["unit_id"] = [f"u{index}" for index in range(len(frame))]
+    coded = frame["subject_id"].isin(list(coded_roles) or list(letters)).to_numpy()
+    frame["unit_id"] = pd.array([pd.NA] * len(frame), dtype="string")
+    frame.loc[coded, "unit_id"] = [f"u{index}" for index in range(int(coded.sum()))]
     reached = frame["t_end"].cummax().shift()
     frame["gap_before"] = frame["t_start"] - reached
     return frame[["unit_id", "subject_id", "speaker", "t_start", "t_end", "gap_before", "text"]]
 
 
-def sample_labels(units: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
-    """One row per unit and sample: unit_id, sample, label (a code or abstain)."""
+def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
+    """One row per unit and sample: unit_id, sample, label (a code or abstain). A batch is batch_size units
+    with the uncoded lines between them in place."""
+    coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
     answers = []
     for sample in range(cfg.n_samples):
         seed = cfg.seed + sample if backend.takes_seed else None
-        for start in range(0, len(units), cfg.batch_size):
-            batch = units.iloc[start : start + cfg.batch_size]
-            context = units.iloc[max(0, start - cfg.context_units) : start]
+        for start in range(0, len(coded), cfg.batch_size):
+            first, last = coded[start], coded[min(start + cfg.batch_size, len(coded)) - 1]
+            batch = lines.iloc[first : last + 1]
+            context = lines.iloc[max(0, first - cfg.context_units) : first]
             system, user = build_annotation_prompt(codebook, batch, context, allow_abstain=cfg.allow_abstain)
             response = backend.complete(system, user, seed=seed)
             parsed = parse_annotation_response(
-                response.text, codebook, batch["unit_id"].tolist(), allow_abstain=cfg.allow_abstain
+                response.text, codebook, batch["unit_id"].dropna().tolist(), allow_abstain=cfg.allow_abstain
             )
             answers.append(parsed.assign(sample=sample))
     if not answers:

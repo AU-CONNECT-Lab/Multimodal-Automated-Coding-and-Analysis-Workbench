@@ -168,6 +168,7 @@ class LLMSection(_Section):
     review_threshold: float = 0.7
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
+    coded_roles: list[str] = Field(default_factory=list)
 
     def is_local(self) -> bool:
         from macaw.coding.llm.backends import BACKEND_GROUP

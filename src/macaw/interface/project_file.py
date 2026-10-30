@@ -39,7 +39,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     )),
     ("Coding", "Coding layers, and the language model that codes speech acts in layer B.", (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
-        "coding.llm.n_samples", "coding.llm.review_threshold",
+        "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.coded_roles",
     )),
 )
 
@@ -78,6 +78,7 @@ LABELS = {
     "coding.llm.base_url": "Server address",
     "coding.llm.n_samples": "Answers per unit",
     "coding.llm.review_threshold": "Review below this agreement",
+    "coding.llm.coded_roles": "People to code",
 }
 
 # keys that name a registered backend, so the choices are whatever is installed, plugins included

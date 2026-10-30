@@ -134,7 +134,8 @@ coding:
     allow_abstain: true              # the model may answer "cannot tell"
     review_threshold: 0.7            # 0-1; below this the unit enters the human review queue
     batch_size: 20                   # units per request
-    context_units: 5                 # earlier units shown before each batch, not coded
+    context_units: 5                 # earlier lines shown before each batch, not coded
+    coded_roles: []                  # roles whose units are coded, the others' lines being context; [] codes everyone
 
 qc:
   checks:

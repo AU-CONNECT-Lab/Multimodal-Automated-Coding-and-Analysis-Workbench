@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from macaw.coding.codebook import Codebook
+from macaw.extractors.audio.content.diarization import OTHER
 
 ABSTAIN = "abstain"
 
@@ -16,12 +17,13 @@ def build_annotation_prompt(
     *,
     allow_abstain: bool = True,
 ) -> tuple[str, str]:
-    """Returns (system, user). units and context carry unit_id, speaker, t_start, t_end, gap_before and text."""
-    lines = [
-        "You code units of a recorded conversation with the codebook below. Speakers are named by letters.",
-        f"Codebook: {codebook.name}. Each unit gets exactly one code.",
-        "",
-    ]
+    """Returns (system, user). units and context carry unit_id, speaker, t_start, t_end, gap_before and text;
+    a row of units without a unit_id is shown in its place as context."""
+    lines = ["You code units of a recorded conversation with the codebook below. Speakers are named by letters."]
+    shown = units["speaker"] if context is None else pd.concat([context["speaker"], units["speaker"]])
+    if (shown == OTHER).any():
+        lines.append(f"The speaker {OTHER} is someone besides the people recorded, such as a researcher in the room.")
+    lines += [f"Codebook: {codebook.name}. Each unit gets exactly one code.", ""]
     for definition in codebook.codes:
         lines.append(f"## {definition.code}")
         lines.append(definition.description)
@@ -49,8 +51,14 @@ def build_annotation_prompt(
         user.append("Earlier in the conversation (context only, do not code):")
         user.extend(_describe(row) for row in context.itertuples(index=False))
         user.append("")
-    user.append("Units to code:")
-    user.extend(f"id {row.unit_id} | {_describe(row)}" for row in units.itertuples(index=False))
+    if units["unit_id"].isna().any():
+        user.append("Units to code, with lines marked context in between that are not to be coded:")
+    else:
+        user.append("Units to code:")
+    user.extend(
+        f"context | {_describe(row)}" if pd.isna(row.unit_id) else f"id {row.unit_id} | {_describe(row)}"
+        for row in units.itertuples(index=False)
+    )
     return "\n".join(lines), "\n".join(user)
 
 

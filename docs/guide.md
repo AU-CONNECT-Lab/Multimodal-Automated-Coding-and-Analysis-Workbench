@@ -227,6 +227,9 @@ This is optional. A language model can code each utterance or turn of the transc
 Where it runs
 : On a model on your own computer or lab server, or on a cloud service (OpenAI, Anthropic). With a cloud service the transcript text is sent there, so check that your ethics approval allows it.
 
+Whose talk
+: Everyone's, unless you name roles under *People to code*, for example only the child. The others' talk, and a researcher's when other voices are on, is still shown to the model around each unit so it can tell an answer from a new topic, but it is not coded.
+
 How sure it is
 : Each unit is asked several times (five by default). The share of matching answers is its confidence. The model may also answer "cannot tell".
 

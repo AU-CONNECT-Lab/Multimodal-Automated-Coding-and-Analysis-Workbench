@@ -166,3 +166,16 @@ def test_the_face_backend_that_ran_is_the_one_named():
 def test_how_the_videos_were_prepared_is_described(video, expected):
     text, _ = render(describe(manifest(spec("prep.video", "n_videos")), config(video=video)), load_references())
     assert expected in text
+
+
+def test_coding_only_some_people_and_other_voices_as_context_is_said():
+    judged = manifest(spec(
+        "coding.judge", "n_units_judged", "ollama", "qwen3:14b@abc", codebook="acts", codebook_unit="utterance",
+        provider="ollama", n_samples=1, context_units=5, coded_roles=["child"],
+    ))
+    shared = config(text={"diarization": "pyannote", "extra_voices": 1})
+    text, _ = render(describe(judged, shared), load_references())
+    assert "Only the units of the child were coded" in text
+    assert "Lines in other voices were shown in place as context" in text
+    text, _ = render(describe(judged, config()), load_references())
+    assert "other voices" not in text

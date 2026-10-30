@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from macaw import __version__
+from macaw.extractors.audio.content.diarization import others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
 
@@ -365,8 +366,13 @@ def _judge(config, spec, names) -> str:
     text = (
         f"Each {params.get('codebook_unit', 'unit')} was coded with the codebook \"{params.get('codebook')}\" by the language model "
         f"{model} ({params.get('provider')}), given the codebook's definitions and examples, the speaker letters and timing, "
-        f"and the {params.get('context_units')} preceding units as context."
+        f"and the {params.get('context_units')} preceding lines as context."
     )
+    coded = params.get("coded_roles") or []
+    if coded:
+        text += f" Only the units of the {_listed(coded)} were coded; the others' lines were shown in place as context."
+    if others_take_turns(config):
+        text += " Lines in other voices were shown in place as context and not coded."
     samples = params.get("n_samples", 1)
     if samples > 1:
         text += (

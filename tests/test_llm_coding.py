@@ -22,7 +22,7 @@ from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
 from macaw.coding.review_queue import REVIEWED_NAME, apply_review, export_review, read_queue
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import CodingSection, LLMSection
-from macaw.exceptions import BackendNotAvailableError, CodebookError, LLMBackendError
+from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
 from macaw.execution.dag import build_dag
 from macaw.project.layout import layout_for
 from macaw.store.annotations import write_annotations
@@ -108,12 +108,23 @@ def units(rows):
     return frame
 
 
+def transcript_of(rows):
+    """load_transcript over these rows, other's only when asked for."""
+    frame = units(rows)
+    return lambda config, rid, others=False: frame if others else frame[frame["subject_id"] != "other"].reset_index(drop=True)
+
+
 RECORDING = SimpleNamespace(
     recording_id="r1",
     subjects=[SimpleNamespace(subject_id="mother"), SimpleNamespace(subject_id="child")],
     entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
 )
 TALK = [("mother", 0.0, 2.0, "where is it?"), ("child", 1.5, 3.0, "it is red"), ("mother", 4.0, 5.0, "ok")]
+# a researcher's question between them, as text.asr gives it when others take turns
+WITH_OTHER = [
+    ("mother", 0.0, 2.0, "where is it?"), ("other", 2.5, 3.5, "do you know?"),
+    ("child", 4.0, 5.0, "it is red"), ("mother", 6.0, 7.0, "ok"),
+]
 
 
 class TestRepair:
@@ -154,7 +165,7 @@ class TestParse:
 
 class TestUnitsAndPrompt:
     def test_units_get_letters_times_and_the_gap_before(self, monkeypatch):
-        monkeypatch.setattr(module, "load_transcript", lambda config, rid: units(TALK))
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
         found = coding_units(None, RECORDING, "utterance")
         assert found["speaker"].tolist() == ["A", "B", "A"]
         assert found["unit_id"].tolist() == ["u0", "u1", "u2"]
@@ -162,7 +173,7 @@ class TestUnitsAndPrompt:
         assert found["gap_before"].iloc[1:].round(2).tolist() == [-0.5, 1.0]
 
     def test_the_prompt_names_letters_not_subject_ids_and_marks_context(self, monkeypatch):
-        monkeypatch.setattr(module, "load_transcript", lambda config, rid: units(TALK))
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
         found = coding_units(None, RECORDING, "utterance")
         system, user = build_annotation_prompt(CODEBOOK, found.iloc[1:], found.iloc[:1])
         assert "## question" in system and "ends in a question" in system and '"abstain"' in system
@@ -170,6 +181,25 @@ class TestUnitsAndPrompt:
         assert user.index("context only") < user.index("Units to code:") < user.index("id u1 |")
         assert "id u0 |" not in user
         assert "overlaps the talk before by 0.5 s" in user
+        assert "context |" not in user and "researcher" not in system
+
+    def test_other_voices_and_people_not_coded_are_lines_without_an_id(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(WITH_OTHER))
+        found = coding_units(None, RECORDING, "utterance", ["child"])
+        assert found["speaker"].tolist() == ["A", "other", "B", "A"]
+        assert found["unit_id"].isna().tolist() == [True, True, False, True]
+        assert found["unit_id"].iloc[2] == "u0"
+        # the pause before the child's answer is after the researcher's question, not the mother's
+        assert found["gap_before"].iloc[2] == pytest.approx(0.5)
+
+    def test_lines_not_coded_sit_in_place_between_the_units(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(WITH_OTHER))
+        found = coding_units(None, RECORDING, "utterance", ["mother"])
+        system, user = build_annotation_prompt(CODEBOOK, found, None)
+        assert "The speaker other is someone besides the people recorded" in system
+        assert "lines marked context in between" in user
+        order = [user.index(text) for text in ("id u0 |", "context | speaker other", "context | speaker B", "id u1 |")]
+        assert order == sorted(order)
 
 
 class TestAggregate:
@@ -257,9 +287,9 @@ class TestBackends:
         assert response.prompt_tokens == 5 and backend.model_version() == "claude-x"
 
 
-def run_judge(monkeypatch, tmp_path, stub, **llm):
+def run_judge(monkeypatch, tmp_path, stub, talk=TALK, **llm):
     path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
-    monkeypatch.setattr(module, "load_transcript", lambda config, rid: units(TALK))
+    monkeypatch.setattr(module, "load_transcript", transcript_of(talk))
     cfg = LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1", **llm)
     extractor = JudgementExtractor(SimpleNamespace(coding=CodingSection(codebook=path, layers=["A", "B"], llm=cfg)))
     return extractor.run(RECORDING, tmp_path)
@@ -280,6 +310,31 @@ class TestJudge:
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         counts = result.rows.set_index(["subject_id", "feature"])["value"]
         assert counts[("mother", "n_units_judged")] == 2 and counts[("child", "share_needs_review")] == 0
+
+    def test_only_the_coded_roles_are_coded_and_the_rest_is_context(self, monkeypatch, tmp_path, stub):
+        result = run_judge(monkeypatch, tmp_path, stub, talk=WITH_OTHER, n_samples=1, batch_size=10, coded_roles=["mother"])
+        assert len(stub.requests) == 1
+        user = stub.requests[0]["body"]["messages"][-1]["content"]
+        assert "context | speaker other" in user and "context | speaker B" in user
+        assert result.annotations["subject_id"].tolist() == ["mother", "mother"]
+        assert set(result.rows["subject_id"]) == {"mother"}
+
+    def test_a_batch_counts_units_not_the_lines_between_them(self, monkeypatch, tmp_path, stub):
+        run_judge(monkeypatch, tmp_path, stub, talk=WITH_OTHER, n_samples=1, batch_size=1, context_units=1, coded_roles=["mother"])
+        assert len(stub.requests) == 2
+        second = stub.requests[1]["body"]["messages"][-1]["content"]
+        # the one line of context before the second mother unit is the child's answer
+        assert second.index("context only") < second.index("speaker B") < second.index("id u1 |")
+        assert "speaker other" not in second
+
+    def test_a_coded_role_that_is_not_a_role_is_refused(self, tmp_path):
+        path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
+        config = SimpleNamespace(
+            project=SimpleNamespace(roles=["mother", "child"]),
+            coding=CodingSection(codebook=path, llm=LLMSection(model="tiny", coded_roles=["kid"])),
+        )
+        with pytest.raises(ConfigError, match="kid"):
+            JudgementExtractor(config).check_available()
 
     def test_disagreeing_samples_send_the_unit_to_review(self, monkeypatch, tmp_path, stub):
         answers = iter(["question", "inform", "question"] * 10)
