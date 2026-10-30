@@ -54,7 +54,7 @@ prosody:
   f0_max_hz: 500.0                   # Hz; too high invites octave doubling. Raise for children
   f0_range_by_role: {}               # per-role override, e.g. {child: [100, 600]}
   standard_sets: [eGeMAPSv02]        # eGeMAPSv02 (88 dims) and/or ComParE_2016 (6373 dims)
-  min_voiced_fraction: 0.1           # 0-1; turns below this get a QC warning, not a value
+  min_voiced_fraction: 0.1           # 0-1; a person voiced for less of the task window gets a QC warning
 
 text:
   asr_backend: whisperx              # whisperx | faster_whisper

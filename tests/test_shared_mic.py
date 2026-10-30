@@ -371,6 +371,12 @@ def test_pitch_off_a_shared_microphone_is_each_persons_own_solo_stretch(project,
     parent = pitch[pitch.subject_id == "parent"]
     assert parent.t_start.min() >= 10.2 and parent.t_start.max() < 11.8
 
+    spans["child"] = pd.DataFrame({"t_start": [12.2], "t_end": [12.4]})
+    warnings = FrameProsodyExtractor(config).run(build_recording("003", config), tmp_path).warnings
+    quiet = [warning for warning in warnings if warning.check == "voiced_fraction"]
+    assert [warning.subject_id for warning in quiet] == ["child"]
+    assert "say little on their own" in quiet[0].message and "track may be silent" not in quiet[0].message
+
 
 def test_a_turn_off_a_shared_microphone_keeps_only_its_solo_stretches():
     audio = np.arange(10 * 100, dtype=float)

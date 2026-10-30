@@ -167,6 +167,12 @@ class FrameProsodyExtractor(Extractor):
             )
 
             if fraction < cfg.min_voiced_fraction:
+                likely = (
+                    "They may say little on their own, their voice may be named wrong (macaw accept-voices), "
+                    "or the pitch range may be wrong."
+                    if spans is not None
+                    else "The track may be silent, mis-attributed, or the pitch range may be wrong."
+                )
                 warnings.append(
                     QCWarning(
                         check="voiced_fraction",
@@ -175,8 +181,7 @@ class FrameProsodyExtractor(Extractor):
                         severity="warn",
                         message=(
                             f"Only {fraction:.1%} of frames are voiced, below the expected "
-                            f"{cfg.min_voiced_fraction:.1%}. The track may be silent, "
-                            "mis-attributed, or the pitch range may be wrong."
+                            f"{cfg.min_voiced_fraction:.1%}. {likely}"
                         ),
                         t_start=prep.t_origin_s,
                         t_end=prep.t_origin_s + prep.duration_s,
