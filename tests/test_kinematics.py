@@ -17,7 +17,6 @@ from macaw.extractors.video.pose.kinematics import (
     head_orientation,
     interpersonal_distance,
     jerk,
-    nod_events,
     postural_openness,
     velocity,
 )
@@ -206,10 +205,6 @@ class TestHeadOrientation:
         head = head_orientation(self.head((np.nan, np.nan)))
         assert np.isnan(head["yaw_index"].iloc[0])
         assert head["roll_deg"].iloc[0] == pytest.approx(0.0)
-
-    def test_nods_are_not_guessed_from_body_keypoints(self):
-        with pytest.raises(NotImplementedError, match="pitch"):
-            nod_events(pd.DataFrame())
 
 
 class TestPairs:

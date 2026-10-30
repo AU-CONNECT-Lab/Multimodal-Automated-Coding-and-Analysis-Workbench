@@ -95,14 +95,3 @@ def agreement(
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")
-
-
-@app.command("refine-codebook")
-def refine_codebook(
-    codebook: Path = typer.Option(..., "--codebook"),
-    out: Path = typer.Option(..., "--out"),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    examples: int = typer.Option(50, "--examples", help="Utterances sampled as context."),
-) -> None:
-    """Turn a vague codebook into operational criteria and boundary cases. Output is advisory."""
-    raise NotImplementedError

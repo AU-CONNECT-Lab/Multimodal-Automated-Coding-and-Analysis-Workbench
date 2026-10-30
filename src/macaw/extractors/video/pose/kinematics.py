@@ -356,13 +356,6 @@ def head_orientation(kp: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"yaw_index": yaw_index, "roll_deg": roll}, index=points.index)
 
 
-def nod_events(head: pd.DataFrame) -> pd.DataFrame:
-    raise NotImplementedError(
-        "Nods are pitch movements and 2D body keypoints give no stable pitch; this belongs with "
-        "the face backend's head pose"
-    )
-
-
 def interpersonal_distance(kp_a: pd.DataFrame, kp_b: pd.DataFrame) -> pd.Series:
     """Metres with depth, pixels without; the unit goes into the manifest either way."""
     a = _points(kp_a, ("left_shoulder", "right_shoulder"))

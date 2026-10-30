@@ -429,19 +429,7 @@ class TestQC:
         assert (result.exit_code, len(checked)) == ((1, 1) if fail_fast else (0, 2))
 
 
-class TestBlockedCommandsStayHonest:
-    """Commands whose layer is still a skeleton must fail, not pretend."""
-
-    @pytest.mark.parametrize(
-        "args",
-        [
-            ["refine-codebook", "-c", "project.yaml", "--codebook", "codebook.yaml", "--out", "refined.yaml"],
-        ],
-    )
-    def test_they_do_not_report_success(self, args, project, monkeypatch):
-        monkeypatch.chdir(project.root)
-        assert invoke(*args).exit_code != 0
-
+class TestEafExport:
     @needs_pydantic
     def test_eaf_export_says_there_is_nothing_to_export(self, project, monkeypatch):
         # it is implemented now, so it has to fail on the missing annotations and say so, rather

@@ -34,7 +34,7 @@ Reviewing the output works the same way. The quality report points at the frames
 ## Milestones
 
 - Scale calibration and body-type classification, so distances can be given in real units.
-- A language-model observation pass before coding, transcript cleanup, and codebook refinement (`macaw refine-codebook` is not implemented yet).
+- A language-model observation pass before coding, transcript cleanup, and codebook refinement.
 - Who looks at whom, from gaze direction, on video where faces are large enough to tell.
 - Gesture and speech alignment coding.
 - Several kept segments per recording, and picking them on the video in the GUI.

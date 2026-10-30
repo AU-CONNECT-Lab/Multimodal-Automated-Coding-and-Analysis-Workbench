@@ -46,14 +46,6 @@ def parse_observation_response(text: str, expected_ids: list[str]) -> pd.DataFra
     raise NotImplementedError
 
 
-def parse_cleanup_response(text: str, expected_ids: list[str]) -> pd.DataFrame:
-    raise NotImplementedError
-
-
-def parse_refinement_response(text: str) -> Codebook:
-    raise NotImplementedError
-
-
 def repair_json(text: str) -> str:
     """Small local models often wrap JSON in prose or truncate it."""
     text = _THINKING.sub("", text)
