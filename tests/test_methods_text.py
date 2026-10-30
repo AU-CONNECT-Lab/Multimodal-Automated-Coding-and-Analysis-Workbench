@@ -192,6 +192,18 @@ def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
     assert "defined for this study" not in text
 
 
+def test_gesture_kinematics_name_the_tier_and_both_thresholds_with_their_sources():
+    ran = manifest(FeatureSpec(
+        name="gesture_left_peak_speed", description="", unit="px/s", scale=Scale.EVENT, group="pose",
+        extractor="pose.gestures", extractor_version="0.1.0",
+    ))
+    gestures = config(kinematics={"gestures": {"tier": "gesture", "still_speed": 12, "peak_prominence": 40}})
+    text, used = render(describe(ran, gestures), load_references())
+    assert "coded on the gesture tier" in text and "at least 40 px/s" in text and "slower than 12 px/s" in text
+    assert {"trujillo2019", "mcneill1992", "pouw2021", "savitzky1964"} <= set(used)
+    assert "University of Chicago Press." in text
+
+
 def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
     hinted = config(

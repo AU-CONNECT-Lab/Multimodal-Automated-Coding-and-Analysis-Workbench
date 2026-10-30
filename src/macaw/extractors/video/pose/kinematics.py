@@ -140,20 +140,9 @@ class KinematicsExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         smoothing_s = self.config.kinematics.smoothing_s
-        keypoints = keypoints_store.read_keypoints(
-            _keypoints_file(self.config, recording.recording_id),
-            recording_id=recording.recording_id,
-        )
-        keypoints = keypoints[keypoints["subject_id"].notna()]
+        keypoints, by_subject = keypoints_by_subject(self.config, recording)
         subjects = [subject.subject_id for subject in recording.subjects]
         own = own_views(recording)
-        views = primary_views(keypoints, recording)
-        # each person is measured on one view: their own camera, else the shared one that saw them most
-        by_subject = {
-            subject_id: keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == views[subject_id])]
-            for subject_id in subjects
-            if subject_id in views
-        }
         shared = keypoints[~keypoints["video"].isin(set(own.values()))]
         warnings = [
             self._warning(recording, subject_id, "warn", "no keypoints for this subject")
@@ -284,6 +273,20 @@ class KinematicsExtractor(Extractor):
             severity=severity,
             message=message,
         )
+
+
+def keypoints_by_subject(config, recording: Recording) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Everyone's keypoints, and each person's on the one view they are measured on: their own
+    camera, else the shared one that saw them most."""
+    keypoints = keypoints_store.read_keypoints(_keypoints_file(config, recording.recording_id), recording_id=recording.recording_id)
+    keypoints = keypoints[keypoints["subject_id"].notna()]
+    views = primary_views(keypoints, recording)
+    by_subject = {
+        subject.subject_id: keypoints[(keypoints["subject_id"] == subject.subject_id) & (keypoints["video"] == views[subject.subject_id])]
+        for subject in recording.subjects
+        if subject.subject_id in views
+    }
+    return keypoints, by_subject
 
 
 def _pair_view(shared: pd.DataFrame, a: str, b: str) -> pd.DataFrame | None:

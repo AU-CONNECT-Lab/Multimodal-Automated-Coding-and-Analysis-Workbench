@@ -153,9 +153,27 @@ class MeasureSection(_Section):
     per_body_size: bool = False
 
 
+class GestureSection(_Section):
+    tier: str | None = None
+    annotator: str | None = None
+    # in the keypoints' length unit per second, so each project sets them for its own videos
+    still_speed: float | None = Field(default=None, gt=0)
+    peak_prominence: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _thresholds_with_a_tier(self) -> "GestureSection":
+        if self.tier and (self.still_speed is None or self.peak_prominence is None):
+            raise ValueError(
+                "gestures.tier is set, so still_speed and peak_prominence are needed too, in pixels per second "
+                "for these videos; the wrist speeds pose.kinematics writes help to choose them"
+            )
+        return self
+
+
 class KinematicsSection(_Section):
     smoothing_s: float = 0.3
     measures: list[MeasureSection] = Field(default_factory=list)
+    gestures: GestureSection = Field(default_factory=GestureSection)
 
     @model_validator(mode="after")
     def _distinct_names(self) -> "KinematicsSection":

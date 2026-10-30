@@ -298,6 +298,26 @@ per_body_size
 
 Two people are measured only on a camera that shows both of them.
 
+### Gestures you coded
+
+If you code gestures in ELAN on a tier of each person, MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, and the gesture space it uses. Each gesture gives one row per measure and hand.
+
+```yaml
+kinematics:
+  gestures:
+    tier: gesture
+    still_speed: 15
+    peak_prominence: 40
+```
+
+still_speed, peak_prominence
+: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Speeds, distances and areas stay in pixels; convert them with whatever yardstick suits your study.
+
+annotator
+: When two people coded the tier, name whose gestures to measure.
+
+Height and gesture space need the hips in view. When a table hides them, those two stay empty.
+
 ### A method of your own
 
 Put a Python file in the `scripts` folder next to `project.yaml`, and name its function as `method: file.function`. The function receives two tables, one per person, with a row per video frame, a column `t` for the time, and `<joint>_x` and `<joint>_y` for every point. It returns one number per row.

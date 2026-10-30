@@ -92,6 +92,11 @@ pose:
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
   measures: []                       # your own quantities between points on people; see the user guide
+  gestures:
+    tier: null                       # annotation tier whose segments are gestures, each on its person's tier; null = none measured
+    annotator: null                  # whose segments, when several people coded that tier
+    still_speed: null                # px/s (m/s with depth); a hand slower than this is still. Needed with a tier
+    peak_prominence: null            # px/s; how far a speed peak rises above its surroundings to count as a submovement. Needed with a tier
 
 face:
   backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface

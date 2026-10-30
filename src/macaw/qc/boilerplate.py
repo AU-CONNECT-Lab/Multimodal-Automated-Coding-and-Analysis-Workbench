@@ -20,7 +20,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "motion.mea", "face.au", "face.au_check", "face.movement",
+    "pose.kinematics", "pose.gestures", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -108,7 +108,7 @@ def formatted(entry: dict) -> str:
     names = [_initials(name) for name in _authors(entry)]
     who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + ", & " + names[-1]
     parts = [f"{who} ({entry.get('year', 'n.d.')}).", str(entry["title"]).rstrip(".") + "."]
-    venue = entry.get("journal") or entry.get("booktitle") or entry.get("howpublished")
+    venue = entry.get("journal") or entry.get("booktitle") or entry.get("howpublished") or entry.get("publisher")
     if venue:
         detail = str(venue)
         if "volume" in entry:
@@ -434,6 +434,21 @@ def _kinematics(config, spec, names) -> str:
     ) + _measures(config.kinematics.measures)
 
 
+def _gestures(config, spec, names) -> str:
+    gestures = config.kinematics.gestures
+    unit = spec.unit.split("/")[0] if spec.unit and "/" in spec.unit else "px"
+    return (
+        f"The kinematics of each gesture coded on the {gestures.tier} tier were measured from each wrist following "
+        "[trujillo2019]: peak speed; submovements, the speed peaks rising at least "
+        f"{gestures.peak_prominence:g} {unit}/s above their surroundings; holds between the first and last submovement, "
+        f"where wrist and elbow both moved slower than {gestures.still_speed:g} {unit}/s; the area the wrist's path "
+        "covered; the highest level it reached relative to the body; and the outermost and most used gesture space "
+        "[mcneill1992]. Rhythm was the standard deviation of the intervals between submovements [pouw2021]. Speeds "
+        f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964] and "
+        "are in image units."
+    )
+
+
 def _measures(measures) -> str:
     from macaw.extractors.video.pose.kinematics import measure_spec
 
@@ -541,6 +556,7 @@ _WRITERS = {
     "pose.detect": _detect,
     "pose.keypoints": _keypoints,
     "pose.kinematics": _kinematics,
+    "pose.gestures": _gestures,
     "motion.mea": _mea,
     "face.au": _face,
     "face.au_check": _au_check,

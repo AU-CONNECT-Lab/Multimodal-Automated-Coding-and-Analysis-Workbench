@@ -201,3 +201,27 @@ kartynnik2019:
   title: "Real-time facial surface geometry from monocular video on mobile GPUs"
   howpublished: arXiv:1907.06724
   year: 2019
+trujillo2019:
+  type: article
+  author: "Trujillo, James P. and Vaitonyte, Julija and Simanova, Irina and Özyürek, Aslı"
+  title: "Toward the markerless and automatic analysis of kinematic features: A toolkit for gesture and movement research"
+  journal: Behavior Research Methods
+  volume: 51
+  number: 2
+  pages: 769--777
+  year: 2019
+pouw2021:
+  type: article
+  author: "Pouw, Wim and Dingemanse, Mark and Motamedi, Yasamin and Özyürek, Aslı"
+  title: "A systematic investigation of gesture kinematics in evolving manual languages in the lab"
+  journal: Cognitive Science
+  volume: 45
+  number: 7
+  pages: e13014
+  year: 2021
+mcneill1992:
+  type: book
+  author: "McNeill, David"
+  title: "Hand and mind: What gestures reveal about thought"
+  publisher: University of Chicago Press
+  year: 1992
