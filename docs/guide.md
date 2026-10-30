@@ -255,6 +255,9 @@ What comes to you
 Agreement
 : MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa.
 
+How the codes were used
+: `macaw describe-codes` lists, for each recording, coder and person, how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs mean the coding flips from unit to unit, which is worth a look before you analyse it. Add `--out codes.csv` to keep the table.
+
 To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
 
 (measures)=

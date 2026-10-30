@@ -11,6 +11,7 @@ from macaw.coding.agreement import (
     load_annotations,
     report_to_json,
 )
+from macaw.coding.describe import describe_codes, format_description
 from macaw.coding.review_queue import apply_review, export_review, queue_summary, read_queue, write_queue
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
@@ -95,3 +96,26 @@ def agreement(
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")
+
+
+@app.command("describe-codes")
+def describe_codes_command(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
+    tier: str = typer.Option(None, "--tier", help="Restrict to one annotation tier."),
+    layer: str = typer.Option(None, "--layer", "-l", help="A, B, or C."),
+    out: Path = typer.Option(None, "--out", help="Write the table as csv."),
+    set_: list[str] = typer.Option(None, "--set"),
+) -> None:
+    """How each code was used in each recording: units, time, runs of one code, and how many runs last one unit."""
+    resolved = resolve_config(config, cli_overrides=set_ or ())
+    annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
+    if tier is not None:
+        annotations = annotations[annotations["tier"] == tier]
+    if layer is not None:
+        annotations = annotations[annotations["layer"] == layer]
+    table = describe_codes(annotations)
+    typer.echo(format_description(table))
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(out, index=False)
