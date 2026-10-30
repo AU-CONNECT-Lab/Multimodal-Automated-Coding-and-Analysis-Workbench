@@ -39,6 +39,17 @@ class TestFigures:
         path = timeline_figure(["parent", "child"], seen, heard, "speaking", CANDIDATES, tmp_path / "t.png")
         assert path.stat().st_size > 0
 
+    def test_a_voice_that_is_no_ones_gets_a_heard_lane_only(self, tmp_path, monkeypatch):
+        from macaw.qc import figures
+
+        drawn = []
+        monkeypatch.setattr(figures, "_save", lambda figure, path: drawn.append(figure) or path)
+        seen = {"parent": present_spans(np.arange(0, 10, 0.04))}
+        heard = {"parent": [(1.0, 3.0)], "other": [(4.0, 2.0)], "none": []}
+        timeline_figure(["parent", "child"], seen, heard, "speaking", CANDIDATES, tmp_path / "t.png")
+        lanes = [label.get_text() for label in drawn[0].axes[0].get_yticklabels()]
+        assert lanes == ["parent  seen", "parent  heard", "child  seen", "child  heard", "other  heard"]
+
     def test_the_pitch_panels_cover_a_person_without_pitch(self, tmp_path):
         pitch = {"parent": (np.arange(0, 10, 0.01), np.full(1000, 220.0))}
         path = pitch_figure(["parent", "child"], pitch, CANDIDATES, tmp_path / "p.png")

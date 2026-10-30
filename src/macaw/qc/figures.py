@@ -201,10 +201,12 @@ def timeline_figure(
     path: Path,
 ) -> Path:
     """Per person, (start, width) spans when a camera saw them and when they were heard, with the
-    spans the checks flagged shaded behind; a person never seen, or seen but never heard, shows at once."""
+    spans the checks flagged shaded behind; a person never seen, or seen but never heard, shows at once.
+    A voice heard that is no one's, such as other, gets a lane of its own."""
     Figure = require_matplotlib()
     kinds = [kind for kind, spans in (("seen", seen), ("heard", heard)) if any(spans.values())]
     lanes = [(subject, kind) for subject in subjects for kind in kinds]
+    lanes += [(voice, "heard") for voice, spans in heard.items() if voice not in subjects and spans]
     figure = Figure(figsize=(12, 0.9 + 0.32 * len(lanes)), layout="constrained")
     axes = figure.subplots()
     for row, (subject, kind) in enumerate(lanes):
