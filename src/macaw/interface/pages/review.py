@@ -142,7 +142,7 @@ def _people_on_camera(layout, results, rid):
 
 def _voices(config, layout, recording):
     from macaw.extractors.audio.content.diarization import DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
-    from macaw.extractors.audio.content.speaker_id import suggest_voices
+    from macaw.extractors.audio.content.speaker_id import read_voice_material, suggest_voices, suggested_people, telling_lines
 
     rid = recording.recording_id
     voices = read_voices(config, rid)
@@ -150,19 +150,30 @@ def _voices(config, layout, recording):
         return None
     named = read_voice_owners(layout.voice_owners_path(rid))
     try:
-        suggested = (suggest_voices(config, recording) or {}).get("people", {})
+        suggestion = suggest_voices(config, recording) or {}
     except Exception:   # a suggestion that cannot be made leaves the choice to the person
-        suggested = {}
+        suggestion = {}
+    suggested, why = suggestion.get("people", {}), suggested_people(suggestion) if suggestion else {}
+    lines, pitch = read_voice_material(config, rid)
     subjects = [subject.subject_id for subject in recording.subjects]
     directory = layout.artifacts_dir(rid, DiarizationExtractor.name)
     rows = []
     for label, voice in sorted(voices.items()):
         current = named.get("people", {}).get(label) or suggested.get(label)
+        median = pitch.get(label, {}).get("median_hz")
+        own = lines[lines["subject_id"].astype(str) == label].sort_values("t_start")
+        every = (
+            html.Details([html.Summary(f"all {len(own)} lines"), html.Div([html.Div(f"{row.t_start:.1f} s  {row.text}") for row in own.itertuples()])])
+            if len(own) > 3 else None
+        )
         rows.append(
             [
                 label,
                 f"{voice.get('speech_s', 0.0):.0f} s",
+                "" if median is None else f"{median:.0f} Hz",
+                html.Div([*(html.Div(f"“{line}”") for line in telling_lines(lines, label)), every]),
                 html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True) for clip in voice.get("clips", [])], className="clips"),
+                why.get(label, ""),
                 dcc.Dropdown([*subjects, NO_ONE], current, id={"type": "voice-pick", "label": label}, clearable=False, className="picker small"),
             ]
         )
@@ -170,11 +181,11 @@ def _voices(config, layout, recording):
     status = ui.note(f"Named by {by.split(' ')[0]}." if by else "Not named yet; the choices shown are the suggestion.", "ok" if by else "warn")
     return ui.card(
         "Voices on the shared microphone",
-        ui.table(["Voice", "Speech", "Clips", "Person"], rows),
+        ui.table(["Voice", "Speech", "Pitch", "What it says", "Clips", "Suggested", "Person"], rows, numeric={"Pitch"}),
         status,
         html.Div(_button("Save these names", "accept-voices", primary=True), className="buttons"),
         desc=(
-            "Listen to the clips, then pick whose voice each is; none leaves a voice out"
+            "Read what each voice says and listen to the clips, then pick whose voice each is; none leaves a voice out"
             + (", and its words count as one further speaker, other, in turn-taking." if others_take_turns(config) else ".")
         ),
     )

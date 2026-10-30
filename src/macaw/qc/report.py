@@ -160,21 +160,38 @@ def _cameras(layout, results: RecordingResults, recording_id: str) -> list[dict]
     return cameras
 
 
-def _voices(config: MacawConfig, layout, recording_id: str, page: Path) -> list[dict]:
-    """Each voice found on a shared microphone, whom it was given to, and its clips to listen to."""
+def _voices(config: MacawConfig, layout, recording, page: Path) -> list[dict]:
+    """Each voice found on a shared microphone, what it says and its pitch, whom the suggestion and
+    the person gave it to, and its clips to listen to."""
     from macaw.extractors.audio.content.diarization import NO_ONE, OTHER, DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
+    from macaw.extractors.audio.content.speaker_id import read_voice_material, suggest_voices, suggested_people, telling_lines
 
+    recording_id = recording.recording_id
     voices = read_voices(config, recording_id)
+    if not voices:
+        return []
     named = read_voice_owners(layout.voice_owners_path(recording_id))
+    lines, pitch = read_voice_material(config, recording_id)
+    try:
+        suggestion = suggest_voices(config, recording)
+    except Exception:   # the page still shows the voices when a suggestion cannot be made
+        suggestion = None
+    suggested = suggested_people(suggestion) if suggestion else {}
     directory = layout.artifacts_dir(recording_id, DiarizationExtractor.name)
     left_out = f"{OTHER} (left out of the people's measures)" if others_take_turns(config) else "left out"
     rows = []
     for label, voice in sorted(voices.items()):
         who = named.get("people", {}).get(label)
+        own = lines[lines["subject_id"].astype(str) == label].sort_values("t_start")
+        median = pitch.get(label, {}).get("median_hz")
         rows.append(
             {
                 "label": label,
                 "speech": f"{voice.get('speech_s', 0.0):.0f} s",
+                "pitch": "" if median is None else f"{median:.0f} Hz",
+                "says": telling_lines(lines, label),
+                "lines": [{"at": f"{row.t_start:.1f}", "text": row.text} for row in own.itertuples()],
+                "suggested": suggested.get(label, ""),
                 "person": None if who is None else (left_out if who == NO_ONE else who),
                 "clips": [
                     {"href": _href(directory / clip["file"], page), "at": f"{clip['t_start']:.0f} s"}
@@ -559,7 +576,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     notes, versions = _feature_notes(layout, recording_id)
     alignment, alignment_figures = _alignment(config, layout, recording_id, page)
     cameras = _cameras(layout, results, recording_id)
-    voices = _voices(config, layout, recording_id, page)
+    voices = _voices(config, layout, recording, page)
     dropped = _dropped(results)
     frames = _frames(layout, recording_id, page)
     warnings = _warnings(layout, results, recording_id)

@@ -53,19 +53,34 @@ PITCH = "pitch"
 PITCH_GAP_HZ = 40.0
 
 
+def read_voice_material(config, recording_id: str) -> tuple[pd.DataFrame, dict[str, dict]]:
+    """Each voice's lines, and its speech time and median pitch, as text.shared_asr left them."""
+    from macaw.extractors.audio.content.asr import SHARED_ASR, TRANSCRIPT_SCHEMA, VOICE_LINES_NAME, VOICE_PITCH_NAME, read_transcript
+    from macaw.project.layout import layout_for
+    from macaw.store.schema import empty_frame
+
+    root = layout_for(config, create=False).artifacts_dir(recording_id, SHARED_ASR)
+    lines_path, pitch_path = root / VOICE_LINES_NAME, root / VOICE_PITCH_NAME
+    lines = read_transcript(lines_path) if lines_path.is_file() else empty_frame(TRANSCRIPT_SCHEMA)
+    pitch = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.is_file() else {}
+    return lines, pitch
+
+
+def telling_lines(lines: pd.DataFrame, label: str, n: int = 3) -> list[str]:
+    """A voice's n longest lines in the order spoken: short ones like "yeah" say nothing about who it is."""
+    own = lines[lines["subject_id"].astype(str) == label]
+    longest = own.assign(length=own["text"].fillna("").astype(str).str.len()).nlargest(n, "length")
+    return longest.sort_values("t_start")["text"].astype(str).tolist()
+
+
 def voice_hints(config, recording: Recording) -> dict[str, dict]:
     """Per person, the voice identity.voice_hints and identity.pitch_order point to; words win over pitch."""
-    from macaw.extractors.audio.content.asr import SHARED_ASR, VOICE_LINES_NAME, VOICE_PITCH_NAME, read_transcript
-    from macaw.project.layout import layout_for
-
     identity = config.identity
     if not identity.voice_hints and not identity.pitch_order:
         return {}
-    root = layout_for(config, create=False).artifacts_dir(recording.recording_id, SHARED_ASR)
     roles = {subject.subject_id: subject.role for subject in recording.subjects}
-    lines_path, pitch_path = root / VOICE_LINES_NAME, root / VOICE_PITCH_NAME
-    found = by_words(read_transcript(lines_path), identity.voice_hints, roles) if lines_path.is_file() else {}
-    pitch = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.is_file() else {}
+    lines, pitch = read_voice_material(config, recording.recording_id)
+    found = by_words(lines, identity.voice_hints, roles)
     taken = {hint["label"] for hint in found.values()}
     for subject_id, hint in by_pitch(pitch, identity.pitch_order, roles).items():
         if subject_id in found:
@@ -186,36 +201,41 @@ def match_voices(
 
 
 def describe_suggestion(suggestion: dict) -> str:
+    return "; ".join(f"{label} is {said}" for label, said in sorted(suggested_people(suggestion).items()))
+
+
+def suggested_people(suggestion: dict) -> dict[str, str]:
+    """Per voice, whom the suggestion gives it to and on what evidence."""
     from macaw.qc.checks import _MOUTH_Z
 
-    shown = []
-    for label, who in sorted(suggestion["people"].items()):
+    shown = {}
+    for label, who in suggestion["people"].items():
         if who is None:
-            shown.append(f"{label} is one of {', '.join(suggestion.get('unheard', []))} (listen to it)")
+            shown[label] = f"one of {', '.join(suggestion.get('unheard', []))} (listen to it)"
             continue
         evidence = suggestion["evidence"].get(who)
         if evidence is None:
-            shown.append(f"{label} is {who}")
+            shown[label] = who
             continue
         if evidence.get("source") == ELIMINATION:
-            shown.append(f"{label} is {who} (the one voice and person left: listen to it)")
+            shown[label] = f"{who} (the one voice and person left: listen to it)"
             continue
         disputed = f", but {evidence['disputed']}: listen to it" if evidence.get("disputed") else ""
         if evidence.get("source") == WORDS:
-            shown.append(f"{label} is {who} ({evidence['n']} line(s) such as \"{evidence['lines'][0]}\"{disputed})")
+            shown[label] = f"{who} ({evidence['n']} line(s) such as \"{evidence['lines'][0]}\"{disputed})"
             continue
         if evidence.get("source") == PITCH:
-            shown.append(f"{label} is {who} (pitch, median {evidence['median_hz']:.0f} Hz{disputed})")
+            shown[label] = f"{who} (pitch, median {evidence['median_hz']:.0f} Hz{disputed})"
             continue
         if disputed:
-            shown.append(f"{label} is {who} ({evidence['source']}{disputed})")
+            shown[label] = f"{who} ({evidence['source']}{disputed})"
             continue
         by = f"{evidence['source']}, " if evidence.get("source") else ""
         if not np.isfinite(evidence["z"]):
             # too few stretches of signal to shift against, as when a face is seen only now and then
-            shown.append(f"{label} is {who} ({by}rho {evidence['rho']:.2f}, too little of it to test: listen to it)")
+            shown[label] = f"{who} ({by}rho {evidence['rho']:.2f}, too little of it to test: listen to it)"
             continue
         # a signal that barely follows the voice was matched by elimination, so it needs listening to
         weak = "" if evidence["z"] >= _MOUTH_Z else ", weak: listen to it"
-        shown.append(f"{label} is {who} ({by}rho {evidence['rho']:.2f}, z {evidence['z']:.1f}{weak})")
-    return "; ".join(shown)
+        shown[label] = f"{who} ({by}rho {evidence['rho']:.2f}, z {evidence['z']:.1f}{weak})"
+    return shown

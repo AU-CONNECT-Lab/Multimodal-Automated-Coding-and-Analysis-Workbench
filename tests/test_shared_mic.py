@@ -35,7 +35,7 @@ from macaw.extractors.audio.content.diarization import (
     describe_voices,
     overlapped_fraction,
 )
-from macaw.extractors.audio.content.speaker_id import by_pitch, by_words, describe_suggestion, match_voices, voice_hints
+from macaw.extractors.audio.content.speaker_id import by_pitch, by_words, describe_suggestion, match_voices, telling_lines, voice_hints
 from macaw.extractors.prep import MediaPrepExtractor, PrepInfo
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -336,6 +336,31 @@ class TestReview:
         assert "S0</td>" in text and "child" in text
         assert "no no no" in text and "in the voice of child" in text and "1 as room bleed" in text
 
+    def test_the_report_and_review_page_show_what_each_voice_says_and_its_pitch(self, project, monkeypatch):
+        pytest.importorskip("dash")
+        from macaw.interface.pages import review
+        from macaw.qc.report import write_recording_report
+
+        evidence = {"child": {"label": "S0", "source": "words", "n": 1, "lines": ["Mommy, look!"]}}
+        self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch, evidence)
+        config = project.resolved()
+        root = layout_for(config).artifacts_dir("003", SHARED_ASR)
+        root.mkdir(parents=True)
+        spoken = [("S0", "Mommy, look!"), ("S0", "yes"), ("S0", "no"), ("S0", "the red one is mine"), ("S0", "ok"), ("S1", "where does it go")]
+        lines = said(*spoken).assign(
+            recording_id="003", utterance_index=range(len(spoken)), t_start=np.arange(len(spoken), dtype=float),
+            t_end=np.arange(len(spoken)) + 0.5, n_words=2, confidence=np.nan, avg_logprob=np.nan, no_speech_prob=np.nan, language="en",
+        )
+        write_transcript(lines, root / VOICE_LINES_NAME)
+        pitch = {"S0": {"speech_s": 5.0, "median_hz": 310.0}, "S1": {"speech_s": 4.0, "median_hz": None}}
+        (root / VOICE_PITCH_NAME).write_text(json.dumps(pitch), encoding="utf-8")
+
+        text = write_recording_report(config, "003")[0].read_text(encoding="utf-8")
+        assert "310 Hz" in text and "the red one is mine" in text and "all 5 lines" in text
+        assert "child (1 line(s) such as" in text and "where does it go" in text
+        shown = json.dumps(review.body(project.config, "003"), default=lambda item: item.to_plotly_json())
+        assert "310 Hz" in shown and "the red one is mine" in shown and "all 5 lines" in shown and "child (1 line(s) such as" in shown
+
     def test_own_microphones_never_wait(self, project):
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data["text"]["diarization"] = "per_track"
@@ -481,6 +506,10 @@ class TestHints:
         found = by_words(lines, [CHILD_SAYS, PARENT_SAYS], ROLES)
         assert {who: found[who]["label"] for who in found} == {"c1": "S0", "p1": "S1"}
         assert found["c1"]["n"] == 2 and found["c1"]["lines"][0] == "Mommy, look!"
+
+    def test_a_voice_is_shown_by_its_longest_lines_in_the_order_spoken(self):
+        lines = said(("S0", "yes"), ("S0", "the red one"), ("S0", "ok"), ("S0", "where does it go"), ("S1", "a much longer line here"))
+        assert telling_lines(lines.assign(t_start=range(5)), "S0", n=2) == ["the red one", "where does it go"]
 
     def test_a_voice_matching_two_roles_equally_says_nothing(self):
         lines = said(("S0", "Mommy, look!"), ("S0", "mommy's going to"))

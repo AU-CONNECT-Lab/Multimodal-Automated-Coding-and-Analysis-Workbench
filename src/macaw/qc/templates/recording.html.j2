@@ -83,12 +83,19 @@
 
 {% if voices %}
 <h2 id="Voices">Voices on the shared microphone</h2>
-<p class="desc">Each voice the diarization found, how long it talks and whom it was given to. Listen to a clip or two to check; rename with <code>macaw accept-voices --rename</code>.</p>
+<p class="desc">Each voice the diarization found, how long it talks, its median pitch and its longest lines, whom the software suggests and on what evidence, and whom it was given to. Listen to a clip or two to check; rename with <code>macaw accept-voices --rename</code>.</p>
 <table class="flat">
-  <thead><tr><th>Voice</th><th class="num">Speech</th><th>Person</th><th>Clips</th></tr></thead>
+  <thead><tr><th>Voice</th><th class="num">Speech</th><th class="num">Pitch</th><th>What it says</th><th>Suggested</th><th>Person</th><th>Clips</th></tr></thead>
   <tbody>
   {%- for voice in voices %}
-  <tr><td>{{ voice.label }}</td><td class="num">{{ voice.speech }}</td>
+  <tr><td>{{ voice.label }}</td><td class="num">{{ voice.speech }}</td><td class="num">{{ voice.pitch }}</td>
+    <td class="message">{% for line in voice.says %}&ldquo;{{ line }}&rdquo;{% if not loop.last %} {% endif %}{% endfor %}
+      {%- if voice.lines | length > voice.says | length %}
+      <details><summary>all {{ voice.lines | length }} lines</summary><div class="details-body">
+        {%- for line in voice.lines %}<div><span class="hint">{{ line.at }} s</span> {{ line.text }}</div>{% endfor %}
+      </div></details>
+      {%- endif %}</td>
+    <td>{{ voice.suggested }}</td>
     <td>{% if voice.person is none %}<span class="warn">not named</span>{% else %}{{ voice.person }}{% endif %}</td>
     <td>{% for clip in voice.clips %}<a href="{{ clip.href }}">{{ clip.at }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
   {%- endfor %}
