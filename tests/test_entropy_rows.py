@@ -166,7 +166,20 @@ class TestWindowRows:
             "transition_entropy_norm",
             "speaker_entropy_bits",
             "speaker_entropy_norm",
+            "turn_pairs_n",
         }
+        assert {spec.name for spec in extractor._specs()} == set(rows.feature)
+
+    def test_each_window_counts_the_turn_pairs_starting_in_it(
+        self, make_turns, make_recording, make_prep, windowed_cfg
+    ):
+        scene = build_scene(make_turns, make_recording, make_prep, windowed_cfg)
+        extractor = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
+        rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
+
+        counts = rows[(rows.scale == "window") & (rows.feature == "turn_pairs_n")].sort_values("t_start")
+        # turns start at 10 to 47 s; the windows begin at 10, 20, 30, 40 and 50 s
+        assert counts.value.tolist() == [6.0, 5.0, 4.0, 1.0, 0.0]
 
     def test_an_empty_window_yields_missing_not_zero(
         self, make_turns, make_recording, make_prep, windowed_cfg
@@ -178,8 +191,10 @@ class TestWindowRows:
         rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
 
         late = rows[(rows.scale == "window") & (rows.t_start >= 40.0)]
+        counted = late.feature == "turn_pairs_n"
         assert not late.empty
-        assert late.value.isna().all()
+        assert late[~counted].value.isna().all()
+        assert (late[counted].value == 0.0).all()
 
 
 class TestWarnings:
@@ -213,3 +228,19 @@ class TestWarnings:
             )
         }
         assert "entropy_too_few_windows" in checks
+
+    def test_thin_windows_are_flagged_with_the_window_that_would_hold_enough(
+        self, extractor, scene, make_turns, make_recording, make_prep, windowed_cfg
+    ):
+        assert "entropy_thin_windows" not in {
+            w.check for w in extractor._warnings(scene.recording, scene.turns, scene.transitions, scene.prep)
+        }
+        windowed = build_scene(make_turns, make_recording, make_prep, windowed_cfg)
+        other = EntropyExtractor(SimpleNamespace(turns=windowed_cfg, text=TextSection()))
+        thin = next(
+            w for w in other._warnings(windowed.recording, windowed.turns, windowed.transitions, windowed.prep)
+            if w.check == "entropy_thin_windows"
+        )
+        # 12 turns over 37 s, one every 3.4 s; two speakers make four states, five pairs each
+        assert thin.message.startswith("5 of 5 windows hold fewer than the 20 turn pairs 4 states want (median 4)")
+        assert "every 3.4 s" in thin.message and "about 67 s would hold 20" in thin.message

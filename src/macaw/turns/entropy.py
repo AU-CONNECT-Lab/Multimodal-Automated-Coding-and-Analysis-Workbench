@@ -161,15 +161,40 @@ _RECORDING_SPECS = {
 }
 
 
+_WINDOW_SPECS = {
+    "turn_pairs_n": (
+        "Consecutive turn pairs starting in the window, the sample its entropies were counted "
+        "from. Fewer than five per state make them unstable.",
+        "count",
+        "sum",
+    ),
+}
+
+
 def window_hop(cfg) -> float:
     """turns.window_hop_s, or half the window when it is not set."""
     return cfg.window_hop_s or cfg.window_s / 2.0
 
 
+def _turns_in(turns: pd.DataFrame, low: float, high: float) -> pd.DataFrame:
+    if turns.empty:
+        return turns
+    starts = turns["t_start"].to_numpy(dtype=float)
+    return turns[(starts >= low) & (starts < high)]
+
+
+def turn_pace(turns: pd.DataFrame) -> float:
+    """Mean seconds from one turn's start to the next's, the time scale a window has to span many of."""
+    if len(turns) < 2:
+        return np.nan
+    starts = np.sort(turns["t_start"].to_numpy(dtype=float))
+    return float((starts[-1] - starts[0]) / (len(starts) - 1))
+
+
 @register_extractor
 class EntropyExtractor(Extractor):
     name = "turns.entropy"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.WINDOW
     group = "turns"
     config_sections = ("turns", "text.diarization", "text.extra_voices")
@@ -296,8 +321,7 @@ class EntropyExtractor(Extractor):
             )
 
         for low, high in self._window_edges(prep):
-            starts = turns["t_start"].to_numpy(dtype=float) if not turns.empty else np.empty(0)
-            inside = turns[(starts >= low) & (starts < high)] if not turns.empty else turns
+            inside = _turns_in(turns, low, high)
             values = self._state_values(inside, subject_ids)
             frames.append(
                 build_long_rows(
@@ -310,6 +334,7 @@ class EntropyExtractor(Extractor):
                                 for feature, value in values.items()
                                 if not feature.startswith("conditional_")
                             },
+                            "turn_pairs_n": [float(max(len(inside) - 1, 0))],
                         }
                     ),
                     scale=Scale.WINDOW,
@@ -379,6 +404,31 @@ class EntropyExtractor(Extractor):
                     t_end=window[1],
                 )
             )
+
+        needed = _MIN_PER_STATE * n_states
+        pairs = [max(len(_turns_in(turns, low, high)) - 1, 0) for low, high in edges]
+        thin = sum(count < needed for count in pairs)
+        if thin:
+            pace = turn_pace(turns)
+            wanted = (
+                f" A new turn starts every {pace:.1f} s on average here, so a window of about "
+                f"{needed * pace:.0f} s would hold {needed}." if np.isfinite(pace) else ""
+            )
+            warnings.append(
+                QCWarning(
+                    check="entropy_thin_windows",
+                    recording_id=recording.recording_id,
+                    subject_id=None,
+                    severity="warn",
+                    message=(
+                        f"{thin} of {len(pairs)} windows hold fewer than the {needed} turn pairs "
+                        f"{n_states} states want (median {np.median(pairs):.0f}); their entropies "
+                        f"are unstable, and turn_pairs_n gives each window's count.{wanted}"
+                    ),
+                    t_start=window[0],
+                    t_end=window[1],
+                )
+            )
         return warnings
 
     def _specs(self) -> list[FeatureSpec]:
@@ -389,7 +439,7 @@ class EntropyExtractor(Extractor):
             "window_hop_s": window_hop(cfg) if cfg.window_s else None,
             "estimator": "miller-madow",
         }
-        return [
+        specs = [
             FeatureSpec(
                 name=feature,
                 description=description,
@@ -409,3 +459,13 @@ class EntropyExtractor(Extractor):
             )
             for feature, (description, unit, aggregation) in _RECORDING_SPECS.items()
         ]
+        if cfg.window_s:
+            specs += [
+                FeatureSpec(
+                    name=feature, description=description, unit=unit, scale=Scale.WINDOW, group=self.group,
+                    extractor=self.name, extractor_version=self.version, params=params, aggregation=aggregation,
+                    validation="synthetic",
+                )
+                for feature, (description, unit, aggregation) in _WINDOW_SPECS.items()
+            ]
+        return specs
