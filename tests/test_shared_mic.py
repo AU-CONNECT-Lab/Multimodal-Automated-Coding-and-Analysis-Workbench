@@ -220,6 +220,8 @@ def test_a_signal_that_barely_follows_its_voice_is_marked_for_listening():
     shown = describe_suggestion(suggestion)
     assert "S0 is parent (mouth movement, rho 0.50, z 6.0)" in shown
     assert "S1 is child (mouth movement, rho 0.00, z -0.1, weak: listen to it)" in shown
+    suggestion["evidence"]["child"]["z"] = float("nan")
+    assert "S1 is child (mouth movement, rho 0.00, too little of it to test: listen to it)" in describe_suggestion(suggestion)
 
 
 def talk_mask(found, label, t):

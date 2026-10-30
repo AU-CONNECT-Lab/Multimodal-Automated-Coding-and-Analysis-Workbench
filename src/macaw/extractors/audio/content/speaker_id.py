@@ -110,8 +110,12 @@ def describe_suggestion(suggestion: dict) -> str:
         if evidence.get("source") == ELIMINATION:
             shown.append(f"{label} is {who} (the one voice and person left: listen to it)")
             continue
+        by = f"{evidence['source']}, " if evidence.get("source") else ""
+        if not np.isfinite(evidence["z"]):
+            # too few stretches of signal to shift against, as when a face is seen only now and then
+            shown.append(f"{label} is {who} ({by}rho {evidence['rho']:.2f}, too little of it to test: listen to it)")
+            continue
         # a signal that barely follows the voice was matched by elimination, so it needs listening to
         weak = "" if evidence["z"] >= _MOUTH_Z else ", weak: listen to it"
-        by = f"{evidence['source']}, " if evidence.get("source") else ""
         shown.append(f"{label} is {who} ({by}rho {evidence['rho']:.2f}, z {evidence['z']:.1f}{weak})")
     return "; ".join(shown)
