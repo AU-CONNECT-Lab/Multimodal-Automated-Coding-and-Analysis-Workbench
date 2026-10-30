@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
+import pandas as pd
 import pytest
 
 pytest.importorskip("jinja2")
@@ -9,7 +11,9 @@ pytest.importorskip("jinja2")
 from macaw.config.loader import resolve_config, scaffold_project_config  # noqa: E402
 from macaw.extractors.prep import VIDEO_INFO_NAME, VideoPrepExtractor  # noqa: E402
 from macaw.project.layout import layout_for  # noqa: E402
-from macaw.qc.report import _common_rate, write_project_report, write_recording_report  # noqa: E402
+from macaw.qc.report import _common_rate, _overview_features, write_project_report, write_recording_report  # noqa: E402
+from macaw.store.longtable import build_long_rows, write_long_table  # noqa: E402
+from macaw.store.schema import Scale  # noqa: E402
 
 
 def video(name, fps, *, made=True, variable=False, repeated=0, dropped=0):
@@ -74,3 +78,34 @@ def test_one_frame_rate_needs_no_table(project):
 @pytest.mark.parametrize(("rates", "expected"), [([30.0, 60.0], 30.0), ([29.97, 59.94], 29.97), ([25.0, 30.0], None)])
 def test_a_rate_every_video_can_be_brought_to(rates, expected):
     assert _common_rate(rates) == expected
+
+
+def kinematics_rows(config, recording):
+    t = np.arange(0.0, 20.0, 1 / 30)
+    common = dict(recording_id=recording, source="pose.kinematics", scale=Scale.FRAME)
+    people = [
+        build_long_rows(subject_id=who, values=pd.DataFrame({"t_start": t, "left_wrist_speed": np.cos(t), "right_wrist_speed": np.sin(t)}), **common)
+        for who in ("parent", "child")
+    ]
+    pair = build_long_rows(
+        subject_id="parent", subject_id_b="child", values=pd.DataFrame({"t_start": t, "interpersonal_distance": 200 + t}), **common
+    )
+    write_long_table(pd.concat([*people, pair], ignore_index=True), layout_for(config).long_table_path(recording))
+
+
+def test_the_overview_shows_movement_and_distance_when_nothing_is_chosen(project):
+    config, _ = project
+    kinematics_rows(config, "001")
+    page, _ = write_recording_report(config, "001")
+    assert "Overview" in page.read_text(encoding="utf-8")
+    assert (layout_for(config).renders_dir("001") / "report" / "overview.png").is_file()
+
+
+def test_the_overview_draws_what_is_chosen_or_movement_distance_and_the_projects_measures():
+    measures = [type("M", (), {"name": "hand_to_head"})()]
+    default = type("C", (), {"qc": type("Q", (), {"overview_features": []})(), "kinematics": type("K", (), {"measures": measures})()})()
+    assert _overview_features(default, ["motion.mea", "pose.kinematics"]) == ["motion_energy", "interpersonal_distance", "hand_to_head"]
+    assert _overview_features(default, ["pose.kinematics"])[:2] == ["left_wrist_speed", "right_wrist_speed"]
+    assert _overview_features(default, ["text.asr"]) == []
+    default.qc.overview_features = ["f0_hz"]
+    assert _overview_features(default, ["pose.kinematics"]) == ["f0_hz"]

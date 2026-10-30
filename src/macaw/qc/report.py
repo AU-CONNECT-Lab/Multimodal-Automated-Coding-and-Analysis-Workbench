@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from macaw.config.schema import MacawConfig
@@ -22,7 +23,17 @@ from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
 from macaw.project.identity import read_confirmation
 from macaw.store import _io
-from macaw.qc.figures import motion_figure, pitch_figure, present_spans, require_matplotlib, timeline_figure
+from macaw.qc.downsample import min_max_downsample
+from macaw.qc.figures import (
+    OVERVIEW_ROW_S,
+    motion_figure,
+    overview_figure,
+    pitch_figure,
+    present_spans,
+    require_matplotlib,
+    timeline_figure,
+)
+from macaw.store import annotations as annotations_store
 from macaw.store.schema import Scale
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -409,7 +420,7 @@ def _frames(layout, recording_id: str, page: Path) -> list[dict]:
     return sorted(groups, key=lambda group: group["reason"] == "baseline")
 
 
-def _over_time(layout, results: RecordingResults, recording_id: str, subjects: list[str], page: Path) -> list[dict]:
+def _over_time(config, layout, results: RecordingResults, recording_id: str, subjects: list[str], page: Path) -> list[dict]:
     """Drawn when the page is written, from what the steps left; skipped without matplotlib."""
     try:
         require_matplotlib()
@@ -443,6 +454,9 @@ def _over_time(layout, results: RecordingResults, recording_id: str, subjects: l
     )
     directory = layout.renders_dir(recording_id) / "report"
     figures = []
+    path = _overview(config, layout, results, recording_id, subjects, candidates, directory / "overview.png")
+    if path is not None:
+        figures.append({"name": "Overview", "hint": "each person's talk, the measures in qc.overview_features (by default movement and distance) and the codes, on one clock; shaded where a check flagged", "href": _href(path, page)})
     if seen or heard:
         path = timeline_figure(subjects, seen, heard, heard_label, candidates, directory / "timeline.png")
         figures.append({"name": "Seen and heard", "hint": f"when a camera saw each person and when they were heard ({heard_label}); shaded spans were flagged by a check", "href": _href(path, page)})
@@ -461,6 +475,55 @@ def _over_time(layout, results: RecordingResults, recording_id: str, subjects: l
         path = motion_figure(subjects, energy, flagged, directory / "motion.png")
         figures.append({"name": "Motion energy", "hint": "share of each person's region that changed from one frame to the next; shaded where the whole picture changed or froze, or nothing moved for a long time", "href": _href(path, page)})
     return figures
+
+
+def _overview(config, layout, results: RecordingResults, recording_id: str, subjects: list[str], candidates, path: Path) -> Path | None:
+    transcript = results.artifact("text.asr", TRANSCRIPT_NAME)
+    talk = {}
+    if transcript is not None:
+        utterances = read_transcript(transcript)
+        talk = {
+            str(who): list(zip(group["t_start"].astype(float), (group["t_end"] - group["t_start"]).astype(float)))
+            for who, group in utterances.groupby("subject_id")
+        }
+    sources = sorted(path.stem for path in layout.long_table_path(recording_id).glob("*.parquet"))
+    lanes = [_lane(config, results, sources, name) for name in _overview_features(config, sources)]
+    codes = None
+    if layout.annotations_path(recording_id).exists():
+        codes = annotations_store.read_annotations(layout.annotations_path(recording_id), recording_id=recording_id)
+        codes = codes[~codes["abstained"].astype(bool)]
+    times = [edge for spans in talk.values() for start, width in spans for edge in (start, start + width)]
+    times += [edge for _, series, _ in lanes for _, _, t, _ in series if t.size for edge in (t.min(), t.max())]
+    if codes is not None and not codes.empty:
+        times += [codes["t_start"].min(), codes["t_end"].max()]
+    if not times:
+        return None
+    return overview_figure(subjects, talk, lanes, codes, candidates, (float(min(times)), float(max(times))), path)
+
+
+def _overview_features(config, sources: list[str]) -> list[str]:
+    if config.qc.overview_features:
+        return list(config.qc.overview_features)
+    names = ["motion_energy"] if "motion.mea" in sources else []
+    if "pose.kinematics" in sources:
+        names += ["left_wrist_speed", "right_wrist_speed"] * (not names)
+        names += ["interpersonal_distance", *(measure.name for measure in config.kinematics.measures)]
+    return names
+
+
+def _lane(config, results: RecordingResults, sources: list[str], name: str):
+    """(name, [(label, person, t, y)], dots): one series per person or pair, the first table holding the feature."""
+    rows = next((found for source in sources if not (found := results.long_table(source, features=[name])).empty), None)
+    if rows is None:
+        return name, [], False
+    rows = rows.sort_values("t_start")
+    who, whom = rows["subject_id"].fillna("").astype(str), rows["subject_id_b"].fillna("").astype(str)
+    target = config.qc.report_downsample_px * max(1, int(np.ceil(np.ptp(rows["t_start"]) / OVERVIEW_ROW_S)))
+    series = []
+    for (a, b), group in rows.groupby([who, whom], sort=True):
+        t, y = min_max_downsample(group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float), target)
+        series.append((f"{a} to {b}" if b else a, a or None, t, y))
+    return name, series, not (rows["scale"].astype(str) == Scale.FRAME.value).all()
 
 
 def _warnings(layout, results: RecordingResults, recording_id: str) -> list[QCWarning]:
@@ -515,7 +578,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "cameras": cameras,
         "voices": voices,
         "dropped": dropped,
-        "over_time": _over_time(layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
+        "over_time": _over_time(config, layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
         "measures": _measures(layout, results, recording_id, notes),
         "frames": frames,
         "warnings": [

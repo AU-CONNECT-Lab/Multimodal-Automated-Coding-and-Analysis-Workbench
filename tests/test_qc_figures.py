@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from macaw.qc.checks import CANDIDATE_SCHEMA
-from macaw.qc.figures import motion_figure, pitch_figure, present_spans, timeline_figure
+from macaw.qc.figures import motion_figure, overview_figure, pitch_figure, present_spans, timeline_figure
 from macaw.store.schema import coerce_frame
 
 pytest.importorskip("matplotlib")
@@ -59,3 +59,30 @@ class TestFigures:
         energy = {"parent": (np.arange(0, 10, 0.04), np.full(250, 0.02))}
         path = motion_figure(["parent", "child"], energy, CANDIDATES, tmp_path / "m.png")
         assert path.stat().st_size > 0
+
+
+class TestOverview:
+    def draw(self, tmp_path, span, name="o.png"):
+        t = np.arange(0.0, span[1], 0.5)
+        lanes = [
+            ("interpersonal_distance", [("parent to child", "parent", t, 100 + np.sin(t))], False),
+            ("left_wrist_speed", [("parent", "parent", t, np.cos(t)), ("child", "child", t, np.sin(t))], False),
+            ("not_made", [], False),
+        ]
+        codes = pd.DataFrame(
+            {"tier": ["backchannel", "speech act"], "subject_id": ["child", None], "t_start": [10.0, 150.0], "t_end": [10.5, 152.0]}
+        )
+        talk = {"parent": [(0.0, 5.0)], "child": [(120.0, 4.0)], "other": [(60.0, 2.0)]}
+        return overview_figure(["parent", "child"], talk, lanes, codes, CANDIDATES, span, tmp_path / name)
+
+    def test_it_is_drawn_at_report_resolution(self, tmp_path):
+        from matplotlib.image import imread
+
+        assert imread(self.draw(tmp_path, (0.0, 200.0))).shape[1] == 12 * 300
+
+    def test_a_recording_longer_than_a_row_wraps_onto_more_rows(self, tmp_path):
+        from matplotlib.image import imread
+
+        one = imread(self.draw(tmp_path, (0.0, 200.0), "one.png")).shape[0]
+        two = imread(self.draw(tmp_path, (0.0, 400.0), "two.png")).shape[0]
+        assert two > 1.8 * one

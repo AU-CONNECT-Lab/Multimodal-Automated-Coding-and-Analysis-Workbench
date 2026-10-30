@@ -242,6 +242,8 @@ class QCSection(_Section):
     # per role or subject id; a median above it means the whole track may be an octave high
     f0_median_max_by_role: dict[str, float] = Field(default_factory=dict)
     report_downsample_px: int = 2000
+    # long-table features the report's overview draws; empty draws movement, distance and kinematics.measures
+    overview_features: list[str] = Field(default_factory=list)
     review_max_candidates: int = 40
     review_baseline: int = 25
     review_seed: int = 0

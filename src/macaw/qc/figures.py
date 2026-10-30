@@ -275,6 +275,104 @@ def _panels(subjects, series, candidates, path: Path, *, ylabel: str, empty: str
     return _save(figure, path)
 
 
+# one colour per person in a fixed order; yellow is left out, it marks what a check flagged
+PERSON_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#e87ba4", "#008300", "#6250d6", "#e34948")
+# seconds of recording per row, so a long recording stays readable at report width
+OVERVIEW_ROW_S = 300.0
+_TALK_ROW_IN = 0.22
+_LANE_IN = 0.85
+_CODE_ROW_IN = 0.18
+_GAP_IN = 0.35
+
+
+def overview_figure(
+    people: list[str],
+    talk: dict[str, list[tuple[float, float]]],
+    lanes: list[tuple[str, list[tuple[str, str | None, np.ndarray, np.ndarray]], bool]],
+    codes,
+    candidates,
+    span: tuple[float, float],
+    path: Path,
+) -> Path:
+    """Talk spans, measure lanes and code tiers of every person on one clock, a row per OVERVIEW_ROW_S, flagged spans shaded."""
+    Figure = require_matplotlib()
+    from matplotlib.patches import Patch
+
+    color = dict(zip(people, PERSON_COLORS))
+    # a voice that is none of the people, such as other, talks in grey
+    talkers = [person for person in people if talk.get(person)] + sorted(who for who in talk if who not in people and talk[who])
+    tiers = sorted(codes["tier"].astype(str).unique()) if codes is not None and not codes.empty else []
+    heights = [_TALK_ROW_IN * len(talkers) + 0.15] * bool(talkers) + [_LANE_IN] * len(lanes)
+    heights += [_CODE_ROW_IN * len(tiers) + 0.15] * bool(tiers)
+    starts = np.arange(span[0], span[1], OVERVIEW_ROW_S) if span[1] > span[0] else np.array([span[0]])
+    ratios = []
+    for index in range(len(starts)):
+        ratios += heights + [_GAP_IN] * (index < len(starts) - 1)
+    figure = Figure(figsize=(12, sum(ratios) + 0.5), layout="constrained")
+    stack = list(np.atleast_1d(figure.subplots(len(ratios), 1, gridspec_kw={"height_ratios": ratios})))
+    limits = [_lane_limits(series) for _, series, _ in lanes]
+
+    for index, start in enumerate(starts):
+        block = [stack.pop(0) for _ in heights]
+        if index < len(starts) - 1:
+            stack.pop(0).set_axis_off()
+        end = start + OVERVIEW_ROW_S
+        rows = iter(block)
+        if talkers:
+            axes = next(rows)
+            for row, person in enumerate(talkers):
+                axes.broken_barh(talk[person], (row - 0.35, 0.7), color=color.get(person, MUTED_INK), lw=0)
+            axes.set_yticks(range(len(talkers)), talkers, fontsize=7)
+            axes.set_ylim(len(talkers) - 0.5, -0.5)
+        for (name, series, dots), limit in zip(lanes, limits):
+            axes = next(rows)
+            for label, person, t, y in series:
+                inside = (t >= start) & (t <= end)
+                style = dict(ms=1.5, ls="none", marker=".") if dots else dict(lw=0.7)
+                axes.plot(t[inside], y[inside], color=color.get(person, MUTED_INK), label=label, rasterized=True, **style)
+            if not series:
+                axes.text(0.5, 0.5, "no values", ha="center", va="center", transform=axes.transAxes, color=MUTED_INK, fontsize=7)
+            elif limit is not None:
+                axes.set_ylim(*limit)
+            if index == 0 and len(series) > 1:
+                axes.legend(fontsize=6, loc="upper right", frameon=False, ncol=len(series))
+            axes.set_ylabel(name, fontsize=7, rotation=0, ha="right", va="center")
+            axes.tick_params(axis="y", labelsize=6)
+        if tiers:
+            axes = next(rows)
+            for row, tier in enumerate(tiers):
+                mine = codes[(codes["tier"].astype(str) == tier) & (codes["t_end"] >= start) & (codes["t_start"] <= end)]
+                for subject_id, coded in mine.groupby(mine["subject_id"].astype(str), dropna=False):
+                    widths = (coded["t_end"] - coded["t_start"]).clip(lower=0.4)
+                    axes.broken_barh(list(zip(coded["t_start"], widths)), (row - 0.3, 0.6), color=color.get(subject_id, MUTED_INK), lw=0)
+            axes.set_yticks(range(len(tiers)), tiers, fontsize=6)
+            axes.set_ylim(len(tiers) - 0.5, -0.5)
+        for axes in block:
+            for flagged in candidates.itertuples():
+                if flagged.t_end >= start and flagged.t_start <= end:
+                    axes.axvspan(flagged.t_start, max(flagged.t_end, flagged.t_start + TIMELINE_STEP_S), color=LOOK_COLOR, alpha=0.35, lw=0, zorder=0)
+            axes.set_xlim(start, end)
+            axes.grid(axis="x", color=GRID_COLOR, lw=0.5)
+            axes.tick_params(colors=MUTED_INK, labelcolor="0.2", labelbottom=axes is block[-1], labelsize=7)
+            for side in ("top", "right"):
+                axes.spines[side].set_visible(False)
+    block[-1].set_xlabel("recording time (s)", fontsize=8)
+    handles = [Patch(color=color[person], label=person) for person in people if person in color]
+    handles.append(Patch(color=LOOK_COLOR, alpha=0.35, label="flagged by a check"))
+    figure.legend(handles=handles, loc="outside upper left", ncol=len(handles), fontsize=8, frameon=False)
+    return _save(figure, path)
+
+
+def _lane_limits(series) -> tuple[float, float] | None:
+    """One y range per lane across every row, so rows compare."""
+    values = np.concatenate([y[np.isfinite(y)] for _, _, _, y in series]) if series else np.empty(0)
+    if not values.size:
+        return None
+    low, high = float(values.min()), float(values.max())
+    pad = (high - low) * 0.05 or abs(high) * 0.05 or 1.0
+    return low - pad, high + pad
+
+
 def _save(figure, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=DPI)
