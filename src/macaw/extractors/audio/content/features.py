@@ -35,6 +35,15 @@ _SPECS = {
     ),
 }
 
+# made only with text.embedding_model; a pair of speakers per row, subject_id following subject_id_b
+_EMBEDDING_SPECS = {
+    "semantic_following": (
+        "Mean cosine similarity of this speaker's utterances to the utterance just before each, where subject_id_b said it: "
+        "how closely they follow on from that person. Its level depends on the embedding model.",
+        None,
+    ),
+}
+
 STOPWORDS = "english_stopwords"
 
 _INSTALL = (
@@ -46,7 +55,7 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
@@ -125,7 +134,27 @@ class TextFeatureExtractor(Extractor):
             path = workspace / EMBEDDINGS_NAME
             pd.concat([embedded, vectors], axis=1).to_parquet(path, index=False)
             artifacts[EMBEDDINGS_NAME] = path
+            frames += self._following(recording, prep, transcript, vectors)
         return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(), artifacts=artifacts)
+
+    def _following(self, recording: Recording, prep, transcript: pd.DataFrame, vectors: pd.DataFrame) -> list[pd.DataFrame]:
+        # a line in a voice that is no participant's breaks the chain rather than being skipped over
+        every = load_transcript(self.config, recording.recording_id, others=True).sort_values(["t_start", "t_end"], kind="stable")
+        if every.empty:
+            return []
+        position = {(str(who), int(index)): row for row, (who, index) in enumerate(zip(transcript["subject_id"], transcript["utterance_index"]))}
+        missing = np.full(vectors.shape[1], np.nan)
+        keys = [(str(who), int(index)) for who, index in zip(every["subject_id"], every["utterance_index"])]
+        ordered = np.array([vectors.iloc[position[key]].to_numpy(dtype=float) if key in position else missing for key in keys])
+        span = {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s]}
+        return [
+            build_long_rows(
+                values=pd.DataFrame({**span, "semantic_following": [value]}), scale=Scale.RECORDING,
+                recording_id=recording.recording_id, source=self.name, entities=recording.entities(), subject_id=follower,
+                subject_id_b=followed,
+            )
+            for (follower, followed), value in sorted(semantic_following([who for who, _ in keys], ordered).items())
+        ]
 
     def _specs(self) -> list[FeatureSpec]:
         return [
@@ -146,7 +175,7 @@ class TextFeatureExtractor(Extractor):
                 },
                 validation="synthetic",
             )
-            for name, (description, unit) in _SPECS.items()
+            for name, (description, unit) in {**_SPECS, **(_EMBEDDING_SPECS if self.config.text.embedding_model else {})}.items()
         ]
 
 
@@ -215,6 +244,18 @@ def first_use_share(
         return {subject: np.nan for subject in speakers}
     introduced = pd.Series([first[token] for token in shared]).value_counts()
     return {subject: float(introduced.get(subject, 0)) / len(shared) for subject in speakers}
+
+
+def semantic_following(speakers: list[str], vectors: np.ndarray) -> dict[tuple[str, str], float]:
+    """Per (follower, followed), the mean cosine similarity of a line to the line just before it by someone else; lines in time order, NaN for one not measured."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        unit = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+    found: dict[tuple[str, str], list[float]] = {}
+    for index in range(1, len(speakers)):
+        if speakers[index] == speakers[index - 1] or not (np.isfinite(unit[index]).all() and np.isfinite(unit[index - 1]).all()):
+            continue
+        found.setdefault((speakers[index], speakers[index - 1]), []).append(float(unit[index] @ unit[index - 1]))
+    return {pair: float(np.mean(values)) for pair, values in found.items()}
 
 
 def sentence_embeddings(texts: list[str], model_name: str, *, device: str = "auto") -> pd.DataFrame:

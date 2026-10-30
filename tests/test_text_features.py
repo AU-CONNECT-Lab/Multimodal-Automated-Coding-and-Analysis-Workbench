@@ -15,6 +15,7 @@ from macaw.extractors.audio.content.features import (
     TextFeatureExtractor,
     excluded_words,
     first_use_share,
+    semantic_following,
     tokenize,
     type_token_ratio,
     unigram_entropy,
@@ -70,7 +71,7 @@ class TestFirstUse:
 
 
 def run(monkeypatch, tmp_path, rows, **text):
-    monkeypatch.setattr(module, "load_transcript", lambda config, rid: transcript(rows))
+    monkeypatch.setattr(module, "load_transcript", lambda config, rid, others=False: transcript(rows))
     monkeypatch.setattr(module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=0.0, duration_s=60.0))
     recording = SimpleNamespace(recording_id="r1", entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None})
     extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(**text)))
@@ -127,3 +128,33 @@ def test_embeddings_are_one_row_per_utterance(monkeypatch, tmp_path):
     table = pd.read_parquet(result.artifacts[EMBEDDINGS_NAME])
     assert list(table.columns) == ["subject_id", "utterance_index", "t_start", "t_end", "e0", "e1", "e2"]
     assert len(table) == 2
+
+
+class TestSemanticFollowing:
+    def test_each_direction_is_its_own_mean(self):
+        vectors = np.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        found = semantic_following(["a", "b", "a", "b"], vectors)
+        assert found[("b", "a")] == pytest.approx((1.0 + np.sqrt(0.5)) / 2)
+        assert found[("a", "b")] == pytest.approx(0.0)
+
+    def test_a_speaker_going_on_follows_no_one(self):
+        assert semantic_following(["a", "a"], np.ones((2, 2))) == {}
+
+    def test_a_line_not_measured_breaks_the_chain(self):
+        vectors = np.array([[1.0, 0.0], [np.nan, np.nan], [1.0, 0.0]])
+        assert semantic_following(["a", "other", "b"], vectors) == {}
+
+    def test_an_empty_line_says_nothing(self):
+        assert semantic_following(["a", "b"], np.array([[0.0, 0.0], [1.0, 0.0]])) == {}
+
+
+def test_following_is_a_row_per_pair_when_utterances_are_embedded(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        module, "sentence_embeddings",
+        lambda texts, model, device: pd.DataFrame([[1.0, 0.0] if "red" in text else [0.0, 1.0] for text in texts], columns=["e0", "e1"]),
+    )
+    _, result = run(monkeypatch, tmp_path, [("a", 0.0, "the red box"), ("b", 2.0, "red one"), ("a", 4.0, "ok then")], embedding_model="any")
+    following = result.rows[result.rows.feature == "semantic_following"]
+    assert dict(zip(zip(following.subject_id, following.subject_id_b), following.value)) == {("b", "a"): 1.0, ("a", "b"): 0.0}
+    assert {spec.name for spec in result.specs} == set(result.rows.feature)
+    validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")

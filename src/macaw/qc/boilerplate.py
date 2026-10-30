@@ -316,7 +316,11 @@ def _text_features(config, spec, names) -> str:
     )
     model = params.get("embedding_model")
     if model:
-        text += f" Each utterance was embedded with the {model} sentence-transformers model [reimers2019]."
+        text += (
+            f" Each utterance was embedded with the {model} sentence-transformers model [reimers2019]. For each pair of "
+            "speakers, the mean cosine similarity of one speaker's utterances to the utterance just before each by the other "
+            "was taken as how closely the first followed on from the second."
+        )
     return text
 
 
