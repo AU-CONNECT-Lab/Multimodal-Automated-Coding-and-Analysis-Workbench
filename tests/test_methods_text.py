@@ -190,3 +190,17 @@ def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
     assert "hand_to_head: Distance from parent's left_wrist to child's nose" in text
     text, _ = render(describe(ran, config()), load_references())
     assert "defined for this study" not in text
+
+
+def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
+    shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
+    hinted = config(
+        project={"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["mother", "child"]},
+        text={"diarization": "pyannote"},
+        identity={"voice_hints": [{"says": "mommy,", "role": "child"}], "pitch_order": ["mother", "child"]},
+    )
+    text, _ = render(describe(shared, hinted), load_references())
+    assert "phrases set for this study as marking a speaker's role and on the expected order" in text
+    assert "at least 40 Hz" in text
+    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    assert "phrases set for this study" not in text

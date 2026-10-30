@@ -522,7 +522,8 @@ class SpeakerReviewGate(Gate):
         if suggestion is None:
             return
         people = {label: suggestion["people"].get(label) for label in voices}
-        if mode == "flagged" and any(who is None for who in people.values()):
+        disputed = any(evidence.get("disputed") for evidence in suggestion.get("evidence", {}).values())
+        if mode == "flagged" and (disputed or any(who is None for who in people.values())):
             return
         path = layout_for(self.config, create=False).voice_owners_path(rid)
         path.parent.mkdir(parents=True, exist_ok=True)

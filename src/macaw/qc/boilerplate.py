@@ -254,8 +254,17 @@ def _diarize(config, spec, names) -> str:
     )
     return (
         f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
-        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review]
+        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review] + _voice_hints(config)
     )
+
+
+def _voice_hints(config) -> str:
+    from macaw.extractors.audio.content.speaker_id import PITCH_GAP_HZ
+
+    identity = config.identity
+    used = ["phrases set for this study as marking a speaker's role"] * bool(identity.voice_hints)
+    used += [f"the expected order of the voices' median pitch, where they differed by at least {PITCH_GAP_HZ:g} Hz"] * bool(identity.pitch_order)
+    return f" Suggested names also drew on {' and on '.join(used)}." if used else ""
 
 
 _VOICE_NAMING = {

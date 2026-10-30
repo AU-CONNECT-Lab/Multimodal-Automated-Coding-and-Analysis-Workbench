@@ -33,6 +33,8 @@ align:
 
 identity:
   confirm: always                    # always: a person confirms once which file belongs to whom (`macaw identify`) | skip, and every run warns
+  voice_hints: []                    # shared microphone: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
+  pitch_order: []                    # shared microphone: roles from the lowest voice to the highest, e.g. [mother, child]
 
 segment:
   task_start_s: null                 # s; trims the researcher's intro. null = keep from 0

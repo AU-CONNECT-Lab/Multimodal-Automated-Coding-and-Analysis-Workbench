@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -34,17 +37,97 @@ def suggest_voices(config, recording: Recording) -> dict | None:
     for subject_id, rows in mouth.groupby("subject_id", dropna=True, observed=True):
         if str(subject_id) not in signals:
             signals[str(subject_id)] = (rows["t_start"].to_numpy(dtype=float), rows["value"].to_numpy(dtype=float), MOUTH)
-    return match_voices(turns[turns["exclusive"].astype(bool)], signals, [subject.subject_id for subject in recording.subjects])
+    return match_voices(
+        turns[turns["exclusive"].astype(bool)], signals, [subject.subject_id for subject in recording.subjects],
+        hints=voice_hints(config, recording),
+    )
 
 
 OWN_MIC = "own microphone"
 MOUTH = "mouth movement"
 ELIMINATION = "elimination"
+WORDS = "words"
+PITCH = "pitch"
+
+# two voices this far apart in median f0 are told apart by pitch
+PITCH_GAP_HZ = 40.0
 
 
-def match_voices(turns: pd.DataFrame, signals: dict[str, tuple], subjects: list[str] | None = None) -> dict | None:
+def voice_hints(config, recording: Recording) -> dict[str, dict]:
+    """Per person, the voice identity.voice_hints and identity.pitch_order point to; words win over pitch."""
+    from macaw.extractors.audio.content.asr import SHARED_ASR, VOICE_LINES_NAME, VOICE_PITCH_NAME, read_transcript
+    from macaw.project.layout import layout_for
+
+    identity = config.identity
+    if not identity.voice_hints and not identity.pitch_order:
+        return {}
+    root = layout_for(config, create=False).artifacts_dir(recording.recording_id, SHARED_ASR)
+    roles = {subject.subject_id: subject.role for subject in recording.subjects}
+    lines_path, pitch_path = root / VOICE_LINES_NAME, root / VOICE_PITCH_NAME
+    found = by_words(read_transcript(lines_path), identity.voice_hints, roles) if lines_path.is_file() else {}
+    pitch = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.is_file() else {}
+    taken = {hint["label"] for hint in found.values()}
+    for subject_id, hint in by_pitch(pitch, identity.pitch_order, roles).items():
+        if subject_id in found:
+            if found[subject_id]["label"] != hint["label"]:
+                found[subject_id]["disputed"] = f"pitch points to {hint['label']}"
+        elif hint["label"] not in taken:
+            found[subject_id] = hint
+    return found
+
+
+def by_words(lines: pd.DataFrame, hints, roles: dict[str, str | None]) -> dict[str, dict]:
+    """A voice goes to a person when more of its lines match that person's role than any other role."""
+    from scipy.optimize import linear_sum_assignment
+
+    matched: dict[str, dict[str, list[str]]] = {}
+    for hint in hints:
+        pattern = re.compile(hint.says, re.IGNORECASE)
+        for label, text in zip(lines["subject_id"].astype(str), lines["text"].fillna("").astype(str)):
+            if pattern.search(text):
+                matched.setdefault(label, {}).setdefault(hint.role, []).append(text)
+    people = [subject_id for subject_id, role in roles.items() if role is not None]
+    labels = sorted(matched)
+    if not people or not labels:
+        return {}
+    score = np.zeros((len(people), len(labels)))
+    for row, subject_id in enumerate(people):
+        for col, label in enumerate(labels):
+            counts = {role: len(said) for role, said in matched[label].items()}
+            mine = counts.get(roles[subject_id], 0)
+            # a voice matching two roles equally says nothing about either
+            score[row, col] = mine if mine > max((n for role, n in counts.items() if role != roles[subject_id]), default=0) else 0
+    found = {}
+    for row, col in zip(*linear_sum_assignment(score, maximize=True)):
+        if score[row, col] > 0:
+            said = matched[labels[col]][roles[people[row]]]
+            found[people[row]] = {"label": labels[col], "source": WORDS, "n": len(said), "lines": said[:2]}
+    return found
+
+
+def by_pitch(pitch: dict[str, dict], order: list[str], roles: dict[str, str | None]) -> dict[str, dict]:
+    """The voices that speak most, as many as order names, matched lowest to highest when far enough apart."""
+    if not order:
+        return {}
+    loudest = sorted(pitch.items(), key=lambda item: item[1]["speech_s"], reverse=True)[: len(order)]
+    voiced = sorted((voice["median_hz"], label) for label, voice in loudest if voice["median_hz"] is not None)
+    if len(voiced) != len(order) or (np.diff([median for median, _ in voiced]) < PITCH_GAP_HZ).any():
+        return {}
+    found = {}
+    for role, (median, label) in zip(order, voiced):
+        holders = [subject_id for subject_id, held in roles.items() if held == role]
+        if len(holders) != 1:
+            return {}
+        found[holders[0]] = {"label": label, "source": PITCH, "median_hz": median}
+    return found
+
+
+def match_voices(
+    turns: pd.DataFrame, signals: dict[str, tuple], subjects: list[str] | None = None, hints: dict[str, dict] | None = None
+) -> dict | None:
     """One voice per person, the assignment with the highest summed rank correlation of each person's
-    signal (t, value, source) with that voice talking; one person and one voice left over are paired."""
+    signal (t, value, source) with that voice talking; hints place people no signal placed, and one person
+    and one voice left over are paired."""
     from scipy.optimize import linear_sum_assignment
 
     from macaw.extractors.audio.content.diarization import NO_ONE
@@ -81,6 +164,13 @@ def match_voices(turns: pd.DataFrame, signals: dict[str, tuple], subjects: list[
                 "label": label, "source": sources[subject], "rho": scores[subject][label][0], "z": scores[subject][label][1],
                 **({"rival": rival, "rival_rho": others[rival]} if rival else {}),
             }
+    for subject, hint in (hints or {}).items():
+        if subject in evidence:
+            if evidence[subject]["label"] != hint["label"]:
+                evidence[subject]["disputed"] = f"{hint['source']} point to {hint['label']}"
+        elif people.get(hint["label"]) == NO_ONE:
+            people[hint["label"]] = subject
+            evidence[subject] = {"rho": float("nan"), "z": float("nan"), **hint}
     unheard = [subject for subject in subjects or () if subject not in evidence]
     left = [label for label, who in people.items() if who == NO_ONE]
     if len(unheard) == 1 and len(left) == 1:
@@ -109,6 +199,16 @@ def describe_suggestion(suggestion: dict) -> str:
             continue
         if evidence.get("source") == ELIMINATION:
             shown.append(f"{label} is {who} (the one voice and person left: listen to it)")
+            continue
+        disputed = f", but {evidence['disputed']}: listen to it" if evidence.get("disputed") else ""
+        if evidence.get("source") == WORDS:
+            shown.append(f"{label} is {who} ({evidence['n']} line(s) such as \"{evidence['lines'][0]}\"{disputed})")
+            continue
+        if evidence.get("source") == PITCH:
+            shown.append(f"{label} is {who} (pitch, median {evidence['median_hz']:.0f} Hz{disputed})")
+            continue
+        if disputed:
+            shown.append(f"{label} is {who} ({evidence['source']}{disputed})")
             continue
         by = f"{evidence['source']}, " if evidence.get("source") else ""
         if not np.isfinite(evidence["z"]):

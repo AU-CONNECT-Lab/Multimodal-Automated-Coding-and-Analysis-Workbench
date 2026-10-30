@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class _Section(BaseModel):
@@ -55,8 +56,26 @@ class AlignSection(_Section):
     review: Literal["always", "flagged", "skip"] = "flagged"
 
 
+class VoiceHintSection(_Section):
+    # a pattern searched in each line a voice on a shared microphone said, ignoring case
+    says: str
+    role: str
+
+    @field_validator("says")
+    @classmethod
+    def _compiles(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as error:
+            raise ValueError(f"{value!r} is not a pattern Python can read: {error}") from None
+        return value
+
+
 class IdentitySection(_Section):
     confirm: Literal["always", "skip"] = "always"
+    voice_hints: list[VoiceHintSection] = Field(default_factory=list)
+    # roles from the lowest voice to the highest
+    pitch_order: list[str] = Field(default_factory=list)
 
 
 class VideoSection(_Section):
@@ -271,6 +290,16 @@ class MacawConfig(_Section):
     # parameters for extractors installed from other packages, keyed by extractor name
     plugins: dict[str, dict[str, Any]] = Field(default_factory=dict)
     primary: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _identity_roles(self) -> "MacawConfig":
+        named = [hint.role for hint in self.identity.voice_hints] + list(self.identity.pitch_order)
+        unknown = sorted(set(named) - set(self.project.roles))
+        if unknown:
+            raise ValueError(
+                f"identity names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
+            )
+        return self
 
 
 # Which sections a recordings/<id>.yaml file may touch. Everything else is a hard error:

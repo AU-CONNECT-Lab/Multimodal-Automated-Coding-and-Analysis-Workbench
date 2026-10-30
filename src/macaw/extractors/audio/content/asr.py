@@ -11,9 +11,12 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.content.diarization import (
     BACKEND_GROUP as DIARIZATION_GROUP,
+    DIARIZATION_NAME,
     OTHER,
     SHARED_MODE,
+    DiarizationExtractor,
     SpeakerReviewGate,
+    inside,
     read_diarization,
     resolve_diarization,
     shared_track,
@@ -32,8 +35,14 @@ from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
 
 BACKEND_GROUP = "asr"
+SHARED_ASR = "text.shared_asr"
 
 TRANSCRIPT_NAME = "transcript.parquet"
+SHARED_UTTERANCES_NAME = "shared_utterances.parquet"
+SHARED_WORDS_NAME = "shared_words.parquet"
+# what each voice on a shared microphone said and how high it is, before anyone names it
+VOICE_LINES_NAME = "voice_lines.parquet"
+VOICE_PITCH_NAME = "voice_pitch.json"
 WORDS_NAME = "words.parquet"
 DROPPED_NAME = "dropped.parquet"
 
@@ -343,7 +352,7 @@ class ASRExtractor(Extractor):
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:
         # on a shared microphone nothing is anyone's until a person has named the voices
-        return cls.requires + ((SpeakerReviewGate.name,) if config.text.diarization == SHARED_MODE else ())
+        return cls.requires + ((SHARED_ASR, SpeakerReviewGate.name) if config.text.diarization == SHARED_MODE else ())
 
     def __init__(self, config):
         super().__init__(config)
@@ -383,8 +392,14 @@ class ASRExtractor(Extractor):
         return (backend.name, str(backend.version))
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        corrected = layout_for(self.config, create=False).corrected_transcript_path(recording.recording_id)
-        return [*voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), *([corrected] if corrected.is_file() else [])]
+        layout = layout_for(self.config, create=False)
+        corrected = layout.corrected_transcript_path(recording.recording_id)
+        heard = layout.artifacts_dir(recording.recording_id, SHARED_ASR)
+        shared = [heard / SHARED_UTTERANCES_NAME, heard / SHARED_WORDS_NAME] if self._shared() else []
+        return [
+            *voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), *shared,
+            *([corrected] if corrected.is_file() else []),
+        ]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)
@@ -460,19 +475,8 @@ class ASRExtractor(Extractor):
 
     def _from_shared_track(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
         """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
-        cfg = self.config.text
         rid = recording.recording_id
-        utterances, words = backend.transcribe(
-            prep.shared_track_path(shared_track(prep, rid)), language=cfg.language, word_timestamps=True
-        )
-        utterances, words, outside = within_track(utterances, words, prep.duration_s)
-        if outside:
-            warnings.append(
-                QCWarning(
-                    check="asr_outside_track", recording_id=rid, subject_id=None, severity="info",
-                    message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
-                )
-            )
+        utterances, words = read_shared_transcript(self.config, rid)
         turns = _track_clock_turns(self.config, rid, prep)
         utterances, words, unplaced = split_by_voice(
             utterances, words, turns, speaker_names(self.config, rid), elsewhere=frozenset(prep.tracks)
@@ -790,6 +794,127 @@ def within_track(
         words["t_start"] = words["t_start"].clip(lower=0.0)
         words["t_end"] = words["t_end"].clip(upper=duration_s)
     return utterances, words, outside
+
+
+@register_extractor
+class SharedASRExtractor(Extractor):
+    """Speech on a shared microphone recognised before anyone names the voices, so naming can read what each voice says."""
+
+    name = SHARED_ASR
+    version = "0.1.0"
+    scale = Scale.RECORDING
+    group = "text"
+    config_sections = (
+        "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.compute_type", "text.diarization",
+        "segment", "prosody.fallback_chain", "prosody.frame_step_s", "prosody.f0_min_hz", "prosody.f0_max_hz",
+    )
+    requires = (MediaPrepExtractor.name, DiarizationExtractor.name)
+    resource_profile = "gpu_standard"
+
+    @classmethod
+    def wanted_by_default(cls, config) -> bool:
+        return config.text.diarization == SHARED_MODE
+
+    @classmethod
+    def resources(cls, config) -> str:
+        return cls.resource_profile if config.text.diarization == SHARED_MODE else Extractor.resource_profile
+
+    def _shared(self) -> bool:
+        return self.config.text.diarization == SHARED_MODE
+
+    def check_available(self) -> None:
+        if self._shared():
+            ASRExtractor(self.config).backend()
+
+    def prefetch(self) -> None:
+        if self._shared():
+            ASRExtractor(self.config).prefetch()
+
+    def backend_info(self) -> tuple[str | None, str | None]:
+        return ASRExtractor(self.config).backend_info() if self._shared() else (None, None)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        if not self._shared():
+            return []
+        rid = recording.recording_id
+        prep = load_prep(self.config, rid)
+        diarized = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name) / DIARIZATION_NAME
+        return [prep.shared_track_path(shared_track(prep, rid)), diarized]
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        if not self._shared():
+            return ExtractorResult(rows=pd.DataFrame())
+        rid = recording.recording_id
+        prep = load_prep(self.config, rid)
+        path = prep.shared_track_path(shared_track(prep, rid))
+        utterances, words = ASRExtractor(self.config).backend().transcribe(
+            path, language=self.config.text.language, word_timestamps=True
+        )
+        utterances, words, outside = within_track(utterances, words, prep.duration_s)
+        warnings = [] if not outside else [
+            QCWarning(
+                check="asr_outside_track", recording_id=rid, subject_id=None, severity="info",
+                message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
+            )
+        ]
+        utterances = utterances.assign(recording_id=rid, subject_id=None, n_words=_word_counts(utterances))
+        words = words.assign(recording_id=rid, subject_id=None)
+        turns = _track_clock_turns(self.config, rid, prep)
+        pitch = voice_pitch(self.config, path, turns)
+        artifacts = {
+            SHARED_UTTERANCES_NAME: write_transcript(_concat([utterances], TRANSCRIPT_SCHEMA), workspace / SHARED_UTTERANCES_NAME),
+            SHARED_WORDS_NAME: _io.write_file(_concat([words], WORD_SCHEMA), workspace / SHARED_WORDS_NAME, WORD_SCHEMA, "words"),
+            VOICE_LINES_NAME: write_transcript(voice_lines(utterances, words, turns, rid, prep.t_origin_s), workspace / VOICE_LINES_NAME),
+        }
+        (workspace / VOICE_PITCH_NAME).write_text(json.dumps(pitch, indent=2), encoding="utf-8")
+        artifacts[VOICE_PITCH_NAME] = workspace / VOICE_PITCH_NAME
+        return ExtractorResult(rows=pd.DataFrame(), artifacts=artifacts, warnings=warnings)
+
+
+def _word_counts(utterances: pd.DataFrame) -> pd.Series:
+    return utterances["text"].fillna("").astype(str).str.split().str.len().astype("int64")
+
+
+def read_shared_transcript(config, recording_id: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The shared microphone's speech as the recogniser gave it, on the track clock."""
+    root = layout_for(config, create=False).artifacts_dir(recording_id, SHARED_ASR)
+    utterances = read_transcript(root / SHARED_UTTERANCES_NAME).drop(columns=["recording_id", "subject_id"])
+    words = read_words(root / SHARED_WORDS_NAME).drop(columns=["recording_id", "subject_id"])
+    return utterances, words
+
+
+def voice_lines(utterances: pd.DataFrame, words: pd.DataFrame, turns: pd.DataFrame, recording_id: str, t_origin_s: float) -> pd.DataFrame:
+    """Each voice's lines on the recording clock, its label standing in for the person until someone names it."""
+    if utterances.empty or turns.empty:
+        return empty_frame(TRANSCRIPT_SCHEMA)
+    labels = {str(label): str(label) for label in turns["label"].unique()}
+    lines, _, _ = split_by_voice(
+        utterances.drop(columns=["recording_id", "subject_id"]), words.drop(columns=["recording_id", "subject_id"]), turns, labels
+    )
+    if lines.empty:
+        return empty_frame(TRANSCRIPT_SCHEMA)
+    lines = lines.assign(
+        recording_id=recording_id, n_words=_word_counts(lines),
+        t_start=lines["t_start"] + t_origin_s, t_end=lines["t_end"] + t_origin_s,
+    )
+    return _concat([lines], TRANSCRIPT_SCHEMA)
+
+
+def voice_pitch(config, path: Path, turns: pd.DataFrame) -> dict[str, dict]:
+    """Per voice its speech time and median f0 over the turns it speaks alone; turns on the track clock."""
+    from macaw.extractors.audio.prosody.frame import f0_contour
+
+    cfg = config.prosody
+    contour = f0_contour(path, cfg, f0_min=cfg.f0_min_hz, f0_max=cfg.f0_max_hz)
+    t, f0 = contour["t_start"].to_numpy(dtype=float), contour["f0_hz"].to_numpy(dtype=float)
+    out = {}
+    for label, own in turns.groupby("label", observed=True):
+        voiced = inside(t, own) & np.isfinite(f0) & (f0 > 0)
+        out[str(label)] = {
+            "speech_s": float((own["t_end"] - own["t_start"]).sum()),
+            "median_hz": float(np.median(f0[voiced])) if voiced.any() else None,
+        }
+    return out
 
 
 def _keep_utterances(words: pd.DataFrame, utterances: pd.DataFrame) -> pd.DataFrame:

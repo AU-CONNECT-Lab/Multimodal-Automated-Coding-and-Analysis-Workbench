@@ -14,7 +14,17 @@ from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.extractors import get_extractor
 from macaw.extractors import prep as prep_module
 from macaw.extractors.audio.content import diarization as diarization_module
-from macaw.extractors.audio.content.asr import assign_voices, split_by_voice
+from macaw.exceptions import ConfigError
+from macaw.extractors.audio.content.asr import (
+    SHARED_ASR,
+    VOICE_LINES_NAME,
+    VOICE_PITCH_NAME,
+    assign_voices,
+    split_by_voice,
+    voice_lines,
+    voice_pitch,
+    write_transcript,
+)
 from macaw.extractors.audio.content.diarization import (
     VOICES_NAME,
     inside,
@@ -25,7 +35,7 @@ from macaw.extractors.audio.content.diarization import (
     describe_voices,
     overlapped_fraction,
 )
-from macaw.extractors.audio.content.speaker_id import describe_suggestion, match_voices
+from macaw.extractors.audio.content.speaker_id import by_pitch, by_words, describe_suggestion, match_voices, voice_hints
 from macaw.extractors.prep import MediaPrepExtractor, PrepInfo
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -267,13 +277,14 @@ class TestReview:
         self.voices(project, "SPEAKER_00")
         assert "--rename" in str(self.accept(project).exception)
 
-    def review(self, project, mode, people, monkeypatch):
+    def review(self, project, mode, people, monkeypatch, evidence=None):
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data["text"]["voice_review"] = mode
         project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
         from macaw.extractors.audio.content import speaker_id
 
-        monkeypatch.setattr(speaker_id, "suggest_voices", lambda config, recording: {"people": people, "evidence": {}, "unheard": []})
+        suggestion = {"people": people, "evidence": evidence or {}, "unheard": []}
+        monkeypatch.setattr(speaker_id, "suggest_voices", lambda config, recording: suggestion)
         self.voices(project, *people)
         config = project.resolved()
         gate, recording = SpeakerReviewGate(config), build_recording("003", config)
@@ -289,6 +300,11 @@ class TestReview:
         assert gate.pending(recording) is None
         assert json.loads(path.read_text(encoding="utf-8")) == {"people": {"S0": "child", "S1": "parent"}, "by": "automatic"}
         assert [(note.check, note.severity) for note in gate.notes(recording)] == [("voices_unreviewed", "info")]
+
+    def test_flagged_waits_when_the_evidence_disagrees(self, project, monkeypatch):
+        evidence = {"child": {"label": "S0", "source": "words", "n": 1, "lines": ["mommy!"], "disputed": "pitch points to S1"}}
+        gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch, evidence)
+        assert not path.exists() and gate.pending(recording) is not None
 
     def test_flagged_waits_when_a_voice_is_undecided(self, project, monkeypatch):
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": None}, monkeypatch)
@@ -444,3 +460,121 @@ def test_the_review_waits_for_faces_read_in_the_same_run_without_pulling_them_in
     assert "face.movement" in with_faces.nodes["text.review"].depends_on
     order = with_faces.topological_order()
     assert order.index("face.movement") < order.index("text.review") < order.index("text.asr")
+
+
+def hint(says, role):
+    return SimpleNamespace(says=says, role=role)
+
+
+def said(*rows):
+    return pd.DataFrame({"subject_id": [label for label, _ in rows], "text": [text for _, text in rows]})
+
+
+ROLES = {"p1": "parent", "c1": "child"}
+CHILD_SAYS = hint(r"^\s*mommy[,.!?]", "child")
+PARENT_SAYS = hint(r"\bmommy's (gonna|going)\b", "parent")
+
+
+class TestHints:
+    def test_a_voice_goes_to_the_role_its_lines_match(self):
+        lines = said(("S0", "Mommy, look!"), ("S0", "mommy."), ("S1", "Mommy's gonna help"), ("S1", "put it there"))
+        found = by_words(lines, [CHILD_SAYS, PARENT_SAYS], ROLES)
+        assert {who: found[who]["label"] for who in found} == {"c1": "S0", "p1": "S1"}
+        assert found["c1"]["n"] == 2 and found["c1"]["lines"][0] == "Mommy, look!"
+
+    def test_a_voice_matching_two_roles_equally_says_nothing(self):
+        lines = said(("S0", "Mommy, look!"), ("S0", "mommy's going to"))
+        assert by_words(lines, [CHILD_SAYS, PARENT_SAYS], ROLES) == {}
+
+    def test_pitch_orders_the_voices_that_speak_most(self):
+        pitch = {
+            "S0": {"speech_s": 50.0, "median_hz": 310.0}, "S1": {"speech_s": 60.0, "median_hz": 210.0},
+            "S2": {"speech_s": 2.0, "median_hz": 120.0},
+        }
+        found = by_pitch(pitch, ["parent", "child"], ROLES)
+        assert {who: found[who]["label"] for who in found} == {"p1": "S1", "c1": "S0"}
+
+    def test_voices_too_close_in_pitch_are_not_told_apart(self):
+        pitch = {"S0": {"speech_s": 50.0, "median_hz": 230.0}, "S1": {"speech_s": 60.0, "median_hz": 210.0}}
+        assert by_pitch(pitch, ["parent", "child"], ROLES) == {}
+
+    def test_hints_place_people_no_signal_placed(self):
+        found = turns(("S0", 0.0, 5.0), ("S1", 6.0, 10.0))
+        hints = {"c1": {"label": "S0", "source": "words", "n": 2, "lines": ["Mommy, look!"]}}
+        suggestion = match_voices(found, {}, ["p1", "c1"], hints=hints)
+        assert suggestion["people"] == {"S0": "c1", "S1": "p1"}
+        assert suggestion["evidence"]["p1"]["source"] == "elimination"
+        assert 'S0 is c1 (2 line(s) such as "Mommy, look!")' in describe_suggestion(suggestion)
+
+    def test_a_hint_against_a_signal_is_shown_as_disputed(self):
+        found, t, talking, rng = three_voices()
+        signals = {"parent": (t, talking["S1"] + 0.3 * rng.random(t.size), "own microphone")}
+        hints = {"parent": {"label": "S0", "source": "words", "n": 1, "lines": ["mommy's gonna"]}}
+        suggestion = match_voices(found, signals, ["parent", "child", "sibling"], hints=hints)
+        assert suggestion["people"]["S1"] == "parent"
+        assert suggestion["evidence"]["parent"]["disputed"] == "words point to S0"
+        assert "S1 is parent (own microphone, but words point to S0: listen to it)" in describe_suggestion(suggestion)
+
+    def test_the_settings_are_read_off_what_the_shared_step_left(self, project):
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data["identity"] = {"voice_hints": [{"says": CHILD_SAYS.says, "role": "child"}], "pitch_order": ["parent", "child"]}
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        config = project.resolved()
+        root = layout_for(config).artifacts_dir("003", SHARED_ASR)
+        root.mkdir(parents=True)
+        lines = said(("S1", "Mommy, look!"), ("S0", "where does it go")).assign(
+            recording_id="003", utterance_index=0, t_start=0.0, t_end=1.0, n_words=2, confidence=np.nan,
+            avg_logprob=np.nan, no_speech_prob=np.nan, language="en",
+        )
+        write_transcript(lines, root / VOICE_LINES_NAME)
+        # pitch alone says the child is S0; the words win, and the pitch is kept as a doubt
+        pitch = {"S0": {"speech_s": 50.0, "median_hz": 300.0}, "S1": {"speech_s": 40.0, "median_hz": 200.0}}
+        (root / VOICE_PITCH_NAME).write_text(json.dumps(pitch), encoding="utf-8")
+        found = voice_hints(config, build_recording("003", config))
+        assert found["child"]["label"] == "S1" and found["child"]["disputed"] == "pitch points to S0"
+        assert "parent" not in found
+
+    def test_a_role_the_project_does_not_have_is_refused(self, project):
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data["identity"] = {"voice_hints": [{"says": "mommy", "role": "mother"}]}
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        with pytest.raises(ConfigError, match="identity names mother"):
+            project.resolved()
+
+    def test_a_pattern_python_cannot_read_is_refused(self, project):
+        data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
+        data["identity"] = {"voice_hints": [{"says": "mommy(", "role": "child"}]}
+        project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        with pytest.raises(ConfigError, match="not a pattern Python can read"):
+            project.resolved()
+
+
+class TestSharedASR:
+    def test_it_runs_before_the_voices_are_named_and_the_transcript_after(self, project):
+        shared = project.resolved()
+        own = shared.model_copy(update={"text": shared.text.model_copy(update={"diarization": "per_track"})})
+        assert SHARED_ASR in get_extractor("text.asr").dependencies(shared)
+        assert SHARED_ASR not in get_extractor("text.asr").dependencies(own)
+        assert SpeakerReviewGate.name not in get_extractor(SHARED_ASR).dependencies(shared)
+        assert get_extractor(SHARED_ASR).wanted_by_default(shared) and not get_extractor(SHARED_ASR).wanted_by_default(own)
+
+    def test_each_voices_lines_are_split_off_one_recognised_segment(self):
+        utterances = pd.DataFrame({
+            "utterance_index": [0], "t_start": [0.0], "t_end": [9.0], "text": ["mommy look where"], "confidence": [np.nan],
+            "language": ["en"], "recording_id": ["003"], "subject_id": [None], "n_words": [3],
+        })
+        words = pd.DataFrame({
+            "utterance_index": [0, 0, 0], "t_start": [1.0, 1.6, 6.0], "t_end": [1.5, 2.0, 6.5], "word": ["mommy", "look", "where"],
+            "score": [0.9] * 3, "recording_id": ["003"] * 3, "subject_id": [None] * 3,
+        })
+        lines = voice_lines(utterances, words, turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0)), "003", 10.0)
+        assert lines[["subject_id", "text", "t_start"]].values.tolist() == [["S0", "mommy look", 11.0], ["S1", "where", 16.0]]
+
+    def test_each_voices_pitch_is_its_median_where_it_speaks_alone(self, project, tmp_path, write_wav):
+        t = np.arange(4 * SAMPLE_RATE) / SAMPLE_RATE
+        voice = np.where(t < 2.0, 0.3 * np.sin(2 * np.pi * 120.0 * t), 0.3 * np.sin(2 * np.pi * 300.0 * t))
+        track = write_wav(tmp_path / "shared.wav", voice)
+        pitch = voice_pitch(project.resolved(), track, turns(("S0", 0.2, 1.8), ("S1", 2.2, 3.8)))
+        assert pitch["S0"]["median_hz"] == pytest.approx(120.0, rel=0.05)
+        assert pitch["S1"]["median_hz"] == pytest.approx(300.0, rel=0.05)
+        assert pitch["S1"]["speech_s"] == pytest.approx(1.6)

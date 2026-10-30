@@ -164,6 +164,22 @@ MACAW decides which person in the picture is which. Press **Draw review frames**
 
 MACAW finds the separate voices and suggests whose each one is. Listen to the clips and pick the right person for each voice. A voice that belongs to nobody in the study, such as a researcher, is marked *none*.
 
+:::{tip}
+The suggestion can also use what each voice says and how high it is, if you tell it what to look for in `project.yaml`. Nothing is assumed about who your participants are: you write the rules.
+
+```yaml
+identity:
+  voice_hints:
+    - says: '^\s*(hey |look )?(mommy|mom|mama)[,.!?]'   # calling for mom: likely the child
+      role: child
+    - says: "\\b(mommy|mama)'s (gonna|going|not)\\b"  # speaking of herself: likely the mother
+      role: mother
+  pitch_order: [mother, child]   # lowest voice first; used when two voices differ by 40 Hz or more
+```
+
+`says` is a regular expression, matched against each line a voice said, ignoring case. A voice goes to a role when more of its lines match that role than any other. Where the words and the pitch disagree, or either disagrees with a microphone or a face, the suggestion says so, and with review set to flagged it waits for you.
+:::
+
 (transcript)=
 ### Transcript
 

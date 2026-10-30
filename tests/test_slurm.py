@@ -79,7 +79,7 @@ def test_steps_on_the_same_kind_of_node_share_a_job(project):
     found = slurm.segments(config, project.hpc(), dag, steps)
     assert [(segment.gpu, segment.profile, segment.extractors) for segment in found] == [
         (False, "data_manage", ["prep.media"]),
-        (True, "gpu_standard", ["text.diarize", "text.asr"]),
+        (True, "gpu_standard", ["text.diarize", "text.shared_asr", "text.asr"]),
         (False, "standard", ["prosody.frame", "turns.structure", "turns.transitions", "turns.entropy"]),
     ]
 
