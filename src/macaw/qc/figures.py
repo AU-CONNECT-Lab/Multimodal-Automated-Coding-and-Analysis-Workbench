@@ -26,6 +26,7 @@ from macaw.media.align import (
     top_two_peaks,
 )
 
+DPI = 300
 EXCERPT_S = 30.0
 # a headset's bursts reach many times its 99th percentile and would flatten everything else
 LOUDNESS_CLIP = 1.5
@@ -120,7 +121,7 @@ def alignment_figure(
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=100)
+    figure.savefig(path, dpi=DPI)
     return path
 
 
@@ -276,5 +277,5 @@ def _panels(subjects, series, candidates, path: Path, *, ylabel: str, empty: str
 
 def _save(figure, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=110)
+    figure.savefig(path, dpi=DPI)
     return path
