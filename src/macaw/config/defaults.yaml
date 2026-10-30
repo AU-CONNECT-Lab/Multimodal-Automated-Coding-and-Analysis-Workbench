@@ -146,6 +146,7 @@ qc:
     - motion_energy
     - au_agreement
   fail_fast: false                   # true aborts the run on the first failed check
+  f0_median_max_by_role: {}          # Hz; a median above it flags a track an octave high throughout, e.g. {mother: 330}
   report_downsample_px: 2000         # px; min-max downsampling target for report curves
   review_max_candidates: 40          # frames the checks pointed at, spread across reasons
   review_baseline: 25                # frames drawn uniformly at random; never filtered by any check

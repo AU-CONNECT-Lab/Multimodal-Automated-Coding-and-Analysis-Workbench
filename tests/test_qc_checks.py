@@ -244,6 +244,40 @@ class TestOctaveCheck:
         assert check_octave_error(RECORDING, None, fake_results(f0=pd.DataFrame())).skipped
 
 
+def with_roles(**roles):
+    subjects = [SimpleNamespace(subject_id=subject_id, role=role) for subject_id, role in roles.items()]
+    return SimpleNamespace(recording_id=RID, subjects=subjects)
+
+
+def ceilings(**by_role):
+    return SimpleNamespace(qc=QCSection(f0_median_max_by_role=by_role))
+
+
+class TestWholeTrackOctave:
+    def test_a_track_high_throughout_is_caught_though_it_never_jumps(self):
+        f0 = f0_rows({"p1": [400.0] * 30 + [np.nan] * 5 + [420.0] * 50, "p2": [300.0] * 90})
+        result = check_octave_error(with_roles(p1="mother", p2="child"), ceilings(mother=330.0), fake_results(f0=f0))
+        assert [(w.subject_id, w.severity) for w in result.warnings] == [("p1", "warn")]
+        assert result.candidates.reason.tolist() == ["median_above_ceiling"]
+        # the longer of the two voiced stretches, to listen to
+        assert result.candidates.t_start.iloc[0] == pytest.approx(0.35)
+        assert result.candidates.t_end.iloc[0] == pytest.approx(0.84)
+        validate_frame(result.candidates, CANDIDATE_SCHEMA, "candidates")
+
+    def test_a_median_under_the_ceiling_says_nothing(self):
+        f0 = f0_rows({"p1": [220.0] * 90})
+        assert not check_octave_error(with_roles(p1="mother"), ceilings(mother=330.0), fake_results(f0=f0)).warnings
+
+    def test_a_subject_id_works_where_the_role_is_not_listed(self):
+        f0 = f0_rows({"p1": [400.0] * 90})
+        result = check_octave_error(with_roles(p1="mother"), ceilings(p1=330.0), fake_results(f0=f0))
+        assert [w.subject_id for w in result.warnings] == ["p1"]
+
+    def test_nobody_listed_is_not_checked(self):
+        f0 = f0_rows({"p1": [400.0] * 90})
+        assert not check_octave_error(with_roles(p1="mother"), ceilings(), fake_results(f0=f0)).warnings
+
+
 def config(checks):
     return SimpleNamespace(qc=QCSection(checks=checks))
 

@@ -190,7 +190,7 @@ How often each check asks is up to you: the labels above are the starting choice
 The Results page has two parts.
 
 Quality page
-: Press **Write the QC page**, then open it. It lists what the checks flagged (a transcript that does not seem to fit its audio, a mouth that does not move while its owner is said to be talking, people the tracker kept losing, a pitch that jumps an octave), every decision made by the software or by a person, and a set of frames to look at. Those frames are the moments the checks pointed at, plus frames picked at random so you also see ordinary moments. You look at a sample, not at every frame.
+: Press **Write the QC page**, then open it. It lists what the checks flagged (a transcript that does not seem to fit its audio, a mouth that does not move while its owner is said to be talking, people the tracker kept losing, a pitch that jumps an octave, or that sits an octave high throughout when `qc.f0_median_max_by_role` gives the highest believable median for a role), every decision made by the software or by a person, and a set of frames to look at. Those frames are the moments the checks pointed at, plus frames picked at random so you also see ordinary moments. You look at a sample, not at every frame.
 
 Measures over time
 : Pick a step and a measure to see it for each person across the recording.

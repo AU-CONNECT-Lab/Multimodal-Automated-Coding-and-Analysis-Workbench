@@ -464,12 +464,17 @@ def check_octave_error(recording: Recording, config: MacawConfig, results) -> Ch
         return CheckResult(skipped=f"no {PROSODY_SOURCE} output")
 
     rid = recording.recording_id
+    ceilings = config.qc.f0_median_max_by_role if config is not None else {}
+    roles = {subject.subject_id: subject.role for subject in getattr(recording, "subjects", ())}
     pieces, warnings = [], []
     for subject_id, contour in f0.groupby("subject_id", dropna=True, observed=True):
         contour = contour.sort_values("t_start")
-        spans, n_error, n_voiced = octave_jumps(
-            contour["t_start"].to_numpy(dtype=float), contour["value"].to_numpy(dtype=float)
-        )
+        t, hz = contour["t_start"].to_numpy(dtype=float), contour["value"].to_numpy(dtype=float)
+        high = _median_too_high(rid, str(subject_id), roles.get(str(subject_id)), ceilings, t, hz)
+        if high is not None:
+            warnings.append(high[0])
+            pieces.append(high[1])
+        spans, n_error, n_voiced = octave_jumps(t, hz)
         if not n_error:
             continue
         pieces.append(
@@ -502,6 +507,51 @@ def check_octave_error(recording: Recording, config: MacawConfig, results) -> Ch
             )
         )
     return CheckResult(warnings=warnings, candidates=_concat_candidates(pieces))
+
+
+def _median_too_high(rid, subject_id, role, ceilings, t, hz) -> tuple[QCWarning, pd.DataFrame] | None:
+    """A track locked an octave up from start to end has no jump to find, only a median no voice
+    of that kind reaches."""
+    key = next((key for key in (role, subject_id) if key is not None and key in ceilings), None)
+    voiced = np.isfinite(hz) & (hz > 0)
+    if key is None or not voiced.any():
+        return None
+    median, ceiling = float(np.median(hz[voiced])), float(ceilings[key])
+    if median <= ceiling:
+        return None
+    start, end = longest_voiced_run(t, hz)
+    warning = QCWarning(
+        check="octave_error",
+        recording_id=rid,
+        subject_id=subject_id,
+        severity="warn",
+        message=f"median f0 is {median:.0f} Hz, above the {ceiling:.0f} Hz set for {key} in "
+        "qc.f0_median_max_by_role: the whole track may sit an octave high",
+        details={"median_hz": median, "ceiling_hz": ceiling},
+    )
+    candidate = pd.DataFrame(
+        [
+            {
+                "recording_id": rid, "subject_id": subject_id, "check": "octave_error",
+                "reason": "median_above_ceiling", "t_start": start, "t_end": end,
+                "t": (start + end) / 2.0, "score": median / ceiling,
+            }
+        ]
+    )
+    return warning, coerce_frame(candidate, CANDIDATE_SCHEMA, "candidates")
+
+
+def longest_voiced_run(t: np.ndarray, hz: np.ndarray) -> tuple[float, float]:
+    """The longest unbroken stretch of voicing, the clearest place to listen."""
+    voiced = np.isfinite(hz) & (hz > 0)
+    step = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
+    joined = voiced[1:] & voiced[:-1] & (np.diff(t) <= 1.5 * step)
+    starts = np.ones(len(t), dtype=bool)
+    starts[1:] = ~joined
+    run = np.cumsum(starts)
+    best = max(np.unique(run[voiced]), key=lambda run_id: np.ptp(t[(run == run_id) & voiced]))
+    index = np.flatnonzero((run == best) & voiced)
+    return float(t[index[0]]), float(t[index[-1]])
 
 
 def octave_jumps(t: np.ndarray, f0_hz: np.ndarray) -> tuple[list[dict], int, int]:

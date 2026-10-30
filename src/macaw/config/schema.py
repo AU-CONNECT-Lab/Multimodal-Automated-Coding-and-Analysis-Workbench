@@ -198,6 +198,8 @@ class QCSection(_Section):
         ]
     )
     fail_fast: bool = False
+    # per role or subject id; a median above it means the whole track may be an octave high
+    f0_median_max_by_role: dict[str, float] = Field(default_factory=dict)
     report_downsample_px: int = 2000
     review_max_candidates: int = 40
     review_baseline: int = 25
