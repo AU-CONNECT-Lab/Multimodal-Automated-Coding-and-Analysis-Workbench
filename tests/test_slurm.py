@@ -84,6 +84,13 @@ def test_steps_on_the_same_kind_of_node_share_a_job(project):
     ]
 
 
+def test_diarizing_asks_for_a_gpu_only_on_a_shared_microphone(project):
+    from macaw.extractors.audio.content.diarization import DiarizationExtractor
+
+    assert DiarizationExtractor.resources(project.resolved()) == "standard"
+    assert DiarizationExtractor.resources(project.resolved("text.diarization=pyannote")) == "gpu_standard"
+
+
 def states_where(new: set[str], held: set[str] = frozenset()):
     def task_states(config, dag, recording_ids):
         return {

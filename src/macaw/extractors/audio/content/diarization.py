@@ -302,6 +302,11 @@ class DiarizationExtractor(Extractor):
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
+    @classmethod
+    def resources(cls, config) -> str:
+        # with a microphone per person it only writes a row saying so
+        return cls.resource_profile if config.text.diarization == SHARED_MODE else Extractor.resource_profile
+
     def check_available(self) -> None:
         if self.config.text.diarization == SHARED_MODE:
             resolve_diarizer(self.config)
