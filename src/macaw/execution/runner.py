@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -17,6 +19,7 @@ from macaw.execution.backends.base import JobSpec
 from macaw.execution.backends.local import LocalBackend
 from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB, JobRecord, now
+from macaw.execution import models
 from macaw.execution.lock import run_lock
 from macaw.execution.output_checker import completed_tasks, load_rules
 from macaw.extractors import get_extractor
@@ -266,6 +269,7 @@ def _run(
     already = completed_on_disk(config, dag, recording_ids) & in_scope if resume else set()
     finished = set(already)
     attempted: set[str] = set()
+    fetched: set[str] = set()
     n_tasks = 0
     database = None
     # a gate that reads what this run produces is checked between waves, once that is there
@@ -291,12 +295,15 @@ def _run(
                 archive_resolved(config, layout.output_dir)
             database = JobDB(layout.job_db_path)
             database.initialise()
+            fetched = _fetch_models(config_path, layout, order, gates, recording_ids, already, execution_id)
         for (recording_id, gate), gate_notes in notes.items():
             _write_warnings(layout, recording_id, gate, gate_notes)
         if not specs:
             break
 
         for spec in specs:
+            if spec.extractor in fetched:
+                spec.env = dict(models.OFFLINE_ENV)
             database.upsert(
                 JobRecord(
                     task_id=spec.task_id,
@@ -353,6 +360,46 @@ def finish(config: MacawConfig, recording_ids: list[str], extractors: list[str],
         output_dir=layout.output_dir,
         waiting=[wait for wait in waiting if not wait.deferred],
     )
+
+
+def _fetch_models(config_path, layout, order, gates, recording_ids, already, execution_id) -> set[str]:
+    """Steps with work left whose weights are now on disk, so they run offline. Weights already on disk are
+    used as they are, never swapped for a newer upload; only what is missing is downloaded. A failed fetch
+    stops the run before anything runs; with HF_HUB_OFFLINE already set, as in a cluster job, nothing is fetched."""
+    if models.offline():
+        return set()
+    left = [name for name in order if name not in gates and any(task_id_for(r, name) not in already for r in recording_ids)]
+    names = models.fetching_steps(left)
+    if not names:
+        return set()
+    log_path = layout.logs_dir / execution_id / "fetch-models.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    fetched, missing = _fetch_pass(config_path, recording_ids, names, log_path, offline=True)
+    if missing:
+        more, failed = _fetch_pass(config_path, recording_ids, sorted(missing), log_path, offline=False)
+        if failed:
+            raise MacawError(f"Model weights could not be fetched, so nothing ran: {'; '.join(failed.values())}. See {log_path}")
+        fetched |= more
+    return fetched
+
+
+def _fetch_pass(config_path, recording_ids, names, log_path, *, offline: bool) -> tuple[set[str], dict[str, str]]:
+    """(steps fetched, each failed step's message) from one fetch-models process."""
+    command = [
+        sys.executable, "-m", "macaw", "fetch-models", "--config", str(config_path),
+        "--recordings", ",".join(recording_ids), *[part for name in names for part in ("-e", name)],
+    ]
+    env = {**os.environ, **models.OFFLINE_ENV} if offline else None
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    output = result.stdout.decode("utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(f"$ {'HF_HUB_OFFLINE=1 ' if offline else ''}{' '.join(command)}\n\n{output}\n")
+    lines = output.splitlines()
+    code = result.returncode
+    failed = {line.split(":", 1)[0].removeprefix("failed "): line.removeprefix("failed ") for line in lines if line.startswith("failed ")}
+    if code != 0 and not failed:
+        failed = {name: f"{name}: exit code {code}" for name in names}
+    return {line.removeprefix("fetched ") for line in lines if line.startswith("fetched ")}, failed
 
 
 def _wave(config_path, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):

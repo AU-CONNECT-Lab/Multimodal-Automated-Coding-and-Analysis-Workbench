@@ -13,6 +13,7 @@ from macaw.config.schema import MacawConfig
 from macaw.exceptions import ConfigValidationError
 from macaw.execution.array_map import array_spec, build_map, write_map
 from macaw.execution.dag import build_dag
+from macaw.execution.models import OFFLINE_ENV
 from macaw.extractors import get_extractor
 from macaw.project.layout import layout_for, new_execution_id
 
@@ -192,6 +193,8 @@ def _preamble(hpc: HPCConfig, comment: str) -> list[str]:
     lines = ["#!/bin/bash", f"# {comment}", "set -eo pipefail", *hpc.module_load, *hpc.env_activate]
     if hpc.hf_home is not None:
         lines.append(f"export HF_HOME={_quote(hpc.hf_home)}")
+    # weights come from macaw hpc prefetch-models beforehand; a job never checks online for newer ones
+    lines += [f"export {name}={value}" for name, value in OFFLINE_ENV.items()]
     return lines
 
 

@@ -55,6 +55,14 @@ def make_spec(tmp_path, database):
     return build
 
 
+def test_a_task_runs_with_the_environment_its_spec_adds(tmp_path, database, make_spec):
+    spec, marker = make_spec("r1:text.asr")
+    spec.command = [sys.executable, "-c", f"import os, pathlib; pathlib.Path(r'{marker}').write_text(os.environ.get('HF_HUB_OFFLINE', 'unset'))"]
+    spec.env = {"HF_HUB_OFFLINE": "1"}
+    _run(database, [spec])
+    assert marker.read_text() == "1"
+
+
 def _run(database, specs, *, n_workers=4):
     backend = LocalBackend(n_workers=n_workers, job_db=database)
     backend.wait(backend.submit(specs))

@@ -46,31 +46,20 @@ def prefetch_models(
     hpc_config: Path = typer.Option(None, "--hpc-config", help="Where hf_home is set; found as for generate."),
 ) -> None:
     """Download the model weights the steps would otherwise fetch while running, into hpc.yaml's hf_home.
-    Run it where there is internet and that folder is the one the compute nodes see, e.g. a login node."""
+    Run it where there is internet and that folder is the one the compute nodes see, e.g. a login node;
+    the jobs then run offline."""
     from macaw.execution.dag import build_dag
-    from macaw.extractors import get_extractor
-    from macaw.extractors.base import Extractor, Phase
+    from macaw.execution.models import fetch_models
 
     hpc = load_hpc_config(hpc_config, config)
     if hpc.hf_home is not None:
         os.environ["HF_HOME"] = str(hpc.hf_home)
-    # loaded once on this machine's CPU, which is all it takes to download them
-    resolved = resolve_config(config, cli_overrides=["text.device=cpu", "face.device=cpu"])
-    failed = []
-    for name in build_dag(resolved, list(extractor or ()) or None).topological_order():
-        cls = get_extractor(name)
-        if cls.phase == Phase.INTERACTIVE:
-            continue
-        try:
-            step = cls(resolved)
-            step.check_available()
-            if cls.prefetch is not Extractor.prefetch:
-                step.prefetch()
-                typer.echo(f"{name}: fetched")
-        except Exception as error:
-            failed.append(name)
-            typer.echo(f"{name}: {' '.join(str(error).split())}")
-    if slurm.JUDGE in build_dag(resolved, list(extractor or ()) or None).nodes and resolved.coding.llm.is_local():
+    resolved = resolve_config(config)
+    dag = build_dag(resolved, list(extractor or ()) or None)
+    failed = fetch_models(
+        config, dag.topological_order(), runner.resolve_recordings(resolved, None), strict=True, echo=typer.echo
+    )
+    if slurm.JUDGE in dag.nodes and resolved.coding.llm.is_local():
         typer.echo(f"{slurm.JUDGE}: pull {resolved.coding.llm.model} into the model server's own folder yourself, e.g. ollama pull")
     if failed:
         raise typer.Exit(code=1)

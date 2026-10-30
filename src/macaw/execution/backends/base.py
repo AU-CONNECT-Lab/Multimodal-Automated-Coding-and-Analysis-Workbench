@@ -18,6 +18,7 @@ class JobSpec:
     resources: ResourceProfile
     log_path: Path
     depends_on: list[str] = None
+    env: dict[str, str] | None = None  # set on top of this process's environment
 
 
 class ExecBackend(ABC):

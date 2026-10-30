@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -107,7 +108,8 @@ class LocalBackend(ExecBackend):
             with open(log_path, "w", encoding="utf-8") as log:
                 log.write(f"$ {' '.join(spec.command)}\n\n")
                 log.flush()
-                process = subprocess.Popen(spec.command, stdout=log, stderr=subprocess.STDOUT)
+                env = {**os.environ, **spec.env} if spec.env else None
+                process = subprocess.Popen(spec.command, stdout=log, stderr=subprocess.STDOUT, env=env)
                 with self._lock:
                     self._processes[spec.task_id] = process
                 code = process.wait()

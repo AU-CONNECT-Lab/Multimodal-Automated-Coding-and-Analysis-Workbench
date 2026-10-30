@@ -145,7 +145,7 @@ class TestScripts:
     def test_a_job_sets_up_its_environment_then_runs_its_steps(self, written):
         first = written.text["segment_1.sh"].splitlines()
         assert first[:2] == ["#!/bin/bash", f"# {written.jobs.directory.name}, step 1 of {len(written.jobs.segments)}: prep.media"]
-        assert first[3:6] == ["ml FFmpeg", "source ~/env/bin/activate", "export HF_HOME=/shared/hf"]
+        assert first[3:7] == ["ml FFmpeg", "source ~/env/bin/activate", "export HF_HOME=/shared/hf", "export HF_HUB_OFFLINE=1"]
         assert first[-1].startswith("python -m macaw hpc task --config ") and first[-1].endswith("-e prep.media")
 
     def test_the_model_server_starts_only_where_the_judge_runs(self, written):
@@ -217,4 +217,100 @@ def test_prefetch_loads_each_model_once_into_the_shared_cache(project, monkeypat
     monkeypatch.setattr(ASRExtractor, "prefetch", lambda self: calls.append((os.environ["HF_HOME"], self.config.text.device)))
     result = CliRunner().invoke(app, ["hpc", "prefetch-models", "-c", str(project.config), "-e", "text.asr"])
     assert result.exit_code == 0, result.output
-    assert calls == [(str(Path("/shared/hf")), "cpu")] and result.output.splitlines() == ["text.asr: fetched"]
+    # two recordings with the same settings fetch once
+    assert calls == [(str(Path("/shared/hf")), "cpu")] and result.output.splitlines() == ["fetched text.asr"]
+
+
+class TestFetchBeforeTheRun:
+    def test_a_recording_that_needs_another_model_fetches_it_too(self, project, monkeypatch):
+        from macaw.execution.models import fetch_models
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        calls = []
+        monkeypatch.setattr(ASRExtractor, "check_available", lambda self: None)
+        monkeypatch.setattr(ASRExtractor, "prefetch", lambda self: calls.append(self.config.text.language))
+        (project.root / "recordings").mkdir()
+        (project.root / "recordings" / "004.yaml").write_text("text:\n  language: de\n", encoding="utf-8")
+        shown = []
+        failed = fetch_models(project.config, ["prep.media", "text.asr"], ["003", "004"], strict=False, echo=shown.append)
+        assert failed == [] and sorted(calls, key=str) == sorted([None, "de"], key=str)
+        assert shown == ["fetched text.asr", "fetched text.asr"]
+
+    def test_a_step_not_installed_is_left_to_fail_on_its_own_unless_strict(self, project, monkeypatch):
+        from macaw.exceptions import BackendNotAvailableError
+        from macaw.execution.models import fetch_models
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        def missing(self):
+            raise BackendNotAvailableError("pip install whisperx")
+
+        monkeypatch.setattr(ASRExtractor, "check_available", missing)
+        shown = []
+        assert fetch_models(project.config, ["text.asr"], [], strict=False, echo=shown.append) == []
+        assert shown == ["skipped text.asr: pip install whisperx"]
+        assert fetch_models(project.config, ["text.asr"], [], strict=True, echo=shown.append) == ["text.asr"]
+
+    def test_a_download_that_fails_is_a_failure(self, project, monkeypatch):
+        from macaw.execution.models import fetch_models
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        def offline(self):
+            raise OSError("no connection and not in the cache")
+
+        monkeypatch.setattr(ASRExtractor, "check_available", lambda self: None)
+        monkeypatch.setattr(ASRExtractor, "prefetch", offline)
+        shown = []
+        assert fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=shown.append) == ["text.asr"]
+        assert shown == ["failed text.asr: no connection and not in the cache"]
+
+    def fetch(self, project, monkeypatch, *answers, already=frozenset()):
+        """answers: (output, exit code) of each fetch-models process in turn, the offline pass first."""
+        from macaw.execution.dag import build_dag
+
+        commands = []
+        replies = iter(answers)
+
+        def run(command, stdout, stderr, env):
+            offline = env is not None and env.get("HF_HUB_OFFLINE") == "1"
+            commands.append((offline, command))
+            output, code = next(replies)
+            return SimpleNamespace(returncode=code, stdout=output.encode())
+
+        monkeypatch.setattr(runner_module.subprocess, "run", run)
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        config = project.resolved()
+        order = build_dag(config, ["text.asr"]).topological_order()
+        layout = runner_module.layout_for(config)
+        fetched = runner_module._fetch_models(project.config, layout, order, set(), ["003", "004"], set(already), "x1")
+        return fetched, commands
+
+    def test_weights_on_disk_are_used_as_they_are_without_going_online(self, project, monkeypatch):
+        fetched, commands = self.fetch(project, monkeypatch, ("fetched text.asr\n", 0))
+        assert fetched == {"text.asr"} and len(commands) == 1
+        offline, command = commands[0]
+        assert offline and command[1:4] == ["-m", "macaw", "fetch-models"] and command[-2:] == ["-e", "text.asr"]
+        assert "003,004" in command
+
+    def test_only_what_is_missing_goes_online(self, project, monkeypatch):
+        fetched, commands = self.fetch(
+            project, monkeypatch, ("failed text.asr: not in the cache\n", 1), ("fetched text.asr\n", 0)
+        )
+        assert fetched == {"text.asr"} and [offline for offline, _ in commands] == [True, False]
+        log = (runner_module.layout_for(project.resolved()).logs_dir / "x1" / "fetch-models.log").read_text(encoding="utf-8")
+        assert "$ HF_HUB_OFFLINE=1 " in log and "not in the cache" in log and log.count("$ ") == 2
+
+    def test_a_failed_download_stops_the_run_and_says_which(self, project, monkeypatch):
+        from macaw.exceptions import MacawError
+
+        with pytest.raises(MacawError, match="nothing ran: text.asr: no connection"):
+            self.fetch(project, monkeypatch, ("failed text.asr: not in the cache\n", 1), ("failed text.asr: no connection\n", 1))
+
+    def test_nothing_is_fetched_for_finished_steps_or_when_already_offline(self, project, monkeypatch):
+        done = {f"{rid}:{name}" for rid in ("003", "004") for name in ("prep.media", "text.asr")}
+        assert self.fetch(project, monkeypatch, already=done) == (set(), [])
+        commands = []
+        monkeypatch.setattr(runner_module.subprocess, "run", lambda *args, **kwargs: commands.append(args))
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        config = project.resolved()
+        assert runner_module._fetch_models(project.config, runner_module.layout_for(config), ["text.asr"], set(), ["003"], set(), "x2") == set()
+        assert commands == []

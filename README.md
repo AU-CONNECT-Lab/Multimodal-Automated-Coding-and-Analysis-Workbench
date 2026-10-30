@@ -25,7 +25,7 @@ Automatic multi-source alignment, feature extraction (prosody, transcript, pose,
 Describe your cluster in an `hpc.yaml` next to `project.yaml`, starting from the one in the package (`macaw/config/hpc.yaml`): partitions, the GPU to ask for, the lines that load modules and activate the environment, and a shared folder for model weights. Then, on a login node:
 
 ```bash
-macaw hpc prefetch-models -c project.yaml   # once: model weights into the shared folder
+macaw hpc prefetch-models -c project.yaml   # once: model weights into the shared folder; the jobs run offline
 macaw hpc generate -c project.yaml          # writes the job arrays and prints the submit command
 ```
 

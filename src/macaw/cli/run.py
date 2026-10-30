@@ -112,6 +112,11 @@ def _echo_reporting(config, dag) -> None:
             f"coding.judge sends {llm.n_samples} x ceil(units / {llm.batch_size}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
+    from macaw.execution import models
+
+    fetching = models.fetching_steps(dag.topological_order())
+    if fetching and not models.offline():
+        notices.append(f"model weights for {', '.join(fetching)} are fetched or checked before anything runs; the steps then run offline")
     for notice in notices:
         if notice:
             typer.echo(f"note: {notice}")
@@ -139,9 +144,23 @@ def run_task(
     extractor: str = typer.Option(..., "--extractor", "-e"),
     execution_id: str = typer.Option(..., "--execution-id"),
 ) -> None:
-    """Run one extractor for one recording. This is what a cluster array element calls."""
+    """Run one extractor for one recording, as each task of a run does."""
     resolved = resolve_config(config, recording_id=recording)
     runner.run_task(resolved, recording, extractor, execution_id)
+
+
+@app.command("fetch-models", hidden=True)
+def fetch_models_command(
+    config: Path = typer.Option(..., "--config", "-c"),
+    recordings: str = typer.Option("", "--recordings", "-r", help="Comma-separated ids."),
+    extractor: list[str] = typer.Option(..., "--extractor", "-e"),
+) -> None:
+    """What a run does before its steps: their model weights, fetched while the network is allowed."""
+    from macaw.execution.models import fetch_models
+
+    ids = [part for part in recordings.split(",") if part]
+    if fetch_models(config, extractor, ids, strict=False, echo=typer.echo):
+        raise typer.Exit(code=1)
 
 
 @app.command("status")
