@@ -510,8 +510,7 @@ def check_octave_error(recording: Recording, config: MacawConfig, results) -> Ch
 
 
 def _median_too_high(rid, subject_id, role, ceilings, t, hz) -> tuple[QCWarning, pd.DataFrame] | None:
-    """A track locked an octave up from start to end has no jump to find, only a median no voice
-    of that kind reaches."""
+    """A track an octave up from start to end has no jump, only a median above the role's ceiling."""
     key = next((key for key in (role, subject_id) if key is not None and key in ceilings), None)
     voiced = np.isfinite(hz) & (hz > 0)
     if key is None or not voiced.any():
