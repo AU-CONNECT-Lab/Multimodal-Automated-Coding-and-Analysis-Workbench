@@ -27,6 +27,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Pose from MediaPipe or YOLO with people kept apart across cameras, body movement, motion energy, facial action units, head angles, gaze direction, mouth movement and blinks.
 - Rule-based coding, language-model coding from a codebook with human review, coder agreement, and ELAN interchange both ways.
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
+- Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 
 ### 0.1.0-alpha
 - Framework scaffold.
