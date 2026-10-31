@@ -148,10 +148,6 @@ def code_interruptions(transitions: pd.DataFrame, cfg: CodingSection) -> pd.Data
     )
 
 
-def code_gesture_speech_alignment(strokes: pd.DataFrame, prominence: pd.DataFrame) -> pd.DataFrame:
-    raise NotImplementedError
-
-
 _SUBJECT_SPECS = {
     "n_backchannels_coded": (
         "Short turns by subject_id whose every token is in the configured lexicon and after "
