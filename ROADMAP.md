@@ -29,7 +29,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
-- Centimetres beside pixels, from an object of known length measured on a frame or a number set by hand.
+- Centimetres beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
 
 ### 0.1.0-alpha
 - Framework scaffold.
