@@ -45,9 +45,11 @@ def qc(
     pages = {}
     failed = None
     for recording_id in resolve_recordings(resolved, recordings):
-        recording = build_recording(recording_id, resolved)
+        # what this recording ran with, its own recordings/<id>.yaml included
+        own = resolve_config(config, recording_id=recording_id)
+        recording = build_recording(recording_id, own)
         results = RecordingResults(layout, recording_id)
-        outcome = run_checks(recording, resolved, results, only=check)
+        outcome = run_checks(recording, own, results, only=check)
 
         directory = layout.qc_dir(recording_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -66,7 +68,7 @@ def qc(
         if render:
             _render(resolved, layout, recording, results, outcome.candidates)
         if report or open_report:
-            pages[recording_id] = write_recording_report(resolved, recording_id)
+            pages[recording_id] = write_recording_report(own, recording_id)
         if severities["fail"] and resolved.qc.fail_fast:
             failed = recording_id
             break
