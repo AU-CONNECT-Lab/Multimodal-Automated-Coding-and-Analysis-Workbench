@@ -8,7 +8,7 @@ import getpass
 from pathlib import Path
 
 import pandas as pd
-from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.execution.runner import resolve_recordings
@@ -17,6 +17,7 @@ from macaw.interface.files import file_url
 from macaw.project.identity import pairing, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from macaw.project.scale import HAND, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
 from macaw.qc.report import _alignment, _cameras, _waiting
 
@@ -24,6 +25,10 @@ LABEL = "Review"
 ACT = "review-act"
 NO_ONE = "none"
 PICK = "act-pick"
+SCALE_VIDEO, SCALE_AT, SCALE_SHOW, SCALE_GRAPH = "scale-video", "scale-at", "scale-show", "scale-graph"
+SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
+SCALE_LENGTH, SCALE_OBJECT = "scale-length", "scale-object"
+_MARK = "#d9534f"
 # a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
 _MAX_ACTS = 200
 
@@ -191,6 +196,102 @@ def _voices(config, layout, recording):
     )
 
 
+def _scale(config, layout, recording):
+    rid = recording.recording_id
+    videos = sorted(item.path.name for item in recording.media if item.kind == "video")
+    if not videos:
+        return None
+    measurements = read_measurements(layout.scale_path(rid))
+    scale = recording_scale(config, layout, rid)
+    rows = [
+        [item.video, f"{item.t:.1f}", item.object or "", f"{item.length_cm:g}", f"{item.length_px:.1f}", f"{item.cm_per_px:.4g}", item.by or ""]
+        for item in measurements
+    ]
+    if scale is None:
+        status = ui.note("No scale yet: results and exports are in pixels.")
+    elif scale.source == HAND:
+        status = ui.note(f"scale.cm_per_px is {scale.cm_per_px:g} in the settings, so exports use it" + (" instead of these measurements." if rows else "."), "ok")
+    else:
+        status = ui.note(f"Exports use {scale.describe()}.", "ok")
+    key = {"key": rid}
+    return ui.card(
+        "Pixels to centimetres",
+        ui.table(["Video", "At (s)", "What", "Length (cm)", "Pixels", "cm per pixel", "By"], rows, numeric={"At (s)", "Length (cm)", "Pixels", "cm per pixel"}) if rows else None,
+        status,
+        html.Div(
+            [
+                ui.field("Video", dcc.Dropdown(videos, measurements[0].video if measurements else videos[0], id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
+                ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10)),
+                ui.button("Show frame", {"type": SCALE_SHOW, **key}),
+            ],
+            className="toolbar",
+        ),
+        html.Div(id={"type": SCALE_NOTE, **key}),
+        dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}),
+        dcc.Store(id={"type": SCALE_POINTS, **key}, data=[]),
+        dcc.Store(id={"type": SCALE_FRAME, **key}, data=None),
+        html.Div(
+            [
+                ui.field("Length (cm)", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
+                ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="table edge")),
+            ],
+            className="toolbar",
+        ),
+        html.Div(
+            [_button("Save this measurement", "set-scale", primary=True), *([_button("Remove the measurements", "clear-scale")] if rows else [])],
+            className="buttons",
+        ),
+        desc=(
+            "Show a frame, click the two ends of something whose length you know and that sits about as far from the camera "
+            "as the people, type its length and save. Measure two or three times to see how much the clicks vary. "
+            "Results stay in pixels; exports add centimetres."
+        ),
+    )
+
+
+def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str | None, str | None]:
+    """The frame the video steps read at a recording time, as an image the page can show; or why not."""
+    from macaw.extractors.prep import apply_prep_timing
+    from macaw.media.ffmpeg import extract_frame
+
+    config = resolve_config(config_path, recording_id=rid)
+    recording = build_recording(rid, config)
+    try:
+        apply_prep_timing(config, recording)
+    except Exception:   # before prep.media the file's own clock is all there is
+        pass
+    item = next((item for item in recording.media if item.path.name == video), None)
+    if item is None:
+        return None, f"{video} is not a video of {rid}."
+    if config.video.normalise and item.prepared_video is None:
+        return None, "Run prep.video first: people are measured on its copy of the video, and the two ends must be clicked on the same picture."
+    dest = layout_for(config, create=False).work_dir / "gui" / "scale" / f"{rid}_{Path(video).stem}.jpg"
+    try:
+        extract_frame(item.frames_path, at_s - item.offset_s, dest)
+    except Exception as error:
+        return None, f"No frame at {at_s:g} s: {error}"
+    return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None
+
+
+def scale_figure(uri: str | None, points: list):
+    import plotly.graph_objects as go
+
+    figure = go.Figure()
+    if uri:
+        figure.add_trace(go.Image(source=uri, hovertemplate="x %{x}, y %{y}<extra></extra>"))
+    if points:
+        figure.add_trace(go.Scatter(
+            x=[point[0] for point in points], y=[point[1] for point in points], mode="lines+markers",
+            marker={"size": 10, "color": _MARK}, line={"color": _MARK, "width": 2}, hoverinfo="skip",
+        ))
+    figure.update_layout(
+        margin={"l": 0, "r": 0, "t": 0, "b": 0}, showlegend=False, dragmode=False,
+        xaxis={"visible": False}, yaxis={"visible": False, "scaleanchor": "x"},
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=520 if uri else 40,
+    )
+    return figure
+
+
 def _transcript(layout, rid):
     stamp = layout.corrected_transcript_stamp_path(rid)
     state = ui.note("The transcript in use is the one corrected by hand.", "ok") if stamp.is_file() else ui.note("The transcript in use is the recogniser's.")
@@ -294,17 +395,29 @@ def body(config_path: Path, rid: str | None):
         _people_on_camera(layout, results, rid),
         _voices(config, layout, recording),
         _speech_acts(config, layout, recording),
+        _scale(resolve_config(config_path, recording_id=rid), layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
         parts.append(_transcript(layout, rid))
     return [part for part in parts if part is not None]
 
 
-def action_command(config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, renames: dict) -> list[str]:
+def action_command(
+    config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, renames: dict, scale: dict | None = None
+) -> list[str]:
     def command(*sub, extra=()):
         return cli_bridge.build_command(list(sub), config_path=config_path, recordings=[rid], extra_flags=list(extra))
 
     by_flag = ["--by", by] if by else []
+    if action == "set-scale":
+        (x1, y1), (x2, y2) = scale["points"]
+        named = ["--object", scale["object"]] if scale.get("object") else []
+        return command("set-scale", extra=[
+            "--media", scale["video"], "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length-cm", f"{scale['length']:g}",
+            "--at", f"{scale['at']:g}", *named, *by_flag,
+        ])
+    if action == "clear-scale":
+        return command("set-scale", extra=["--clear"])
     if action == "identify":
         return command("identify", extra=["--yes", *by_flag])
     if action == "accept-offset":
@@ -328,10 +441,45 @@ def _transcript_command(config_path: Path, rid: str, action: str, upload: Path |
     return ["macaw", "transcript", "import", str(upload), "-c", str(config_path), "-r", rid, *(["--by", by] if by else [])]
 
 
+def clicked(points: list, click: dict) -> list:
+    """The ends clicked so far, in the frame's pixels; a click after two starts a new pair."""
+    point = click["points"][0]
+    kept = points if points and len(points) < 2 else []
+    return [*kept, [float(point["x"]), float(point["y"])]]
+
+
 def register(app, config_path: Path) -> None:
     @app.callback(Output("review-recording", "options"), Input("url", "pathname"))
     def recordings(_):
         return resolve_recordings(resolve_config(config_path), None)
+
+    @app.callback(
+        Output({"type": SCALE_GRAPH, "key": MATCH}, "figure"),
+        Output({"type": SCALE_POINTS, "key": MATCH}, "data"),
+        Output({"type": SCALE_FRAME, "key": MATCH}, "data"),
+        Output({"type": SCALE_NOTE, "key": MATCH}, "children"),
+        Input({"type": SCALE_SHOW, "key": MATCH}, "n_clicks"),
+        Input({"type": SCALE_GRAPH, "key": MATCH}, "clickData"),
+        State({"type": SCALE_VIDEO, "key": MATCH}, "value"),
+        State({"type": SCALE_AT, "key": MATCH}, "value"),
+        State({"type": SCALE_POINTS, "key": MATCH}, "data"),
+        State({"type": SCALE_FRAME, "key": MATCH}, "data"),
+        prevent_initial_call=True,
+    )
+    def scale_frame(_show, click, video, at, points, uri):
+        trigger = ctx.triggered_id
+        if trigger["type"] == SCALE_SHOW:
+            uri, problem = frame_uri(config_path, trigger["key"], video, float(at or 0.0))
+            note = ui.note(problem, "warn") if problem else ui.note("Click one end of the object, then the other.")
+            return scale_figure(uri, []), [], uri, note
+        if not uri or not click:
+            return no_update, no_update, no_update, no_update
+        points = clicked(points, click)
+        if len(points) == 1:
+            return scale_figure(uri, points), points, no_update, ui.note("Now click the other end.")
+        (x1, y1), (x2, y2) = points
+        note = ui.note(f"{((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5:.1f} pixels between the two ends. Type the length and save, or click again to start over.")
+        return scale_figure(uri, points), points, no_update, note
 
     @app.callback(
         Output("review-body", "children"),
@@ -348,8 +496,13 @@ def register(app, config_path: Path) -> None:
         State({"type": "review-rename", "target": ALL}, "id"),
         State({"type": PICK, "key": ALL}, "value"),
         State({"type": PICK, "key": ALL}, "id"),
+        State({"type": SCALE_VIDEO, "key": ALL}, "value"),
+        State({"type": SCALE_AT, "key": ALL}, "value"),
+        State({"type": SCALE_POINTS, "key": ALL}, "data"),
+        State({"type": SCALE_LENGTH, "key": ALL}, "value"),
+        State({"type": SCALE_OBJECT, "key": ALL}, "value"),
     )
-    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids):
+    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids, *scale):
         trigger = ctx.triggered_id
         message = None
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
@@ -357,6 +510,9 @@ def register(app, config_path: Path) -> None:
             if not any(value for value in clicks or []) or not ctx.triggered[0]["value"]:
                 return no_update, no_update
             action, target = trigger["action"], trigger["target"]
+            measured = dict(zip(("video", "at", "points", "length", "object"), (values[0] if values else None for values in scale)))
+            if action == "set-scale" and (len(measured["points"] or []) != 2 or not measured["length"]):
+                return no_update, ui.note("Click both ends on the frame and type the length first.", "warn")
             if action == "transcript-export":
                 argv = _transcript_command(config_path, rid, action, None, by)
             elif action == "apply-review":
@@ -365,7 +521,8 @@ def register(app, config_path: Path) -> None:
             else:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
                 named = {item["target"]: value for item, value in zip(rename_ids, renames)}
-                argv = action_command(config_path, rid, action, target, by, voices, named)
+                measured["at"] = float(measured["at"] or 0.0)
+                argv = action_command(config_path, rid, action, target, by, voices, named, measured)
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         elif trigger == "review-upload" and upload:
             directory = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "uploads"

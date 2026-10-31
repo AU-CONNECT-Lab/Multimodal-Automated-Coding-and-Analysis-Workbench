@@ -72,6 +72,10 @@ class Layout:
     def offset_table_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "offsets.json"
 
+    # a yardstick a person measured on a video frame; read only when exporting and reporting
+    def scale_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "scale.json"
+
     # tracks a person named as a camera's owner; an input to pose.keypoints
     def camera_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "camera_owners.json"

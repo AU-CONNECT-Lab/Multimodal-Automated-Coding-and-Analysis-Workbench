@@ -177,6 +177,15 @@ def normalise_video(
     return repeated, dropped
 
 
+def extract_frame(src: Path, at_s: float, dest: Path) -> Path:
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(["-ss", f"{max(at_s, 0.0):.3f}", "-i", str(src), "-frames:v", "1", "-q:v", "2", str(dest)])
+    if not dest.is_file():
+        raise UnreadableMediaError(f"{src} has no frame at {at_s:.3f} s")
+    return dest
+
+
 def extract_thumbnails(src: Path, dest_dir: Path, *, every_s: float = 10.0) -> list[Path]:
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)

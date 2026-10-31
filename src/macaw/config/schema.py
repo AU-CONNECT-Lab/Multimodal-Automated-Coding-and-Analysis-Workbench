@@ -185,6 +185,13 @@ class KinematicsSection(_Section):
         return self
 
 
+class ScaleSection(_Section):
+    # written by hand, it wins over a yardstick measured with macaw set-scale
+    cm_per_px: float | None = Field(default=None, gt=0)
+    # share by which a person's apparent size may change over a recording before the report flags it
+    max_size_change: float = Field(default=0.1, gt=0)
+
+
 class FaceSection(_Section):
     backend: str = "pyfeat"
     model: str | None = None
@@ -255,6 +262,7 @@ class QCSection(_Section):
             "octave_error",
             "motion_energy",
             "au_agreement",
+            "scale",
         ]
     )
     fail_fast: bool = False
@@ -300,6 +308,7 @@ class MacawConfig(_Section):
     text: TextSection = Field(default_factory=TextSection)
     pose: PoseSection = Field(default_factory=PoseSection)
     kinematics: KinematicsSection = Field(default_factory=KinematicsSection)
+    scale: ScaleSection = Field(default_factory=ScaleSection)
     face: FaceSection = Field(default_factory=FaceSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
@@ -331,6 +340,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "text",
     "pose",
     "kinematics",
+    "scale",
     "face",
     "motion",
     "turns",

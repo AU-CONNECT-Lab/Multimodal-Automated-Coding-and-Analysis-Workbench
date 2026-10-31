@@ -12,6 +12,7 @@ from macaw import __version__
 from macaw.extractors.audio.content.diarization import others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
+from macaw.project.scale import pixel_power
 
 METHODS_NAME = "methods.md"
 BIB_NAME = "references.bib"
@@ -31,13 +32,26 @@ SECTIONS = {
 _CITATION = re.compile(r"\[([a-z0-9_]+(?:; [a-z0-9_]+)*)\]")
 
 
+def recordings_scaled(config_path: Path, config) -> tuple[int, int]:
+    """(recordings with a scale, recordings) in a project."""
+    from macaw.config.loader import resolve_config
+    from macaw.execution.runner import resolve_recordings
+    from macaw.project.layout import layout_for
+    from macaw.project.scale import recording_scale
+
+    layout = layout_for(config, create=False)
+    recording_ids = resolve_recordings(config, None)
+    found = sum(recording_scale(resolve_config(config_path, recording_id=rid), layout, rid) is not None for rid in recording_ids)
+    return found, len(recording_ids)
+
+
 def load_references() -> dict[str, dict]:
     return yaml.safe_load(files("macaw.qc").joinpath("references.yaml").read_text(encoding="utf-8"))
 
 
-def write_methods(manifest: FeatureManifest, config, out_dir: Path) -> tuple[Path, Path]:
+def write_methods(manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None) -> tuple[Path, Path]:
     references = load_references()
-    text, used = render(describe(manifest, config), references)
+    text, used = render(describe(manifest, config, scaled=scaled), references)
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
     methods.write_text(text, encoding="utf-8")
@@ -46,7 +60,8 @@ def write_methods(manifest: FeatureManifest, config, out_dir: Path) -> tuple[Pat
     return methods, bib
 
 
-def describe(manifest: FeatureManifest, config) -> dict[str, list[str]]:
+def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None) -> dict[str, list[str]]:
+    """scaled is (recordings with a scale, recordings), when known."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
         by_extractor.setdefault(spec.extractor, []).append(spec)
@@ -58,7 +73,20 @@ def describe(manifest: FeatureManifest, config) -> dict[str, list[str]]:
         if not text:
             continue
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
+    in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
+    if scaled and scaled[0] and in_pixels:
+        sections.setdefault("Body", []).append(_centimetres(*scaled))
     return sections
+
+
+def _centimetres(with_scale: int, recordings: int) -> str:
+    which = "each recording" if with_scale == recordings else f"{with_scale} of the {recordings} recordings"
+    return (
+        f"For {which}, lengths in pixels were also converted to centimetres with one scale, the length of an object "
+        "of known size divided by the distance between its two ends as marked by a person on a video frame (the mean "
+        "where it was marked more than once), or a number set by hand. The conversion holds for a person at about the "
+        "object's distance from the camera."
+    )
 
 
 def render(sections: dict[str, list[str]], references: dict[str, dict]) -> tuple[str, list[str]]:

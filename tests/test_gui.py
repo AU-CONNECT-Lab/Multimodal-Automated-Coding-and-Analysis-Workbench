@@ -79,6 +79,42 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
     assert voices[voices.index("--rename") + 1] == "S0=none,S1=child"
 
 
+def test_the_review_page_measures_a_yardstick_and_saves_it(project):
+    shown = text_of(review.body(project, "003"))
+    assert "Pixels to centimetres" in shown and "set-scale" in shown and "No scale yet" in shown
+    measured = {"video": "003_room.mp4", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge"}
+    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
+    assert argv[1] == "set-scale" and argv[argv.index("--points") + 1] == "0,0,30,40"
+    assert argv[argv.index("--length-cm") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
+    assert review.action_command(project, "003", "clear-scale", "", "ann", {}, {})[-1] == "--clear"
+
+
+def test_two_clicks_mark_the_ends_and_a_third_starts_again():
+    click = lambda x, y: {"points": [{"x": x, "y": y}]}
+    first = review.clicked([], click(1, 2))
+    both = review.clicked(first, click(3, 4))
+    assert both == [[1.0, 2.0], [3.0, 4.0]] and review.clicked(both, click(5, 6)) == [[5.0, 6.0]]
+    figure = review.scale_figure("data:image/jpeg;base64,AAAA", both)
+    assert figure.data[0].type == "image" and list(figure.data[1].x) == [1.0, 3.0]
+
+
+def test_the_frame_is_read_from_the_video_the_people_are_measured_on(project):
+    from macaw.exceptions import ExternalToolError
+    from macaw.media.ffmpeg import run_ffmpeg
+
+    video = project.parent / "raw" / "003" / "003_room.mp4"
+    try:
+        run_ffmpeg(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=2", "-pix_fmt", "yuv420p", str(video)])
+    except ExternalToolError:
+        pytest.skip("needs ffmpeg")
+    uri, problem = review.frame_uri(project, "003", "003_room.mp4", 1.0)
+    assert uri is None and "prep.video" in problem
+    with open(project, "a", encoding="utf-8") as handle:
+        handle.write("\nvideo:\n  normalise: false\n")
+    uri, problem = review.frame_uri(project, "003", "003_room.mp4", 1.0)
+    assert problem is None and uri.startswith("data:image/jpeg;base64,")
+
+
 def test_results_show_one_number_per_person_or_a_curve(project):
     config = resolve_config(project)
     directory = layout_for(config).long_table_path("003")

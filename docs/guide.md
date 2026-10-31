@@ -222,7 +222,7 @@ Something looks off? Change the setting and run again. Only the steps that setti
 Type one of these in the project folder. Each one prints where it saved its files.
 
 `macaw export`
-: One table (CSV) with every measure, for every person, over time. Add `--rmd` for an R Markdown file that loads it.
+: One table (CSV) with every measure, for every person, over time. Add `--rmd` for an R Markdown file that loads it. Recordings with a scale also get their pixel measures in centimetres ({ref}`scale`).
 
 `macaw export -f sequence`
 : Who is talking at each second, per person, for sequence analysis.
@@ -311,7 +311,7 @@ kinematics:
 ```
 
 still_speed, peak_prominence
-: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Speeds, distances and areas stay in pixels; convert them with whatever yardstick suits your study.
+: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Speeds, distances and areas stay in pixels; exports add centimetres when a recording has a scale ({ref}`scale`).
 
 annotator
 : When two people coded the tier, name whose gestures to measure.
@@ -342,4 +342,21 @@ When you change the file, the next run recomputes this measure. The `scripts` fo
 
 :::{warning}
 Every file in `scripts` runs as Python whenever MACAW reads the project. Only put files there that you trust.
+:::
+
+(scale)=
+## Centimetres instead of pixels
+
+This is optional. Distances, speeds and areas from the video are in pixels. To have them in centimetres too, give each recording a scale, in one of two ways:
+
+Measure it on a frame
+: On the Review page, under *Pixels to centimetres*, show a frame, click the two ends of something whose length you know (a table edge, a sheet of paper), type its length and save. Measure two or three times: the page lists each measurement, and their spread shows how precise the clicks are. In a terminal the same is `macaw set-scale -r 003 --media 003_room.mp4 --points 412,630,1508,641 --length-cm 120`.
+
+Write the number
+: Put `scale: {cm_per_px: 0.11}` in `project.yaml`, or in `recordings/003.yaml` for one recording. A number written this way is used instead of any measurement.
+
+The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with the scale each recording used.
+
+:::{warning}
+One scale is right only at one distance from the camera. Measure an object about as far from the camera as the people. When two people sit at different distances, as with one across the table and one at its side, the scale fits the one at the object's distance. The quality page gives each person's nose-to-shoulders length in centimetres at the scale (a value far from a real one means that person sits nearer or further), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`).
 :::

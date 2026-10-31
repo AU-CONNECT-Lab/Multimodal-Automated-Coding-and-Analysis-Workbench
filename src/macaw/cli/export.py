@@ -86,6 +86,7 @@ def export(
 
     out = out or (layout.output_dir / "exports" / f"features.{format_}")
     out.parent.mkdir(parents=True, exist_ok=True)
+    table = _with_centimetres(config, layout, table, out.parent)
     if format_ == "csv":
         export_csv(table, out, wide=wide)
     else:
@@ -95,6 +96,42 @@ def export(
     typer.echo(str(out))
     if rmd:
         typer.echo(str(export_rmd_template(out.parent, out.name, layout.manifest_path.name)))
+
+
+def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    """Pixel features again in centimetres for each recording with a scale; scale.csv says which scale."""
+    from macaw.project.manifest import read_manifest
+    from macaw.project.scale import CM_SUFFIX, MEASURED, centimetre_rows, other_videos, recording_scale
+    from macaw.qc.checks import RecordingResults
+
+    if not layout.manifest_path.exists():
+        return table
+    units = {name: spec.unit for name, spec in read_manifest(layout.manifest_path).specs.items()}
+    pieces, used = [table], []
+    for recording_id, rows in table.groupby("recording_id", observed=True):
+        scale = recording_scale(resolve_config(config_path, recording_id=str(recording_id)), layout, str(recording_id))
+        if scale is None:
+            continue
+        if scale.source == MEASURED:
+            elsewhere = other_videos(RecordingResults(layout, str(recording_id)).keypoints(), scale.video)
+            if elsewhere:
+                logger.warning(
+                    "%s: people are measured on %s too, not only on %s where the yardstick is; left in pixels",
+                    recording_id, ", ".join(elsewhere), scale.video,
+                )
+                continue
+        pieces.append(centimetre_rows(rows, units, scale.cm_per_px))
+        used.append({
+            "recording_id": recording_id, "cm_per_px": scale.cm_per_px, "source": scale.source, "video": scale.video,
+            "spread": scale.spread, "measurements": len(scale.measurements) if scale.source == MEASURED else 0,
+            "objects": ", ".join(sorted({item.object for item in scale.measurements if item.object})) or None,
+        })
+    if not used:
+        return table
+    path = out_dir / "scale.csv"
+    pd.DataFrame(used).to_csv(path, index=False)
+    logger.info("features in pixels also given in centimetres, named *%s, for %d recording(s); see %s", CM_SUFFIX, len(used), path)
+    return concat_long_tables(pieces)
 
 
 def _annotation_frames(layout, recording_ids: list[str]) -> list[tuple[str, pd.DataFrame]]:

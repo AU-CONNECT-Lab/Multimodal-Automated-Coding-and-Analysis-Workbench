@@ -99,6 +99,10 @@ kinematics:
     peak_prominence: null            # px/s; how far a speed peak rises above its surroundings to count as a submovement. Needed with a tier
     holds: each_hand                 # each_hand: a hold is one hand still | both_hands: both hands still at once, counted once per gesture
 
+scale:
+  cm_per_px: null                    # centimetres one pixel spans on the video people are measured on; wins over a yardstick measured with macaw set-scale. Per recording in recordings/<id>.yaml
+  max_size_change: 0.1               # share by which a person's apparent size may change over a recording before the report flags it
+
 face:
   backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface
   model: null                        # pyfeat: v1 (default) or v2 | mediapipe: path to face_landmarker.task, or set MACAW_FACE_MODEL
