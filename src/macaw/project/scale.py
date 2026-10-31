@@ -1,5 +1,6 @@
-"""How many centimetres one pixel spans on a recording's video: a yardstick a person measured on a
-frame, or a number written in the settings. Results stay in pixels; exports add centimetres."""
+"""How many centimetres one pixel spans: an object of known length a person measured on a frame of the
+recording or of a calibration clip, or a number written in the settings, for everyone or per role. Results
+stay in pixels; exports add centimetres. A scale holds only at the distance of the object it came from."""
 
 from __future__ import annotations
 
@@ -11,9 +12,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from macaw.exceptions import MacawError
+from macaw.project.recording import VIDEO_SUFFIXES
+
 HAND = "settings"
-MEASURED = "yardstick"
+MEASURED = "recording video"
+CALIBRATION = "calibration clip"
 CM_SUFFIX = "_cm"
+DEPTH_NOTE = "right only for people as far from the camera as the object measured"
 # a person's apparent size is taken over stretches this long, long enough to sit up straight once
 SIZE_WINDOW_S = 30.0
 _SIZE_MIN_FRAMES = 10
@@ -22,13 +28,15 @@ _PIXEL_UNIT = re.compile(r"^px(?:\^(\d))?(/.*)?$")
 
 @dataclass
 class Measurement:
-    video: str
-    t: float                       # recording time of the frame it was measured on
-    points: list[list[float]]      # the two ends, in pixels of the frames the video steps read
+    video: str                     # the file it was measured on: one of the recording's videos, or a calibration clip
+    t: float                       # time of the frame, on the recording's clock or the clip's own
+    points: list[list[float]]      # the two ends, in pixels of the picture shown
     length_cm: float
+    person: str | None = None      # role at whose place the object stood; None for everyone
     object: str | None = None
     by: str | None = None
     at: str | None = None
+    frame_size: list[int] | None = None   # width and height of a calibration clip's picture
 
     @property
     def length_px(self) -> float:
@@ -42,19 +50,35 @@ class Measurement:
 
 @dataclass
 class RecordingScale:
-    cm_per_px: float
-    source: str                    # HAND or MEASURED
-    video: str | None              # where the yardstick was measured; None when written by hand
-    spread: float | None           # standard deviation over two or more measurements
+    by_role: dict[str | None, float]           # None: everyone without a number of their own
+    spread: dict[str | None, float | None]     # standard deviation over two or more measurements
+    source: str                                # HAND, MEASURED or CALIBRATION
+    video: str | None                          # the recording's video or the clip it was measured on
     measurements: list[Measurement]
+
+    def for_role(self, role: str | None) -> float | None:
+        return self.by_role.get(role, self.by_role.get(None))
+
+    def factor(self, role: str | None, role_b: str | None) -> float | None:
+        """cm per pixel for a row: one person's own, a pair's when both share it, else everyone's."""
+        if role_b is not None:
+            first, second = self.for_role(role), self.for_role(role_b)
+            return first if first is not None and first == second else None
+        return self.for_role(role) if role is not None else self.by_role.get(None)
+
+    def values(self) -> str:
+        return "cm per pixel " + "; ".join(
+            f"{value:.4g}{f' ± {self.spread[role]:.2g}' if self.spread.get(role) is not None else ''} for {role or 'everyone'}"
+            for role, value in sorted(self.by_role.items(), key=lambda item: (item[0] is not None, item[0] or ""))
+        )
 
     def describe(self) -> str:
         if self.source == HAND:
-            return f"{self.cm_per_px:.4g} cm per pixel, written in scale.cm_per_px"
-        objects = sorted({m.object for m in self.measurements if m.object})
+            return f"{self.values()}, written in the settings"
+        objects = sorted({item.object for item in self.measurements if item.object})
         what = f" of {', '.join(objects)}" if objects else ""
-        spread = f" ± {self.spread:.2g}" if self.spread is not None else ""
-        return f"{self.cm_per_px:.4g}{spread} cm per pixel from {len(self.measurements)} measurement(s){what} on {self.video}"
+        where = f"calibration clip {self.video}" if self.source == CALIBRATION else self.video
+        return f"{self.values()}, from {len(self.measurements)} measurement(s){what} on {where}"
 
 
 def read_measurements(path: Path) -> list[Measurement]:
@@ -70,15 +94,85 @@ def write_measurements(measurements: list[Measurement], path: Path) -> Path:
 
 
 def recording_scale(config, layout, recording_id: str) -> RecordingScale | None:
-    """config is the one this recording runs, so a scale.cm_per_px in its own file counts."""
-    measurements = read_measurements(layout.scale_path(recording_id))
-    if config.scale.cm_per_px is not None:
-        return RecordingScale(config.scale.cm_per_px, HAND, None, None, measurements)
-    if not measurements:
-        return None
-    ratios = [item.cm_per_px for item in measurements]
-    spread = float(np.std(ratios, ddof=1)) if len(ratios) > 1 else None
-    return RecordingScale(float(np.mean(ratios)), MEASURED, measurements[0].video, spread, measurements)
+    """config is the one this recording runs, so its own file counts. Numbers in the settings come first,
+    then measurements on the recording's video, then the calibration clip it names."""
+    cfg = config.scale
+    hand = {**({None: cfg.cm_per_px} if cfg.cm_per_px is not None else {}), **cfg.cm_per_px_by_role}
+    if hand:
+        return RecordingScale(hand, {role: None for role in hand}, HAND, None, [])
+    own = read_measurements(layout.scale_path(recording_id))
+    if own:
+        return from_measurements(own, MEASURED, own[0].video)
+    if cfg.calibration:
+        clip = read_measurements(layout.calibration_scale_path(cfg.calibration))
+        if clip:
+            return from_measurements(clip, CALIBRATION, cfg.calibration)
+    return None
+
+
+def from_measurements(measurements: list[Measurement], source: str, video: str) -> RecordingScale:
+    by_role, spread = {}, {}
+    for role in dict.fromkeys(item.person for item in measurements):
+        ratios = [item.cm_per_px for item in measurements if item.person == role]
+        by_role[role] = float(np.mean(ratios))
+        spread[role] = float(np.std(ratios, ddof=1)) if len(ratios) > 1 else None
+    return RecordingScale(by_role, spread, source, video, measurements)
+
+
+def calibration_clips(config) -> list[str]:
+    folder = Path(config.scale.calibration_dir)
+    if not folder.is_dir():
+        return []
+    return sorted(path.name for path in folder.iterdir() if path.suffix.lower() in VIDEO_SUFFIXES)
+
+
+def clip_frame(config, clip: str, at_s: float, dest: Path) -> tuple[Path, tuple[int, int]]:
+    """A calibration clip's frame, with square pixels where prep.video gives the recordings square pixels too."""
+    from macaw.media.ffmpeg import extract_frame
+    from macaw.media.probe import run_ffprobe
+
+    path = Path(config.scale.calibration_dir) / clip
+    if not path.is_file():
+        raise MacawError(f"no calibration clip {clip} in {config.scale.calibration_dir}")
+    extract_frame(path, at_s, dest, square_pixels=config.video.normalise)
+    width, height = run_ffprobe(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(dest)]).strip().split(",")
+    return dest, (int(width), int(height))
+
+
+def picture_size(config, recording_id: str, video: str) -> tuple[int, int] | None:
+    """Width and height of the frames the video steps read from a recording's video, once prep.video has run."""
+    from macaw.extractors.prep import load_video_prep
+
+    entry = load_video_prep(config, recording_id).get(video)
+    size = (entry.get("prepared_size") or entry.get("size")) if entry else None
+    return (int(size[0]), int(size[1])) if size else None
+
+
+def measured_videos(keypoints: pd.DataFrame) -> set[str]:
+    """Videos people were measured on."""
+    seen = keypoints[keypoints["subject_id"].notna() & keypoints["x"].notna()]
+    return set(seen["video"].astype(str))
+
+
+def unusable(scale: RecordingScale, config, recording_id: str, keypoints: pd.DataFrame) -> str | None:
+    """Why a measured scale cannot convert this recording's pixels; None when it can."""
+    videos = sorted(measured_videos(keypoints))
+    if scale.source == MEASURED:
+        elsewhere = [video for video in videos if video != scale.video]
+        if elsewhere:
+            return f"people are measured on {', '.join(elsewhere)} too, not only on {scale.video} where the object was measured"
+    if scale.source == CALIBRATION:
+        if len(videos) > 1:
+            return f"people are measured on {len(videos)} videos ({', '.join(videos)}), and a calibration clip stands for one camera"
+        sizes = {tuple(item.frame_size) for item in scale.measurements if item.frame_size}
+        picture = picture_size(config, recording_id, videos[0]) if videos else None
+        if picture and sizes and sizes != {picture}:
+            clip = " or ".join(f"{width}x{height}" for width, height in sorted(sizes))
+            return (
+                f"calibration clip {scale.video} is {clip} but {videos[0]} is {picture[0]}x{picture[1]}; "
+                "a clip carries over only to video of the same size from the same camera"
+            )
+    return None
 
 
 def pixel_power(unit: str | None) -> int | None:
@@ -91,20 +185,21 @@ def in_centimetres(unit: str) -> str:
     return "cm" + unit[2:]
 
 
-def centimetre_rows(rows: pd.DataFrame, units: dict[str, str | None], cm_per_px: float) -> pd.DataFrame:
-    """A copy of every pixel-unit feature's rows in centimetres, each named <feature>_cm."""
+def centimetre_rows(rows: pd.DataFrame, units: dict[str, str | None], factor_of) -> pd.DataFrame:
+    """A copy of every pixel-unit feature's rows in centimetres, each named <feature>_cm. factor_of gives the
+    cm per pixel for a (subject_id, subject_id_b) pair, or None to leave those rows in pixels."""
     powers = {name: power for name, power in ((name, pixel_power(unit)) for name, unit in units.items()) if power}
-    picked = rows[rows["feature"].isin(list(powers))].copy()
-    factors = cm_per_px ** picked["feature"].map(powers).astype(float).to_numpy()
-    picked["value"] = picked["value"].astype(float).to_numpy() * factors
-    picked["feature"] = picked["feature"] + CM_SUFFIX
-    return picked
-
-
-def other_videos(keypoints: pd.DataFrame, video: str) -> list[str]:
-    """Videos besides the yardstick's that people were measured on."""
-    seen = keypoints[keypoints["subject_id"].notna() & keypoints["x"].notna()]
-    return sorted(set(seen["video"].astype(str)) - {video})
+    picked = rows[rows["feature"].isin(list(powers))]
+    pieces = []
+    for (first, second), group in picked.groupby(["subject_id", "subject_id_b"], dropna=False, observed=True):
+        factor = factor_of(None if pd.isna(first) else str(first), None if pd.isna(second) else str(second))
+        if factor is None:
+            continue
+        group = group.copy()
+        group["value"] = group["value"].astype(float).to_numpy() * factor ** group["feature"].map(powers).astype(float).to_numpy()
+        group["feature"] = group["feature"] + CM_SUFFIX
+        pieces.append(group)
+    return pd.concat(pieces, ignore_index=True) if pieces else picked.iloc[0:0]
 
 
 def apparent_size(person: pd.DataFrame) -> pd.Series:

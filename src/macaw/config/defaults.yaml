@@ -99,8 +99,11 @@ kinematics:
     peak_prominence: null            # px/s; how far a speed peak rises above its surroundings to count as a submovement. Needed with a tier
     holds: each_hand                 # each_hand: a hold is one hand still | both_hands: both hands still at once, counted once per gesture
 
-scale:
-  cm_per_px: null                    # centimetres one pixel spans on the video people are measured on; wins over a yardstick measured with macaw set-scale. Per recording in recordings/<id>.yaml
+scale:                               # right only for people as far from the camera as the object measured
+  cm_per_px: null                    # centimetres one pixel spans, for everyone; written by hand it wins over any measurement. Per recording in recordings/<id>.yaml
+  cm_per_px_by_role: {}              # role -> centimetres per pixel at that person's place, e.g. {child: 0.12}
+  calibration: null                  # clip in calibration_dir, filmed with the cameras as they stood, for recordings not measured on their own video
+  calibration_dir: calibration       # next to project.yaml
   max_size_change: 0.1               # share by which a person's apparent size may change over a recording before the report flags it
 
 face:

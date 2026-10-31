@@ -186,10 +186,21 @@ class KinematicsSection(_Section):
 
 
 class ScaleSection(_Section):
-    # written by hand, it wins over a yardstick measured with macaw set-scale
+    # written by hand, these win over any measurement; a role's own number wins over the one for everyone
     cm_per_px: float | None = Field(default=None, gt=0)
+    cm_per_px_by_role: dict[str, float] = Field(default_factory=dict)
+    # a clip in calibration_dir measured with macaw set-scale --calibration, for recordings not measured on their own video
+    calibration: str | None = None
+    calibration_dir: Path = Path("calibration")
     # share by which a person's apparent size may change over a recording before the report flags it
     max_size_change: float = Field(default=0.1, gt=0)
+
+    @model_validator(mode="after")
+    def _positive_by_role(self) -> "ScaleSection":
+        bad = sorted(role for role, value in self.cm_per_px_by_role.items() if value <= 0)
+        if bad:
+            raise ValueError(f"scale.cm_per_px_by_role must be above 0, not for {', '.join(bad)}")
+        return self
 
 
 class FaceSection(_Section):
@@ -328,6 +339,11 @@ class MacawConfig(_Section):
         if unknown:
             raise ValueError(
                 f"identity names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
+            )
+        unknown = sorted(set(self.scale.cm_per_px_by_role) - set(self.project.roles))
+        if unknown:
+            raise ValueError(
+                f"scale.cm_per_px_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
         return self
 

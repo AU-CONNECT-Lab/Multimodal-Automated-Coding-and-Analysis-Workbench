@@ -17,7 +17,7 @@ from macaw.interface.files import file_url
 from macaw.project.identity import pairing, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.project.scale import HAND, read_measurements, recording_scale
+from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
 from macaw.qc.report import _alignment, _cameras, _waiting
 
@@ -27,7 +27,9 @@ NO_ONE = "none"
 PICK = "act-pick"
 SCALE_VIDEO, SCALE_AT, SCALE_SHOW, SCALE_GRAPH = "scale-video", "scale-at", "scale-show", "scale-graph"
 SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
-SCALE_LENGTH, SCALE_OBJECT = "scale-length", "scale-object"
+SCALE_LENGTH, SCALE_OBJECT, SCALE_PERSON = "scale-length", "scale-object", "scale-person"
+CLIP = "clip:"
+EVERYONE = "everyone"
 _MARK = "#d9534f"
 # a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
 _MAX_ACTS = 200
@@ -199,28 +201,48 @@ def _voices(config, layout, recording):
 def _scale(config, layout, recording):
     rid = recording.recording_id
     videos = sorted(item.path.name for item in recording.media if item.kind == "video")
-    if not videos:
+    clips = calibration_clips(config)
+    if not videos and not clips:
         return None
-    measurements = read_measurements(layout.scale_path(rid))
+    own = read_measurements(layout.scale_path(rid))
+    clip = config.scale.calibration
+    from_clip = read_measurements(layout.calibration_scale_path(clip)) if clip else []
     scale = recording_scale(config, layout, rid)
     rows = [
-        [item.video, f"{item.t:.1f}", item.object or "", f"{item.length_cm:g}", f"{item.length_px:.1f}", f"{item.cm_per_px:.4g}", item.by or ""]
-        for item in measurements
+        [
+            where, f"{item.t:.1f}", item.person or EVERYONE, item.object or "",
+            f"{item.length_cm:g}", f"{item.length_px:.1f}", f"{item.cm_per_px:.4g}", item.by or "",
+        ]
+        for where, item in [*((item.video, item) for item in own), *((f"calibration clip {item.video}", item) for item in from_clip)]
     ]
     if scale is None:
         status = ui.note("No scale yet: results and exports are in pixels.")
     elif scale.source == HAND:
-        status = ui.note(f"scale.cm_per_px is {scale.cm_per_px:g} in the settings, so exports use it" + (" instead of these measurements." if rows else "."), "ok")
+        status = ui.note(f"Exports use {scale.describe()}" + (", not the measurements listed." if rows else "."), "ok")
     else:
         status = ui.note(f"Exports use {scale.describe()}.", "ok")
+    if clip is None and clips:
+        status = [status, ui.note(f"To use a calibration clip for this recording, write scale: {{calibration: name}} in project.yaml, or in recordings/{rid}.yaml for this one.")]
+    sources = [{"label": name, "value": name} for name in videos] + [{"label": f"calibration clip {name}", "value": CLIP + name} for name in clips]
+    chosen = own[0].video if own else (CLIP + clip if clip in clips else sources[0]["value"])
     key = {"key": rid}
+    remove = [_button("Remove this recording's measurements", "clear-scale")] if own else []
+    remove += [_button(f"Remove the measurements of {clip}", "clear-scale", CLIP + clip)] if from_clip else []
     return ui.card(
         "Pixels to centimetres",
-        ui.table(["Video", "At (s)", "What", "Length (cm)", "Pixels", "cm per pixel", "By"], rows, numeric={"At (s)", "Length (cm)", "Pixels", "cm per pixel"}) if rows else None,
+        ui.note(
+            "A scale is right only at the distance from the camera where the object was. Put the object where a person sits, "
+            "and when people sit at different distances, measure at each person's place and say whose place it was.",
+            "warn",
+        ),
+        ui.table(
+            ["Measured on", "At (s)", "Whose place", "What", "Length (cm)", "Pixels", "cm per pixel", "By"], rows,
+            numeric={"At (s)", "Length (cm)", "Pixels", "cm per pixel"},
+        ) if rows else None,
         status,
         html.Div(
             [
-                ui.field("Video", dcc.Dropdown(videos, measurements[0].video if measurements else videos[0], id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
+                ui.field("Measure on", dcc.Dropdown(sources, chosen, id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
                 ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10)),
                 ui.button("Show frame", {"type": SCALE_SHOW, **key}),
             ],
@@ -233,28 +255,35 @@ def _scale(config, layout, recording):
         html.Div(
             [
                 ui.field("Length (cm)", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
-                ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="table edge")),
+                ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="ruler")),
+                ui.field("Whose place", dcc.Dropdown([EVERYONE, *config.project.roles], EVERYONE, id={"type": SCALE_PERSON, **key}, clearable=False, className="picker small")),
             ],
             className="toolbar",
         ),
-        html.Div(
-            [_button("Save this measurement", "set-scale", primary=True), *([_button("Remove the measurements", "clear-scale")] if rows else [])],
-            className="buttons",
-        ),
+        html.Div([_button("Save this measurement", "set-scale", primary=True), *remove], className="buttons"),
         desc=(
-            "Show a frame, click the two ends of something whose length you know and that sits about as far from the camera "
-            "as the people, type its length and save. Measure two or three times to see how much the clicks vary. "
-            "Results stay in pixels; exports add centimetres."
+            "Show a frame of this recording or of a calibration clip filmed before it with the camera unmoved (clips go in "
+            "the calibration folder next to project.yaml), click the two ends of something whose length you know, type its "
+            "length and save. Measure two or three times to see how much the clicks vary. Results stay in pixels; exports add centimetres."
         ),
     )
 
 
 def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str | None, str | None]:
-    """The frame the video steps read at a recording time, as an image the page can show; or why not."""
+    """The frame the video steps read at a recording time, or a calibration clip's frame at its own time, as an
+    image the page can show; or why not."""
     from macaw.extractors.prep import apply_prep_timing
     from macaw.media.ffmpeg import extract_frame
 
     config = resolve_config(config_path, recording_id=rid)
+    if video.startswith(CLIP):
+        clip = video[len(CLIP):]
+        dest = layout_for(config, create=False).work_dir / "gui" / "scale" / f"clip_{Path(clip).stem}.jpg"
+        try:
+            clip_frame(config, clip, at_s, dest)
+        except Exception as error:
+            return None, f"No frame at {at_s:g} s of {clip}: {error}"
+        return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None
     recording = build_recording(rid, config)
     try:
         apply_prep_timing(config, recording)
@@ -409,15 +438,24 @@ def action_command(
         return cli_bridge.build_command(list(sub), config_path=config_path, recordings=[rid], extra_flags=list(extra))
 
     by_flag = ["--by", by] if by else []
-    if action == "set-scale":
+    if action in ("set-scale", "clear-scale"):
+        source = scale["video"] if action == "set-scale" else target
+        on_clip = bool(source) and source.startswith(CLIP)
+
+        def measure(*extra):
+            if on_clip:
+                return cli_bridge.build_command(["set-scale"], config_path=config_path, extra_flags=["--calibration", source[len(CLIP):], *extra])
+            return command("set-scale", extra=[*(["--media", source] if source else []), *extra])
+
+        if action == "clear-scale":
+            return measure("--clear")
         (x1, y1), (x2, y2) = scale["points"]
         named = ["--object", scale["object"]] if scale.get("object") else []
-        return command("set-scale", extra=[
-            "--media", scale["video"], "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length-cm", f"{scale['length']:g}",
-            "--at", f"{scale['at']:g}", *named, *by_flag,
-        ])
-    if action == "clear-scale":
-        return command("set-scale", extra=["--clear"])
+        person = ["--person", scale["person"]] if scale.get("person") not in (None, EVERYONE) else []
+        return measure(
+            "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length-cm", f"{scale['length']:g}", "--at", f"{scale['at']:g}",
+            *person, *named, *by_flag,
+        )
     if action == "identify":
         return command("identify", extra=["--yes", *by_flag])
     if action == "accept-offset":
@@ -501,6 +539,7 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_POINTS, "key": ALL}, "data"),
         State({"type": SCALE_LENGTH, "key": ALL}, "value"),
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
+        State({"type": SCALE_PERSON, "key": ALL}, "value"),
     )
     def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids, *scale):
         trigger = ctx.triggered_id
@@ -510,7 +549,7 @@ def register(app, config_path: Path) -> None:
             if not any(value for value in clicks or []) or not ctx.triggered[0]["value"]:
                 return no_update, no_update
             action, target = trigger["action"], trigger["target"]
-            measured = dict(zip(("video", "at", "points", "length", "object"), (values[0] if values else None for values in scale)))
+            measured = dict(zip(("video", "at", "points", "length", "object", "person"), (values[0] if values else None for values in scale)))
             if action == "set-scale" and (len(measured["points"] or []) != 2 or not measured["length"]):
                 return no_update, ui.note("Click both ends on the frame and type the length first.", "warn")
             if action == "transcript-export":

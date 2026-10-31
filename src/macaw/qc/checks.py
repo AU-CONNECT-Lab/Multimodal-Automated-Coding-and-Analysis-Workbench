@@ -647,27 +647,33 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
     """With a scale set, whether one number fits each person: how big they look at it, and how much that
     changes over the recording. No scale, nothing to check."""
     from macaw.extractors.video.pose.keypoints import primary_views
-    from macaw.project.scale import MEASURED, SIZE_WINDOW_S, apparent_size, other_videos, recording_scale, size_change
+    from macaw.project.scale import MEASURED, SIZE_WINDOW_S, apparent_size, recording_scale, size_change, unusable
 
     rid = recording.recording_id
+
+    def warning(subject_id, severity, message, **details):
+        return QCWarning(check="scale", recording_id=rid, subject_id=subject_id, severity=severity, message=message, details=details)
+
     scale = recording_scale(config, results.layout, rid)
     if scale is None:
+        if config.scale.calibration:
+            return CheckResult(warnings=[warning(None, "warn", f"scale.calibration names {config.scale.calibration}, but nothing was measured on it; exports stay in pixels")])
         return CheckResult()
     keypoints = results.keypoints()
     if keypoints.empty:
         return CheckResult(skipped=f"no {POSE_SOURCE} output to see the people at this scale")
 
-    def warning(subject_id, severity, message, **details):
-        return QCWarning(check="scale", recording_id=rid, subject_id=subject_id, severity=severity, message=message, details=details)
-
     warnings = []
-    if scale.source == MEASURED:
-        elsewhere = other_videos(keypoints, scale.video)
-        if elsewhere:
-            message = f"people are measured on {', '.join(elsewhere)} too, not only on {scale.video} where the yardstick is; exports leave this recording in pixels"
-            warnings.append(warning(None, "warn", message))
+    problem = unusable(scale, config, rid, keypoints)
+    if problem:
+        warnings.append(warning(None, "warn", f"{problem}; exports leave this recording in pixels"))
+    roles = {subject.subject_id: subject.role or subject.subject_id for subject in recording.subjects}
     for subject_id, view in sorted(primary_views(keypoints, recording).items()):
-        if scale.video is not None and view != scale.video:
+        if scale.source == MEASURED and view != scale.video:
+            continue
+        cm_per_px = scale.for_role(roles.get(subject_id, subject_id))
+        if cm_per_px is None:
+            warnings.append(warning(subject_id, "info", "no scale at this person's place, so their measures stay in pixels"))
             continue
         person = keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == view)]
         measured = size_change(apparent_size(person))
@@ -676,9 +682,9 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
         typical, change = measured
         warnings.append(warning(
             subject_id, "info",
-            f"nose to shoulders is about {typical * scale.cm_per_px:.0f} cm at this scale ({typical:.0f} px); "
-            "far from a real one means they sit nearer to or further from the camera than the yardstick",
-            size_px=typical, cm_per_px=scale.cm_per_px,
+            f"nose to shoulders is about {typical * cm_per_px:.0f} cm at this scale ({typical:.0f} px); "
+            "far from a real one means they sit nearer to or further from the camera than the object measured",
+            size_px=typical, cm_per_px=cm_per_px,
         ))
         if change > config.scale.max_size_change:
             warnings.append(warning(

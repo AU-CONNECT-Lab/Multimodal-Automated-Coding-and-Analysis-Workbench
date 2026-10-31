@@ -82,10 +82,12 @@ def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | Non
 def _centimetres(with_scale: int, recordings: int) -> str:
     which = "each recording" if with_scale == recordings else f"{with_scale} of the {recordings} recordings"
     return (
-        f"For {which}, lengths in pixels were also converted to centimetres with one scale, the length of an object "
-        "of known size divided by the distance between its two ends as marked by a person on a video frame (the mean "
-        "where it was marked more than once), or a number set by hand. The conversion holds for a person at about the "
-        "object's distance from the camera."
+        f"For {which}, lengths in pixels were also converted to centimetres. The scale was the length of an object of "
+        "known size divided by the distance between its two ends as marked by a person on a frame of the recording, or "
+        "of a calibration clip filmed with the camera unmoved (the mean where it was marked more than once), or a number "
+        "set by hand; where the object was filmed at each participant's place, each participant had their own. A scale "
+        "holds only at the distance from the camera at which it was taken, and measures between two participants were "
+        "converted only when both had the same scale."
     )
 
 

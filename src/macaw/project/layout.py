@@ -76,6 +76,10 @@ class Layout:
     def scale_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "scale.json"
 
+    # the same for a calibration clip, which serves every recording that names it
+    def calibration_scale_path(self, clip: str) -> Path:
+        return self.output_dir / "calibration" / f"{clip}.json"
+
     # tracks a person named as a camera's owner; an input to pose.keypoints
     def camera_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "camera_owners.json"

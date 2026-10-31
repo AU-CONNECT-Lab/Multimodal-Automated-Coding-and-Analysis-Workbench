@@ -347,16 +347,23 @@ Every file in `scripts` runs as Python whenever MACAW reads the project. Only pu
 (scale)=
 ## Centimetres instead of pixels
 
-This is optional. Distances, speeds and areas from the video are in pixels. To have them in centimetres too, give each recording a scale, in one of two ways:
+This is optional. Distances, speeds and areas from the video are in pixels. They can be given in centimetres too, with one condition.
 
-Measure it on a frame
-: On the Review page, under *Pixels to centimetres*, show a frame, click the two ends of something whose length you know (a table edge, a sheet of paper), type its length and save. Measure two or three times: the page lists each measurement, and their spread shows how precise the clicks are. In a terminal the same is `macaw set-scale -r 003 --media 003_room.mp4 --points 412,630,1508,641 --length-cm 120`.
+:::{important}
+A scale is right only at the distance from the camera where it was measured. Something twice as far away looks half as big, so a scale taken at the parent's seat makes a child sitting further back look smaller than they are. Measure an object where each person sits. When people sit at different distances, measure at each person's place, and say whose place it was: each person then gets their own scale. A measure between two people, such as the distance between them, gets centimetres only when both have the same scale.
+:::
+
+Film it before you record (calibration)
+: Before the session, with the camera where it will stay, film an object of known length (a ruler or a sheet of paper) held at each person's place. Put the clip in a `calibration` folder next to `project.yaml`, and write `scale: {calibration: lab.mp4}` in `project.yaml` so every recording uses it. When the camera was moved for some sessions, film a new clip and name it in those recordings' own files, such as `recordings/003.yaml`. Moving or zooming the camera after the clip makes it wrong, and a clip carries over only to video of the same size.
+
+Measure it in the recording
+: When the object is in the recording itself, measure it there instead. A recording's own measurements come before a calibration clip.
 
 Write the number
-: Put `scale: {cm_per_px: 0.11}` in `project.yaml`, or in `recordings/003.yaml` for one recording. A number written this way is used instead of any measurement.
+: Put `scale: {cm_per_px: 0.11}` in `project.yaml` for everyone, or `scale: {cm_per_px_by_role: {child: 0.12, parent: 0.09}}` for each person's place; in `recordings/003.yaml` for one recording. Numbers written this way come before any measurement.
 
-The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with the scale each recording used.
+To measure, open the Review page and go to *Pixels to centimetres*. Choose the recording's video or a calibration clip, show a frame, click the two ends of the object, type its length, say whose place it was, and save. Measure two or three times: the page lists each measurement, and their spread shows how precise the clicks are. In a terminal the same is `macaw set-scale --calibration lab.mp4 --points 412,630,1508,641 --length-cm 30 --person child`, or `-r 003` in place of `--calibration` for a recording's own video.
 
-:::{warning}
-One scale is right only at one distance from the camera. Measure an object about as far from the camera as the people. When two people sit at different distances, as with one across the table and one at its side, the scale fits the one at the object's distance. The quality page gives each person's nose-to-shoulders length in centimetres at the scale (a value far from a real one means that person sits nearer or further), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`).
-:::
+The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with each recording's scale for each person.
+
+The quality page gives each person's nose-to-shoulders length in centimetres at their scale (a value far from a real one means they sit nearer or further than the object was), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`), since then they moved toward or away from the camera.

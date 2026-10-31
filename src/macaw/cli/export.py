@@ -101,7 +101,7 @@ def export(
 def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
     """Pixel features again in centimetres for each recording with a scale; scale.csv says which scale."""
     from macaw.project.manifest import read_manifest
-    from macaw.project.scale import CM_SUFFIX, MEASURED, centimetre_rows, other_videos, recording_scale
+    from macaw.project.scale import CM_SUFFIX, DEPTH_NOTE, centimetre_rows, recording_scale, unusable
     from macaw.qc.checks import RecordingResults
 
     if not layout.manifest_path.exists():
@@ -109,23 +109,26 @@ def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: P
     units = {name: spec.unit for name, spec in read_manifest(layout.manifest_path).specs.items()}
     pieces, used = [table], []
     for recording_id, rows in table.groupby("recording_id", observed=True):
-        scale = recording_scale(resolve_config(config_path, recording_id=str(recording_id)), layout, str(recording_id))
+        recording_id = str(recording_id)
+        own = resolve_config(config_path, recording_id=recording_id)
+        scale = recording_scale(own, layout, recording_id)
         if scale is None:
             continue
-        if scale.source == MEASURED:
-            elsewhere = other_videos(RecordingResults(layout, str(recording_id)).keypoints(), scale.video)
-            if elsewhere:
-                logger.warning(
-                    "%s: people are measured on %s too, not only on %s where the yardstick is; left in pixels",
-                    recording_id, ", ".join(elsewhere), scale.video,
-                )
-                continue
-        pieces.append(centimetre_rows(rows, units, scale.cm_per_px))
-        used.append({
-            "recording_id": recording_id, "cm_per_px": scale.cm_per_px, "source": scale.source, "video": scale.video,
-            "spread": scale.spread, "measurements": len(scale.measurements) if scale.source == MEASURED else 0,
-            "objects": ", ".join(sorted({item.object for item in scale.measurements if item.object})) or None,
-        })
+        problem = unusable(scale, own, recording_id, RecordingResults(layout, recording_id).keypoints())
+        if problem:
+            logger.warning("%s: %s; left in pixels", recording_id, problem)
+            continue
+        roles = {subject.subject_id: subject.role or subject.subject_id for subject in build_recording(recording_id, own).subjects}
+        pieces.append(centimetre_rows(rows, units, lambda first, second: scale.factor(roles.get(first, first), roles.get(second, second))))
+        objects = ", ".join(sorted({item.object for item in scale.measurements if item.object})) or None
+        used += [
+            {
+                "recording_id": recording_id, "person": role or "everyone", "cm_per_px": value, "spread": scale.spread.get(role),
+                "source": scale.source, "measured_on": scale.video,
+                "measurements": sum(item.person == role for item in scale.measurements), "objects": objects, "holds": DEPTH_NOTE,
+            }
+            for role, value in scale.by_role.items()
+        ]
     if not used:
         return table
     path = out_dir / "scale.csv"

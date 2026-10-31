@@ -82,11 +82,35 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
 def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     shown = text_of(review.body(project, "003"))
     assert "Pixels to centimetres" in shown and "set-scale" in shown and "No scale yet" in shown
-    measured = {"video": "003_room.mp4", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge"}
+    assert "right only at the distance from the camera" in shown
+    measured = {"video": "003_room.mp4", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
     argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
-    assert argv[1] == "set-scale" and argv[argv.index("--points") + 1] == "0,0,30,40"
+    assert argv[1] == "set-scale" and argv[argv.index("-r") + 1] == "003" and argv[argv.index("--points") + 1] == "0,0,30,40"
     assert argv[argv.index("--length-cm") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
+    assert argv[argv.index("--person") + 1] == "child"
     assert review.action_command(project, "003", "clear-scale", "", "ann", {}, {})[-1] == "--clear"
+    everyone = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, {**measured, "person": review.EVERYONE})
+    assert "--person" not in everyone
+
+
+def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_names_it(project):
+    from macaw.exceptions import ExternalToolError
+    from macaw.media.ffmpeg import run_ffmpeg
+
+    folder = project.parent / "calibration"
+    folder.mkdir()
+    try:
+        run_ffmpeg(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=2", "-pix_fmt", "yuv420p", str(folder / "lab.mp4")])
+    except ExternalToolError:
+        pytest.skip("needs ffmpeg")
+    shown = text_of(review.body(project, "003"))
+    assert "calibration clip lab.mp4" in shown and "scale: {calibration: name}" in shown
+    measured = {"video": review.CLIP + "lab.mp4", "at": 1.0, "points": [[0, 0], [0, 50]], "length": 10, "object": None, "person": None}
+    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
+    assert argv[argv.index("--calibration") + 1] == "lab.mp4" and "-r" not in argv
+    assert review.action_command(project, "003", "clear-scale", review.CLIP + "lab.mp4", "ann", {}, {})[-2:] == ["lab.mp4", "--clear"]
+    uri, problem = review.frame_uri(project, "003", review.CLIP + "lab.mp4", 1.0)
+    assert problem is None and uri.startswith("data:image/jpeg;base64,")
 
 
 def test_two_clicks_mark_the_ends_and_a_third_starts_again():

@@ -22,7 +22,7 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
 from macaw.project.identity import read_confirmation
-from macaw.project.scale import HAND, recording_scale
+from macaw.project.scale import DEPTH_NOTE, HAND, recording_scale
 from macaw.store import _io
 from macaw.qc.downsample import min_max_downsample
 from macaw.qc.figures import (
@@ -305,7 +305,7 @@ def _decisions(
         people = ", ".join(sorted({item.by for item in scale.measurements if item.by}))
         last = max((item.at for item in scale.measurements if item.at), default="")[:10]
         rows.append({
-            "what": "Pixels to centimetres", "decided": scale.describe() + "; exports add centimetres beside pixels",
+            "what": "Pixels to centimetres", "decided": f"{scale.describe()}; exports add centimetres beside pixels, {DEPTH_NOTE}",
             "by": "settings" if scale.source == HAND else ", ".join(part for part in (people, last) if part), "href": None,
         })
     return rows

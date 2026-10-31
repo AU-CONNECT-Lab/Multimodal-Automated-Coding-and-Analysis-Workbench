@@ -177,10 +177,12 @@ def normalise_video(
     return repeated, dropped
 
 
-def extract_frame(src: Path, at_s: float, dest: Path) -> Path:
+def extract_frame(src: Path, at_s: float, dest: Path, *, square_pixels: bool = False) -> Path:
+    """square_pixels shapes the picture the way normalise_video does, so pixel positions match its copies."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(["-ss", f"{max(at_s, 0.0):.3f}", "-i", str(src), "-frames:v", "1", "-q:v", "2", str(dest)])
+    shape = ["-vf", "scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2',setsar=1"] if square_pixels else []
+    run_ffmpeg(["-ss", f"{max(at_s, 0.0):.3f}", "-i", str(src), *shape, "-frames:v", "1", "-q:v", "2", str(dest)])
     if not dest.is_file():
         raise UnreadableMediaError(f"{src} has no frame at {at_s:.3f} s")
     return dest
