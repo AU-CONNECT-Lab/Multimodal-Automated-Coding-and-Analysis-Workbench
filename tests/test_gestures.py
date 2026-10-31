@@ -11,7 +11,9 @@ from macaw.extractors.video.pose import gestures as gestures_module
 from macaw.extractors.video.pose import kinematics as kinematics_module
 from macaw.extractors.video.pose.gestures import (
     GestureExtractor,
+    both_hands_holds,
     gesture_kinematics,
+    gesture_sectors,
     gesture_spaces,
     height_levels,
     holds,
@@ -61,7 +63,7 @@ class TestHolds:
     def test_a_hold_lies_between_the_first_and_last_stroke(self):
         t = np.arange(0, 4, 1 / FPS)
         wrist = hump(t, 0.5, 1.0, 100.0) + hump(t, 2.1, 1.0, 100.0)
-        found = holds(t, wrist, np.zeros_like(t), 5.0, np.array([1.0, 2.6]))
+        found = holds(t, [wrist, np.zeros_like(t)], 5.0, np.array([1.0, 2.6]))
         assert len(found) == 1
         start, end = found[0]
         assert start == pytest.approx(1.5, abs=0.05) and end == pytest.approx(2.1, abs=0.05)
@@ -69,11 +71,34 @@ class TestHolds:
     def test_a_moving_elbow_is_no_hold(self):
         t = np.arange(0, 4, 1 / FPS)
         wrist = hump(t, 0.5, 1.0, 100.0) + hump(t, 2.1, 1.0, 100.0)
-        assert holds(t, wrist, np.full_like(t, 50.0), 5.0, np.array([1.0, 2.6])) == []
+        assert holds(t, [wrist, np.full_like(t, 50.0)], 5.0, np.array([1.0, 2.6])) == []
 
     def test_one_stroke_has_nothing_between(self):
         t = np.arange(0, 2, 1 / FPS)
-        assert holds(t, np.zeros_like(t), np.zeros_like(t), 5.0, np.array([1.0])) == []
+        assert holds(t, [np.zeros_like(t), np.zeros_like(t)], 5.0, np.array([1.0])) == []
+
+
+class TestBothHands:
+    def test_a_hold_needs_the_other_hand_still_too(self):
+        t = np.arange(0, 4, 1 / FPS)
+        strokes = hump(t, 0.5, 1.0, 100.0) + hump(t, 2.1, 1.0, 100.0)
+        still, zero = np.zeros_like(t), np.zeros_like(t)
+        assert both_hands_holds(t, [strokes, still], [zero, zero], 5.0, 20.0)["holds"] == 1.0
+        # the other hand moves through the pause between the strokes
+        busy = hump(t, 1.4, 0.8, 50.0)
+        assert both_hands_holds(t, [strokes, busy], [zero, zero], 5.0, 20.0)["holds"] == 0.0
+
+    def test_the_strokes_of_either_hand_bound_the_holds(self):
+        t = np.arange(0, 4, 1 / FPS)
+        zero = np.zeros_like(t)
+        measured = both_hands_holds(t, [hump(t, 0.5, 1.0, 100.0), hump(t, 2.1, 1.0, 100.0)], [zero, zero], 5.0, 20.0)
+        assert measured["holds"] == 1.0 and measured["hold_s"] == pytest.approx(0.6, abs=0.05)
+
+    def test_a_hand_never_in_view_gives_nothing(self):
+        t = np.arange(0, 2, 1 / FPS)
+        zero = np.zeros_like(t)
+        measured = both_hands_holds(t, [hump(t, 0.2, 0.8, 100.0), np.full_like(t, np.nan)], [zero, zero], 5.0, 20.0)
+        assert np.isnan(measured["holds"]) and np.isnan(measured["hold_s"])
 
 
 class TestOneGesture:
@@ -105,11 +130,19 @@ class TestPlaces:
         wrists = np.array([[0.0, 75.0], [40.0, 75.0], [70.0, 75.0], [100.0, 75.0], [0.0, -100.0]])
         assert gesture_spaces(wrists, body(len(wrists))).tolist() == [1.0, 2.0, 3.0, 4.0, 4.0]
 
+    def test_the_periphery_splits_into_eight_cells_around_the_centre(self):
+        # in TEMPLATE the centre space spans x -50 to 50 and image y 25 to 125
+        wrists = np.array(
+            [[0.0, 75.0], [40.0, 75.0], [70.0, 75.0], [-70.0, 75.0], [0.0, -50.0], [70.0, -50.0], [0.0, 200.0], [-100.0, 200.0]]
+        )
+        assert gesture_sectors(wrists, body(len(wrists))).tolist() == [0.0, 0.0, 5.0, 4.0, 2.0, 3.0, 7.0, 6.0]
+
     def test_without_hips_neither_is_known(self):
         hidden = body(1)
         hidden[("y", "left_hip")] = np.nan
         wrist = np.array([[0.0, 50.0]])
         assert np.isnan(height_levels(wrist, hidden)).all() and np.isnan(gesture_spaces(wrist, hidden)).all()
+        assert np.isnan(gesture_sectors(wrist, hidden)).all()
 
 
 def test_a_tier_needs_both_thresholds():
@@ -128,7 +161,7 @@ def stroke_path(n):
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    def build(segments, *, annotator=None):
+    def build(segments, *, annotator=None, holds="each_hand"):
         stored = tmp_path / "keypoints"
         write_keypoints(person("parent", n_frames=105, moves={"left_wrist": stroke_path(105)}), stored)
         monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet")
@@ -143,7 +176,7 @@ def run(tmp_path, monkeypatch):
         )
         write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), coded)
         monkeypatch.setattr(gestures_module, "layout_for", lambda config, create=False: SimpleNamespace(annotations_path=lambda rid: coded))
-        gestures = GestureSection(tier="gesture", annotator=annotator, still_speed=10.0, peak_prominence=20.0)
+        gestures = GestureSection(tier="gesture", annotator=annotator, still_speed=10.0, peak_prominence=20.0, holds=holds)
         recording = SimpleNamespace(
             recording_id="sub-003_ses-12mo", subjects=[SimpleNamespace(subject_id="parent")], media=[],
             entities=lambda: {"group_id": "003", "session_id": "12mo", "task": None, "run": None},
@@ -170,6 +203,15 @@ class TestExtractor:
         assert value(result, "gesture_left_peak_speed") == pytest.approx(30.0 * np.pi / 2, rel=0.05)
         assert value(result, "gesture_left_max_height") == 1.0 and value(result, "gesture_left_space_max") == 2.0
         assert value(result, "gesture_right_submovements") == 0.0
+        # the left wrist stays in the centre; the right rests just outside it, to one side
+        assert value(result, "gesture_left_space_sectors") == 0.0 and value(result, "gesture_right_space_sectors") == 1.0
+
+    def test_with_both_hands_the_holds_are_one_pair_per_gesture(self, run):
+        result = run([("parent", 0.0, 3.4, "ann")], holds="both_hands")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        assert "gesture_left_holds" not in set(result.rows.feature)
+        # the right hand rests throughout, so the left hand's pause is a hold of both
+        assert value(result, "gesture_holds") == 1.0 and 0.6 < value(result, "gesture_hold_s") < 0.85
 
     def test_speeds_carry_pixel_units(self, run):
         specs = {spec.name: spec for spec in run([("parent", 0.0, 3.4, "ann")]).specs}

@@ -63,13 +63,29 @@ _SPECS: dict[str, tuple[str, str | None, str, bool]] = {
         None, "max", True,
     ),
     "space_mode": ("Gesture space the {side} wrist is in most of the time, coded as space_max.", None, "median", True),
+    "space_sectors": (
+        "How many of the eight directions around the centre space (above, below, to either side and the four "
+        "corners) the {side} wrist reaches in the periphery or beyond; 0 when it stays in the centre. Needs hips in view.",
+        "count", "mean", True,
+    ),
+}
+_HOLDS = ("holds", "hold_s")
+# with kinematics.gestures.holds both_hands, the holds are measured once per gesture instead of per hand
+_BOTH_HANDS_SPECS: dict[str, tuple[str, str | None, str, bool]] = {
+    "holds": (
+        "Stretches between the first and last submovement of either hand in which both wrists and both elbows move "
+        "slower than kinematics.gestures.still_speed. Frames with either hand out of view are not still; empty when "
+        "a hand is out of view throughout.",
+        "count", "mean", False,
+    ),
+    "hold_s": ("Time spent in those holds.", "s", "mean", False),
 }
 
 
 @register_extractor
 class GestureExtractor(Extractor):
     name = "pose.gestures"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -135,9 +151,12 @@ class GestureExtractor(Extractor):
                 velocity(kp, f"{side}_elbow", smoothing_s=smoothing_s).reindex(times.index).to_numpy(),
                 _xy(wrist, f"{side}_wrist"),
             )
-        heights = {side: height_levels(sides[side][2], body.reindex(times.index)) for side in SIDES}
-        spaces = {side: gesture_spaces(sides[side][2], body.reindex(times.index)) for side in SIDES}
+        placed = body.reindex(times.index)
+        heights = {side: height_levels(sides[side][2], placed) for side in SIDES}
+        spaces = {side: gesture_spaces(sides[side][2], placed) for side in SIDES}
+        sectors = {side: gesture_sectors(sides[side][2], placed) for side in SIDES}
         t = times.to_numpy(dtype=float)
+        both_hands = cfg.holds == "both_hands"
 
         rows = []
         for segment in segments.sort_values("t_start").itertuples():
@@ -149,17 +168,35 @@ class GestureExtractor(Extractor):
                 measured["max_height"] = _nanmax(heights[side][inside])
                 measured["space_max"] = _nanmax(spaces[side][inside])
                 measured["space_mode"] = _mode(spaces[side][inside])
+                measured["space_sectors"] = _distinct_sectors(sectors[side][inside])
+                if both_hands:
+                    for name in _HOLDS:
+                        del measured[name]
                 row.update({f"gesture_{side}_{name}": value for name, value in measured.items()})
+            if both_hands:
+                wrists = [sides[side][0][inside] for side in SIDES]
+                elbows = [sides[side][1][inside] for side in SIDES]
+                measured = both_hands_holds(t[inside], wrists, elbows, cfg.still_speed, cfg.peak_prominence)
+                row.update({f"gesture_{name}": value for name, value in measured.items()})
             rows.append(row)
         return pd.DataFrame(rows)
 
     def _specs(self, length_unit: str) -> list[FeatureSpec]:
         cfg = self.config.kinematics.gestures
         params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump()}
+        both_hands = cfg.holds == "both_hands"
+        named = [
+            (f"gesture_{side}_{name}", description.format(side=side), spec)
+            for side in SIDES
+            for name, (description, *spec) in _SPECS.items()
+            if not (both_hands and name in _HOLDS)
+        ]
+        if both_hands:
+            named += [(f"gesture_{name}", description, spec) for name, (description, *spec) in _BOTH_HANDS_SPECS.items()]
         return [
             FeatureSpec(
-                name=f"gesture_{side}_{name}",
-                description=description.format(side=side),
+                name=name,
+                description=description,
                 unit=unit.format(length=length_unit) if unit else None,
                 scale=Scale.EVENT,
                 group=self.group,
@@ -171,8 +208,7 @@ class GestureExtractor(Extractor):
                 comparable_across_backends=False,
                 validation="synthetic",
             )
-            for side in SIDES
-            for name, (description, unit, aggregation, comparable) in _SPECS.items()
+            for name, description, (unit, aggregation, comparable) in named
         ]
 
     def _warning(self, recording: Recording, subject_id, message: str, severity: str = "warn") -> QCWarning:
@@ -186,7 +222,7 @@ def gesture_kinematics(
     if not np.isfinite(wrist_speed).any():
         return {name: np.nan for name in ("peak_speed", "submovements", "rhythm_sd_s", "holds", "hold_s", "extent")}
     peaks = submovement_peaks(t, wrist_speed, peak_prominence)
-    stretches = holds(t, wrist_speed, elbow_speed, still_speed, peaks)
+    stretches = holds(t, [wrist_speed, elbow_speed], still_speed, peaks)
     seen = xy[np.isfinite(xy).all(axis=1)]
     return {
         "peak_speed": float(np.nanmax(wrist_speed)),
@@ -199,6 +235,17 @@ def gesture_kinematics(
     }
 
 
+def both_hands_holds(
+    t: np.ndarray, wrists: list[np.ndarray], elbows: list[np.ndarray], still_speed: float, peak_prominence: float
+) -> dict[str, float]:
+    """Holds with both hands still at once, between the first and last submovement of either hand."""
+    if not all(np.isfinite(speed).any() for speed in wrists):
+        return {"holds": np.nan, "hold_s": np.nan}
+    peaks = np.sort(np.concatenate([submovement_peaks(t, speed, peak_prominence) for speed in wrists]))
+    stretches = holds(t, [*wrists, *elbows], still_speed, peaks)
+    return {"holds": float(len(stretches)), "hold_s": float(sum(end - start for start, end in stretches))}
+
+
 def submovement_peaks(t: np.ndarray, speed: np.ndarray, prominence: float) -> np.ndarray:
     """Times of the speed peaks; each tracked stretch on its own, so a gap makes no peak."""
     found = []
@@ -208,13 +255,13 @@ def submovement_peaks(t: np.ndarray, speed: np.ndarray, prominence: float) -> np
     return np.concatenate(found) if found else np.empty(0)
 
 
-def holds(t: np.ndarray, wrist_speed: np.ndarray, elbow_speed: np.ndarray, still_speed: float, peaks: np.ndarray) -> list[tuple[float, float]]:
-    """Stretches with wrist and elbow both still, between the first and last submovement peak."""
+def holds(t: np.ndarray, speeds: list[np.ndarray], still_speed: float, peaks: np.ndarray) -> list[tuple[float, float]]:
+    """Stretches with every given joint still, between the first and last submovement peak."""
     if len(peaks) < 2:
         return []
     step = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
     with np.errstate(invalid="ignore"):
-        still = (wrist_speed < still_speed) & (elbow_speed < still_speed) & (t > peaks[0]) & (t < peaks[-1])
+        still = np.logical_and.reduce([speed < still_speed for speed in speeds]) & (t > peaks[0]) & (t < peaks[-1])
     return [(float(t[run][0]), float(t[run][-1] + step)) for run in _runs(still)]
 
 
@@ -238,12 +285,10 @@ def height_levels(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
 def gesture_spaces(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
     """Per frame, the gesture space the wrist is in, centre-centre 1 to extreme periphery 4."""
     x, up = wrist[:, 0], -wrist[:, 1]
-    hips_x = np.column_stack([body[("x", "left_hip")].to_numpy(), body[("x", "right_hip")].to_numpy()])
-    centre_up = -(_midpoint(body, "left_shoulder", "right_shoulder")[:, 1] + _midpoint(body, "left_hip", "right_hip")[:, 1]) / 2.0
+    low, high, centre_up = _hips_box(body)
     eyes = -_midpoint(body, "left_eye", "right_eye")[:, 1]
     nose = -body[("y", "nose")].to_numpy()
     face = 2.0 * np.abs(body[("x", "left_eye")].to_numpy() - body[("x", "right_eye")].to_numpy())
-    low, high = hips_x.min(axis=1), hips_x.max(axis=1)
     width = high - low
     top = eyes + (eyes - nose)
     with np.errstate(invalid="ignore"):
@@ -251,8 +296,30 @@ def gesture_spaces(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
         centre = (x > low - width / 2.0) & (x < high + width / 2.0) & (np.abs(up - centre_up) < width)
         periphery = (x > low - width / 2.0 - face) & (x < high + width / 2.0 + face) & (np.abs(up - centre_up) < top - centre_up)
     spaces = np.select([centre_centre, centre, periphery], [1.0, 2.0, 3.0], 4.0)
-    known = np.isfinite(np.column_stack([x, up, hips_x, centre_up, top, face])).all(axis=1)
+    known = np.isfinite(np.column_stack([x, up, low, high, centre_up, top, face])).all(axis=1)
     return np.where(known, spaces, np.nan)
+
+
+def gesture_sectors(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
+    """Per frame, which of the eight cells around the centre space the wrist is in, 1 to 8, or 0 within it."""
+    x, up = wrist[:, 0], -wrist[:, 1]
+    low, high, centre_up = _hips_box(body)
+    width = high - low
+    with np.errstate(invalid="ignore"):
+        column = np.where(x <= low - width / 2.0, 0, np.where(x >= high + width / 2.0, 2, 1))
+        row = np.where(up >= centre_up + width, 0, np.where(up <= centre_up - width, 2, 1))
+    # the edges of the centre space extended outward cut the periphery into a 3 x 3 grid less its middle
+    cell = 3 * row + column
+    sectors = np.where(cell < 4, cell + 1, cell).astype(float)
+    spaces = gesture_spaces(wrist, body)
+    return np.where(np.isfinite(spaces), np.where(spaces >= 3, sectors, 0.0), np.nan)
+
+
+def _hips_box(body: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per frame, the hips' outer x on each side and the height halfway between shoulders and hips, up positive."""
+    hips_x = np.column_stack([body[("x", "left_hip")].to_numpy(), body[("x", "right_hip")].to_numpy()])
+    centre_up = -(_midpoint(body, "left_shoulder", "right_shoulder")[:, 1] + _midpoint(body, "left_hip", "right_hip")[:, 1]) / 2.0
+    return hips_x.min(axis=1), hips_x.max(axis=1), centre_up
 
 
 def _runs(mask: np.ndarray) -> list[np.ndarray]:
@@ -265,6 +332,11 @@ def _runs(mask: np.ndarray) -> list[np.ndarray]:
 
 def _nanmax(values: np.ndarray) -> float:
     return float(np.nanmax(values)) if np.isfinite(values).any() else np.nan
+
+
+def _distinct_sectors(values: np.ndarray) -> float:
+    known = values[np.isfinite(values)]
+    return float(np.unique(known[known > 0]).size) if known.size else np.nan
 
 
 def _mode(values: np.ndarray) -> float:

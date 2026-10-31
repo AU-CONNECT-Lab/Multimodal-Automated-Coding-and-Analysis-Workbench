@@ -300,7 +300,7 @@ Two people are measured only on a camera that shows both of them.
 
 ### Gestures you coded
 
-If you code gestures in ELAN on a tier of each person, MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, and the gesture space it uses. Each gesture gives one row per measure and hand.
+If you code gestures in ELAN on a tier of each person, MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, the gesture space it uses, and in how many directions around the body's centre it reaches out (above, below, to either side and the four corners). Each gesture gives one row per measure and hand.
 
 ```yaml
 kinematics:
@@ -315,6 +315,9 @@ still_speed, peak_prominence
 
 annotator
 : When two people coded the tier, name whose gestures to measure.
+
+holds
+: `each_hand` (the default) counts the holds of each hand on its own. `both_hands` counts a hold only while both hands are still, once per gesture; a hand that is out of view throughout leaves it empty.
 
 Height and gesture space need the hips in view. When a table hides them, those two stay empty.
 

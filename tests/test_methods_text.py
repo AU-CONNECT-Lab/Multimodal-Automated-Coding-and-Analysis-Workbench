@@ -200,6 +200,10 @@ def test_gesture_kinematics_name_the_tier_and_both_thresholds_with_their_sources
     gestures = config(kinematics={"gestures": {"tier": "gesture", "still_speed": 12, "peak_prominence": 40}})
     text, used = render(describe(ran, gestures), load_references())
     assert "coded on the gesture tier" in text and "at least 40 px/s" in text and "slower than 12 px/s" in text
+    assert "eight cells of the periphery" in text and "both wrists" not in text
+    both = config(kinematics={"gestures": {"tier": "gesture", "still_speed": 12, "peak_prominence": 40, "holds": "both_hands"}})
+    text, _ = render(describe(ran, both), load_references())
+    assert "both wrists and both elbows moved slower than 12 px/s, counted once per gesture" in text
     assert {"trujillo2019", "mcneill1992", "pouw2021", "savitzky1964"} <= set(used)
     assert "University of Chicago Press." in text
 

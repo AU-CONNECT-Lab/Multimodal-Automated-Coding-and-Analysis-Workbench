@@ -437,13 +437,18 @@ def _kinematics(config, spec, names) -> str:
 def _gestures(config, spec, names) -> str:
     gestures = config.kinematics.gestures
     unit = spec.unit.split("/")[0] if spec.unit and "/" in spec.unit else "px"
+    still = (
+        f"where both wrists and both elbows moved slower than {gestures.still_speed:g} {unit}/s, counted once per gesture"
+        if gestures.holds == "both_hands"
+        else f"where wrist and elbow both moved slower than {gestures.still_speed:g} {unit}/s"
+    )
     return (
         f"The kinematics of each gesture coded on the {gestures.tier} tier were measured from each wrist following "
         "[trujillo2019]: peak speed; submovements, the speed peaks rising at least "
         f"{gestures.peak_prominence:g} {unit}/s above their surroundings; holds between the first and last submovement, "
-        f"where wrist and elbow both moved slower than {gestures.still_speed:g} {unit}/s; the area the wrist's path "
-        "covered; the highest level it reached relative to the body; and the outermost and most used gesture space "
-        "[mcneill1992]. Rhythm was the standard deviation of the intervals between submovements [pouw2021]. Speeds "
+        f"{still}; the area the wrist's path covered; the highest level it reached relative to the body; the outermost "
+        "and most used gesture space [mcneill1992]; and how many of the eight cells of the periphery around the centre "
+        "space it entered. Rhythm was the standard deviation of the intervals between submovements [pouw2021]. Speeds "
         f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964] and "
         "are in image units."
     )
