@@ -29,14 +29,14 @@ Reviewing the output works the same way. The quality report points at the frames
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
+- Centimetres beside pixels, from an object of known length measured on a frame or a number set by hand.
 
 ### 0.1.0-alpha
 - Framework scaffold.
 
 ## Milestones
 
-- Scale calibration and body-type classification, so distances can be given in real units.
 - A language-model observation pass before coding, transcript cleanup, and codebook refinement.
 - Who looks at whom, from gaze direction, on video where faces are large enough to tell.
 - Several kept segments per recording, and picking them on the video in the GUI.
-- Metric 3D output; the storage schema reserves room for it.
+- Metric 3D output, with body models suited to children; the storage schema reserves room for it.
