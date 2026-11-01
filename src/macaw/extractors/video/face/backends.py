@@ -14,8 +14,8 @@ BACKEND_GROUP = "face"
 FACE_COLUMNS = ("frame", "face_x", "face_y", "face_width", "face_height", "face_score", "pitch", "roll", "yaw")
 # when gaze is asked for, in degrees; pitch up and yaw to the person's own right are positive
 GAZE_COLUMNS = ("gaze_pitch", "gaze_yaw")
-# frames decoded and handed over at a time; the model batches within it
-CHUNK_FRAMES = 256
+# frames decoded and handed over at a time, at least one batch; the model batches within it, and a 1080p frame is about 6 MB
+CHUNK_FRAMES = 64
 
 
 class FaceBackend(Backend):
@@ -99,19 +99,25 @@ class PyFeatBackend(FaceBackend):
         try:
             first, stop = frames if frames is not None else (0, None)
             index = _seek(capture, cv2, max(int(first), 0))
+            # one buffer the frames are copied into, so a chunk is held once rather than as a list, a stack and a tensor
+            chunk, size = None, max(CHUNK_FRAMES, batch_size)
             while stop is None or index < stop:
-                chunk = []
-                while len(chunk) < CHUNK_FRAMES and (stop is None or index + len(chunk) < stop):
+                wanted = size if stop is None else min(size, stop - index)
+                n = 0
+                while n < wanted:
                     ok, image = capture.read()
                     if not ok:
                         break
-                    chunk.append(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-                if not chunk:
+                    if chunk is None:
+                        chunk = np.empty((size, *image.shape), np.uint8)
+                    chunk[n] = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    n += 1
+                if not n:
                     break
-                tensor = torch.from_numpy(np.stack(chunk)).permute(0, 3, 1, 2).contiguous()
+                tensor = torch.from_numpy(chunk[:n]).permute(0, 3, 1, 2)
                 found = detector.detect(tensor, data_type="tensor", batch_size=batch_size, progress_bar=False)
                 pieces.append(_rows(pd.DataFrame(found), index, landmarks, gaze))
-                index += len(chunk)
+                index += n
         finally:
             capture.release()
         pieces = [piece for piece in pieces if not piece.empty]

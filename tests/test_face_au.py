@@ -248,3 +248,33 @@ def test_openface_is_found_through_its_folder(tmp_path, monkeypatch):
         OpenFaceBackend().check_available()
     (tmp_path / "FaceLandmarkVidMulti.exe").write_bytes(b"")
     OpenFaceBackend().check_available()
+
+
+@pytest.mark.parametrize("batch_size, sizes", [(16, [64, 64, 12]), (100, [100, 40])])
+def test_pyfeat_gets_each_frame_once_in_chunks_of_at_least_a_batch(tmp_path, monkeypatch, batch_size, sizes):
+    torch = pytest.importorskip("torch")
+    import cv2
+
+    from macaw.extractors.video.face.backends import PyFeatBackend
+    from macaw.media.ffmpeg import run_ffmpeg
+
+    video = tmp_path / "room.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=64x48:r=25:d=7", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    capture = cv2.VideoCapture(str(video))
+    shown = [cv2.cvtColor(capture.read()[1], cv2.COLOR_BGR2RGB).mean() for _ in range(160)]
+    capture.release()
+    seen = []
+
+    class Detector:
+        def detect(self, tensor, *, data_type, batch_size, progress_bar):
+            assert tensor.shape[1:] == (3, 48, 64) and tensor.dtype == torch.uint8
+            seen.append(len(tensor))
+            means = tensor.double().mean(dim=(1, 2, 3)).numpy()
+            return pd.DataFrame({"frame": range(len(tensor)), "FaceRectX": 0.0, "FaceRectY": 0.0, "FaceRectWidth": 1.0,
+                                 "FaceRectHeight": 1.0, "FaceScore": 0.9, "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0, "AU01": means})
+
+    monkeypatch.setattr(PyFeatBackend, "detector", lambda self, model, device, gaze=False: Detector())
+    found = PyFeatBackend().infer(video, frames=(10, 150), device="cpu", model=None, batch_size=batch_size, landmarks=False)
+    assert seen == sizes
+    assert found["frame"].tolist() == list(range(10, 150))
+    assert np.allclose(found["AU01"], shown[10:150])
