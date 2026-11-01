@@ -120,7 +120,7 @@ class StandardSetExtractor(Extractor):
                 params={"feature_set": feature_set},
                 aggregation="mean",
                 comparable_across_backends=False,
-                validation="reference",
+                validation="against_reference",
             )
             for feature_set, columns in names.items()
             for name in columns
