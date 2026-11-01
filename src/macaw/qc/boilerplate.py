@@ -612,9 +612,14 @@ def _movement(config, spec, names) -> str:
 def _gaze(config, spec, names) -> str:
     from macaw.extractors.video.gaze.heads import HEAD_SCALE
 
+    settle = config.gaze.min_look_s
     people = (
         "mutual gaze was coded when two people looked at each other in the same frame. "
-        "Each run of frames with the same target was kept as one coded interval"
+        + (
+            f"A run of frames with one target lasting less than {settle:g} s took the target of the run before it (the first "
+            "run, that of the run after), and each remaining run was kept as one coded interval"
+            if settle > 0 else "Each run of frames with the same target was kept as one coded interval"
+        )
     )
     if spec.backend == "angles":
         cfg = config.gaze

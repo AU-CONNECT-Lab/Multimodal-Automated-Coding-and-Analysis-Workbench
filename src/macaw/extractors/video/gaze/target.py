@@ -70,7 +70,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "segment", "video")
@@ -123,6 +123,7 @@ class GazeTargetExtractor(Extractor):
             points, warnings = self._points(recording, backend, keypoints, views, by_name, span)
         else:
             points, warnings = self._angles(recording, views, by_name, span)
+        points = settle_looks(points, self.config.gaze.min_look_s)
         directory = workspace / self.name
         directory.mkdir(parents=True, exist_ok=True)
         points.to_parquet(directory / POINTS_NAME, index=False)
@@ -303,6 +304,9 @@ class GazeTargetExtractor(Extractor):
         else:
             rule = f"1 while subject_id looks within {cfg.tolerance_deg:g} deg of subject_id_b, nearer them than anyone else, else 0."
             params = {"tolerance_deg": cfg.tolerance_deg, "seats": {name: list(place) for name, place in cfg.seats.items()}}
+        if cfg.min_look_s > 0:
+            rule += f" A look at anyone or anything lasting less than {cfg.min_look_s:g} s joins the look before it."
+        params["min_look_s"] = cfg.min_look_s
         described = {
             **_LOOKER_SPECS, **_DISTANCE_SPECS, "looks_at": (rule, None, "mean"), "mutual_gaze": _MUTUAL_SPEC,
             **{name: (text, None, "mean") for name, text in _SUMMARY_SPECS.items()},
@@ -364,6 +368,43 @@ def name_objects(points: pd.DataFrame, things: pd.DataFrame, within_frames: int)
     chosen = candidates.sort_values("area").drop_duplicates("index")
     out.loc[chosen["index"].to_numpy(), "target"] = chosen["label"].to_numpy()
     return out
+
+
+def settle_looks(points: pd.DataFrame, min_look_s: float) -> pd.DataFrame:
+    """Within each person's unbroken frames, a run of one target shorter than min_look_s takes the target of the run
+    before it, the first run that of the run after; target_read keeps what each frame read."""
+    out = points.assign(target_read=points["target"])
+    if min_look_s <= 0 or out.empty:
+        return out
+    for _, mine in out.groupby("subject_id", sort=False):
+        mine = mine.sort_values("frame")
+        period = float(np.median(np.diff(mine["t"]))) if len(mine) > 1 else 0.0
+        if period <= 0:
+            continue
+        unbroken = (mine["frame"].diff() != 1).cumsum()
+        for _, part in mine.groupby(unbroken, sort=False):
+            # the small margin keeps a run of exactly min_look_s from counting as shorter through rounding
+            out.loc[part.index, "target"] = _settled(part["target"].tolist(), min_look_s / period - 1e-6)
+    return out
+
+
+def _settled(labels: list, min_frames: float) -> list:
+    pieces: list[list] = []
+    for label in labels:
+        if pieces and pieces[-1][0] == label:
+            pieces[-1][1] += 1
+        else:
+            pieces.append([label, 1])
+    kept: list[list] = []
+    for label, length in pieces:
+        if kept and (length < min_frames or kept[-1][0] == label):
+            kept[-1][1] += length
+        else:
+            kept.append([label, length])
+    if len(kept) > 1 and kept[0][1] < min_frames:
+        first = kept.pop(0)
+        kept[0][1] += first[1]
+    return [label for label, length in kept for _ in range(length)]
 
 
 def mutual_gaze(points: pd.DataFrame, a: str, b: str) -> pd.DataFrame:

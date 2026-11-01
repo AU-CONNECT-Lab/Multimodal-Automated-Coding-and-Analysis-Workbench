@@ -262,6 +262,7 @@ class GazeSection(_Section):
     object_score: float = Field(default=0.35, gt=0, lt=1)
     seats: dict[str, tuple[float, float, float]] = Field(default_factory=dict)
     tolerance_deg: float | None = Field(default=None, gt=0, lt=180)
+    min_look_s: float = Field(default=0.2, ge=0)
 
     @model_validator(mode="after")
     def _names(self) -> "GazeSection":

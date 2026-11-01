@@ -144,6 +144,7 @@ gaze:
   object_score: 0.35                 # 0-1; lower finds more things and more that are not there
   seats: {}                          # backend angles: each role's place and the camera's seen from above, [x, depth, eye height] in one unit, x to the camera's right and depth straight ahead of it, e.g. {camera: [0, 0, 110], parent: [-50, 120, 115], child: [30, 140, 85]}
   tolerance_deg: null                # deg; backend angles: a look within this of the direction to someone is a look at them; no default, as it depends on how far apart the people sit
+  min_look_s: 0.2                    # s; a look shorter than this joins the one before it (the first look, the one after), so a flicker of a frame or two is not counted as a look; 0 keeps every frame as read
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea

@@ -226,7 +226,9 @@ def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats(
     point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitl14_inout_childplay", in_frame_cut=0.5)
     text, used = render(describe(manifest(point), config(gaze={"targets": ["bottle", "book"]})), load_references())
     assert {"ryan2025", "tafasca2023", "liu2024"} <= set(used)
-    assert "## Gaze" in text and "bottle, book" in text and "at least 0.5" in text
+    assert "## Gaze" in text and "bottle, book" in text and "at least 0.5" in text and "less than 0.2 s" in text
+    every_frame, _ = render(describe(manifest(point), config(gaze={"min_look_s": 0})), load_references())
+    assert "less than" not in every_frame and "Each run of frames with the same target" in every_frame
     plain, used = render(describe(manifest(spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitb14_inout", in_frame_cut=0.5)), config()), load_references())
     assert "tafasca2023" not in used and "liu2024" not in used
     seats = {"camera": [0, 0, 100], "parent": [-50, 100, 110]}

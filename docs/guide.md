@@ -302,6 +302,8 @@ The results, for each person (`subject_id`) toward each other person (`subject_i
 `looks_at_share`, `looks_at_n`, `mutual_gaze_share`
 : For the whole recording: the share of the time one looked at the other, how many looks that was, and the share of mutual gaze.
 
+Read frame by frame, a look sometimes flickers to something else for a frame or two, and each flicker would count as a new look. So a look shorter than `gaze.min_look_s` (0.2 seconds) joins the look before it; set it to 0 to keep every frame as read. What each frame read before this stays in the step's `gaze_points.parquet`.
+
 `gaze_x`, `gaze_y`, `gaze_in_frame`
 : The point itself, in pixels, and how sure the model is that what the person looks at is in the picture (0 to 1; below 0.5 counts as outside it).
 

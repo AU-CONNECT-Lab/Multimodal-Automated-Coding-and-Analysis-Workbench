@@ -17,6 +17,7 @@ from macaw.extractors.video.gaze.target import (
     label_runs,
     mutual_gaze,
     name_targets,
+    settle_looks,
 )
 from macaw.project.recording import MediaFile
 from macaw.store.keypoints import write_keypoints
@@ -90,6 +91,32 @@ def test_mutual_gaze_needs_both_looking_at_each_other_in_the_same_frame():
     ])
     mutual = mutual_gaze(points, "child", "parent")
     assert mutual["mutual"].tolist() == [True] * 3 + [False] * 7
+
+
+class TestSettleLooks:
+    def looks(self, targets, frames=None):
+        frames = list(range(len(targets))) if frames is None else frames
+        return pd.DataFrame({"frame": frames, "subject_id": "parent", "t": [f / FPS for f in frames], "target": targets})
+
+    def test_a_flicker_joins_the_look_before_it_and_what_was_read_is_kept(self):
+        settled = settle_looks(self.looks(["child"] * 4 + [ELSEWHERE] + ["child"] * 4 + ["toy"] * 3), 0.2)
+        assert settled["target"].tolist() == ["child"] * 9 + ["toy"] * 3
+        assert settled["target_read"].tolist()[4] == ELSEWHERE
+
+    def test_a_short_first_look_takes_the_one_after_it(self):
+        assert settle_looks(self.looks(["toy"] + ["child"] * 4), 0.2)["target"].tolist() == ["child"] * 5
+
+    def test_a_look_exactly_as_long_as_the_shortest_stays(self):
+        targets = ["child"] * 3 + ["toy"] * 2 + ["child"] * 3
+        assert settle_looks(self.looks(targets), 0.2)["target"].tolist() == targets
+
+    def test_looks_on_either_side_of_a_gap_are_not_joined(self):
+        settled = settle_looks(self.looks(["child"] * 4 + ["toy"], frames=[0, 1, 2, 3, 7]), 0.2)
+        assert settled["target"].tolist() == ["child"] * 4 + ["toy"]
+
+    def test_zero_keeps_every_frame_as_read(self):
+        targets = ["child", ELSEWHERE, "child"]
+        assert settle_looks(self.looks(targets), 0)["target"].tolist() == targets
 
 
 def test_label_runs_join_consecutive_frames_and_break_at_a_gap():
