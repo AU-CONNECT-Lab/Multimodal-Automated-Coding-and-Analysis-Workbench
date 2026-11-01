@@ -147,6 +147,21 @@ class TestTrackQuality:
         keypoints = pd.concat([person("parent", centre=150.0, frames=frames), person("child", centre=450.0)])
         assert "missing_subject" not in reasons(check_track_quality(RECORDING, None, fake_results(keypoints)))
 
+    def test_leaving_one_camera_while_another_sees_them_is_not_missing(self):
+        room = person("parent", centre=150.0, frames=[*range(0, 30), *range(50, 60)])
+        side = person("parent", centre=150.0, frames=range(25, 55)).assign(video="side.mp4")
+        keypoints = pd.concat([room, side, person("child", centre=450.0)])
+        assert "missing_subject" not in reasons(check_track_quality(RECORDING, None, fake_results(keypoints)))
+
+    def test_with_two_cameras_a_person_neither_sees_is_missing(self):
+        room = person("parent", centre=150.0, frames=range(0, 20))
+        side = person("parent", centre=150.0, frames=range(45, 60)).assign(video="side.mp4")
+        keypoints = pd.concat([room, side, person("child", centre=450.0)])
+        flagged = check_track_quality(RECORDING, None, fake_results(keypoints)).candidates
+        flagged = flagged[flagged.reason == "missing_subject"]
+        assert len(flagged) == 1
+        assert (flagged.t_start.iloc[0], flagged.t_end.iloc[0]) == pytest.approx((19 / FPS, 45 / FPS))
+
     def test_absence_at_the_start_counts_too(self):
         keypoints = pd.concat([person("parent", centre=150.0, frames=range(30, 60)), person("child", centre=450.0)])
         flagged = check_track_quality(RECORDING, None, fake_results(keypoints)).candidates

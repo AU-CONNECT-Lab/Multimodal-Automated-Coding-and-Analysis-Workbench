@@ -354,14 +354,13 @@ def check_track_quality(recording: Recording, config: MacawConfig, results) -> C
     standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
     pieces = [_unassigned(rid, standard), _swaps(rid, results)]
     span = (float(keypoints["t"].min()), float(keypoints["t"].max()))
-    # frame numbers are each camera's own, so each person is checked per camera they are on
+    # with several cameras, leaving one camera's view is ordinary; a person is missing only when none sees them
+    for subject_id, person in standard.groupby("subject_id", dropna=True, observed=True):
+        pieces.append(_missing(rid, str(subject_id), person, span))
+    # frame numbers are each camera's own, so the rest is checked per camera a person is on
     for (subject_id, _), person in standard.groupby(["subject_id", "video"], dropna=True, observed=True):
         subject_id = str(subject_id)
-        pieces += [
-            _missing(rid, subject_id, person, span),
-            _low_confidence(rid, subject_id, person),
-            _bone_stretch(rid, subject_id, person),
-        ]
+        pieces += [_low_confidence(rid, subject_id, person), _bone_stretch(rid, subject_id, person)]
     candidates = _concat_candidates(pieces)
     return CheckResult(warnings=_summary("track_quality", rid, candidates), candidates=candidates)
 
