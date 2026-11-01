@@ -77,12 +77,26 @@ def make_board(board_cfg):
     )
 
 
+def describe_board(board_cfg) -> str:
+    """The board as a calibration's metadata names it, so a later change of pose3d.board shows."""
+    return (
+        f"ChArUco {board_cfg.squares_x}x{board_cfg.squares_y}, squares {board_cfg.square_mm:g} mm, "
+        f"markers {board_cfg.marker_mm:g} mm, {board_cfg.dictionary}"
+    )
+
+
+def fits_on(board_cfg, paper: str) -> bool:
+    page_w, page_h = PAPERS_MM[paper]
+    board_w, board_h = board_cfg.squares_x * board_cfg.square_mm, board_cfg.squares_y * board_cfg.square_mm
+    return board_w + 2 * _PAGE_MARGIN_MM <= page_w and board_h + 2 * _PAGE_MARGIN_MM + _CAPTION_MM <= page_h
+
+
 def board_page(board_cfg, paper: str) -> np.ndarray:
     """The board at its true size on a page, to print at PRINT_DPI and 100%."""
     cv2 = _cv2()
     page_w, page_h = PAPERS_MM[paper]
     board_w, board_h = board_cfg.squares_x * board_cfg.square_mm, board_cfg.squares_y * board_cfg.square_mm
-    if board_w + 2 * _PAGE_MARGIN_MM > page_w or board_h + 2 * _PAGE_MARGIN_MM + _CAPTION_MM > page_h:
+    if not fits_on(board_cfg, paper):
         raise MacawError(
             f"a {board_cfg.squares_x} x {board_cfg.squares_y} board of {board_cfg.square_mm:g} mm squares is "
             f"{board_w:g} x {board_h:g} mm and does not fit on {paper}; choose a bigger paper or smaller squares"

@@ -41,7 +41,7 @@ def calibrate_cameras(
 ) -> None:
     """Find each camera's lens and where the cameras stand from a ChArUco board filmed by all of them at once;
     writes the calibration pose3d.calibration reads. Name each clip like its camera in the recordings."""
-    from macaw.extractors.video.pose.board import calibrate, find_board, make_board
+    from macaw.extractors.video.pose.board import calibrate, describe_board, find_board, make_board
     from macaw.extractors.video.pose.cameras import write_setup
 
     resolved = resolve_config(config)
@@ -60,13 +60,16 @@ def calibrate_cameras(
             width_factor=_width_factor(clip, resolved), end_s=until,
         ))
     fit = calibrate(found, board)
-    cfg = resolved.pose3d.board
     fit.setup.metadata.update(
         made_by="macaw calibrate-cameras", made_at=datetime.now().isoformat(timespec="seconds"),
-        board=f"ChArUco {cfg.squares_x}x{cfg.squares_y}, squares {cfg.square_mm:g} mm, markers {cfg.marker_mm:g} mm, {cfg.dictionary}",
+        board=describe_board(resolved.pose3d.board),
         error_px={name: round(value, 3) for name, value in fit.error_px.items()},
+        lens_error_px={name: round(value, 3) for name, value in fit.lens_error_px.items()},
+        views=dict(fit.views),
+        together={f"{a} and {b}": count for (a, b), count in fit.shared.items()},
         clips={names[clip]: clip.name for clip in clips},
         offsets_s={names[clip]: round(offsets[clip], 4) for clip in clips},
+        notes=[*notes, *fit.notes],
     )
     path = write_setup(fit.setup, layout_for(resolved).camera_setup_path(setup))
     for camera in fit.setup.cameras:

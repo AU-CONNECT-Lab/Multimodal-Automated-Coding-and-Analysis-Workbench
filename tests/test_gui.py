@@ -207,7 +207,107 @@ def test_every_step_is_listed_with_how_a_run_would_find_it(project):
 
 
 def test_pages_open_by_their_address():
-    assert [page_for(path) for path in ("/review", "/settings", "/", "/nowhere")] == ["review", "settings", "run", "run"]
+    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/", "/nowhere")] == ["review", "settings", "cameras", "run", "run"]
+
+
+def nav_style(project, name):
+    layout = build_layout(project.resolve()).to_plotly_json()
+    found = []
+
+    def walk(node):
+        if hasattr(node, "to_plotly_json"):
+            node = node.to_plotly_json()
+        if isinstance(node, dict):
+            if node.get("props", {}).get("id") == f"nav-{name}":
+                found.append(node["props"].get("style"))
+            for value in node.get("props", {}).values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    walk(layout)
+    assert len(found) == 1
+    return found[0]
+
+
+def test_the_cameras_tab_shows_only_where_two_cameras_film(project):
+    assert nav_style(project, "cameras") == {"display": "none"}
+    (project.parent / "raw" / "003" / "003_side.mp4").write_bytes(b"")
+    assert nav_style(project, "cameras") is None
+
+
+def calibrated(project, notes=(), together=40):
+    from macaw.extractors.video.pose.board import describe_board
+    from macaw.extractors.video.pose.cameras import CameraSetup, write_setup
+    from test_cameras import look_at
+
+    config = resolve_config(project)
+    folder = config.project.calibration_dir / "lab"
+    folder.mkdir(parents=True)
+    for name in ("room.mp4", "side.mp4"):
+        (folder / name).write_bytes(b"")
+    target = [500.0, 0.0, 2000.0]
+    cameras = [look_at("room", [0, 0, 0], target), look_at("side", [1500, 0, 500], target)]
+    metadata = {
+        "made_by": "macaw calibrate-cameras", "made_at": "2026-10-31T10:00:00", "board": describe_board(config.pose3d.board),
+        "error_px": {"room": 0.4, "side": 2.6}, "lens_error_px": {"room": 0.3, "side": 0.5}, "views": {"room": 120, "side": 98},
+        "together": {"room and side": together}, "notes": list(notes),
+    }
+    return write_setup(CameraSetup(cameras, "mm", metadata), layout_for(config).camera_setup_path("lab"))
+
+
+def test_a_setup_shows_each_camera_and_what_to_redo(project):
+    from macaw.interface.pages import cameras
+
+    config = resolve_config(project)
+    assert cameras.setups(config) == [] and "No setup yet" in text_of(cameras.setup_view(project, None))
+    (config.project.calibration_dir / "lab").mkdir(parents=True)
+    (config.project.calibration_dir / "lab" / "room.mp4").write_bytes(b"")
+    (config.project.calibration_dir / "lab" / "side.mp4").write_bytes(b"")
+    assert cameras.setups(config) == ["lab"]
+    waiting = text_of(cameras.setup_view(project, "lab"))
+    assert "not found yet" in waiting and "calibrate-cameras" in waiting
+    for clip in (config.project.calibration_dir / "lab").iterdir():
+        clip.unlink()
+    (config.project.calibration_dir / "lab").rmdir()
+
+    calibrated(project, notes=["side.mp4 has no sound"], together=8)
+    shown = text_of(cameras.setup_view(project, "lab"))
+    assert "Found on 2026-10-31T10:00:00" in shown and "side.mp4 has no sound" in shown
+    assert "up to 2.6 px" in shown and "8 (few: film more where both see it)" in shown
+    assert "1.50, 0.00, 0.50" in shown and "used by this project" not in shown
+    project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square_mm: 74.5\n", encoding="utf-8")
+    assert "pose3d.board differs now" in text_of(cameras.setup_view(project, "lab"))
+
+
+def test_the_cameras_are_drawn_where_they_stand(project):
+    from macaw.extractors.video.pose.cameras import read_setup
+    from macaw.interface.pages import cameras
+
+    figure = cameras.cameras_figure(read_setup(calibrated(project)), "lab")
+    shown = next(trace for trace in figure.data if trace.name == "cameras")
+    assert list(shown.text) == ["room", "side"] and list(shown.x) == pytest.approx([0.0, 1.5])
+
+
+def test_choosing_a_setup_writes_it_into_the_project(project):
+    from macaw.interface.pages import cameras
+
+    calibrated(project)
+    cameras.use_setup(project, "lab")
+    assert resolve_config(project).pose3d.calibration == "lab" and "# short project name" in project.read_text(encoding="utf-8")
+    assert "used by this project" in text_of(cameras.setup_view(project, "lab"))
+
+
+def test_the_board_says_which_paper_it_fits(project):
+    from macaw.interface.pages import cameras
+
+    shown = text_of(cameras.board_view(project))
+    assert "fits A2, A1." in shown and "--paper" in shown
+    drawn = resolve_config(project).project.calibration_dir / "board_A2.png"
+    drawn.parent.mkdir(parents=True)
+    drawn.write_bytes(b"png")
+    assert path_from_url(file_url(drawn).removeprefix("/files/"), resolve_config(project)) == drawn.resolve()
 
 
 def test_the_whole_workbench_lays_out(project):

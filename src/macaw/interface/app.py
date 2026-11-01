@@ -12,11 +12,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import results, review, run, settings
+from macaw.interface.pages import cameras, results, review, run, settings
 
-PAGES = (run, review, results, settings)
+PAGES = (run, review, results, cameras, settings)
 # the tabs along the top; settings is reached by the gear
-TABS = (run, review, results)
+TABS = (run, review, results, cameras)
 
 
 def create_app(config_path: Path) -> Dash:
@@ -43,7 +43,7 @@ def create_app(config_path: Path) -> Dash:
     return app
 
 
-def _header(title: str, subtitle: str):
+def _header(title: str, subtitle: str, *, with_cameras: bool = False):
     return html.Header(
         [
             html.Div(
@@ -63,7 +63,9 @@ def _header(title: str, subtitle: str):
             html.Nav(
                 [
                     dcc.Link([page.LABEL, *([html.Span(id="review-badge", className="badge")] if page is review else [])],
-                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}")
+                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}",
+                             # a project with one camera never needs it, so the tab stays out of the way
+                             style={"display": "none"} if page is cameras and not with_cameras else None)
                     for page in TABS
                 ],
                 className="tabs",
@@ -89,7 +91,7 @@ def build_layout(config_path: Path):
     return html.Div(
         [
             dcc.Location(id="url"),
-            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}"),
+            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}", with_cameras=cameras.wanted(config)),
             html.Main([html.Div(page.layout(config_path), id=f"page-{page.LABEL.lower()}", className="page") for page in PAGES]),
         ]
     )

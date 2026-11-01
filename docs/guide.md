@@ -74,7 +74,7 @@ macaw gui
 
 The first line creates a project folder with a settings file and a results folder. The last line opens the workbench. Next time, the last two lines are enough. If you prefer a browser tab to a window, use `macaw gui --browser`.
 
-The workbench has three pages along the top and a gear for the settings:
+The workbench has three pages along the top, a fourth for projects with several cameras, and a gear for the settings:
 
 Run
 : Choose recordings and steps, start a run and watch it.
@@ -84,6 +84,9 @@ Review
 
 Results
 : The quality page and every measure over time.
+
+Cameras
+: Only when two or more cameras film the same people: calibrating them for 3D ({ref}`three-d`).
 
 Settings (the gear)
 : Everything about the project.
@@ -399,7 +402,9 @@ This part has so far been checked on simulated cameras only.
 
 ### 1. Print the board
 
-`macaw calibration-board` writes a ChArUco board (a chessboard with small codes in its white squares) as `calibration/board_A2.png`. Print it at 100%, glue it flat on something stiff such as foam board, and measure one square with a ruler. Write that length in `project.yaml`:
+The workbench has a *Cameras* page for every step here; it appears once a recording has two or more videos, or a setup is in the `calibration` folder. Each button on it shows the command it runs.
+
+*Draw the board* on that page, or `macaw calibration-board`, writes a ChArUco board (a chessboard with small codes in its white squares) as `calibration/board_A2.png`. Print it at 100%, glue it flat on something stiff such as foam board, and measure one square with a ruler. Type that length on the page and save it, or write it in `project.yaml`:
 
 ```yaml
 pose3d:
@@ -419,7 +424,7 @@ With the cameras where they will stay, clap once in view of all of them, then mo
 macaw calibrate-cameras lab
 ```
 
-It reports, for each camera, how far the board's corners land from where the camera saw them (under 1 or 2 pixels is good) and where the camera stands. Then name the setup in `project.yaml`, or in a recording's own file when some sessions used another setup:
+or choose the setup on the *Cameras* page and press *Find the cameras*. It takes a few minutes and reports, for each camera, how far the board's corners land from where the camera saw them (under 1 or 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, drawn in 3D on the page. The page also says when a clip or the board's size changed since, so the cameras need finding again. Then press *Use for this project*, or name the setup in `project.yaml`, or in a recording's own file when some sessions used another setup:
 
 ```yaml
 pose3d:

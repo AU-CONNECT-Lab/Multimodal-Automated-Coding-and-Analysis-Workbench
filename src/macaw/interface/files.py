@@ -15,7 +15,8 @@ PREFIX = "/files/"
 
 def allowed_roots(config: MacawConfig) -> list[Path]:
     layout = layout_for(config, create=False)
-    return [root.resolve() for root in (layout.output_dir, layout.work_dir, Path(config.project.raw_dir))]
+    roots = (layout.output_dir, layout.work_dir, Path(config.project.raw_dir), Path(config.project.calibration_dir))
+    return [root.resolve() for root in roots]
 
 
 def file_url(path: Path) -> str:
