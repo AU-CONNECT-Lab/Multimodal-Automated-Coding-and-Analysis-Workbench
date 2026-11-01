@@ -515,7 +515,8 @@ def _kinematics_3d(config, spec, names) -> str:
     return (
         f"Each person's keypoints were placed in 3D from the {cameras}calibrated cameras that saw them by weighted linear "
         f"triangulation of the undistorted points [hartley2003], leaving a camera out of a point while its view missed the "
-        f"others' by more than {pose3d.max_reprojection_px:g} px. {calibrated} In 3D, wrist speed, acceleration and jerk "
+        f"others' by more than {pose3d.max_reprojection_px:g} px; no point was placed where the remaining views still "
+        f"missed each other by more, or where it fell behind a camera. {calibrated} In 3D, wrist speed, acceleration and jerk "
         f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964], together "
         "with the distance between the wrists, between two people's shoulder midpoints and between the midpoints of their "
         "ears, and the angle between where a person's head points, from the midpoint of the ears to the nose, and the "

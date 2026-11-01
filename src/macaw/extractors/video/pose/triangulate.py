@@ -65,7 +65,7 @@ def points_file(config, recording_id: str) -> Path:
 @register_extractor
 class TriangulationExtractor(Extractor):
     name = "pose.triangulate"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE

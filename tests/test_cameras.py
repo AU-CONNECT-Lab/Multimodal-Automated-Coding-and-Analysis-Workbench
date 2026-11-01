@@ -79,6 +79,21 @@ class TestTriangulate:
         found, used, _ = triangulate(cameras, pixels, np.ones((300, 3)), max_error_px=15)
         assert not used[:, 2].any() and np.abs(found - self.points).max() < 1e-6
 
+    def test_two_views_that_miss_each_other_place_nothing(self):
+        cameras = trio()[:2]
+        pixels = self.seen(cameras)
+        pixels[:150, 1] += 40.0
+        found, used, error = triangulate(cameras, pixels, np.ones((300, 2)), max_error_px=15)
+        assert np.isnan(found[:150]).all() and not used[:150].any() and np.isnan(error[:150]).all()
+        assert np.abs(found[150:] - self.points[150:]).max() < 1e-6
+
+    def test_a_point_behind_the_cameras_is_a_mismatch(self):
+        cameras = trio()
+        behind = np.array([[900.0, 0.0, -1500.0], [600.0, 100.0, -900.0]])
+        pixels = np.stack([camera.project(behind) for camera in cameras], axis=1)
+        found, used, _ = triangulate(cameras, pixels, np.ones((2, 3)), max_error_px=15)
+        assert np.isnan(found).all() and not used.any()
+
     def test_one_view_is_not_enough(self):
         cameras = trio()
         weights = np.zeros((300, 3))

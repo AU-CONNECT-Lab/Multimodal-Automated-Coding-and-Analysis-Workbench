@@ -149,8 +149,8 @@ def triangulate(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """pixels (N, V, 2) as seen by each camera, weights (N, V) with 0 where a camera has no point.
     Returns the room points (N, 3), the views kept (N, V) and the mean reprojection error in pixels (N,).
-    A point needs two views; with three or more, the view furthest off is dropped while it misses by
-    more than max_error_px."""
+    With three or more views, the view furthest off is dropped while it misses by more than max_error_px;
+    a point is placed only when two or more views remain within it and it lies in front of each."""
     normal = np.stack([camera.undistort(pixels[:, index]) for index, camera in enumerate(cameras)], axis=1)
     used = (weights > 0) & np.isfinite(normal).all(axis=-1)
     for _ in range(len(cameras) - 2):
@@ -176,7 +176,11 @@ def triangulate(
         used[chosen, drop[chosen]] = False
     points = _dlt(cameras, normal, np.where(used, weights, 0.0))
     errors = _reprojection_errors(cameras, points, pixels, used)
-    enough = used.sum(axis=1) >= 2
+    depth = np.stack([camera.to_camera(points)[:, 2] for camera in cameras], axis=1)
+    # two views that still miss each other cannot say which is wrong, and a point behind a camera that saw it is a mismatch
+    with np.errstate(invalid="ignore"):
+        agree = ~(np.where(used, errors, 0.0).max(axis=1) > max_error_px) & ~(used & ~(depth > 0)).any(axis=1)
+    enough = (used.sum(axis=1) >= 2) & agree
     points[~enough] = np.nan
     used[~enough] = False
     error = np.where(enough, np.where(used, errors, 0.0).sum(axis=1) / np.maximum(used.sum(axis=1), 1), np.nan)
