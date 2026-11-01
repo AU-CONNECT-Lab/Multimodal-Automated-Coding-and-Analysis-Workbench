@@ -107,28 +107,10 @@ class KinematicsExtractor(Extractor):
     requires = (PoseReviewGate.name,)
 
     def check_available(self) -> None:
-        roles = set(self.config.project.roles)
         for measure in self.config.kinematics.measures:
-            where = f"kinematics.measures {measure.name}"
             if measure.name in {**_SUBJECT_SPECS, **_PAIR_SPECS}:
-                raise ConfigError(f"{where}: pose.kinematics already has a feature of that name; choose another")
-            if measure.person not in roles or (measure.to_person not in roles and measure.to_person != SELF):
-                raise ConfigError(
-                    f"{where}: person and to_person name a role in project.roles ({', '.join(sorted(roles))}); "
-                    f"to_person may also be {SELF}"
-                )
-            if measure.method in BUILTIN_MEASURES:
-                _check_joints(where, measure)
-            elif "." in measure.method:
-                try:
-                    script_function(self.config.project.scripts_dir, measure.method)
-                except ConfigError as error:
-                    raise ConfigError(f"{where}: {error}") from None
-            else:
-                raise ConfigError(
-                    f"{where}: method is {', '.join(BUILTIN_MEASURES)}, or file.function for a function "
-                    f"in {self.config.project.scripts_dir}"
-                )
+                raise ConfigError(f"kinematics.measures {measure.name}: pose.kinematics already has a feature of that name; choose another")
+        check_measures(self.config)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         scripts = [
@@ -273,6 +255,29 @@ class KinematicsExtractor(Extractor):
             severity=severity,
             message=message,
         )
+
+
+def check_measures(config) -> None:
+    roles = set(config.project.roles)
+    for measure in config.kinematics.measures:
+        where = f"kinematics.measures {measure.name}"
+        if measure.person not in roles or (measure.to_person not in roles and measure.to_person != SELF):
+            raise ConfigError(
+                f"{where}: person and to_person name a role in project.roles ({', '.join(sorted(roles))}); "
+                f"to_person may also be {SELF}"
+            )
+        if measure.method in BUILTIN_MEASURES:
+            _check_joints(where, measure)
+        elif "." in measure.method:
+            try:
+                script_function(config.project.scripts_dir, measure.method)
+            except ConfigError as error:
+                raise ConfigError(f"{where}: {error}") from None
+        else:
+            raise ConfigError(
+                f"{where}: method is {', '.join(BUILTIN_MEASURES)}, or file.function for a function "
+                f"in {config.project.scripts_dir}"
+            )
 
 
 def keypoints_by_subject(config, recording: Recording) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
@@ -505,9 +510,13 @@ def _offset_toward(kp_a, joint, kp_b, to_joint, frames) -> np.ndarray:
 
 
 def _script_values(reference: str, function, kp_a, kp_b, frames) -> np.ndarray:
-    values = np.asarray(function(_skeleton_table(kp_a, frames), _skeleton_table(kp_b, frames)), dtype=float).reshape(-1)
-    if len(values) != len(frames):
-        raise SchemaViolationError(f"{reference} returned {len(values)} values for {len(frames)} rows; give one per row")
+    return call_script(reference, function, _skeleton_table(kp_a, frames), _skeleton_table(kp_b, frames))
+
+
+def call_script(reference: str, function, table_a: pd.DataFrame, table_b: pd.DataFrame) -> np.ndarray:
+    values = np.asarray(function(table_a, table_b), dtype=float).reshape(-1)
+    if len(values) != len(table_a):
+        raise SchemaViolationError(f"{reference} returned {len(values)} values for {len(table_a)} rows; give one per row")
     return values
 
 
@@ -533,10 +542,14 @@ def _check_joints(where: str, measure) -> None:
         raise ConfigError(f"{where}: offset_toward takes one joint and one to_joint")
 
 
-def measure_spec(measure) -> tuple[str, str | None, bool]:
-    who = f"{measure.person}'s {', '.join(measure.joints)}"
+def measure_ends(measure) -> tuple[str, str]:
+    """How a description names the measure's points: whose joints, and toward whose."""
     owner = "their own" if measure.to_person == SELF else f"{measure.to_person}'s"
-    target = f"{owner} {', '.join(measure.to_joints)}"
+    return f"{measure.person}'s {', '.join(measure.joints)}", f"{owner} {', '.join(measure.to_joints)}"
+
+
+def measure_spec(measure) -> tuple[str, str | None, bool]:
+    who, target = measure_ends(measure)
     if measure.method == "distance":
         text, unit = f"Distance from {who} to {target}, the nearest pair where several are listed.", "{length}"
     elif measure.method == "approach_speed":

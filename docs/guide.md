@@ -338,6 +338,8 @@ def wrist_height_gap(person, other):
       method: my_measures.wrist_height_gap
 ```
 
+With several calibrated cameras ({ref}`three-d`), add `in_3d: true` to a measure whose function also makes sense on points in the room. It is then run a second time on tables that also have `<joint>_z`, with every position in metres, and gives `wrist_height_gap_3d`. Without it, a function written for the picture is not run in 3D.
+
 When you change the file, the next run recomputes this measure. The `scripts` folder can also hold whole new steps or backends: `macaw new-extractor` and `macaw new-backend` write a working example, and copying its `extractor.py` or `backend.py` into `scripts` is enough, with nothing to install.
 
 :::{warning}
@@ -427,5 +429,8 @@ Run as usual. Each person must carry the same name on every camera (see *Who is 
 
 `head_toward_deg_3d`
 : The angle between where a person's head points and the direction to the other person's head; 0 means the head points straight at them. This is head direction, not gaze.
+
+`<name>_3d`
+: Your own measures ({ref}`measures`) in the room. `distance`, `approach_speed` and `offset_toward` always get one; a method of your own only with `in_3d: true`. In 3D, `offset_toward` is how far the point sits from the shoulder midpoint in the direction of the other point, depth included. Two people are measured whenever both are placed in 3D, not only when one camera shows them both.
 
 On the Results page, *In 3D* shows everyone's skeleton and the cameras; drag to turn it and move the slider to go through the recording. The quality page says, for each person, how often they were placed in 3D, how well the cameras agree on them, and warns when a bone keeps changing length, which means some of its points were misplaced.

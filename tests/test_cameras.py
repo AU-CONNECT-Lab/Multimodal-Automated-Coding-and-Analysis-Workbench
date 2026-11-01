@@ -355,6 +355,66 @@ class TestSteps:
         assert units["left_wrist_speed_3d"] == "m/s" and units["head_toward_deg_3d"] == "deg"
 
 
+OWN_MEASURES = """kinematics:
+  measures:
+    - {name: hand_to_head, person: parent, joints: [left_wrist, right_wrist], to_person: child, to_joints: [nose]}
+    - {name: closing, person: parent, joints: [nose], to_person: child, to_joints: [nose], method: approach_speed}
+    - {name: lean, person: parent, joints: [nose], to_person: child, to_joints: [nose], method: offset_toward, per_body_size: true}
+    - {name: depth, person: parent, to_person: child, method: mine.depth, in_3d: true}
+    - {name: flat, person: parent, to_person: self, method: mine.flat}
+"""
+
+
+def test_the_projects_own_measures_have_3d_versions(seated, project, tmp_path):
+    from macaw.project.manifest import FeatureManifest
+    from macaw.qc.boilerplate import describe, load_references, render
+
+    (project.parent / "scripts").mkdir()
+    (project.parent / "scripts" / "mine.py").write_text(
+        "def depth(person, other):\n    return other['nose_z'] - person['nose_y']\n\n\ndef flat(person, other):\n    return person['nose_x']\n",
+        encoding="utf-8",
+    )
+    settings(project, OWN_MEASURES)
+    config = resolve_config(project)
+    placed = TriangulationExtractor(config).run(build_recording("003", config), tmp_path).keypoints
+    write_keypoints(placed, points_file(config, "003").parent)
+    step = Kinematics3DExtractor(config)
+    step.check_available()
+    result = step.run(build_recording("003", config), tmp_path)
+    validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+    rows = result.rows
+
+    def values(feature):
+        return rows[rows.feature == feature]["value"].to_numpy(dtype=float)
+
+    parent, child = seated.people["parent"], seated.people["child"]
+    nearest = np.minimum(*(np.linalg.norm(parent[wrist] - child["nose"], axis=1) for wrist in ("left_wrist", "right_wrist"))) / 1000.0
+    assert np.allclose(values("hand_to_head_3d"), nearest, atol=1e-6)
+    assert np.nanmax(np.abs(values("closing_3d"))) < 1e-6
+    centre = (parent["left_shoulder"][0] + parent["right_shoulder"][0]) / 2
+    toward = child["nose"][0] - centre
+    lean = (parent["nose"][0] - centre) @ toward / np.linalg.norm(toward) / np.linalg.norm(parent["left_shoulder"][0] - parent["right_shoulder"][0])
+    assert np.allclose(values("lean_3d"), lean, atol=1e-6)
+    assert np.allclose(values("depth_3d"), child["nose"][0, 2] / 1000.0 - parent["nose"][0, 1] / 1000.0, atol=1e-6)
+    assert "flat_3d" not in set(rows.feature)
+    assert set(rows[rows.feature == "hand_to_head_3d"].subject_id_b) == {"child"}
+    units = {spec.name: spec.unit for spec in result.specs}
+    assert (units["hand_to_head_3d"], units["closing_3d"], units["lean_3d"], units["depth_3d"]) == ("m", "m/s", None, None)
+
+    manifest = FeatureManifest()
+    for spec in result.specs:
+        manifest.add(spec)
+    text, _ = render(describe(manifest, config), load_references())
+    assert "hand_to_head_3d: Distance in the room from parent's left_wrist, right_wrist to child's nose" in text
+    assert "flat_3d" not in text
+
+
+def test_a_3d_version_may_not_take_a_name_in_use(seated, project):
+    settings(project, "kinematics:\n  measures:\n    - {name: head_distance, person: parent, joints: [nose], to_person: child, to_joints: [nose]}\n")
+    with pytest.raises(ConfigError, match="head_distance_3d"):
+        Kinematics3DExtractor(resolve_config(project)).check_available()
+
+
 def test_a_stretching_bone_shows_in_its_spread():
     frames = 40
     rows = []

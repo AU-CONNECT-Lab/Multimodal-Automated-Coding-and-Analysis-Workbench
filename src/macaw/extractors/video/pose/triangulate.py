@@ -14,12 +14,23 @@ from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
 from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, Camera, read_setup, triangulate
 from macaw.extractors.video.pose.keypoints import PoseReviewGate
-from macaw.extractors.video.pose.kinematics import POLYORDER, _keypoints_file, _smoothed_derivative
+from macaw.extractors.video.pose.kinematics import (
+    _CENTRES,
+    BUILTIN_MEASURES,
+    POLYORDER,
+    SELF,
+    _keypoints_file,
+    _smoothed_derivative,
+    call_script,
+    check_measures,
+    measure_ends,
+)
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording, media_label
 from macaw.project.scale import picture_size
+from macaw.project_scripts import script_function, script_path
 from macaw.store import keypoints as keypoints_store
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, UNITS_METRE, Scale, coerce_frame, empty_frame
@@ -260,14 +271,19 @@ _PAIR_SPECS: dict[str, tuple[str, str]] = {
 }
 
 
+def measures_3d(config) -> list:
+    """The project's own measures that also run in 3D: every built-in one, and scripts marked in_3d."""
+    return [measure for measure in config.kinematics.measures if measure.method in BUILTIN_MEASURES or measure.in_3d]
+
+
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s",)
+    config_sections = ("kinematics.smoothing_s", "kinematics.measures")
     requires = (TriangulationExtractor.name,)
 
     @classmethod
@@ -275,10 +291,22 @@ class Kinematics3DExtractor(Extractor):
         return config.pose3d.calibration is not None
 
     def check_available(self) -> None:
-        return None
+        taken = {*_SUBJECT_SPECS, *_PAIR_SPECS} | {measure.name for measure in self.config.kinematics.measures}
+        for measure in measures_3d(self.config):
+            if f"{measure.name}_3d" in taken:
+                raise ConfigError(
+                    f"kinematics.measures {measure.name}: its 3D version would be called {measure.name}_3d, which another "
+                    "feature already is; choose another name"
+                )
+        check_measures(self.config)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return [points_file(self.config, recording.recording_id)]
+        scripts = [
+            script_path(self.config.project.scripts_dir, measure.method)
+            for measure in measures_3d(self.config)
+            if measure.method not in BUILTIN_MEASURES
+        ]
+        return [points_file(self.config, recording.recording_id), *scripts]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         smoothing_s = self.config.kinematics.smoothing_s
@@ -292,18 +320,37 @@ class Kinematics3DExtractor(Extractor):
         for a, b in permutations(sorted(people), 2):
             values = pair_values_3d(people[a], people[b], symmetric=a < b)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common))
+        for measure in measures_3d(self.config):
+            frames += self._measure_rows(measure, recording, people, common)
         rows = concat_long_tables(frames)
         return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"]) if not rows.empty else set(), smoothing_s))
 
+    def _measure_rows(self, measure, recording: Recording, people: dict[str, pd.DataFrame], common: dict) -> list[pd.DataFrame]:
+        function = None if measure.method in BUILTIN_MEASURES else script_function(self.config.project.scripts_dir, measure.method)
+        # unlike in the picture, two people placed in the room can always be measured against each other
+        placed = [subject for subject in recording.subjects if subject.subject_id in people]
+        rows = []
+        for a in [subject.subject_id for subject in placed if subject.role == measure.person]:
+            others = [a] if measure.to_person == SELF else [
+                subject.subject_id for subject in placed if subject.role == measure.to_person and subject.subject_id != a
+            ]
+            for b in others:
+                values = measure_values_3d(measure, people[a], people[b], smoothing_s=self.config.kinematics.smoothing_s, function=function)
+                rows.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common))
+        return rows
+
     def _specs(self, emitted: set[str], smoothing_s: float) -> list[FeatureSpec]:
         params = {"joint_set": JOINT_SET, "smoothing_s": smoothing_s, "polyorder": POLYORDER}
+        catalog = {name: (description, unit, True, params) for name, (description, unit) in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        for measure in measures_3d(self.config):
+            catalog[f"{measure.name}_3d"] = (*measure_spec_3d(measure), {**params, **measure.model_dump()})
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
-                extractor_version=self.version, params=params, interpolation="none", aggregation="mean",
-                comparable_across_subjects=True, comparable_across_backends=False, validation="synthetic",
+                extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
+                comparable_across_subjects=comparable, comparable_across_backends=False, validation="synthetic",
             )
-            for name, (description, unit) in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()
+            for name, (description, unit, comparable, spec_params) in catalog.items()
             if name in emitted
         ]
 
@@ -328,12 +375,17 @@ def _part(found: dict[str, np.ndarray], *joints: str) -> np.ndarray | None:
     return np.mean([found[joint] for joint in joints], axis=0)
 
 
+def _step(frames: np.ndarray, times: np.ndarray) -> float:
+    """Seconds per frame; 0 with a single frame, which leaves every derivative empty."""
+    return float(np.median(np.diff(times) / np.diff(frames))) if len(frames) > 1 else 0.0
+
+
 def subject_values_3d(points: pd.DataFrame, smoothing_s: float) -> pd.DataFrame:
     frames, times, found = _joints(points)
     values = pd.DataFrame({"t_start": times.to_numpy(dtype=float)})
     if "left_wrist" in found and "right_wrist" in found:
         values["hand_distance_3d"] = np.linalg.norm(found["left_wrist"] - found["right_wrist"], axis=1)
-    step = float(np.median(np.diff(times.to_numpy(dtype=float)) / np.diff(frames))) if len(frames) > 1 else 0.0
+    step = _step(frames, times.to_numpy(dtype=float))
     for wrist in _WRISTS:
         if wrist not in found:
             continue
@@ -364,3 +416,69 @@ def pair_values_3d(points_a: pd.DataFrame, points_b: pd.DataFrame, *, symmetric:
             cosine = np.sum(facing * toward, axis=1) / (np.linalg.norm(facing, axis=1) * np.linalg.norm(toward, axis=1))
         values["head_toward_deg_3d"] = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
     return values
+
+
+def measure_values_3d(measure, points_a: pd.DataFrame, points_b: pd.DataFrame, *, smoothing_s: float, function=None) -> pd.DataFrame:
+    """A project measure on the frames both people were placed on; function stands in for a script method."""
+    frames_a, times_a, found_a = _joints(points_a)
+    frames_b, _, found_b = _joints(points_b)
+    frames, in_a, in_b = np.intersect1d(frames_a, frames_b, return_indices=True)
+    times = times_a.to_numpy(dtype=float)[in_a]
+    a = {joint: xyz[in_a] for joint, xyz in found_a.items()}
+    b = {joint: xyz[in_b] for joint, xyz in found_b.items()}
+    if function is not None:
+        values = call_script(measure.method, function, _skeleton_table_3d(a, frames, times), _skeleton_table_3d(b, frames, times))
+    elif measure.method == "offset_toward":
+        own, centre, target = _at(a, measure.joints[0], len(frames)), _at(a, "shoulder_center", len(frames)), _at(b, measure.to_joints[0], len(frames))
+        toward = target - centre
+        with np.errstate(invalid="ignore", divide="ignore"):
+            values = np.sum((own - centre) * toward, axis=1) / np.linalg.norm(toward, axis=1)
+    else:
+        ends = np.stack([_at(a, joint, len(frames)) for joint in measure.joints], axis=1)[:, :, None, :]
+        targets = np.stack([_at(b, joint, len(frames)) for joint in measure.to_joints], axis=1)[:, None, :, :]
+        values = np.fmin.reduce(np.linalg.norm(ends - targets, axis=-1).reshape(len(frames), -1), axis=1)
+        if measure.method == "approach_speed":
+            values = -_smoothed_derivative(values[:, None], frames, _step(frames, times), smoothing_s, 1)[:, 0]
+    if measure.per_body_size:
+        values = values / _shoulder_width(found_a)
+    return pd.DataFrame({"t_start": times, f"{measure.name}_3d": values})
+
+
+def _at(found: dict[str, np.ndarray], joint: str, n: int) -> np.ndarray:
+    """A joint or a centre the measures may name, NaN throughout when it was never placed."""
+    point = _part(found, *_CENTRES.get(joint, (joint,)))
+    return np.full((n, 3), np.nan) if point is None else point
+
+
+def _shoulder_width(found: dict[str, np.ndarray]) -> float:
+    # in the room a shoulder width does not shrink as the person turns, so its median is their size
+    if "left_shoulder" not in found or "right_shoulder" not in found:
+        return float("nan")
+    width = np.linalg.norm(found["left_shoulder"] - found["right_shoulder"], axis=1)
+    return float(np.nanmedian(width)) if np.isfinite(width).any() else float("nan")
+
+
+def _skeleton_table_3d(found: dict[str, np.ndarray], frames: np.ndarray, times: np.ndarray) -> pd.DataFrame:
+    """What a script measure gets per person in 3D: t and each joint's x, y and z in metres."""
+    columns = {"t": times}
+    for joint in STANDARD_JOINTS:
+        xyz = found.get(joint, np.full((len(frames), 3), np.nan))
+        columns.update({f"{joint}_{axis}": xyz[:, index] for index, axis in enumerate("xyz")})
+    return pd.DataFrame(columns, index=pd.Index(frames, name="frame"))
+
+
+def measure_spec_3d(measure) -> tuple[str, str | None, bool]:
+    """(description, unit, comparable across subjects) of a project measure's 3D version."""
+    if measure.method not in BUILTIN_MEASURES:
+        return f"Computed by the project script {measure.method} on the points in the room.", None, False
+    who, target = measure_ends(measure)
+    if measure.method == "distance":
+        text, unit = f"Distance in the room from {who} to {target}, the nearest pair where several are listed.", "m"
+    elif measure.method == "approach_speed":
+        text, unit = f"Rate at which the distance in the room from {who} to {target} shrinks; positive while closing in.", "m/s"
+    else:
+        text, unit = f"How far {who} sits from their own shoulder midpoint in the direction of {target}; negative when away from it.", "m"
+    if measure.per_body_size:
+        text += f" In units of {measure.person}'s shoulder width."
+        unit = "1/s" if unit == "m/s" else None
+    return text, unit, True

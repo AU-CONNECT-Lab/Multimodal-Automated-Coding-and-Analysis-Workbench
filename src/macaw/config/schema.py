@@ -153,6 +153,8 @@ class MeasureSection(_Section):
     # a built-in name, or file.function from project.scripts_dir
     method: str = "distance"
     per_body_size: bool = False
+    # with 3D, a script method runs on the points in the room too; built-in methods always do
+    in_3d: bool = False
 
 
 class GestureSection(_Section):

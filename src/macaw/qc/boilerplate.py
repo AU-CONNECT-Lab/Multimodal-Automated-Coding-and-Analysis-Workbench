@@ -509,7 +509,17 @@ def _kinematics_3d(config, spec, names) -> str:
         "with the distance between the wrists, between two people's shoulder midpoints and between the midpoints of their "
         "ears, and the angle between where a person's head points, from the midpoint of the ears to the nose, and the "
         "direction to the other person's head."
-    )
+    ) + _measures_3d(config)
+
+
+def _measures_3d(config) -> str:
+    from macaw.extractors.video.pose.triangulate import measure_spec_3d, measures_3d
+
+    measures = measures_3d(config)
+    if not measures:
+        return ""
+    described = [f"{measure.name}_3d: {measure_spec_3d(measure)[0].rstrip('.')}" for measure in measures]
+    return " Measures defined for this study were also derived in 3D (" + "; ".join(described) + ")."
 
 
 def _measures(measures) -> str:
