@@ -350,6 +350,17 @@ def test_a_form_edit_keeps_the_files_comments(project):
     assert project_file.check(project, edited).pose.backend == "yolo"
 
 
+def test_a_yes_or_no_setting_is_asked_as_one_and_written_back(project):
+    assert project_file.control("video.normalise") == {"kind": "yes_no"}
+    form = {key: project_file.to_form(key, value) for key, value in project_file.file_values(project).items()}
+    form["video.normalise"] = False
+    assert project_file.changes(project, form) == {"video.normalise": (True, False)}
+    edited = project_file.with_values(project.read_text(encoding="utf-8"), {"video.normalise": False})
+    assert project_file.check(project, edited).video.normalise is False
+    with pytest.raises(MacawError, match="video.normalise"):
+        project_file.check(project, project_file.with_values(edited, {"video.fps": 30.0}))
+
+
 def test_changes_compare_the_form_with_the_file(project):
     form = {key: project_file.to_form(key, value) for key, value in project_file.file_values(project).items()}
     assert project_file.changes(project, form) == {}

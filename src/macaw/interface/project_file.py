@@ -27,6 +27,9 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "project.name", "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern",
         "project.media_pattern", "project.n_subjects", "project.roles", "segment.task_start_s", "segment.task_end_s",
     )),
+    ("Video", "How the videos are brought to one frame rate and format before anything is measured on them.", (
+        "video.normalise", "video.fps", "video.quality", "video.encoder",
+    )),
     ("Steps", "What a run without a choice of steps runs, and how many recordings run at once.", (
         "pipeline.run", "execution.n_workers",
     )),
@@ -54,6 +57,10 @@ LABELS = {
     "project.roles": "Roles",
     "segment.task_start_s": "Task starts at (s)",
     "segment.task_end_s": "Task ends at (s)",
+    "video.normalise": "Bring videos to one format",
+    "video.fps": "One frame rate for all (fps)",
+    "video.quality": "Quality",
+    "video.encoder": "Encoder",
     "pipeline.run": "Steps to run",
     "execution.n_workers": "Recordings at once",
     "prosody.backend": "Voice measures",
@@ -146,8 +153,10 @@ def _strip_none(annotation) -> tuple[Any, bool]:
 
 
 def control(dotted: str) -> dict[str, Any]:
-    """How the form asks for a key: its kind (choice, multi, number, text, list), its options, and whether it may be empty."""
+    """How the form asks for a key: its kind (choice, multi, yes_no, number, text, list), its options, and whether it may be empty."""
     annotation, optional = _strip_none(_annotation(dotted))
+    if annotation is bool:
+        return {"kind": "yes_no"}
     if dotted in BACKEND_GROUPS:
         return {"kind": "choice", "options": list_backends(BACKEND_GROUPS[dotted]), "optional": optional}
     if dotted == "text.device":

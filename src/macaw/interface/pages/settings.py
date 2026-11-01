@@ -46,6 +46,8 @@ def _control(dotted: str, value):
             if item is not None and item not in options:
                 options.append(item)
         return dcc.Dropdown(options, shown, id=identity, multi=kind["kind"] == "multi", clearable=kind["kind"] == "multi" or kind.get("optional", False))
+    if kind["kind"] == "yes_no":
+        return dcc.Dropdown([{"label": "Yes", "value": True}, {"label": "No", "value": False}], shown, id=identity, clearable=False)
     if kind["kind"] == "number":
         return dcc.Input(id=identity, type="number", value=shown, step=1 if kind["integer"] else "any", debounce=True)
     return dcc.Input(id=identity, type="text", value=shown, debounce=True)
