@@ -336,6 +336,20 @@ class TestClean:
         runner.invoke(app, ["clean", "-c", str(project.config), "--all"], input="y\n")
         assert not recording_dir.exists()
 
+    def test_all_keeps_what_people_did_by_hand(self, project):
+        layout = make_layout(project.output, create=False)
+        made = [layout.voice_owners_path("003"), layout.imported_codes_path("003"), layout.reviewed_codes_path("003")]
+        computed = [layout.annotations_path("003") / "B.parquet", layout.long_table_path("003") / "part.parquet"]
+        for path in made + computed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+        result = runner.invoke(app, ["clean", "-c", str(project.config), "--all"], input="y\n")
+        assert result.exit_code == 0, result.output
+        assert all(path.is_file() for path in made)
+        assert not any(path.exists() for path in computed)
+        assert not layout.long_table_path("003").exists()
+        assert "annotations/imported.parquet in 1" in result.output
+
 
 class TestLogging:
     @pytest.mark.parametrize(

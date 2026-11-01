@@ -19,7 +19,7 @@ from macaw.coding.llm.backends import AnthropicBackend, OllamaBackend, OpenAIBac
 from macaw.coding.llm.judge import JudgementExtractor, aggregate_samples, coding_units, sample_labels
 from macaw.coding.llm.parsing import parse_annotation_response, repair_json
 from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
-from macaw.coding.review_queue import REVIEWED_NAME, apply_review, export_review, read_queue
+from macaw.coding.review_queue import apply_review, export_review, read_queue
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import CodingSection, LLMSection
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
@@ -400,10 +400,10 @@ class TestReview:
         assert result.exit_code == 0, result.output
         assert "r1: 1" in result.output
 
-        reviewed = pd.read_parquet(layout_for(project.resolved).annotations_path("r1") / REVIEWED_NAME)
+        reviewed = pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))
         assert reviewed[["annotator", "label", "t_start"]].values.tolist() == [["ann", "inform", 2.0]]
         assert export_review(project.resolved, ["r1"])["t_start"].tolist() == [4.0]
 
         # the same decision applied twice is still one row
         apply_review(project.resolved, queue)
-        assert len(pd.read_parquet(layout_for(project.resolved).annotations_path("r1") / REVIEWED_NAME)) == 1
+        assert len(pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))) == 1

@@ -131,6 +131,25 @@ class Layout:
     def imported_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "imported.parquet"
 
+    # beside the layer files, so a rerun of the model pass that rewrites B.parquet leaves people's decisions alone
+    def reviewed_codes_path(self, recording_id: str) -> Path:
+        return self.annotations_path(recording_id) / "reviewed.parquet"
+
+    def human_made(self, recording_id: str) -> list[Path]:
+        """What people did by hand in a recording's folder, which no rerun gives back."""
+        return [
+            self.offset_table_path(recording_id),  # offsets set or accepted by hand sit beside computed ones
+            self.camera_owners_path(recording_id),
+            self.camera_owners_accepted_path(recording_id),
+            self.voice_owners_path(recording_id),
+            self.gaze_labels_path(recording_id),
+            self.corrected_transcript_path(recording_id),
+            self.corrected_transcript_stamp_path(recording_id),
+            self.scale_path(recording_id),
+            self.imported_codes_path(recording_id),
+            self.reviewed_codes_path(recording_id),
+        ]
+
     def artifacts_dir(self, recording_id: str, extractor: str) -> Path:
         return self.recording_dir(recording_id) / "artifacts" / extractor
 

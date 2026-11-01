@@ -187,7 +187,6 @@ def test_min_max_keeps_the_extremes_of_every_run():
 
 def test_the_review_page_lists_uncertain_speech_acts_and_saves_a_pick(project):
     from macaw.coding.codebook import Codebook, CodeDefinition, write_codebook
-    from macaw.coding.review_queue import REVIEWED_NAME
     from macaw.store.annotations import write_annotations
     from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame
 
@@ -215,7 +214,7 @@ def test_the_review_page_lists_uncertain_speech_acts_and_saves_a_pick(project):
     path = review.review_file(project, "003", "ann", {"parent|1.000|acts": "tell"})
     code, text = cli_bridge.run_now(["macaw", "review", "-c", str(project), "--apply", str(path)])
     assert code == 0, text
-    reviewed = pd.read_parquet(layout_for(config).annotations_path("003") / REVIEWED_NAME)
+    reviewed = pd.read_parquet(layout_for(config).reviewed_codes_path("003"))
     assert reviewed[["annotator", "label", "t_start"]].values.tolist() == [["ann", "tell", 1.0]]
     assert "No coded unit is waiting" in text_of(review.body(project, "003"))
 

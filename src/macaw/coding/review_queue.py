@@ -200,9 +200,7 @@ def _counts(values: pd.Series) -> dict[str, int]:
     return {str(name): int(count) for name, count in counted.items()}
 
 
-# beside the layer files, so a rerun of the model pass that rewrites B.parquet leaves people's decisions alone
-REVIEWED_NAME = "reviewed.parquet"
-_UNIT = ["recording_id", "subject_id", "tier", "t_start", "t_end"]
+_UNIT =["recording_id", "subject_id", "tier", "t_start", "t_end"]
 
 
 def _unit_keys(frame: pd.DataFrame) -> pd.Series:
@@ -221,7 +219,7 @@ def export_review(config, recording_ids: list[str]) -> pd.DataFrame:
     layout = layout_for(config, create=False)
     decided = [
         _io.read_file(path, ANNOTATION_SCHEMA, "annotations")
-        for path in (layout.annotations_path(recording_id) / REVIEWED_NAME for recording_id in recording_ids)
+        for path in (layout.reviewed_codes_path(recording_id) for recording_id in recording_ids)
         if path.is_file()
     ]
     if decided:
@@ -241,7 +239,7 @@ def apply_review(config, queue: pd.DataFrame) -> dict[str, int]:
         directory = layout.annotations_path(str(recording_id))
         present = directory.is_dir() and any(directory.glob("*.parquet"))
         annotations = _io.read_partitioned(directory, ANNOTATION_SCHEMA, "annotations") if present else empty_frame(ANNOTATION_SCHEMA)
-        target = directory / REVIEWED_NAME
+        target = layout.reviewed_codes_path(str(recording_id))
         earlier = _io.read_file(target, ANNOTATION_SCHEMA, "annotations") if target.is_file() else empty_frame(ANNOTATION_SCHEMA)
         annotations = annotations[~_keys(annotations).isin(set(_keys(earlier))).to_numpy()].reset_index(drop=True)
         merged = apply_decisions(annotations, decisions)

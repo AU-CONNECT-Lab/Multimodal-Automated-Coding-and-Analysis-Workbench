@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from collections import Counter
 from pathlib import Path
 
 import typer
@@ -223,7 +224,9 @@ def list_registered(
 def clean(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     extractor: str = typer.Option(None, "--extractor", "-e"),
-    cache_only: bool = typer.Option(True, "--cache-only/--all"),
+    cache_only: bool = typer.Option(
+        True, "--cache-only/--all", help="--all also deletes the computed output, keeping what people did by hand."
+    ),
     output_dir: Path = typer.Option(None, "--output", "-o", help="Also read from $MACAW_OUTPUT_DIR."),
     work_dir: Path = typer.Option(
         None, "--work", "-w", help="Where the cache is. Also read from $MACAW_WORK_DIR."
@@ -249,11 +252,32 @@ def clean(
     if not targets:
         return
     typer.confirm(
-        f"--all also deletes the folders of {len(targets)} recordings under {layout.output_dir}: the computed "
-        "output and what people did there by hand (accepted offsets and cameras, measured scales, labelled "
-        "frames, corrected transcripts, review decisions, imported coding). Continue?",
+        f"--all also deletes the computed output in the folders of {len(targets)} recordings under "
+        f"{layout.output_dir}. What people did there by hand stays: offsets, voices and cameras named or "
+        "accepted, measured scales, labelled frames, corrected transcripts, review decisions and imported "
+        "coding. Continue?",
         abort=True,
     )
+    kept: Counter[str] = Counter()
     for path in targets:
-        shutil.rmtree(path)
-    typer.echo(f"recording directories removed {len(targets)}")
+        made = {item for item in layout.human_made(path.name) if item.is_file()}
+        _remove_all_but(path, made)
+        kept.update(item.relative_to(path).as_posix() for item in made)
+    typer.echo(f"computed output removed from {len(targets)} recording folders")
+    if kept:
+        typer.echo("kept, made by hand: " + ", ".join(f"{name} in {count}" for name, count in sorted(kept.items())))
+        typer.echo("to remove those too, delete the folders yourself")
+
+
+def _remove_all_but(folder: Path, keep: set[Path]) -> None:
+    for path in folder.iterdir():
+        if path in keep:
+            continue
+        if path.is_dir() and any(path in item.parents for item in keep):
+            _remove_all_but(path, keep)
+        elif path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    if not any(folder.iterdir()):
+        folder.rmdir()
