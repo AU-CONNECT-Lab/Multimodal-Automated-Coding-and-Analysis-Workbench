@@ -118,7 +118,7 @@ Coding
 : The codebook and the language model. Only needed for {ref}`coding with a language model <coding>`.
 
 :::{tip}
-Does the task start at a different time in each recording? Each recording can have its own start and end. Put them in a small file named after the recording, such as `dyad01.yaml`, in the `recordings` folder inside the project.
+Does the task start at a different time in each recording? Each recording can have its own start and end. Put them in a small file named after the recording, such as `dyad01.yaml`, in the `recordings` folder inside the project. Such a file can change other settings too, except ones that add a step for that recording alone, such as the things people look at: those go in `project.yaml`, and a run says so.
 :::
 
 ## 4. Run

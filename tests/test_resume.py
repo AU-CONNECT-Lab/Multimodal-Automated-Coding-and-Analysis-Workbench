@@ -118,3 +118,23 @@ def test_a_recording_with_its_own_settings_is_judged_by_them(tmp_path, monkeypat
     assert own["rec1"] == resolve_config(project, recording_id="rec1")
     assert hash_extractor_config(own["rec1"], "prep.media") != hash_extractor_config(config, "prep.media")
     assert not list(layout_for(config).output_dir.glob(".*"))
+
+
+def test_a_recording_file_may_not_need_a_step_the_project_plan_lacks(tmp_path):
+    from macaw.exceptions import ConfigError
+    from macaw.execution.runner import check_recording_steps
+
+    project = tmp_path / "project.yaml"
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    own = tmp_path / "recordings" / "rec1.yaml"
+    own.parent.mkdir()
+    own.write_text("gaze:\n  targets: [bottle]\n", encoding="utf-8")
+    config = resolve_config(project)
+    with pytest.raises(ConfigError, match="gaze.objects.*project.yaml"):
+        check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
+
+    project.write_text(project.read_text(encoding="utf-8") + "gaze:\n  targets: [bottle, cup]\n", encoding="utf-8")
+    config = resolve_config(project)
+    check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
+    own.write_text("gaze:\n  targets: []\n", encoding="utf-8")
+    check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])

@@ -30,7 +30,8 @@ def registry(monkeypatch):
 
 def _config(excluded=()):
     return SimpleNamespace(
-        project=SimpleNamespace(excluded_recordings=list(excluded)), pipeline=PipelineSection()
+        project=SimpleNamespace(excluded_recordings=list(excluded), recording_config_dir="no-recording-files"),
+        pipeline=PipelineSection(),
     )
 
 

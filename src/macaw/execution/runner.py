@@ -14,7 +14,7 @@ from pathlib import Path
 
 from macaw.config.hashing import hash_extractor_config
 from macaw.config.schema import MacawConfig
-from macaw.exceptions import MacawError
+from macaw.exceptions import ConfigError, MacawError
 from macaw.execution.backends.base import JobSpec
 from macaw.execution.backends.local import LocalBackend
 from macaw.execution.dag import build_dag
@@ -82,6 +82,7 @@ def plan(
 ) -> list[str]:
     """What would run, in order, without running it. Gates are checked, not listed; finished tasks are left out."""
     dag = build_dag(config, extractors or None)
+    check_recording_steps(config, dag, recording_ids, extractors)
     gates = _gates(dag)
     _, blocked, _ = check_gates(config, dag, recording_ids, finished)
     skip = blocked | (finished or set())
@@ -204,6 +205,22 @@ def recording_configs(config: MacawConfig, recording_ids: list[str]) -> dict[str
     return configs
 
 
+def check_recording_steps(config: MacawConfig, dag, recording_ids: list[str], extractors: list[str] | None) -> None:
+    """Steps are planned once for the project, so a recording's own file may not need a step or an input step the plan lacks."""
+    planned = {name: dag.dependencies(name) for name in dag.nodes}
+    folder = Path(config.project.recording_config_dir)
+    for recording_id, own in recording_configs(config, recording_ids).items():
+        if own is config:
+            continue
+        theirs = build_dag(own, extractors or None)
+        missing = sorted(name for name in theirs.nodes if name not in planned or not theirs.dependencies(name) <= planned[name])
+        if missing:
+            raise ConfigError(
+                f"{folder / f'{recording_id}.yaml'} needs {', '.join(missing)} to run differently from the project's plan, "
+                "which is made once for every recording; put that setting in project.yaml"
+            )
+
+
 def task_states(config: MacawConfig, dag, recording_ids: list[str]) -> dict[str, str]:
     """Each task as a resumed run would find it: current, held behind a gate waiting for a person,
     stale (outputs made from something that has changed since) or new."""
@@ -286,6 +303,7 @@ def _run(
 
     recording_ids = recordings if recordings is not None else resolve_recordings(config, None)
     dag = build_dag(config, extractors or None)
+    check_recording_steps(config, dag, recording_ids, extractors)
     order = dag.topological_order()
     gates = set(_gates(dag))
 

@@ -107,9 +107,10 @@ def sbatch_flags(profile: ResourceProfile) -> list[str]:
 def plan(config: MacawConfig, hpc: HPCConfig, recording_ids: list[str], wanted: list[str]) -> Jobs:
     """The segments with anything left to do, the recordings they run on, and notes for whoever submits them."""
     from macaw.coding.llm.backends import resolve_llm_backend
-    from macaw.execution.runner import task_id_for, task_states
+    from macaw.execution.runner import check_recording_steps, task_id_for, task_states
 
     dag = build_dag(config, wanted or None)
+    check_recording_steps(config, dag, recording_ids, wanted)
     gates = set(dag.interactive_gates())
     steps = [name for name in dag.topological_order() if name not in gates]
     notes = []
