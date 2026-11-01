@@ -125,7 +125,7 @@ face:
   backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface
   model: null                        # pyfeat: v1 (default) or v2 | mediapipe: path to face_landmarker.task, or set MACAW_FACE_MODEL
   device: auto                       # auto | cpu | cuda
-  batch_size: 16                     # frames the face model takes at once
+  batch_size: 16                     # frames the face model takes at once; 16 of 1080p takes about 8 GB of GPU memory, and a batch the GPU cannot hold may slow to a crawl instead of failing
   action_units: true                 # 20 action units per frame, 0 to 1
   landmarks: true                    # face landmarks kept in an artifact, not the long table; face.movement reads them
   blink_min_eye_px: 5.0              # px; eyes narrower than this in the picture are not read for blinks
