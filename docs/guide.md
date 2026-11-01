@@ -314,7 +314,7 @@ kinematics:
 ```
 
 still_speed, peak_prominence
-: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Speeds, distances and areas stay in pixels; exports add centimetres when a recording has a scale ({ref}`scale`).
+: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Set `peak_prominence` well above the jitter of the tracking, or every wobble counts as a submovement: before trusting the counts, check a few gestures against the video. Speeds, distances and areas stay in pixels; exports add centimetres when a recording has a scale ({ref}`scale`).
 
 annotator
 : When two people coded the tier, name whose gestures to measure.
@@ -323,6 +323,12 @@ holds
 : `each_hand` (the default) counts the holds of each hand on its own. `both_hands` counts a hold only while both hands are still, once per gesture; a hand that is out of view throughout leaves it empty.
 
 Height and gesture space need the hips in view. When a table hides them, those two stay empty.
+
+:::{important}
+Gesture space is drawn on the picture, so it follows the body only while the person faces the camera or has their back to it. Seen from the side, the body looks narrow and the hands seem to reach far out of it. Height is much less affected. With several cameras, the 3D gesture space below has no such limit.
+:::
+
+Tracking jitter adds a little to every speed and area, most to small, slow movements. Compare them between people and conditions measured the same way rather than reading them as true sizes.
 
 With several calibrated cameras ({ref}`three-d`), the same measures are also taken in the room, named with `_3d` at the end, once you set two more thresholds in metres per second:
 

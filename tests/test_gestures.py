@@ -216,6 +216,7 @@ class TestExtractor:
     def test_speeds_carry_pixel_units(self, run):
         specs = {spec.name: spec for spec in run([("parent", 0.0, 3.4, "ann")]).specs}
         assert specs["gesture_left_peak_speed"].unit == "px/s" and specs["gesture_left_extent"].unit == "px^2"
+        assert "faces the camera" in specs["gesture_left_space_max"].description
 
     def test_two_coders_are_not_mixed(self, run):
         both = [("parent", 0.0, 3.4, "ann"), ("parent", 0.1, 3.3, "bob")]

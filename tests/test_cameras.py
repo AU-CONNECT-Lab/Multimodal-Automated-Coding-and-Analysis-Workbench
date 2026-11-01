@@ -542,6 +542,7 @@ class TestGestures3D:
         specs = {spec.name: spec for spec in result.specs}
         assert specs["gesture_left_peak_speed_3d"].unit == "m/s" and specs["gesture_left_extent_3d"].unit == "m^2"
         assert "peak_prominence_3d" in specs["gesture_left_submovements_3d"].description
+        assert not any("back to it" in spec.description for spec in result.specs)
         assert all(spec.comparable_across_subjects for spec in result.specs)
 
     def test_without_its_thresholds_it_says_what_to_set(self, gesturing, tmp_path):

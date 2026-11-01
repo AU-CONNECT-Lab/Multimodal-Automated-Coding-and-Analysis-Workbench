@@ -36,6 +36,8 @@ from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 SIDES = ("left", "right")
 _BODY = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "nose", "left_eye", "right_eye")
 
+# the grid is drawn in the picture, which shows the body's own width only when it faces the camera or turns away
+_FACING = "Needs hips in view, and follows the body only while the person faces the camera or has their back to it."
 # description, unit ({length} is px or m), aggregation, comparable across subjects
 _SPECS: dict[str, tuple[str, str | None, str, bool]] = {
     "peak_speed": ("Highest speed of the {side} wrist during the gesture.", "{length}/s", "mean", False),
@@ -63,13 +65,13 @@ _SPECS: dict[str, tuple[str, str | None, str, bool]] = {
     ),
     "space_max": (
         "Outermost gesture space the {side} wrist enters: 1 centre-centre, 2 centre, 3 periphery, 4 extreme "
-        "periphery, on a grid drawn from the hips, eyes and nose. Needs hips in view.",
+        "periphery, on a grid drawn from the hips, eyes and nose. " + _FACING,
         None, "max", True,
     ),
     "space_mode": ("Gesture space the {side} wrist is in most of the time, coded as space_max.", None, "median", True),
     "space_sectors": (
         "How many of the eight directions around the centre space (above, below, to either side and the four "
-        "corners) the {side} wrist reaches in the periphery or beyond; 0 when it stays in the centre. Needs hips in view.",
+        "corners) the {side} wrist reaches in the periphery or beyond; 0 when it stays in the centre. " + _FACING,
         "count", "mean", True,
     ),
 }
@@ -89,7 +91,7 @@ _BOTH_HANDS_SPECS: dict[str, tuple[str, str | None, str, bool]] = {
 @register_extractor
 class GestureExtractor(Extractor):
     name = "pose.gestures"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -300,6 +302,7 @@ def _in_the_room(name: str, description: str) -> str:
     return (
         description.replace("still_speed", "still_speed_3d").replace("peak_prominence", "peak_prominence_3d")
         .replace("out of view", "not placed in 3D")
+        .replace(_FACING, "Needs hips in view.")
         .replace("Needs hips in view.", "Taken in the person's own frontal plane, so it holds whichever way they face; needs hips and shoulders placed in 3D.")
     )
 

@@ -480,7 +480,8 @@ def _gestures(config, spec, names) -> str:
         "and most used gesture space [mcneill1992]; and how many of the eight cells of the periphery around the centre "
         "space it entered. Rhythm was the standard deviation of the intervals between submovements [pouw2021]. Speeds "
         f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964] and "
-        "are in image units."
+        "are in image units. Gesture spaces were drawn in the image plane, which follows the body only while a person "
+        "faces the camera or has their back to it."
     )
 
 
