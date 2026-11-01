@@ -4,6 +4,7 @@ import math
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
@@ -15,6 +16,7 @@ from macaw.extractors.video.pose.backends import (
     yolo_device,
     yolo_label_rows,
 )
+from macaw.media.ffmpeg import require_ffmpeg, run_ffmpeg
 from macaw.media.probe import MediaInfo, StreamInfo
 
 
@@ -141,3 +143,39 @@ class TestInfer:
         )
         with pytest.raises(ExternalToolError, match="CUDA error: out of memory"):
             YOLOPoseBackend().infer(fake_yolo.video, device="auto", min_confidence=0.3, model=fake_yolo.weights)
+
+
+SIDE = 32
+# each frame shows its own number as three grey blocks, base 16, far enough apart to survive compression
+NUMBERED = "geq=lum='16+13*if(lt(X,W/3),mod(N,16),if(lt(X,2*W/3),mod(floor(N/16),16),floor(N/256)))':cb=128:cr=128"
+
+
+def numbers_shown(path: Path) -> list[int]:
+    raw = subprocess.run(
+        [require_ffmpeg(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    luma = np.frombuffer(raw, np.uint8).reshape(-1, SIDE * SIDE * 9 // 2)[:, : 3 * SIDE * SIDE].reshape(-1, SIDE, 3 * SIDE)
+    digits = [np.round((luma[:, 4:-4, k * SIDE + 4 : (k + 1) * SIDE - 4].mean(axis=(1, 2)) - 16) / 13) for k in range(3)]
+    return (digits[2] * 256 + digits[1] * 16 + digits[0]).astype(int).tolist()
+
+
+@pytest.fixture(scope="module", params=["mp4", "ts"])
+def numbered_video(request, tmp_path_factory):
+    """20 s at 29.97 fps with B-frames and a keyframe every 50; the transport stream starts its clock at 2.8 s."""
+    path = tmp_path_factory.mktemp("numbered") / f"numbered.{request.param}"
+    run_ffmpeg([
+        "-f", "lavfi", "-i", f"color=black:s={3 * SIDE}x{SIDE}:r=30000/1001:d=20", "-vf", NUMBERED,
+        "-c:v", "libx264", "-crf", "8", "-g", "50", "-bf", "3", "-pix_fmt", "yuv420p",
+        *(["-output_ts_offset", "1.4"] if request.param == "ts" else []), str(path),
+    ])
+    shown = numbers_shown(path)
+    assert shown == list(range(len(shown))) and len(shown) > 590
+    return path, len(shown)
+
+
+@pytest.mark.parametrize("first, stop", [(0, 10), (49, 52), (50, 51), (51, 140), (430, None), (589, 590)])
+def test_a_window_holds_exactly_its_frames(numbered_video, tmp_path, first, stop):
+    path, n_frames = numbered_video
+    clip = backends._window_clip(path, first, stop, tmp_path)
+    assert numbers_shown(clip) == list(range(first, n_frames if stop is None else stop))

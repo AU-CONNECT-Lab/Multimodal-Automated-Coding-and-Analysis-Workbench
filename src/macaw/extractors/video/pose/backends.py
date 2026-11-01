@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,7 @@ from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors import register_backend
 from macaw.extractors.base import Backend
 from macaw.media.ffmpeg import run_ffmpeg
-from macaw.media.probe import probe
+from macaw.media.probe import frame_rate, probe
 from macaw.telemetry import quiet_environment
 from macaw.extractors.video.pose.skeleton import (
     JOINT_SET,
@@ -529,12 +530,26 @@ class YOLOPoseBackend(PoseBackend):
         return out_path / "run" / "labels"
 
 
+# the jump lands on a keyframe at least this far ahead of a window, so decoding starts before its first frame
+SEEK_MARGIN_S = 1.0
+
+
 def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) -> Path:
-    """Frames [first, stop) as a clip of their own, chosen by frame number so none is gained or lost."""
-    chosen = f"gte(n\\,{first})" if stop is None else f"between(n\\,{first}\\,{stop - 1})"
+    """Frames [first, stop) as a clip of their own, chosen by time on the file's own clock after a jump close to them."""
+    info = probe(video_path)
+    stream = next(iter(info.video_streams()), None)
+    rate = frame_rate(stream) if stream is not None else None
+    if not rate:
+        raise ExternalToolError(f"no frame rate in {video_path} to find frame {first} by")
+    origin = stream.start_s if stream.start_s is not None else info.start_s
+    # frame k is shown k intervals after the first; half an interval either side absorbs rounded timestamps
+    chosen = f"gte(t\\,{origin + float((first - Fraction(1, 2)) / rate):.6f})"
+    if stop is not None:
+        chosen += f"*lt(t\\,{origin + float((stop - Fraction(1, 2)) / rate):.6f})"
     clip = scratch / "window.mp4"
     # an encoder every ffmpeg build has, at a quality the detector cannot tell from the source
     run_ffmpeg([
+        "-copyts", "-noaccurate_seek", "-ss", f"{max(float(first / rate) - SEEK_MARGIN_S, 0.0):.6f}",
         "-i", str(video_path), "-an",
         "-vf", f"select={chosen},setpts=PTS-STARTPTS", "-fps_mode", "passthrough",
         "-c:v", "mpeg4", "-q:v", "2", str(clip),
