@@ -39,7 +39,7 @@ Each person's pose, how fast they move, how far apart people are, and the amount
 :::
 
 :::{grid-item-card} Face
-Facial expressions as muscle movements (action units), head angle, gaze direction, mouth movement and blinks.
+Facial expressions as muscle movements (action units), head angle, mouth movement and blinks; whom each person looks at, which named things, and when two look at each other.
 :::
 
 :::{grid-item-card} Codes
@@ -47,7 +47,7 @@ Pauses, interruptions and backchannels coded by rule, and, if you want, speech a
 :::
 ::::
 
-Not there yet: who looks at whom, coding of gestures with speech, and distances in real units such as centimetres.
+Not there yet: several kept segments per recording, and 3D from a single camera.
 
 ## Where to begin
 
