@@ -265,9 +265,9 @@ def test_the_board_prints_at_its_size(project):
     assert too_small.exit_code != 0 and "does not fit on A3" in said(too_small)
 
 
-def person(head, facing, frames, *, wrist_speed=0.0, fps=30.0):
+def person(head, facing, frames, *, wrist_speed=0.0, fps=30.0, hips=False):
     """Joints in mm: a seated upper body whose nose points along facing; the left forearm swings about the
-    elbow at wrist_speed metres per second, so no bone changes length."""
+    elbow at wrist_speed metres per second, so no bone changes length. hips adds them 700 mm below the head."""
     facing = np.asarray(facing, float) / np.linalg.norm(facing)
     side = np.cross(facing, [0.0, 1.0, 0.0])
     head, down = np.asarray(head, float), np.array([0.0, 1.0, 0.0])
@@ -278,6 +278,8 @@ def person(head, facing, frames, *, wrist_speed=0.0, fps=30.0):
         "left_elbow": head + 500 * down + 220 * side, "right_elbow": head + 500 * down - 220 * side,
         "right_wrist": head + 750 * down - 220 * side,
     }
+    if hips:
+        body.update({"left_hip": head + 700 * down + 150 * side, "right_hip": head + 700 * down - 150 * side})
     joints = {joint: np.tile(xyz, (frames, 1)) for joint, xyz in body.items()}
     angle = np.arange(frames) / fps * wrist_speed * 1000.0 / 250.0
     joints["left_wrist"] = body["left_elbow"] + 250.0 * (np.cos(angle)[:, None] * down + np.sin(angle)[:, None] * facing)
@@ -451,3 +453,107 @@ def test_the_viewer_draws_each_person_and_the_cameras(seated, tmp_path):
     assert {"parent", "child", "cameras"} <= names
     shown = next(trace for trace in graph.figure.data if trace.name == "cameras")
     assert list(shown.text) == ["left", "right"]
+
+
+GESTURES = """kinematics:
+  gestures:
+    tier: gesture
+    still_speed: 10
+    peak_prominence: 20
+"""
+
+
+def code_gestures(config, segments):
+    from macaw.store.annotations import write_annotations
+    from macaw.store.schema import ANNOTATION_SCHEMA
+
+    rows = pd.DataFrame([
+        {"recording_id": "003", "subject_id": who, "tier": "gesture", "t_start": start, "t_end": end, "label": "iconic",
+         "annotator": "ann", "layer": "C", "abstained": False, "needs_review": False, "group_id": "003", "session_id": None,
+         "task": None, "run": None, "confidence": np.nan, "execution_id": None, "config_hash": None}
+        for who, start, end in segments
+    ])
+    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).annotations_path("003"))
+
+
+@pytest.fixture
+def gesturing(project):
+    """The parent, filmed from their side, raises the left hand and moves it up and inward twice with a pause between."""
+    target = [500.0, 300.0, 2000.0]
+    cameras = [look_at("left", [-300, -200, 0], target), look_at("right", [1300, -200, 0], target)]
+    write_setup(CameraSetup(cameras, "mm"), project.parent / "calibration" / "lab.toml")
+    frames = 105
+    parent = person([0, 0, 2000], [1, 0, 0], frames, hips=True)
+    t = np.arange(frames) / 30.0
+    rise = lambda start: np.clip(t - start, 0.0, 1.0)
+    shift = 100.0 * ((1 - np.cos(np.pi * rise(0.5))) / 2 - (1 - np.cos(np.pi * rise(2.1))) / 2)
+    # forearm raised forward; the parent's side is the room's z, so the hand moves in depth for both cameras
+    raised = parent["left_shoulder"][0] + np.array([250.0, 50.0, 40.0])
+    parent["left_wrist"] = raised + shift[:, None] * np.array([0.0, -1.0, -1.0]) / np.sqrt(2)
+    people = {"parent": parent, "child": person([1000, 100, 2000], [-1, 0, 0], frames, hips=True)}
+    settings(project, "pose3d:\n  calibration: lab.toml\n" + GESTURES)
+    config = resolve_config(project)
+    write_keypoints(keypoints_of(cameras, ["003_left.mp4", "003_right.mp4"], people, frames), layout_for(config).keypoints_path("003"))
+    code_gestures(config, [("parent", 0.0, 3.4)])
+    return SimpleNamespace(project=project, people=people)
+
+
+def triangulated(project, tmp_path):
+    config = resolve_config(project)
+    placed = TriangulationExtractor(config).run(build_recording("003", config), tmp_path).keypoints
+    write_keypoints(placed, points_file(config, "003").parent)
+    return config
+
+
+class TestGestures3D:
+    def test_each_gesture_is_measured_in_the_room(self, gesturing, tmp_path):
+        from macaw.extractors.video.pose.gestures import Gesture3DExtractor
+
+        settings(gesturing.project, "    still_speed_3d: 0.02\n    peak_prominence_3d: 0.05\n")
+        config = triangulated(gesturing.project, tmp_path)
+        assert Gesture3DExtractor.wanted_by_default(config)
+        result = Gesture3DExtractor(config).run(build_recording("003", config), tmp_path)
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        rows = result.rows[result.rows.subject_id == "parent"]
+        value = lambda feature: float(rows[rows.feature == feature]["value"].iloc[0])
+        assert value("gesture_left_submovements_3d") == 2.0 and value("gesture_left_holds_3d") == 1.0
+        assert 0.6 < value("gesture_left_hold_s_3d") < 0.85
+        assert value("gesture_left_peak_speed_3d") == pytest.approx(0.1 * np.pi / 2, rel=0.05)
+        assert value("gesture_left_extent_3d") == pytest.approx((0.1 / np.sqrt(2)) ** 2, rel=1e-3)
+        # from the side the picture shows no frontal plane; in the room the hand reaches above the shoulders
+        assert value("gesture_left_max_height_3d") == 3.0 and value("gesture_left_space_max_3d") == 2.0
+        assert value("gesture_right_submovements_3d") == 0.0
+        specs = {spec.name: spec for spec in result.specs}
+        assert specs["gesture_left_peak_speed_3d"].unit == "m/s" and specs["gesture_left_extent_3d"].unit == "m^2"
+        assert "peak_prominence_3d" in specs["gesture_left_submovements_3d"].description
+        assert all(spec.comparable_across_subjects for spec in result.specs)
+
+    def test_without_its_thresholds_it_says_what_to_set(self, gesturing, tmp_path):
+        from macaw.extractors.video.pose.gestures import Gesture3DExtractor
+
+        config = triangulated(gesturing.project, tmp_path)
+        result = Gesture3DExtractor(config).run(build_recording("003", config), tmp_path)
+        assert result.rows.empty and "still_speed_3d and peak_prominence_3d" in result.warnings[0].message
+
+    def test_the_frontal_plane_turns_with_the_person(self):
+        from macaw.extractors.video.pose.gestures import frontal_plane
+
+        body = person([0, 0, 2000], [0, 0, -1], 3, hips=True)
+        turn = Rotation.from_euler("xyz", [0.3, 1.9, -0.4])
+        turned = {joint: turn.apply(xyz) + [400.0, -100.0, 50.0] for joint, xyz in body.items()}
+        frames = np.arange(3)
+        assert np.allclose(frontal_plane(turned, frames).to_numpy(), frontal_plane(body, frames).to_numpy())
+
+    def test_the_methods_give_the_thresholds_in_metres(self, gesturing, tmp_path):
+        from macaw.extractors.video.pose.gestures import Gesture3DExtractor
+        from macaw.project.manifest import FeatureManifest
+        from macaw.qc.boilerplate import describe, load_references, render
+
+        settings(gesturing.project, "    still_speed_3d: 0.02\n    peak_prominence_3d: 0.05\n")
+        config = triangulated(gesturing.project, tmp_path)
+        manifest = FeatureManifest()
+        for spec in Gesture3DExtractor(config).run(build_recording("003", config), tmp_path).specs:
+            manifest.add(spec)
+        text, _ = render(describe(manifest, config), load_references())
+        assert "at least 0.05 m/s" in text and "slower than 0.02 m/s" in text and "frontal plane" in text

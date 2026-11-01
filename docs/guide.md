@@ -321,6 +321,17 @@ holds
 
 Height and gesture space need the hips in view. When a table hides them, those two stay empty.
 
+With several calibrated cameras ({ref}`three-d`), the same measures are also taken in the room, named with `_3d` at the end, once you set two more thresholds in metres per second:
+
+```yaml
+kinematics:
+  gestures:
+    still_speed_3d: 0.05
+    peak_prominence_3d: 0.1
+```
+
+These numbers are only an example: as in the picture, there is no default, and the 3D wrist speeds in the results help to choose them. In 3D the area, the height and the gesture space are taken in the person's own frontal plane, set by their hips and shoulders, so they hold whichever way the person faces a camera; the hips and shoulders must be placed in 3D.
+
 ### A method of your own
 
 Put a Python file in the `scripts` folder next to `project.yaml`, and name its function as `method: file.function`. The function receives two tables, one per person, with a row per video frame, a column `t` for the time, and `<joint>_x` and `<joint>_y` for every point. It returns one number per row.
@@ -429,6 +440,9 @@ Run as usual. Each person must carry the same name on every camera (see *Who is 
 
 `head_toward_deg_3d`
 : The angle between where a person's head points and the direction to the other person's head; 0 means the head points straight at them. This is head direction, not gaze.
+
+`gesture_left_peak_speed_3d`, ...
+: The measures of each gesture you coded, in the room, when `still_speed_3d` and `peak_prominence_3d` are set (see *Gestures you coded*).
 
 `<name>_3d`
 : Your own measures ({ref}`measures`) in the room. `distance`, `approach_speed` and `offset_toward` always get one; a method of your own only with `in_3d: true`. In 3D, `offset_toward` is how far the point sits from the shoulder midpoint in the direction of the other point, depth included. Two people are measured whenever both are placed in 3D, not only when one camera shows them both.

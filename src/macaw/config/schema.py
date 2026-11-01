@@ -163,6 +163,9 @@ class GestureSection(_Section):
     # in the keypoints' length unit per second, so each project sets them for its own videos
     still_speed: float | None = Field(default=None, gt=0)
     peak_prominence: float | None = Field(default=None, gt=0)
+    # metres per second, for pose.gestures3d; without them gestures are measured from the picture only
+    still_speed_3d: float | None = Field(default=None, gt=0)
+    peak_prominence_3d: float | None = Field(default=None, gt=0)
     holds: Literal["each_hand", "both_hands"] = "each_hand"
 
     @model_validator(mode="after")

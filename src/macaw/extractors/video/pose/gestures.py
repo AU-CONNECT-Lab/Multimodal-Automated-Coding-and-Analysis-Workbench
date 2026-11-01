@@ -1,4 +1,5 @@
-"""Kinematics of each gesture a person coded: speed, submovements, holds, extent, height and gesture space."""
+"""Kinematics of each gesture a person coded: speed, submovements, holds, extent, height and gesture space, from
+the picture and, with calibrated cameras, in the room."""
 
 from __future__ import annotations
 
@@ -17,17 +18,20 @@ from macaw.extractors.video.pose.kinematics import (
     _length_unit,
     _midpoint,
     _points,
+    _smoothed_derivative,
     _xy,
     keypoints_by_subject,
     velocity,
 )
 from macaw.extractors.video.pose.skeleton import JOINT_SET
+from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joints, _step, points_file
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.store import keypoints as keypoints_store
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
-from macaw.store.schema import Scale
+from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 
 SIDES = ("left", "right")
 _BODY = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "nose", "left_eye", "right_eye")
@@ -104,45 +108,30 @@ class GestureExtractor(Extractor):
         return [_keypoints_file(self.config, recording.recording_id), *sorted(coded.glob("*.parquet"))]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        segments, warnings = self._segments(recording)
+        cfg = self.config.kinematics.gestures
+        segments, warnings = coded_gestures(self.config, recording, self.name)
         keypoints, by_subject = keypoints_by_subject(self.config, recording)
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         frames = []
         for subject_id, own in segments.groupby("subject_id", observed=True):
             kp = by_subject.get(str(subject_id))
             if kp is None:
-                warnings.append(self._warning(recording, str(subject_id), f"{len(own)} gesture(s) coded but no keypoints for this person"))
+                warnings.append(_warning(self.name, recording, str(subject_id), f"{len(own)} gesture(s) coded but no keypoints for this person"))
                 continue
-            values = self._measure(kp, own)
-            unseen = int(values.filter(like="peak_speed").isna().all(axis=1).sum())
-            if unseen:
-                warnings.append(self._warning(recording, str(subject_id), f"{unseen} of {len(own)} gesture(s) fall where neither wrist was tracked"))
+            times, sides, placed = self._tracks(kp)
+            values = measure_gestures(times, sides, placed, own, still_speed=cfg.still_speed, peak_prominence=cfg.peak_prominence, both_hands=cfg.holds == "both_hands")
+            warnings += _unseen(self.name, recording, str(subject_id), values, "was tracked")
             frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))
         rows = concat_long_tables(frames)
-        return ExtractorResult(rows=rows, specs=self._specs(_length_unit(keypoints)), warnings=warnings)
+        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump(exclude={"still_speed_3d", "peak_prominence_3d"})}
+        named = [(name, description, unit.format(length=_length_unit(keypoints)) if unit else None, aggregation, comparable)
+                 for name, description, unit, aggregation, comparable in gesture_specs(cfg.holds == "both_hands")]
+        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params), warnings=warnings)
 
-    def _segments(self, recording: Recording) -> tuple[pd.DataFrame, list[QCWarning]]:
-        cfg = self.config.kinematics.gestures
-        path = layout_for(self.config, create=False).annotations_path(recording.recording_id)
-        coded = read_annotations(path, tier=cfg.tier) if path.exists() else pd.DataFrame(columns=["subject_id", "annotator", "t_start", "t_end"])
-        if cfg.annotator is not None:
-            coded = coded[coded["annotator"] == cfg.annotator]
-        annotators = sorted(coded["annotator"].dropna().astype(str).unique())
-        if len(annotators) > 1:
-            # two people's segments of the same gesture would be counted twice
-            message = f"tier {cfg.tier} was coded by {', '.join(annotators)}; set kinematics.gestures.annotator to measure one of them"
-            return coded.iloc[0:0], [self._warning(recording, None, message)]
-        nobody = coded["subject_id"].isna()
-        warnings = [self._warning(recording, None, f"{int(nobody.sum())} gesture(s) on tier {cfg.tier} belong to no person and were left out")] if nobody.any() else []
-        if coded.empty:
-            warnings.append(self._warning(recording, None, f"no segments on tier {cfg.tier} to measure", severity="info"))
-        return coded[~nobody], warnings
-
-    def _measure(self, kp: pd.DataFrame, segments: pd.DataFrame) -> pd.DataFrame:
-        cfg = self.config.kinematics.gestures
+    def _tracks(self, kp: pd.DataFrame) -> tuple[np.ndarray, dict, pd.DataFrame]:
+        """Frame times, each hand's (wrist speed, elbow speed, wrist position) and the body's landmarks, per frame."""
         smoothing_s = self.config.kinematics.smoothing_s
         times = _frame_times(kp)
-        body = _points(kp, _BODY)
         sides = {}
         for side in SIDES:
             wrist = _points(kp, [f"{side}_wrist"]).reindex(times.index)
@@ -151,68 +140,197 @@ class GestureExtractor(Extractor):
                 velocity(kp, f"{side}_elbow", smoothing_s=smoothing_s).reindex(times.index).to_numpy(),
                 _xy(wrist, f"{side}_wrist"),
             )
-        placed = body.reindex(times.index)
-        heights = {side: height_levels(sides[side][2], placed) for side in SIDES}
-        spaces = {side: gesture_spaces(sides[side][2], placed) for side in SIDES}
-        sectors = {side: gesture_sectors(sides[side][2], placed) for side in SIDES}
-        t = times.to_numpy(dtype=float)
-        both_hands = cfg.holds == "both_hands"
+        return times.to_numpy(dtype=float), sides, _points(kp, _BODY).reindex(times.index)
 
-        rows = []
-        for segment in segments.sort_values("t_start").itertuples():
-            inside = (t >= segment.t_start) & (t <= segment.t_end)
-            row = {"t_start": float(segment.t_start), "t_end": float(segment.t_end)}
-            for side in SIDES:
-                wrist_speed, elbow_speed, xy = (values[inside] for values in sides[side])
-                measured = gesture_kinematics(t[inside], wrist_speed, elbow_speed, xy, cfg.still_speed, cfg.peak_prominence)
-                measured["max_height"] = _nanmax(heights[side][inside])
-                measured["space_max"] = _nanmax(spaces[side][inside])
-                measured["space_mode"] = _mode(spaces[side][inside])
-                measured["space_sectors"] = _distinct_sectors(sectors[side][inside])
-                if both_hands:
-                    for name in _HOLDS:
-                        del measured[name]
-                row.update({f"gesture_{side}_{name}": value for name, value in measured.items()})
-            if both_hands:
-                wrists = [sides[side][0][inside] for side in SIDES]
-                elbows = [sides[side][1][inside] for side in SIDES]
-                measured = both_hands_holds(t[inside], wrists, elbows, cfg.still_speed, cfg.peak_prominence)
-                row.update({f"gesture_{name}": value for name, value in measured.items()})
-            rows.append(row)
-        return pd.DataFrame(rows)
 
-    def _specs(self, length_unit: str) -> list[FeatureSpec]:
+@register_extractor
+class Gesture3DExtractor(Extractor):
+    name = "pose.gestures3d"
+    version = "0.1.0"
+    scale = Scale.EVENT
+    group = "pose"
+    phase = Phase.DERIVE
+    config_sections = ("kinematics.smoothing_s", "kinematics.gestures")
+    requires = (TriangulationExtractor.name,)
+
+    @classmethod
+    def wanted_by_default(cls, config) -> bool:
+        return config.kinematics.gestures.tier is not None and config.pose3d.calibration is not None
+
+    def check_available(self) -> None:
+        return None
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        coded = layout_for(self.config, create=False).annotations_path(recording.recording_id)
+        return [points_file(self.config, recording.recording_id), *sorted(coded.glob("*.parquet"))]
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.kinematics.gestures
-        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump()}
-        both_hands = cfg.holds == "both_hands"
-        named = [
-            (f"gesture_{side}_{name}", description.format(side=side), spec)
-            for side in SIDES
-            for name, (description, *spec) in _SPECS.items()
-            if not (both_hands and name in _HOLDS)
-        ]
-        if both_hands:
-            named += [(f"gesture_{name}", description, spec) for name, (description, *spec) in _BOTH_HANDS_SPECS.items()]
-        return [
-            FeatureSpec(
-                name=name,
-                description=description,
-                unit=unit.format(length=length_unit) if unit else None,
-                scale=Scale.EVENT,
-                group=self.group,
-                extractor=self.name,
-                extractor_version=self.version,
-                params=params,
-                aggregation=aggregation,
-                comparable_across_subjects=comparable,
-                comparable_across_backends=False,
-                validation="synthetic",
-            )
-            for name, description, (unit, aggregation, comparable) in named
-        ]
+        if cfg.still_speed_3d is None or cfg.peak_prominence_3d is None:
+            return ExtractorResult(rows=empty_frame(LONG_TABLE_SCHEMA), warnings=[_warning(
+                self.name, recording, None,
+                "gestures are measured in 3D once kinematics.gestures.still_speed_3d and peak_prominence_3d are set, in metres "
+                "per second; the wrist speeds pose.kinematics3d writes help to choose them",
+                severity="info",
+            )])
+        segments, warnings = coded_gestures(self.config, recording, self.name)
+        points = keypoints_store.read_keypoints(points_file(self.config, recording.recording_id), recording_id=recording.recording_id)
+        people = {str(subject_id): own for subject_id, own in points.groupby("subject_id", observed=True)}
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        frames = []
+        for subject_id, own in segments.groupby("subject_id", observed=True):
+            placed = people.get(str(subject_id))
+            if placed is None:
+                warnings.append(_warning(self.name, recording, str(subject_id), f"{len(own)} gesture(s) coded but this person was never placed in 3D"))
+                continue
+            times, sides, body = room_tracks(placed, self.config.kinematics.smoothing_s)
+            values = measure_gestures(times, sides, body, own, still_speed=cfg.still_speed_3d, peak_prominence=cfg.peak_prominence_3d, both_hands=cfg.holds == "both_hands")
+            warnings += _unseen(self.name, recording, str(subject_id), values, "was placed in 3D")
+            values.columns = [column if column in ("t_start", "t_end") else f"{column}_3d" for column in values.columns]
+            frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))
+        rows = concat_long_tables(frames)
+        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump(exclude={"still_speed", "peak_prominence"})}
+        # in metres and against each person's own body, so every measure compares across people
+        named = [(f"{name}_3d", _in_the_room(name, description), unit.format(length="m") if unit else None, aggregation, True)
+                 for name, description, unit, aggregation, _ in gesture_specs(cfg.holds == "both_hands")]
+        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params), warnings=warnings)
 
-    def _warning(self, recording: Recording, subject_id, message: str, severity: str = "warn") -> QCWarning:
-        return QCWarning(check=self.name, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message)
+
+def coded_gestures(config, recording: Recording, check: str) -> tuple[pd.DataFrame, list[QCWarning]]:
+    """The segments on the gesture tier that belong to a person, from one coder."""
+    cfg = config.kinematics.gestures
+    path = layout_for(config, create=False).annotations_path(recording.recording_id)
+    coded = read_annotations(path, tier=cfg.tier) if path.exists() else pd.DataFrame(columns=["subject_id", "annotator", "t_start", "t_end"])
+    if cfg.annotator is not None:
+        coded = coded[coded["annotator"] == cfg.annotator]
+    annotators = sorted(coded["annotator"].dropna().astype(str).unique())
+    if len(annotators) > 1:
+        # two people's segments of the same gesture would be counted twice
+        message = f"tier {cfg.tier} was coded by {', '.join(annotators)}; set kinematics.gestures.annotator to measure one of them"
+        return coded.iloc[0:0], [_warning(check, recording, None, message)]
+    nobody = coded["subject_id"].isna()
+    warnings = [_warning(check, recording, None, f"{int(nobody.sum())} gesture(s) on tier {cfg.tier} belong to no person and were left out")] if nobody.any() else []
+    if coded.empty:
+        warnings.append(_warning(check, recording, None, f"no segments on tier {cfg.tier} to measure", severity="info"))
+    return coded[~nobody], warnings
+
+
+def measure_gestures(
+    t: np.ndarray, sides: dict, body: pd.DataFrame, segments: pd.DataFrame, *, still_speed: float, peak_prominence: float, both_hands: bool
+) -> pd.DataFrame:
+    """One row per segment; sides holds each hand's (wrist speed, elbow speed, wrist position) on the frames of t."""
+    heights = {side: height_levels(sides[side][2], body) for side in SIDES}
+    spaces = {side: gesture_spaces(sides[side][2], body) for side in SIDES}
+    sectors = {side: gesture_sectors(sides[side][2], body) for side in SIDES}
+    rows = []
+    for segment in segments.sort_values("t_start").itertuples():
+        inside = (t >= segment.t_start) & (t <= segment.t_end)
+        row = {"t_start": float(segment.t_start), "t_end": float(segment.t_end)}
+        for side in SIDES:
+            wrist_speed, elbow_speed, xy = (values[inside] for values in sides[side])
+            measured = gesture_kinematics(t[inside], wrist_speed, elbow_speed, xy, still_speed, peak_prominence)
+            measured["max_height"] = _nanmax(heights[side][inside])
+            measured["space_max"] = _nanmax(spaces[side][inside])
+            measured["space_mode"] = _mode(spaces[side][inside])
+            measured["space_sectors"] = _distinct_sectors(sectors[side][inside])
+            if both_hands:
+                for name in _HOLDS:
+                    del measured[name]
+            row.update({f"gesture_{side}_{name}": value for name, value in measured.items()})
+        if both_hands:
+            wrists = [sides[side][0][inside] for side in SIDES]
+            elbows = [sides[side][1][inside] for side in SIDES]
+            measured = both_hands_holds(t[inside], wrists, elbows, still_speed, peak_prominence)
+            row.update({f"gesture_{name}": value for name, value in measured.items()})
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def room_tracks(points: pd.DataFrame, smoothing_s: float) -> tuple[np.ndarray, dict, pd.DataFrame]:
+    """As GestureExtractor._tracks, from a person's points in the room: speeds in 3D, positions in their frontal plane."""
+    frames, times, found = _joints(points)
+    step = _step(frames, times.to_numpy(dtype=float))
+    missing = np.full((len(frames), 3), np.nan)
+    body = frontal_plane(found, frames)
+
+    def speed(joint: str) -> np.ndarray:
+        return np.linalg.norm(_smoothed_derivative(found.get(joint, missing), frames, step, smoothing_s, 1), axis=1)
+
+    sides = {side: (speed(f"{side}_wrist"), speed(f"{side}_elbow"), _xy(body, f"{side}_wrist")) for side in SIDES}
+    return times.to_numpy(dtype=float), sides, body
+
+
+def frontal_plane(found: dict[str, np.ndarray], frames: np.ndarray) -> pd.DataFrame:
+    """Each landmark and wrist in the person's own frontal plane, laid out like a picture taken from in front of them:
+    x toward their left, y down their trunk, from the hip midpoint. NaN without both hips and both shoulders."""
+    missing = np.full((len(frames), 3), np.nan)
+    hips = (found.get("left_hip", missing) + found.get("right_hip", missing)) / 2.0
+    up = (found.get("left_shoulder", missing) + found.get("right_shoulder", missing)) / 2.0 - hips
+    across = found.get("left_hip", missing) - found.get("right_hip", missing)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        up /= np.linalg.norm(up, axis=1, keepdims=True)
+        across -= np.sum(across * up, axis=1, keepdims=True) * up
+        across /= np.linalg.norm(across, axis=1, keepdims=True)
+    joints = [*_BODY, *(f"{side}_wrist" for side in SIDES)]
+    columns = {}
+    for joint in joints:
+        offset = found.get(joint, missing) - hips
+        columns[("x", joint)] = np.sum(offset * across, axis=1)
+        columns[("y", joint)] = -np.sum(offset * up, axis=1)
+    plane = pd.DataFrame(columns, index=pd.Index(frames, name="frame"))
+    return plane.reindex(columns=pd.MultiIndex.from_product([["x", "y"], joints]))
+
+
+def gesture_specs(both_hands: bool) -> list[tuple[str, str, str | None, str, bool]]:
+    """(name, description, unit with {length}, aggregation, comparable across subjects) of each gesture measure."""
+    named = [
+        (f"gesture_{side}_{name}", description.format(side=side), *spec)
+        for side in SIDES
+        for name, (description, *spec) in _SPECS.items()
+        if not (both_hands and name in _HOLDS)
+    ]
+    if both_hands:
+        named += [(f"gesture_{name}", description, *spec) for name, (description, *spec) in _BOTH_HANDS_SPECS.items()]
+    return named
+
+
+def _in_the_room(name: str, description: str) -> str:
+    if name.endswith("_extent"):
+        return description.replace("wrist's path.", "wrist's path in the person's own frontal plane.")
+    return (
+        description.replace("still_speed", "still_speed_3d").replace("peak_prominence", "peak_prominence_3d")
+        .replace("out of view", "not placed in 3D")
+        .replace("Needs hips in view.", "Taken in the person's own frontal plane, so it holds whichever way they face; needs hips and shoulders placed in 3D.")
+    )
+
+
+def _feature_specs(extractor: Extractor, named: list, params: dict) -> list[FeatureSpec]:
+    return [
+        FeatureSpec(
+            name=name,
+            description=description,
+            unit=unit,
+            scale=Scale.EVENT,
+            group=extractor.group,
+            extractor=extractor.name,
+            extractor_version=extractor.version,
+            params=params,
+            aggregation=aggregation,
+            comparable_across_subjects=comparable,
+            comparable_across_backends=False,
+            validation="synthetic",
+        )
+        for name, description, unit, aggregation, comparable in named
+    ]
+
+
+def _unseen(check: str, recording: Recording, subject_id: str, values: pd.DataFrame, how: str) -> list[QCWarning]:
+    unseen = int(values.filter(like="peak_speed").isna().all(axis=1).sum()) if not values.empty else 0
+    return [_warning(check, recording, subject_id, f"{unseen} of {len(values)} gesture(s) fall where neither wrist {how}")] if unseen else []
+
+
+def _warning(check: str, recording: Recording, subject_id, message: str, severity: str = "warn") -> QCWarning:
+    return QCWarning(check=check, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message)
 
 
 def gesture_kinematics(

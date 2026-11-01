@@ -21,7 +21,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "motion.mea", "face.au", "face.au_check", "face.movement",
+    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -484,6 +484,17 @@ def _gestures(config, spec, names) -> str:
     )
 
 
+def _gestures_3d(config, spec, names) -> str:
+    gestures = config.kinematics.gestures
+    still = "both wrists and both elbows" if gestures.holds == "both_hands" else "wrist and elbow"
+    return (
+        f"The same measures of each coded gesture were also taken from the wrists placed in 3D, with speeds in m/s, "
+        f"submovements rising at least {gestures.peak_prominence_3d:g} m/s above their surroundings and holds where {still} "
+        f"moved slower than {gestures.still_speed_3d:g} m/s. The area, the levels and the gesture spaces were taken in each "
+        "person's own frontal plane, set by their hips and shoulders, so that they do not depend on where the cameras stood."
+    )
+
+
 def _kinematics_3d(config, spec, names) -> str:
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
@@ -631,6 +642,7 @@ _WRITERS = {
     "pose.kinematics": _kinematics,
     "pose.gestures": _gestures,
     "pose.kinematics3d": _kinematics_3d,
+    "pose.gestures3d": _gestures_3d,
     "motion.mea": _mea,
     "face.au": _face,
     "face.au_check": _au_check,
