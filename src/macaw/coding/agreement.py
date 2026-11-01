@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Sequence
 
 import numpy as np
@@ -17,7 +18,7 @@ UNIT_KEY = ("recording_id", "subject_id", "tier", "t_start", "t_end")
 NO_CODE = "_none"  # grid and coder modes: this annotator left the cell or unit blank
 REST = "_rest"     # the other side of a one-vs-rest split
 
-_UNIT_COLUMNS = ["unit_id", "annotator", "label"]
+_UNIT_COLUMNS = ["unit_id", "annotator", "label", *UNIT_KEY]
 _GROUP_KEY = ("recording_id", "subject_id", "tier")
 _SMALL_SAMPLE = 30
 _BLOCK = 500
@@ -67,6 +68,7 @@ def _exact_units(frame: pd.DataFrame) -> pd.DataFrame:
             "unit_id": keys.to_numpy(),
             "annotator": frame["annotator"].astype(str).to_numpy(),
             "label": frame["label"].astype(str).to_numpy(),
+            **{column: frame[column].to_numpy(dtype=object) if column in frame.columns else None for column in UNIT_KEY},
         }
     )
 
@@ -81,27 +83,30 @@ def _grid_units(frame: pd.DataFrame, grid_s: float) -> pd.DataFrame:
         if columns
         else [((), frame)]
     )
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple] = []
     ties = 0
     for keys, group in grouped:
-        prefix = "|".join(str(key) for key in (keys if isinstance(keys, tuple) else (keys,)))
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        prefix = "|".join(str(key) for key in keys)
+        where = _where(columns, keys)
         covered = _cell_coverage(group, grid_s)
         if not covered:
             continue
         present = sorted({annotator for _, annotator in covered})
         for cell in sorted({cell for cell, _ in covered}):
+            span = (round(cell * grid_s, 6), round((cell + 1) * grid_s, 6))
             for annotator in present:
                 choices = covered.get((cell, annotator))
                 if not choices:
                     # a cell nobody covered is not a unit at all, but a cell one coder marked
                     # and another left blank is a real disagreement
-                    rows.append((f"{prefix}|{cell}", annotator, NO_CODE))
+                    rows.append((f"{prefix}|{cell}", annotator, NO_CODE, *where, *span))
                     continue
                 top = max(choices.values())
                 winners = sorted(label for label, seconds in choices.items() if seconds == top)
                 if len(winners) > 1:
                     ties += 1
-                rows.append((f"{prefix}|{cell}", annotator, winners[0]))
+                rows.append((f"{prefix}|{cell}", annotator, winners[0], *where, *span))
 
     out = pd.DataFrame(rows, columns=_UNIT_COLUMNS)
     out.attrs["grid_ties"] = int(ties)
@@ -111,17 +116,20 @@ def _grid_units(frame: pd.DataFrame, grid_s: float) -> pd.DataFrame:
 def _coder_units(frame: pd.DataFrame, coder: str) -> pd.DataFrame:
     """A coder who coded nothing for this person and tier gives no rating; one who coded elsewhere gives NO_CODE."""
     columns = [column for column in _GROUP_KEY if column in frame.columns]
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple] = []
     ties = 0
     for keys, group in frame.groupby(columns, dropna=False, sort=False, observed=True):
-        prefix = "|" + "|".join(str(key) for key in (keys if isinstance(keys, tuple) else (keys,)))
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        prefix = "|" + "|".join(str(key) for key in keys)
+        where = _where(columns, keys)
         names = group["annotator"].astype(str)
         own = group[names == coder]
         if own.empty:
             continue
         starts, ends = own["t_start"].to_numpy(dtype=float), own["t_end"].to_numpy(dtype=float)
         ids = [f"{prefix}|{start}|{end}" for start, end in zip(own["t_start"], own["t_end"])]
-        rows += list(zip(ids, [coder] * len(own), own["label"].astype(str)))
+        spans = dict(zip(ids, zip(starts, ends)))
+        rows += [(unit, coder, label, *where, *spans[unit]) for unit, label in zip(ids, own["label"].astype(str))]
         for other, theirs in group[names != coder].groupby(names[names != coder], sort=True):
             labels = theirs["label"].astype(str).to_numpy()
             # how long each of their annotations overlaps each unit, a block of units at a time
@@ -134,15 +142,21 @@ def _coder_units(frame: pd.DataFrame, coder: str) -> pd.DataFrame:
                 )
                 for unit, seconds in zip(ids[block], overlap):
                     if not (seconds > 0).any():
-                        rows.append((unit, str(other), NO_CODE))
+                        rows.append((unit, str(other), NO_CODE, *where, *spans[unit]))
                         continue
                     totals = pd.Series(seconds).groupby(labels).sum()
                     winners = sorted(totals.index[totals == totals.max()])
                     ties += len(winners) > 1
-                    rows.append((unit, str(other), winners[0]))
+                    rows.append((unit, str(other), winners[0], *where, *spans[unit]))
     out = pd.DataFrame(rows, columns=_UNIT_COLUMNS)
     out.attrs["grid_ties"] = int(ties)
     return out
+
+
+def _where(columns: list[str], keys: tuple) -> tuple:
+    """Recording, person and tier of a group, None for a column the frame lacks."""
+    values = dict(zip(columns, keys))
+    return tuple(values.get(column) for column in _GROUP_KEY)
 
 
 def _cell_coverage(group: pd.DataFrame, grid_s: float) -> dict[tuple[int, str], dict[str, float]]:
@@ -260,16 +274,19 @@ def pairwise_kappa(units: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def per_code_kappa(units: pd.DataFrame) -> pd.DataFrame:
-    """One code against everything else. A single overall coefficient hides which code disagrees."""
-    columns = ["code", "n_units", "n_ratings", "alpha", "kappa"]
+def _codes(units: pd.DataFrame) -> list[str]:
+    return sorted(label for label in units["label"].astype(str).unique().tolist() if label != NO_CODE)
+
+
+def per_code_alpha(units: pd.DataFrame) -> pd.DataFrame:
+    """One code against everything else, all coders together; an overall coefficient hides which code disagrees."""
+    columns = ["code", "n_units", "n_ratings", "alpha"]
     if units is None or units.empty:
         return pd.DataFrame(columns=columns)
 
     labels = units["label"].astype(str)
-    names = sorted(units["annotator"].astype(str).unique().tolist())
     rows = []
-    for code in sorted(label for label in labels.unique().tolist() if label != NO_CODE):
+    for code in _codes(units):
         hit = labels.to_numpy() == code
         binary = pd.DataFrame(
             {
@@ -284,10 +301,51 @@ def per_code_kappa(units: pd.DataFrame) -> pd.DataFrame:
                 "n_units": int(units.loc[hit, "unit_id"].nunique()),
                 "n_ratings": int(hit.sum()),
                 "alpha": krippendorff_alpha(binary),
-                "kappa": cohen_kappa(binary, names[0], names[1]) if len(names) == 2 else float("nan"),
             }
         )
     return pd.DataFrame(rows, columns=columns)
+
+
+def per_code_pairs(units: pd.DataFrame) -> pd.DataFrame:
+    """One code against the rest for every pair of coders; n_a and n_b count it on the units both rated."""
+    columns = ["code", "annotator_a", "annotator_b", "n_units", "n_a", "n_b", "kappa"]
+    if units is None or units.empty:
+        return pd.DataFrame(columns=columns)
+
+    wide = _wide(units)
+    names = sorted(str(name) for name in wide.columns)
+    pairs = {
+        (left, right): wide.loc[:, [left, right]].dropna().astype(str)
+        for position, left in enumerate(names)
+        for right in names[position + 1 :]
+    }
+    rows = []
+    for code in _codes(units):
+        for (left, right), both in pairs.items():
+            hit_a, hit_b = both[left].to_numpy() == code, both[right].to_numpy() == code
+            rows.append(
+                {
+                    "code": code,
+                    "annotator_a": left,
+                    "annotator_b": right,
+                    "n_units": len(both),
+                    "n_a": int(hit_a.sum()),
+                    "n_b": int(hit_b.sum()),
+                    "kappa": _kappa(np.where(hit_a, code, REST), np.where(hit_b, code, REST))[1],
+                }
+            )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def unit_table(units: pd.DataFrame) -> pd.DataFrame:
+    """A row per unit, a column per coder: blank for no rating, NO_CODE where they coded around the unit."""
+    if units is None or units.empty:
+        return pd.DataFrame(columns=list(UNIT_KEY))
+    where = units.drop_duplicates("unit_id").set_index("unit_id").reindex(columns=list(UNIT_KEY))
+    where = where.astype({"t_start": float, "t_end": float})
+    table = where.join(_wide(units)).sort_values(list(UNIT_KEY), kind="stable", na_position="first")
+    table.columns.name = None
+    return table.reset_index(drop=True)
 
 
 def _abstention_rate(annotations: pd.DataFrame) -> dict[str, float]:
@@ -337,10 +395,12 @@ def agreement_report(
         "annotators": names,
         "alpha": krippendorff_alpha(units),
         "pairwise_kappa": pairwise_kappa(units),
-        "per_code": per_code_kappa(units),
+        "per_code": per_code_alpha(units),
+        "per_code_pairs": per_code_pairs(units),
         "abstention_rate": _abstention_rate(frame),
         "coverage": (complete / n_units) if n_units else float("nan"),
         "warnings": [],
+        "units": unit_table(units),
     }
     report["warnings"] = _report_warnings(report, units)
     return report
@@ -400,9 +460,10 @@ def format_report(report: dict) -> str:
     if not report["pairwise_kappa"].empty:
         lines.append("")
         lines.append(report["pairwise_kappa"].to_string(index=False))
-    if not report["per_code"].empty:
-        lines.append("")
-        lines.append(report["per_code"].to_string(index=False))
+    for table in ("per_code", "per_code_pairs"):
+        if not report[table].empty:
+            lines.append("")
+            lines.append(report[table].to_string(index=False))
     if report["abstention_rate"]:
         lines.append("")
         lines.append(
@@ -421,10 +482,17 @@ def report_to_json(report: dict) -> dict:
     out = {
         key: (None if isinstance(value, float) and not np.isfinite(value) else value)
         for key, value in report.items()
+        if key != "units"
     }
-    out["pairwise_kappa"] = json.loads(report["pairwise_kappa"].to_json(orient="records"))
-    out["per_code"] = json.loads(report["per_code"].to_json(orient="records"))
+    for table in ("pairwise_kappa", "per_code", "per_code_pairs"):
+        out[table] = json.loads(report[table].to_json(orient="records"))
     return out
+
+
+def write_report(report: dict, folder: Path) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "report.json").write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")
+    report["units"].to_csv(folder / "units.csv", index=False)
 
 
 def load_annotations(config, recording_ids: Sequence[str]) -> pd.DataFrame:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import typer
@@ -9,7 +8,7 @@ from macaw.coding.agreement import (
     agreement_report,
     format_report,
     load_annotations,
-    report_to_json,
+    write_report,
 )
 from macaw.coding.describe import describe_codes, format_description
 from macaw.coding.imports import import_coding
@@ -91,19 +90,23 @@ def agreement(
     units: str = typer.Option(
         None, "--units", help="Compare on this coder's intervals: each takes every other coder's code covering most of it."
     ),
-    out: Path = typer.Option(None, "--out", help="Write the report as json."),
+    out: Path = typer.Option(
+        None, "--out", help="A folder for report.json and units.csv, each unit with every coder's code."
+    ),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
     """Inter-annotator agreement over the annotations table: Krippendorff alpha and Cohen kappa."""
     if grid_s is not None and units is not None:
         raise MacawError("give --grid-s or --units, not both")
+    if out is not None and out.is_file():
+        raise MacawError(f"{out} is a file; --out takes a folder")
     resolved = resolve_config(config, cli_overrides=set_ or ())
     annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
     report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units)
     typer.echo(format_report(report))
     if out is not None:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")
+        write_report(report, out)
+        typer.echo(f"\nreport.json and units.csv in {out}")
 
 
 @app.command("import-codes")

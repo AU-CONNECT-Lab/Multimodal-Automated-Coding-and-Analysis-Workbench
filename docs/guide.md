@@ -302,6 +302,9 @@ Which tier is whose
 Comparing
 : Coders who coded the same intervals: `macaw agreement --tier speech_acts`. When each drew their own boundaries, `--units` takes each interval of one coder as a unit and gives it every other coder's code that covers most of it, or no code when none does; name the language model as `macaw agreement` lists it to compare on its utterances. For states that last, such as where someone looks, `--grid-s 0.5` cuts the time into half-second cells instead. A coder who coded only part of a recording leaves the rest without a code, which counts as disagreement, so compare over what both coded.
 
+What you get
+: Alpha over all coders together, kappa for each pair, and each code on its own against the rest: alpha over all coders, and kappa for every pair with how often each of the two gave the code. With two people and a language model, the model's kappa with each person sits beside the people's own on every code. `--out agreement` writes `report.json` and `units.csv`, one row per unit with its recording, person, tier, start and end and a column per coder: their code, `_none` where they coded that person and tier but put nothing on this unit, or blank where they gave it no rating. From it you can count which codes are taken for which, or see whether the model misses where the people also disagree.
+
 (gaze)=
 ## Who looks at whom
 

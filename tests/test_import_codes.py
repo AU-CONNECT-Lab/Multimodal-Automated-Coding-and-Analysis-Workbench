@@ -205,3 +205,17 @@ class TestCommand:
         assert result.exit_code == 1 and "family1.eaf" in str(result.exception)
         result = CliRunner().invoke(app, ["import-codes", str(path), "--coder", "anna", "-r", "dyad01", "-c", str(project.path)])
         assert result.exit_code == 0 and "child gaze_target 1" in result.output
+
+    def test_two_coders_compared_into_a_folder(self, project, tmp_path):
+        project.configure(IMPORTS)
+        for coder, code in (("anna", "Mom"), ("ben", "Away")):
+            path = write_eaf(tmp_path / f"dyad01_{coder}.eaf", {"Child Gaze": (None, [(0, 1000, code), (2000, 3000, "Mom")])})
+            CliRunner().invoke(app, ["import-codes", str(path), "--coder", coder, "-c", str(project.path)])
+        out = tmp_path / "agreement"
+        result = CliRunner().invoke(app, ["agreement", "--units", "anna", "--out", str(out), "-r", "dyad01", "-c", str(project.path)])
+        assert result.exit_code == 0, result.output
+        units = pd.read_csv(out / "units.csv")
+        assert units[["anna", "ben"]].values.tolist() == [["parent", "elsewhere"], ["parent", "parent"]]
+        assert (out / "report.json").is_file()
+        result = CliRunner().invoke(app, ["agreement", "--out", str(out / "report.json"), "-c", str(project.path)])
+        assert result.exit_code == 1 and "takes a folder" in str(result.exception)

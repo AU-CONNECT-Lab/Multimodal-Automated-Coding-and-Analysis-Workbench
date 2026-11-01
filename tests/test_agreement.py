@@ -14,8 +14,11 @@ from macaw.coding.agreement import (
     format_report,
     krippendorff_alpha,
     pairwise_kappa,
-    per_code_kappa,
+    per_code_alpha,
+    per_code_pairs,
     report_to_json,
+    unit_table,
+    write_report,
 )
 
 
@@ -108,7 +111,20 @@ class TestBuildUnits:
     def test_empty_input_keeps_the_columns(self):
         units = build_units(pd.DataFrame())
         assert units.empty
-        assert list(units.columns) == ["unit_id", "annotator", "label"]
+        assert list(units.columns) == ["unit_id", "annotator", "label", "recording_id", "subject_id", "tier", "t_start", "t_end"]
+
+    @pytest.mark.parametrize("mode", [{}, {"grid_s": 0.5}, {"units_of": "A"}])
+    def test_every_unit_says_where_and_when_it_is(self, mode):
+        units = build_units(annotations([("A", 1.0, 2.0, "x"), ("B", 1.0, 2.0, "x")]), **mode)
+        assert set(units["recording_id"]) == {"r1"}
+        assert set(units["subject_id"]) == {"parent"}
+        assert set(units["tier"]) == {"backchannel"}
+        assert units["t_start"].min() == pytest.approx(1.0)
+        assert units["t_end"].max() == pytest.approx(2.0)
+
+    def test_a_grid_unit_is_its_cell(self):
+        units = build_units(annotations([("A", 0.2, 0.9, "x")]), grid_s=0.5)
+        assert sorted(zip(units["t_start"], units["t_end"])) == [(0.0, 0.5), (0.5, 1.0)]
 
     def test_missing_labels_are_dropped(self):
         frame = annotations([("A", 0.0, 1.0, "yes"), ("B", 0.0, 1.0, "yes")])
@@ -263,16 +279,16 @@ class TestPairwiseKappa:
         assert "kappa" in table.columns
 
 
-class TestPerCodeKappa:
+class TestPerCodeAlpha:
     def test_one_row_per_code(self):
-        table = per_code_kappa(two_coder_units(["a", "b"], ["a", "b"]))
+        table = per_code_alpha(two_coder_units(["a", "b"], ["a", "b"]))
         assert table["code"].tolist() == ["a", "b"]
 
     def test_an_overall_value_can_hide_one_bad_code(self):
         """Three codes agree and one never does; the total stays high, the per-code row does not."""
         labels_a = ["a", "a", "b", "b", "c", "c", "d", "d"]
         labels_b = ["a", "a", "b", "b", "c", "c", "a", "b"]
-        table = per_code_kappa(two_coder_units(labels_a, labels_b)).set_index("code")
+        table = per_code_alpha(two_coder_units(labels_a, labels_b)).set_index("code")
         assert krippendorff_alpha(two_coder_units(labels_a, labels_b)) > 0.6
         assert table.loc["d", "alpha"] < 0.0
 
@@ -280,22 +296,79 @@ class TestPerCodeKappa:
         units = build_units(
             annotations([("A", 0.0, 0.5, "x"), ("B", 0.0, 1.0, "x")]), grid_s=0.5
         )
-        assert NO_CODE not in per_code_kappa(units)["code"].tolist()
+        assert NO_CODE not in per_code_alpha(units)["code"].tolist()
 
     def test_counts_are_reported(self):
-        table = per_code_kappa(two_coder_units(["a", "a"], ["a", "b"])).set_index("code")
+        table = per_code_alpha(two_coder_units(["a", "a"], ["a", "b"])).set_index("code")
         assert table.loc["a", "n_ratings"] == 3
         assert table.loc["a", "n_units"] == 2
         assert table.loc["b", "n_units"] == 1
 
-    def test_kappa_is_left_out_when_there_are_not_exactly_two_annotators(self):
-        rows = [(f"u{index}", name, "a") for index in range(2) for name in "ABC"]
-        assert np.isnan(per_code_kappa(units_from(rows))["kappa"]).all()
-
     def test_empty_input_keeps_the_columns(self):
-        table = per_code_kappa(pd.DataFrame())
+        table = per_code_alpha(pd.DataFrame())
         assert table.empty
         assert "alpha" in table.columns
+
+
+def three_coder_units(labels):
+    """labels are (A, B, M) per unit, None where that coder gave nothing."""
+    return units_from(
+        [(f"u{index}", name, label) for index, row in enumerate(labels) for name, label in zip("ABM", row) if label is not None]
+    )
+
+
+class TestPerCodePairs:
+    def test_one_row_per_code_and_pair(self):
+        table = per_code_pairs(three_coder_units([("a", "a", "a"), ("b", "b", "a")]))
+        assert len(table) == 6
+        assert table[["code", "annotator_a", "annotator_b"]].values.tolist()[:3] == [
+            ["a", "A", "B"], ["a", "A", "M"], ["a", "B", "M"],
+        ]
+
+    def test_a_model_is_set_beside_the_people(self):
+        """The people agree on every unit and the model misses each b; only the pairs with the model show it."""
+        labels = [("a", "a", "a"), ("b", "b", "a")] * 5
+        table = per_code_pairs(three_coder_units(labels)).set_index(["code", "annotator_a", "annotator_b"])
+        assert table.loc[("b", "A", "B"), "kappa"] == pytest.approx(1.0)
+        assert table.loc[("b", "A", "M"), "kappa"] == pytest.approx(0.0)
+        assert table.loc[("b", "B", "M"), "n_a"] == 5
+        assert table.loc[("b", "B", "M"), "n_b"] == 0
+
+    def test_two_coders_match_cohen_kappa_on_a_split(self):
+        units = two_coder_units(NINE_A, NINE_B)
+        table = per_code_pairs(units).set_index("code")
+        binary = units.assign(label=np.where(units["label"] == "2", "2", "rest"))
+        assert table.loc["2", "kappa"] == pytest.approx(cohen_kappa(binary, "A", "B"))
+
+    def test_only_units_both_rated_count(self):
+        table = per_code_pairs(three_coder_units([("a", "a", None), ("b", "b", "b")])).set_index(["code", "annotator_a", "annotator_b"])
+        assert table.loc[("a", "A", "B"), "n_units"] == 2
+        assert table.loc[("a", "A", "M"), "n_units"] == 1
+
+    def test_one_coder_has_no_pairs(self):
+        assert per_code_pairs(units_from([("u0", "A", "a")])).empty
+
+
+class TestUnitTable:
+    def test_one_row_per_unit_and_a_column_per_coder(self):
+        frame = annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "y"), ("A", 1.0, 2.0, "x")])
+        table = unit_table(build_units(frame))
+        assert list(table.columns) == ["recording_id", "subject_id", "tier", "t_start", "t_end", "A", "B"]
+        assert table["A"].tolist() == ["x", "x"]
+        assert table["B"].iloc[0] == "y"
+        assert pd.isna(table["B"].iloc[1])
+
+    def test_rows_follow_time(self):
+        frame = annotations([("A", 5.0, 6.0, "x"), ("A", 0.0, 1.0, "y"), ("B", 5.0, 6.0, "x"), ("B", 0.0, 1.0, "y")])
+        assert unit_table(build_units(frame))["t_start"].tolist() == [0.0, 5.0]
+
+    def test_coded_around_is_told_apart_from_not_rated(self):
+        frame = annotations([("A", 0.0, 1.0, "x"), ("A", 3.0, 4.0, "y"), ("B", 0.0, 1.0, "x")])
+        table = unit_table(build_units(frame, units_of="A"))
+        assert table["B"].tolist() == ["x", NO_CODE]
+
+    def test_empty_units_keep_the_place_columns(self):
+        assert list(unit_table(build_units(pd.DataFrame())).columns) == ["recording_id", "subject_id", "tier", "t_start", "t_end"]
 
 
 class TestAgreementReport:
@@ -380,6 +453,12 @@ class TestAgreementReport:
         text = json.dumps(report_to_json(agreement_report(self.paired(n=5))))
         assert "NaN" not in text
         assert json.loads(text)["n_units"] == 5
+        assert "units" not in json.loads(text)
+
+    def test_the_folder_holds_the_report_and_the_units(self, tmp_path):
+        write_report(agreement_report(self.paired(n=5)), tmp_path / "out")
+        assert json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))["per_code_pairs"]
+        assert len(pd.read_csv(tmp_path / "out" / "units.csv")) == 5
 
     def test_format_report_mentions_the_headline_number(self):
         text = format_report(agreement_report(self.paired()))
