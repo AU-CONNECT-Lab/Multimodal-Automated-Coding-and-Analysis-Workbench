@@ -258,3 +258,25 @@ triggs2000:
   publisher: Springer
   pages: 298--372
   year: 2000
+ryan2025:
+  type: inproceedings
+  author: "Ryan, Fiona and Bati, Ajay and Lee, Sangmin and Bolya, Daniel and Hoffman, Judy and Rehg, James M."
+  title: "Gaze-LLE: Gaze target estimation via large-scale learned encoders"
+  booktitle: Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+  pages: 28874--28884
+  year: 2025
+tafasca2023:
+  type: inproceedings
+  author: "Tafasca, Samy and Gupta, Anshul and Odobez, Jean-Marc"
+  title: "ChildPlay: A new benchmark for understanding children's gaze behaviour"
+  booktitle: Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)
+  pages: 20935--20946
+  year: 2023
+liu2024:
+  type: inproceedings
+  author: "Liu, Shilong and Zeng, Zhaoyang and Ren, Tianhe and Li, Feng and Zhang, Hao and Yang, Jie and Jiang, Qing and Li, Chunyuan and Yang, Jianwei and Su, Hang and Zhu, Jun and Zhang, Lei"
+  title: "Grounding DINO: Marrying DINO with grounded pre-training for open-set object detection"
+  booktitle: Computer Vision -- ECCV 2024
+  publisher: Springer
+  doi: 10.1007/978-3-031-72970-6_3
+  year: 2024

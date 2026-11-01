@@ -220,3 +220,15 @@ def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
     assert "at least 40 Hz" in text
     text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
     assert "phrases set for this study" not in text
+
+
+def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats():
+    point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitl14_inout_childplay", in_frame_cut=0.5)
+    text, used = render(describe(manifest(point), config(gaze={"targets": ["bottle", "book"]})), load_references())
+    assert {"ryan2025", "tafasca2023", "liu2024"} <= set(used)
+    assert "## Gaze" in text and "bottle, book" in text and "at least 0.5" in text
+    plain, used = render(describe(manifest(spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitb14_inout", in_frame_cut=0.5)), config()), load_references())
+    assert "tafasca2023" not in used and "liu2024" not in used
+    seats = {"camera": [0, 0, 100], "parent": [-50, 100, 110]}
+    text, used = render(describe(manifest(spec("gaze.target", "looks_at", "angles", "1.0")), config(project={"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["parent", "child"]}, gaze={"backend": "angles", "seats": seats, "tolerance_deg": 20})), load_references())
+    assert "head pose" in text and "within 20°" in text and "seats" in text and not used

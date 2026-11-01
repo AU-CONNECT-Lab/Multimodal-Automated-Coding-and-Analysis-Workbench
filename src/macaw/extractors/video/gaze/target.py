@@ -169,6 +169,15 @@ class GazeTargetExtractor(Extractor):
         labels = labels_frame(read_labels(layout_for(self.config, create=False).gaze_labels_path(rid)))
         roles = [subject.subject_id for subject in recording.subjects]
         points, warnings = [], []
+        seats = cfg.seats
+        if seats and len({views.get(str(subject)) for subject in measured["subject_id"].unique()}) > 1:
+            seats = {}
+            warnings.append(
+                self._warning(
+                    recording, None, "warn",
+                    "gaze.seats describe one camera, and these people are measured on several, so only labelled frames say where anyone is",
+                )
+            )
         for subject, mine in measured.groupby("subject_id", sort=True):
             subject = str(subject)
             item = by_name.get(views.get(subject, ""))
@@ -176,7 +185,7 @@ class GazeTargetExtractor(Extractor):
                 continue
             labelled = angles.labelled_directions(measured, labels, 1.0 / item.fps)
             named_things = sorted(set(labels.loc[labels["subject"] == subject, "target"]) - set(roles) - {ELSEWHERE})
-            expected = angles.expected_directions(subject, [role for role in roles if role != subject] + named_things, cfg.seats, labelled)
+            expected = angles.expected_directions(subject, [role for role in roles if role != subject] + named_things, seats, labelled)
             if not expected:
                 warnings.append(
                     self._warning(

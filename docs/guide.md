@@ -269,6 +269,70 @@ How the codes were used
 
 To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
 
+(gaze)=
+## Who looks at whom
+
+For each person in each frame, MACAW finds the point in the picture they look at, and from it whom they look at, which of the things you name, somewhere else in the picture, or something outside it. It reads this off the picture with a model trained for it (Gaze-LLE), from the person's head and the whole scene, so it also works when a face is half turned away. It needs nothing from you beyond the settings below, and the first run downloads the model (about 1.3 GB).
+
+:::{important}
+Whom a person looks at can only be read when the person they look at is in the same picture, so this needs a camera that shows everyone involved. A camera on one person alone gives where in the picture they look, nothing about whom; see *Your seats instead of the picture* below for that case. The point found is where the head and eyes point as the model reads them from the picture, not an eye tracker: it tells the other person's face from the table or the toys, not one toy from the one beside it.
+:::
+
+People
+: A person counts as looking at someone while the point lies on that person's head, as MACAW places it from their body points. Two people looking at each other at the same moment is mutual gaze.
+
+Things
+: Name them in `project.yaml`, in plain English words, and MACAW looks for them in the picture five times a second (with Grounding DINO, which finds things by name):
+
+  ```yaml
+  gaze:
+    targets: [bottle, book, toy car]
+  ```
+
+  The quality page warns when a name is rarely found; another word for the same thing often works better. Raise `gaze.object_score` (0.35) when it finds things that are not there, lower it when it misses them. A person's head counts before any thing in front of it.
+
+The results, for each person (`subject_id`) toward each other person (`subject_id_b`):
+
+`looks_at`, `gaze_to_head`
+: 1 while one looks at the other, else 0; and how far the point is from the other's head, in head widths (0 on the head), for setting a looser rule yourself.
+
+`mutual_gaze`
+: 1 while the two look at each other.
+
+`looks_at_share`, `looks_at_n`, `mutual_gaze_share`
+: For the whole recording: the share of the time one looked at the other, how many looks that was, and the share of mutual gaze.
+
+`gaze_x`, `gaze_y`, `gaze_in_frame`
+: The point itself, in pixels, and how sure the model is that what the person looks at is in the picture (0 to 1; below 0.5 counts as outside it).
+
+Every look also becomes a code on a `gaze_target` tier for each person (the person or thing looked at, `elsewhere`, or `off_screen`) and on a `mutual_gaze` tier, so `macaw export -f eaf` puts them in ELAN beside your own coding, and `macaw describe-codes` counts them.
+
+`gaze.model` picks the model. The default was tuned on children playing with adults; `gazelle_dinov2_vitb14_inout_childplay` takes about half the time and is a little less exact.
+
+:::{note}
+Checked on 28 public clips of children playing with adults (ChildPlay), against hand labels of where each person looks. Of the frames MACAW said a person looked at someone, 66% were right for adults and 55% for children; of the frames a person was labelled looking at someone, MACAW found 75% for adults and 67% for children. Over each clip, the share of time a person spent looking at someone ranked people much as the labels did (rank correlation 0.80), though it came out too high for adults who look about a lot. Children look at faces less often than adults, so a few wrong frames weigh more for them. How well it does on your video depends on how large and how turned the heads are: label some frames (below) and the quality page tells you.
+:::
+
+### Check it on your own video
+
+On the Review page, *Where people look* shows a frame with each person's head marked. Say whom or what each person looks at and save; *A frame at random* picks the next one. Take frames at random rather than the clear ones, or the check says more than it should. About 20 frames per person tell you a good deal. The quality page then says, for each person, how often MACAW agreed with you and lists the frames where it did not. In a terminal the same is `macaw label-gaze -r 003 --at 12.4 --person child --looks-at parent`, with `elsewhere` for anything else and `unsure` when you cannot tell.
+
+### Your seats instead of the picture
+
+When the person looked at is often outside the picture, for example a parent sitting beside the camera that films the child, whom someone looks at can still be read from where their head (and, with `face.gaze: true`, their eyes) points, if MACAW knows where everyone sits. Set `gaze.backend: angles` and say where the people and the camera are, seen from above, and how high their eyes are, all in one unit (centimetres, say), with the camera at the start of the depth axis and x to its right:
+
+```yaml
+gaze:
+  backend: angles
+  seats:
+    camera: [0, 0, 110]
+    parent: [-50, 120, 115]
+    child: [30, 140, 85]
+  tolerance_deg: 20
+```
+
+A look within `tolerance_deg` of the direction to someone is a look at them (there is no default: it depends on how far apart people sit). This assumes people stay in their seats and the camera is level; a recording with other seats gets its own in `recordings/003.yaml`. Seats describe one camera, so when people are filmed by several (each their own, say), only labelled frames are used. Head angles from a single camera carry a bias of their own, so label some frames as above: MACAW then corrects each person's offset from them, and once a person has three or more frames looking at something, it takes that direction from the frames rather than the seats. Labelled frames alone, without seats, work too, and also name things such as a toy that stays put. The measure between two people is then `gaze_off_deg`, the angle off the direction to the other.
+
 (measures)=
 ## Your own body measures
 

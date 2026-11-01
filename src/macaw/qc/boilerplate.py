@@ -22,10 +22,11 @@ ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "face.au", "face.au_check", "face.movement",
+    "gaze.target",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
-    "pose": "Body", "motion": "Body", "face": "Face",
+    "pose": "Body", "motion": "Body", "face": "Face", "gaze": "Gaze",
 }
 
 # writers cite as [key] or [key; key]; render turns that into author-year and collects the keys
@@ -608,6 +609,42 @@ def _movement(config, spec, names) -> str:
     )
 
 
+def _gaze(config, spec, names) -> str:
+    from macaw.extractors.video.gaze.heads import HEAD_SCALE
+
+    people = (
+        "mutual gaze was coded when two people looked at each other in the same frame. "
+        "Each run of frames with the same target was kept as one coded interval"
+    )
+    if spec.backend == "angles":
+        cfg = config.gaze
+        signal = "gaze direction where the face model gave one and head pose elsewhere" if config.face.gaze else "head pose"
+        where = (
+            "the seats measured for the session (each participant's position and eye height relative to the camera), "
+            "corrected by each participant's median offset on frames labelled by hand"
+        ) if cfg.seats else "frames labelled by hand"
+        return (
+            f"Gaze targets were inferred from {signal}: each participant was coded as looking at the target whose direction, "
+            f"taken from {where}, lay nearest their own and within {cfg.tolerance_deg:g}°; a target with three or more "
+            f"labelled frames took its direction from them; {people}."
+        )
+    model = spec.params.get("model") or ""
+    text = (
+        f"For each participant in each frame, the point they looked at was estimated with Gaze-LLE [ryan2025] ({model}"
+        f"{', fine-tuned on ChildPlay [tafasca2023]' if model.endswith('childplay') else ''}) from the whole frame and a head "
+        f"box drawn from the participant's pose keypoints ({HEAD_SCALE:g} times the spread of the face keypoints, or the "
+        "shoulder width if larger). A participant was coded as looking at another while that point lay inside the other's "
+        f"head box and the model's in-frame score was at least {spec.params.get('in_frame_cut', 0.5):g}; {people}."
+    )
+    if config.gaze.targets:
+        text += (
+            f" Objects named {', '.join(config.gaze.targets)} were detected five times per second with Grounding DINO "
+            f"[liu2024] (box score at least {config.gaze.object_score:g}); a gaze point on no head but inside an object's box "
+            "in the nearest such frame was assigned to that object, the smallest box first."
+        )
+    return text
+
+
 def _syntax(config, spec, names) -> str:
     model = spec.params.get("syntax_model") or config.text.syntax_model
     version = spec.params.get("syntax_model_version")
@@ -649,4 +686,5 @@ _WRITERS = {
     "face.au": _face,
     "face.au_check": _au_check,
     "face.movement": _movement,
+    "gaze.target": _gaze,
 }

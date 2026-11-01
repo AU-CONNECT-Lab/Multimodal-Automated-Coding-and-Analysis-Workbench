@@ -235,3 +235,29 @@ class TestAngles:
 
         with pytest.raises(ConfigError, match="tolerance_deg"):
             GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(backend="angles"))).check_available()
+
+
+def test_seats_are_set_aside_when_people_are_measured_on_several_cameras(tmp_path, monkeypatch):
+    from macaw.store.longtable import build_long_rows, write_long_table
+
+    stored = tmp_path / "pose.keypoints.parquet"
+    write_keypoints(pd.concat([keypoints({"parent": (100, 100)}, video="parent.mp4"), keypoints({"child": (100, 100)}, video="child.mp4")]), stored)
+    rows = pd.concat([
+        build_long_rows(values=pd.DataFrame({"t_start": np.arange(10) / FPS, "face_yaw_deg": 0.0, "face_pitch_deg": 0.0}),
+                        recording_id="r1", source="face.au", scale="frame", subject_id=subject)
+        for subject in ("parent", "child")
+    ])
+    face = tmp_path / "face.au.parquet"
+    write_long_table(rows, face)
+    monkeypatch.setattr(target_module, "_keypoints_file", lambda config, rid: stored)
+    monkeypatch.setattr(target_module, "_face_rows_file", lambda config, rid: face)
+    monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: tmp_path / "none.json"))
+    monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
+    recording = SimpleNamespace(
+        recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
+        media=[video("parent.mp4", "parent"), video("child.mp4", "child")], entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
+    )
+    config = SimpleNamespace(gaze=GazeSection(backend="angles", seats=TestAngles.SEATS, tolerance_deg=20))
+    result = GazeTargetExtractor(config).run(recording, tmp_path)
+    assert any("measured on several" in w.message for w in result.warnings)
+    assert "looks_at" not in set(result.rows.feature)
