@@ -16,6 +16,7 @@ project:
   recording_prefix: ""               # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
   recording_config_dir: recordings   # dir of <recording_id>.yaml files overriding this config
   scripts_dir: scripts               # your own .py files: measure functions, extractors, backends
+  calibration_dir: calibration       # clips filmed before recording: an object of known length, a board per camera setup
   n_subjects: 2                      # people per recording; N-person is supported, 2 is tested
   roles: [parent, child]             # role labels; length must equal n_subjects
   excluded_recordings: []            # recording ids skipped by every command
@@ -102,9 +103,20 @@ kinematics:
 scale:                               # right only for people as far from the camera as the object measured
   cm_per_px: null                    # centimetres one pixel spans, for everyone; written by hand it wins over any measurement. Per recording in recordings/<id>.yaml
   cm_per_px_by_role: {}              # role -> centimetres per pixel at that person's place, e.g. {child: 0.12}
-  calibration: null                  # clip in calibration_dir, filmed with the cameras as they stood, for recordings not measured on their own video
-  calibration_dir: calibration       # next to project.yaml
+  calibration: null                  # clip in project.calibration_dir, filmed with the cameras as they stood, for recordings not measured on their own video
   max_size_change: 0.1               # share by which a person's apparent size may change over a recording before the report flags it
+
+pose3d:                              # 3D from two or more cameras that see the same people
+  calibration: null                  # in project.calibration_dir: a folder of board clips, one per camera (macaw calibrate-cameras), or a calibration .toml
+  units: mm                          # mm | cm | m; an imported calibration's translations, when the file does not say
+  board:                             # the ChArUco board printed with macaw calibration-board; these sizes fit A2, for A3 use 50 and 37
+    squares_x: 7
+    squares_y: 5
+    square_mm: 75                    # measure one printed square with a ruler and write it here
+    marker_mm: 56
+    dictionary: 5X5_100              # 4X4_50 | 4X4_100 | 5X5_50 | 5X5_100 | 6X6_50 | 6X6_250
+  max_reprojection_px: 15            # px; a camera whose view of a point misses the others' by more is left out of that point
+  board_every_s: 0.2                 # s; board clips are read at this interval
 
 face:
   backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface

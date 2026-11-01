@@ -225,3 +225,36 @@ mcneill1992:
   title: "Hand and mind: What gestures reveal about thought"
   publisher: University of Chicago Press
   year: 1992
+hartley2003:
+  type: book
+  author: "Hartley, Richard and Zisserman, Andrew"
+  title: "Multiple view geometry in computer vision"
+  edition: "2nd"
+  publisher: Cambridge University Press
+  year: 2003
+garrido2014:
+  type: article
+  author: "Garrido-Jurado, Sergio and Muñoz-Salinas, Rafael and Madrid-Cuevas, Francisco J. and Marín-Jiménez, Manuel J."
+  title: "Automatic generation and detection of highly reliable fiducial markers under occlusion"
+  journal: Pattern Recognition
+  volume: 47
+  number: 6
+  pages: 2280--2292
+  year: 2014
+zhang2000:
+  type: article
+  author: "Zhang, Zhengyou"
+  title: "A flexible new technique for camera calibration"
+  journal: IEEE Transactions on Pattern Analysis and Machine Intelligence
+  volume: 22
+  number: 11
+  pages: 1330--1334
+  year: 2000
+triggs2000:
+  type: incollection
+  author: "Triggs, Bill and McLauchlan, Philip F. and Hartley, Richard I. and Fitzgibbon, Andrew W."
+  title: "Bundle adjustment: A modern synthesis"
+  booktitle: "Vision algorithms: Theory and practice"
+  publisher: Springer
+  pages: 298--372
+  year: 2000

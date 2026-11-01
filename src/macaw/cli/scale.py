@@ -31,7 +31,7 @@ app = typer.Typer()
 def set_scale(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recording: str = typer.Option(None, "--recording", "-r", help="Measure on this recording's own video."),
-    calibration: str = typer.Option(None, "--calibration", help="Measure on this clip in scale.calibration_dir instead."),
+    calibration: str = typer.Option(None, "--calibration", help="Measure on this clip in project.calibration_dir instead."),
     media: str = typer.Option(None, "--media", help="The recording's video measured on; needed when it has several."),
     points: str = typer.Option(None, "--points", help="The object's two ends in pixels of the frame: x1,y1,x2,y2."),
     length_cm: float = typer.Option(None, "--length-cm", help="Its real length in centimetres."),

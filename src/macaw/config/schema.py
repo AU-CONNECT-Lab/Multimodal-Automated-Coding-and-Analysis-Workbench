@@ -29,6 +29,8 @@ class ProjectSection(_Section):
     recording_prefix: str = ""
     recording_config_dir: Path = Path("recordings")
     scripts_dir: Path = Path("scripts")
+    # clips and files filmed or made before recording: an object of known length, a board per camera setup
+    calibration_dir: Path = Path("calibration")
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
@@ -189,9 +191,8 @@ class ScaleSection(_Section):
     # written by hand, these win over any measurement; a role's own number wins over the one for everyone
     cm_per_px: float | None = Field(default=None, gt=0)
     cm_per_px_by_role: dict[str, float] = Field(default_factory=dict)
-    # a clip in calibration_dir measured with macaw set-scale --calibration, for recordings not measured on their own video
+    # a clip in project.calibration_dir measured with macaw set-scale --calibration, for recordings not measured on their own video
     calibration: str | None = None
-    calibration_dir: Path = Path("calibration")
     # share by which a person's apparent size may change over a recording before the report flags it
     max_size_change: float = Field(default=0.1, gt=0)
 
@@ -201,6 +202,33 @@ class ScaleSection(_Section):
         if bad:
             raise ValueError(f"scale.cm_per_px_by_role must be above 0, not for {', '.join(bad)}")
         return self
+
+
+class BoardSection(_Section):
+    squares_x: int = Field(default=7, ge=3)
+    squares_y: int = Field(default=5, ge=3)
+    # as printed and measured with a ruler; it sets the scale of everything in 3D
+    square_mm: float = Field(default=75.0, gt=0)
+    marker_mm: float = Field(default=56.0, gt=0)
+    dictionary: Literal["4X4_50", "4X4_100", "5X5_50", "5X5_100", "6X6_50", "6X6_250"] = "5X5_100"
+
+    @model_validator(mode="after")
+    def _markers_inside_squares(self) -> "BoardSection":
+        if self.marker_mm >= self.square_mm:
+            raise ValueError("pose3d.board.marker_mm must be smaller than square_mm")
+        return self
+
+
+class Pose3DSection(_Section):
+    # a folder of board clips, one per camera, or a calibration .toml, in project.calibration_dir
+    calibration: str | None = None
+    # what an imported calibration's translations are in, when the file does not say
+    units: Literal["mm", "cm", "m"] = "mm"
+    board: BoardSection = Field(default_factory=BoardSection)
+    # a camera whose view of a point lands further than this from where the others place it is left out of that point
+    max_reprojection_px: float = Field(default=15.0, gt=0)
+    # board clips are read at this interval
+    board_every_s: float = Field(default=0.2, gt=0)
 
 
 class FaceSection(_Section):
@@ -320,6 +348,7 @@ class MacawConfig(_Section):
     pose: PoseSection = Field(default_factory=PoseSection)
     kinematics: KinematicsSection = Field(default_factory=KinematicsSection)
     scale: ScaleSection = Field(default_factory=ScaleSection)
+    pose3d: Pose3DSection = Field(default_factory=Pose3DSection)
     face: FaceSection = Field(default_factory=FaceSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
@@ -357,6 +386,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "pose",
     "kinematics",
     "scale",
+    "pose3d",
     "face",
     "motion",
     "turns",

@@ -21,7 +21,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "pose.gestures", "motion.mea", "face.au", "face.au_check", "face.movement",
+    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "motion.mea", "face.au", "face.au_check", "face.movement",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -484,6 +484,34 @@ def _gestures(config, spec, names) -> str:
     )
 
 
+def _kinematics_3d(config, spec, names) -> str:
+    from macaw.extractors.video.pose.cameras import read_setup
+    from macaw.extractors.video.pose.triangulate import calibration_path
+
+    pose3d = config.pose3d
+    try:
+        setup = read_setup(calibration_path(config), pose3d.units)
+        cameras, made_here = f"{len(setup.cameras)} ", setup.metadata.get("made_by") == "macaw calibrate-cameras"
+    except Exception:   # the calibration file moved since the run; the text stays true without the count
+        cameras, made_here = "", False
+    board = pose3d.board
+    calibrated = (
+        f"The cameras were calibrated from a ChArUco board [garrido2014] of {board.square_mm:g} mm squares filmed by all of "
+        "them: each lens first from its own views [zhang2000], then every camera's place and lens together by bundle "
+        "adjustment [triggs2000]."
+        if made_here else "The cameras' calibration was supplied as a file."
+    )
+    return (
+        f"Each person's keypoints were placed in 3D from the {cameras}calibrated cameras that saw them by weighted linear "
+        f"triangulation of the undistorted points [hartley2003], leaving a camera out of a point while its view missed the "
+        f"others' by more than {pose3d.max_reprojection_px:g} px. {calibrated} In 3D, wrist speed, acceleration and jerk "
+        f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964], together "
+        "with the distance between the wrists, between two people's shoulder midpoints and between the midpoints of their "
+        "ears, and the angle between where a person's head points, from the midpoint of the ears to the nose, and the "
+        "direction to the other person's head."
+    )
+
+
 def _measures(measures) -> str:
     from macaw.extractors.video.pose.kinematics import measure_spec
 
@@ -592,6 +620,7 @@ _WRITERS = {
     "pose.keypoints": _keypoints,
     "pose.kinematics": _kinematics,
     "pose.gestures": _gestures,
+    "pose.kinematics3d": _kinematics_3d,
     "motion.mea": _mea,
     "face.au": _face,
     "face.au_check": _au_check,

@@ -35,7 +35,7 @@ Who holds the floor, gaps and overlaps between speakers, interruptions, short "m
 :::
 
 :::{grid-item-card} Body
-Each person's pose, how fast they move, how far apart people are, and the amount of movement in a part of the picture you mark.
+Each person's pose, how fast they move, how far apart people are, and the amount of movement in a part of the picture you mark; with several calibrated cameras, all of it in 3D.
 :::
 
 :::{grid-item-card} Face

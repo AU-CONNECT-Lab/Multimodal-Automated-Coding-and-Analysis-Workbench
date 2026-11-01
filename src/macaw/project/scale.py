@@ -120,7 +120,7 @@ def from_measurements(measurements: list[Measurement], source: str, video: str) 
 
 
 def calibration_clips(config) -> list[str]:
-    folder = Path(config.scale.calibration_dir)
+    folder = Path(config.project.calibration_dir)
     if not folder.is_dir():
         return []
     return sorted(path.name for path in folder.iterdir() if path.suffix.lower() in VIDEO_SUFFIXES)
@@ -131,9 +131,9 @@ def clip_frame(config, clip: str, at_s: float, dest: Path) -> tuple[Path, tuple[
     from macaw.media.ffmpeg import extract_frame
     from macaw.media.probe import run_ffprobe
 
-    path = Path(config.scale.calibration_dir) / clip
+    path = Path(config.project.calibration_dir) / clip
     if not path.is_file():
-        raise MacawError(f"no calibration clip {clip} in {config.scale.calibration_dir}")
+        raise MacawError(f"no calibration clip {clip} in {config.project.calibration_dir}")
     extract_frame(path, at_s, dest, square_pixels=config.video.normalise)
     width, height = run_ffprobe(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(dest)]).strip().split(",")
     return dest, (int(width), int(height))

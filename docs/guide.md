@@ -367,3 +367,65 @@ To measure, open the Review page and go to *Pixels to centimetres*. Choose the r
 The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with each recording's scale for each person.
 
 The quality page gives each person's nose-to-shoulders length in centimetres at their scale (a value far from a real one means they sit nearer or further than the object was), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`), since then they moved toward or away from the camera.
+
+(three-d)=
+## Several cameras: 3D
+
+This is optional. When two or more cameras film the same people from different sides, MACAW can place each person's body points in the room, in metres. Distances then no longer depend on how far someone sits from a camera, and it becomes possible to say where a person's head points relative to the other person.
+
+It needs four things:
+
+- Every body point you care about is seen by at least two cameras, from clearly different directions.
+- The cameras film at the same time. MACAW lines them up by their sound, as it does for any recording.
+- The cameras are calibrated: MACAW knows each lens and where the cameras stand. This comes from a short clip of a printed board, filmed before the session.
+- The cameras do not move or zoom after that clip. When they do, film the board again.
+
+:::{note}
+This part has so far been checked on simulated cameras only.
+:::
+
+### 1. Print the board
+
+`macaw calibration-board` writes a ChArUco board (a chessboard with small codes in its white squares) as `calibration/board_A2.png`. Print it at 100%, glue it flat on something stiff such as foam board, and measure one square with a ruler. Write that length in `project.yaml`:
+
+```yaml
+pose3d:
+  board:
+    square_mm: 74.6
+```
+
+The default board fills A2. For A3, set `square_mm: 50` and `marker_mm: 37` before printing (`--paper A3`).
+
+### 2. Film it before the session
+
+With the cameras where they will stay, clap once in view of all of them, then move the board slowly through the space where people will sit, tilting it towards and away from the cameras, for about a minute. Keep it in view of two or more cameras at a time, and near enough that it fills a good part of the picture. Put one clip per camera in a folder such as `calibration/lab`, each named like that camera in the recordings: `room.mp4` for the camera whose recordings are named `003_room.mp4`.
+
+### 3. Find the cameras
+
+```bash
+macaw calibrate-cameras lab
+```
+
+It reports, for each camera, how far the board's corners land from where the camera saw them (under 1 or 2 pixels is good) and where the camera stands. Then name the setup in `project.yaml`, or in a recording's own file when some sessions used another setup:
+
+```yaml
+pose3d:
+  calibration: lab
+```
+
+A lab that has calibrated its cameras with another tool can put that calibration file in the `calibration` folder instead and name it, such as `calibration: lab.toml`. MACAW reads Anipose's `calibration.toml`; set `pose3d.units` to what its positions are in when the file does not say.
+
+### 4. Run and look
+
+Run as usual. Each person must carry the same name on every camera (see *Who is on camera* in step 5 above). The results gain measures ending in `_3d`, in metres, beside the measures from the picture:
+
+`left_wrist_speed_3d`, `hand_distance_3d`, ...
+: Each person's wrist speed, acceleration and jerk, and the distance between their wrists.
+
+`interpersonal_distance_3d`, `head_distance_3d`
+: Between two people's shoulder midpoints and between their heads.
+
+`head_toward_deg_3d`
+: The angle between where a person's head points and the direction to the other person's head; 0 means the head points straight at them. This is head direction, not gaze.
+
+On the Results page, *In 3D* shows everyone's skeleton and the cameras; drag to turn it and move the slider to go through the recording. The quality page says, for each person, how often they were placed in 3D, how well the cameras agree on them, and warns when a bone keeps changing length, which means some of its points were misplaced.

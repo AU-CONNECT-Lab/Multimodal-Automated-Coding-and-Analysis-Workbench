@@ -80,6 +80,10 @@ class Layout:
     def calibration_scale_path(self, clip: str) -> Path:
         return self.output_dir / "calibration" / f"{clip}.json"
 
+    # the cameras macaw calibrate-cameras found from a folder of board clips
+    def camera_setup_path(self, setup: str) -> Path:
+        return self.output_dir / "calibration" / f"{setup}.toml"
+
     # tracks a person named as a camera's owner; an input to pose.keypoints
     def camera_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "camera_owners.json"

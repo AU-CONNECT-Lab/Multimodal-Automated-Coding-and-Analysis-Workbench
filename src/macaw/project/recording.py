@@ -208,6 +208,12 @@ def _media_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("^" + "".join(parts) + "$")
 
 
+def media_label(path: Path, media_pattern: str) -> str:
+    """The part of a file name media_pattern captures, a person or a camera such as room; else the whole stem."""
+    match = _media_regex(media_pattern).match(path.name)
+    return match.group("subject_id") if match else path.stem
+
+
 def _glob_fragment(text: str) -> str:
     return "".join(".*" if character == "*" else re.escape(character) for character in text)
 
