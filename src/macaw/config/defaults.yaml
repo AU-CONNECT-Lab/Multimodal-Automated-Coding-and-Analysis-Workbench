@@ -188,6 +188,8 @@ qc:
     - octave_error
     - motion_energy
     - au_agreement
+    - scale
+    - gaze_labels
   fail_fast: false                   # true aborts the run on the first failed check
   f0_median_max_by_role: {}          # Hz; a median above it flags a track an octave high throughout, e.g. {mother: 330}
   report_downsample_px: 2000         # px; min-max downsampling target for report curves

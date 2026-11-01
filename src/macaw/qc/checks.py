@@ -71,6 +71,10 @@ _FROZEN_S = 1.0
 _STILL_S = 10.0
 # two face models whose rank correlation on an action unit is below this are not reading the same thing
 _AU_AGREE = 0.4
+# a labelled frame is compared with the gaze found this near it in time
+_GAZE_LABEL_S = 0.05
+# gaze.target agreeing with fewer labelled frames than this is flagged
+_GAZE_AGREE = 2 / 3
 
 _CHECKS: dict[str, Callable] = {}
 
@@ -693,6 +697,49 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
                 change=change,
             ))
     return CheckResult(warnings=warnings)
+
+
+@register_check("gaze_labels")
+def check_gaze_labels(recording: Recording, config: MacawConfig, results) -> CheckResult:
+    """Frames a person labelled with macaw label-gaze against what gaze.target found in them: how often the two
+    agree for each person, and the frames where they do not. No labels, nothing to check."""
+    from macaw.extractors.video.gaze.target import POINTS_NAME, finds_points
+    from macaw.project.gaze_labels import labels_frame, read_labels
+
+    rid = recording.recording_id
+    labels = labels_frame(read_labels(results.layout.gaze_labels_path(rid)))
+    if labels.empty:
+        return CheckResult()
+    path = results.artifact("gaze.target", POINTS_NAME)
+    if path is None:
+        return CheckResult(skipped="no gaze.target output to compare the labelled frames with")
+    points = pd.read_parquet(path)
+    learned = "" if finds_points(config) else f"; backend {config.gaze.backend} learns from these same frames, so this flatters it"
+    warnings, pieces = [], []
+    for subject, mine in labels.groupby("subject", sort=True):
+        found = points.loc[points["subject_id"] == subject, ["t", "target"]].rename(columns={"target": "found"}).sort_values("t")
+        if found.empty:
+            continue
+        joined = pd.merge_asof(mine.sort_values("t"), found, on="t", direction="nearest", tolerance=_GAZE_LABEL_S).dropna(subset=["found"])
+        if joined.empty:
+            continue
+        agree = joined["found"] == joined["target"]
+        warnings.append(
+            QCWarning(
+                check="gaze_labels", recording_id=rid, subject_id=str(subject),
+                severity="warn" if agree.mean() < _GAZE_AGREE else "info",
+                message=f"gaze.target agrees with {int(agree.sum())} of {len(joined)} labelled frames ({agree.mean():.0%}){learned}",
+                details={"agree": int(agree.sum()), "labelled": len(joined)},
+            )
+        )
+        for row in joined[~agree].itertuples():
+            pieces.append(
+                candidate_spans(
+                    rid, str(subject), "gaze_labels", f"labelled {row.target}, found {row.found}",
+                    np.array([row.t]), np.array([True]), np.array([1.0]),
+                )
+            )
+    return CheckResult(warnings=warnings, candidates=_concat_candidates(pieces))
 
 
 def _lasting(candidates: pd.DataFrame, at_least_s: float) -> pd.DataFrame:

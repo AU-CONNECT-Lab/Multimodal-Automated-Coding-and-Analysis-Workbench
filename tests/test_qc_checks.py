@@ -580,3 +580,40 @@ class TestAUAgreement:
 
         empty = SimpleNamespace(long_table=lambda source, features=None: empty_frame(LONG_TABLE_SCHEMA))
         assert "face.check_model" in check_au_agreement(RECORDING, None, empty).skipped
+
+
+class TestGazeLabels:
+    def results(self, tmp_path, labels, points):
+        from macaw.project.gaze_labels import GazeLabel, write_labels
+
+        layout = Layout(output_dir=tmp_path, work_dir=tmp_path)
+        write_labels([GazeLabel(*label) for label in labels], layout.gaze_labels_path(RID))
+        found = tmp_path / "gaze_points.parquet"
+        points.to_parquet(found, index=False)
+        return SimpleNamespace(layout=layout, artifact=lambda extractor, name: found if extractor == "gaze.target" else None)
+
+    def test_agreement_per_person_and_each_disagreement_is_a_place_to_look(self, tmp_path):
+        from macaw.config.schema import GazeSection
+        from macaw.qc.checks import check_gaze_labels
+
+        points = pd.DataFrame({"subject_id": "child", "t": np.arange(10) / 10, "target": ["parent"] * 5 + ["elsewhere"] * 5})
+        labels = [(0.1, "child", "parent"), (0.2, "child", "parent"), (0.7, "child", "parent"), (0.8, "child", "unsure")]
+        result = check_gaze_labels(RECORDING, SimpleNamespace(gaze=GazeSection()), self.results(tmp_path, labels, points))
+        assert [w.message for w in result.warnings] == ["gaze.target agrees with 2 of 3 labelled frames (67%)"]
+        assert reasons(result) == ["labelled parent, found elsewhere"] and result.candidates["t"].tolist() == [0.7]
+
+    def test_no_labels_nothing_to_check(self, tmp_path):
+        from macaw.config.schema import GazeSection
+        from macaw.qc.checks import check_gaze_labels
+
+        result = check_gaze_labels(RECORDING, SimpleNamespace(gaze=GazeSection()), self.results(tmp_path, [], pd.DataFrame()))
+        assert not result.warnings and result.skipped is None
+
+
+def test_the_default_checks_are_the_same_in_the_settings_file_and_the_schema(tmp_path):
+    from macaw.config.loader import resolve_config, scaffold_project_config
+
+    (tmp_path / "raw").mkdir()
+    config = tmp_path / "project.yaml"
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    assert resolve_config(config).qc.checks == QCSection().checks

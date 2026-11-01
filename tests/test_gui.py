@@ -94,6 +94,18 @@ def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     assert "--person" not in everyone
 
 
+def test_the_review_page_labels_where_people_look_and_reports_agreement(project):
+    from macaw.project.gaze_labels import GazeLabel, write_labels
+
+    shown = text_of(review.body(project, "003"))
+    assert "Where people look" in shown and "at random" in shown and "label-gaze" in shown
+    argv = review.action_command(project, "003", "label-gaze", "child", "ann", {}, {}, gaze={"t": 12.5, "looks_at": "parent"})
+    assert argv[1] == "label-gaze" and argv[argv.index("--at") + 1] == "12.5" and argv[argv.index("--person") + 1] == "child"
+    assert argv[argv.index("--looks-at") + 1] == "parent" and argv[argv.index("--by") + 1] == "ann"
+    write_labels([GazeLabel(12.5, "child", "parent"), GazeLabel(13.0, "child", "parent")], layout_for(resolve_config(project)).gaze_labels_path("003"))
+    assert "Looks at" in text_of(review.body(project, "003")) and "Looks at" not in shown
+
+
 def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_names_it(project):
     from macaw.exceptions import ExternalToolError
     from macaw.media.ffmpeg import run_ffmpeg

@@ -7,6 +7,7 @@ import base64
 import getpass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 
@@ -28,6 +29,8 @@ PICK = "act-pick"
 SCALE_VIDEO, SCALE_AT, SCALE_SHOW, SCALE_GRAPH = "scale-video", "scale-at", "scale-show", "scale-graph"
 SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
 SCALE_LENGTH, SCALE_OBJECT, SCALE_PERSON = "scale-length", "scale-object", "scale-person"
+GAZE_VIDEO, GAZE_AT, GAZE_SHOW, GAZE_RANDOM, GAZE_GRAPH = "gaze-video", "gaze-at", "gaze-show", "gaze-random", "gaze-graph"
+GAZE_T, GAZE_NOTE, GAZE_PICK = "gaze-t", "gaze-note", "gaze-pick"
 CLIP = "clip:"
 EVERYONE = "everyone"
 _MARK = "#d9534f"
@@ -269,6 +272,93 @@ def _scale(config, layout, recording):
     )
 
 
+def _gaze(config, layout, recording):
+    from macaw.project.gaze_labels import UNSURE, read_labels
+    from macaw.qc.checks import check_gaze_labels
+
+    rid = recording.recording_id
+    videos = sorted(item.path.name for item in recording.media if item.kind == "video")
+    if not videos:
+        return None
+    labels = read_labels(layout.gaze_labels_path(rid))
+    roles = list(config.project.roles)
+    counts = {(label.subject, label.target): 0 for label in labels}
+    for label in labels:
+        counts[(label.subject, label.target)] += 1
+    rows = [[person, target, str(n)] for (person, target), n in sorted(counts.items())]
+    checked = check_gaze_labels(recording, config, RecordingResults(layout, rid)).warnings if labels else []
+    key = {"key": rid}
+    choices = {person: [role for role in roles if role != person] + list(config.gaze.targets) + ["elsewhere", UNSURE] for person in roles}
+    return ui.card(
+        "Where people look",
+        ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}) if rows else None,
+        *[ui.note(f"{item.subject_id}: {item.message}", "warn" if item.severity == "warn" else "ok") for item in checked],
+        html.Div(
+            [
+                ui.field("Video", dcc.Dropdown(videos, videos[0], id={"type": GAZE_VIDEO, **key}, clearable=False, className="picker")),
+                ui.field("At (s)", dcc.Input(id={"type": GAZE_AT, **key}, type="number", min=0, value=10)),
+                ui.button("Show frame", {"type": GAZE_SHOW, **key}),
+                ui.button("A frame at random", {"type": GAZE_RANDOM, **key}),
+            ],
+            className="toolbar",
+        ),
+        html.Div(id={"type": GAZE_NOTE, **key}),
+        dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}),
+        dcc.Store(id={"type": GAZE_T, **key}, data=None),
+        html.Div(
+            [ui.field(f"{person} looks at", dcc.Dropdown(choices[person], None, id={"type": GAZE_PICK, "key": person}, className="picker small")) for person in roles],
+            className="toolbar",
+        ),
+        html.Div([_button("Save what they look at", "label-gaze", primary=True)], className="buttons"),
+        desc=(
+            "Show a frame, say whom or what each person looks at, and save. Take frames at random rather than the clear "
+            "ones, so the check is fair; the frame shows each person's head as MACAW places it, not what gaze.target found. "
+            "The quality page then says how often gaze.target agrees, and the angles backend learns where things are from these."
+        ),
+    )
+
+
+def gaze_frame(config_path: Path, rid: str, video: str, at_s: float):
+    """The frame with each person's head box and name drawn on it, and a note; or why not."""
+    from macaw.extractors.prep import apply_prep_timing
+    from macaw.extractors.video.gaze.heads import head_boxes
+
+    uri, problem = frame_uri(config_path, rid, video, at_s)
+    if problem:
+        return scale_figure(None, []), ui.note(problem, "warn")
+    config = resolve_config(config_path, recording_id=rid)
+    keypoints = RecordingResults(layout_for(config, create=False), rid).keypoints()
+    recording = build_recording(rid, config)
+    try:
+        apply_prep_timing(config, recording)
+    except Exception:   # before prep.media there are no people to draw anyway
+        pass
+    item = next(item for item in recording.media if item.path.name == video)
+    figure = scale_figure(uri, [])
+    if keypoints.empty or not item.fps:
+        return figure, ui.note("Run pose first to see whose head is whose on the frame.")
+    frame = round((at_s - item.offset_s) * item.fps)
+    boxes = head_boxes(keypoints[(keypoints["video"] == video) & (keypoints["frame"] == frame) & keypoints["subject_id"].notna()])
+    for box in boxes.itertuples():
+        figure.add_shape(type="rect", x0=box.x0, y0=box.y0, x1=box.x1, y1=box.y1, line={"color": _MARK, "width": 2})
+        figure.add_annotation(x=box.x0, y=box.y0, text=box.subject_id, showarrow=False, yshift=10, xanchor="left", font={"color": _MARK})
+    return figure, ui.note(f"Frame at {at_s:.2f} s. Say for each person whom or what they look at, then save.")
+
+
+def random_time(config_path: Path, rid: str, video: str) -> float:
+    from macaw.extractors.prep import apply_prep_timing
+
+    config = resolve_config(config_path, recording_id=rid)
+    recording = build_recording(rid, config)
+    try:
+        prep = apply_prep_timing(config, recording)
+        start, length = prep.t_origin_s, prep.duration_s
+    except Exception:   # before prep.media only the file's own length is known
+        item = next(item for item in recording.media if item.path.name == video)
+        start, length = item.offset_s, item.duration_s or 0.0
+    return round(start + float(np.random.default_rng().uniform(0, max(length, 0.0))), 2)
+
+
 def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str | None, str | None]:
     """The frame the video steps read at a recording time, or a calibration clip's frame at its own time, as an
     image the page can show; or why not."""
@@ -425,6 +515,7 @@ def body(config_path: Path, rid: str | None):
         _voices(config, layout, recording),
         _speech_acts(config, layout, recording),
         _scale(resolve_config(config_path, recording_id=rid), layout, recording),
+        _gaze(resolve_config(config_path, recording_id=rid), layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
         parts.append(_transcript(layout, rid))
@@ -432,12 +523,15 @@ def body(config_path: Path, rid: str | None):
 
 
 def action_command(
-    config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, renames: dict, scale: dict | None = None
+    config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, renames: dict, scale: dict | None = None,
+    gaze: dict | None = None,
 ) -> list[str]:
     def command(*sub, extra=()):
         return cli_bridge.build_command(list(sub), config_path=config_path, recordings=[rid], extra_flags=list(extra))
 
     by_flag = ["--by", by] if by else []
+    if action == "label-gaze":
+        return command("label-gaze", extra=["--at", f"{gaze['t']:g}", "--person", target, "--looks-at", gaze["looks_at"], *by_flag])
     if action in ("set-scale", "clear-scale"):
         source = scale["video"] if action == "set-scale" else target
         on_clip = bool(source) and source.startswith(CLIP)
@@ -520,6 +614,23 @@ def register(app, config_path: Path) -> None:
         return scale_figure(uri, points), points, no_update, note
 
     @app.callback(
+        Output({"type": GAZE_GRAPH, "key": MATCH}, "figure"),
+        Output({"type": GAZE_T, "key": MATCH}, "data"),
+        Output({"type": GAZE_AT, "key": MATCH}, "value"),
+        Output({"type": GAZE_NOTE, "key": MATCH}, "children"),
+        Input({"type": GAZE_SHOW, "key": MATCH}, "n_clicks"),
+        Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
+        State({"type": GAZE_VIDEO, "key": MATCH}, "value"),
+        State({"type": GAZE_AT, "key": MATCH}, "value"),
+        prevent_initial_call=True,
+    )
+    def show_gaze_frame(_show, _random, video, at):
+        rid = ctx.triggered_id["key"]
+        at = random_time(config_path, rid, video) if ctx.triggered_id["type"] == GAZE_RANDOM else float(at or 0.0)
+        figure, note = gaze_frame(config_path, rid, video, at)
+        return figure, at, at, note
+
+    @app.callback(
         Output("review-body", "children"),
         Output("review-message", "children"),
         Input("review-recording", "value"),
@@ -534,6 +645,9 @@ def register(app, config_path: Path) -> None:
         State({"type": "review-rename", "target": ALL}, "id"),
         State({"type": PICK, "key": ALL}, "value"),
         State({"type": PICK, "key": ALL}, "id"),
+        State({"type": GAZE_T, "key": ALL}, "data"),
+        State({"type": GAZE_PICK, "key": ALL}, "value"),
+        State({"type": GAZE_PICK, "key": ALL}, "id"),
         State({"type": SCALE_VIDEO, "key": ALL}, "value"),
         State({"type": SCALE_AT, "key": ALL}, "value"),
         State({"type": SCALE_POINTS, "key": ALL}, "data"),
@@ -541,7 +655,7 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
         State({"type": SCALE_PERSON, "key": ALL}, "value"),
     )
-    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids, *scale):
+    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
         trigger = ctx.triggered_id
         message = None
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
@@ -552,6 +666,15 @@ def register(app, config_path: Path) -> None:
             measured = dict(zip(("video", "at", "points", "length", "object", "person"), (values[0] if values else None for values in scale)))
             if action == "set-scale" and (len(measured["points"] or []) != 2 or not measured["length"]):
                 return no_update, ui.note("Click both ends on the frame and type the length first.", "warn")
+            if action == "label-gaze":
+                looked = {item["key"]: value for item, value in zip(look_ids, looks) if value}
+                if not gaze_t or gaze_t[0] is None or not looked:
+                    return no_update, ui.note("Show a frame and say whom or what someone looks at first.", "warn")
+                message = []
+                for person, value in looked.items():
+                    argv = action_command(config_path, rid, action, person, by, {}, {}, gaze={"t": gaze_t[0], "looks_at": value})
+                    message += [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
+                return body(config_path, rid), message
             if action == "transcript-export":
                 argv = _transcript_command(config_path, rid, action, None, by)
             elif action == "apply-review":

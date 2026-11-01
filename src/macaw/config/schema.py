@@ -332,6 +332,7 @@ class QCSection(_Section):
             "motion_energy",
             "au_agreement",
             "scale",
+            "gaze_labels",
         ]
     )
     fail_fast: bool = False
