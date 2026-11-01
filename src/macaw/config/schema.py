@@ -200,6 +200,8 @@ class ScaleSection(_Section):
     calibration: str | None = None
     # share by which a person's apparent size may change over a recording before the report flags it
     max_size_change: float = Field(default=0.1, gt=0)
+    # length of the stretches compared; long ones miss people walking about, short ones flag a moment bent over
+    size_window_s: float = Field(default=30.0, gt=0)
 
     @model_validator(mode="after")
     def _positive_by_role(self) -> "ScaleSection":

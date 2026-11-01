@@ -273,13 +273,13 @@ class TestCheck:
         assert apparent_size(person("parent", n_frames=3)).tolist() == pytest.approx([60.0] * 3)
 
     def test_a_person_who_leans_in_looks_bigger_for_a_stretch(self):
-        typical, change = size_change(apparent_size(moving_parent()))
+        typical, change = size_change(apparent_size(moving_parent()), 30.0)
         assert typical == pytest.approx(60.0) and change == pytest.approx(0.3)
 
     def test_bending_now_and_then_does_not_count_as_moving(self):
         size = apparent_size(person("parent", n_frames=450, fps=5.0))
         size.iloc[::4] *= 0.6
-        assert size_change(size)[1] == pytest.approx(0.0)
+        assert size_change(size, 30.0)[1] == pytest.approx(0.0)
 
     def test_the_report_says_how_big_each_person_is_and_flags_one_who_moves(self, project):
         config = resolve_config(project, cli_overrides=["scale.cm_per_px=0.5"])
@@ -287,6 +287,23 @@ class TestCheck:
         messages = {warning.severity: warning.message for warning in outcome.warnings}
         assert "about 30 cm at this scale (60 px)" in messages["info"]
         assert "up to 30% bigger or smaller" in messages["warn"]
+
+    def test_shorter_stretches_catch_a_brief_move_that_long_ones_pass(self, project):
+        fps = 5.0
+        lean = person("parent", n_frames=int(2 * fps), fps=fps, scale=1.3)
+        after = person("parent", n_frames=int(28 * fps), fps=fps)
+        for part, start in ((lean, 60.0), (after, 62.0)):
+            part["t"] += start
+            part["frame"] += int(start * fps)
+        keypoints = pd.concat([person("parent", n_frames=int(60 * fps), fps=fps), lean, after], ignore_index=True)
+
+        def flagged(window_s):
+            config = resolve_config(project, cli_overrides=["scale.cm_per_px=0.5", f"scale.size_window_s={window_s}"])
+            outcome = check_scale(self.recording(), config, self.results(project, keypoints))
+            return [warning.message for warning in outcome.warnings if warning.severity == "warn"]
+
+        assert flagged(30) == []
+        assert "across 5 s stretches" in flagged(5)[0]
 
     def test_a_person_without_a_scale_at_their_place_is_said(self, project):
         settings(project, "scale:\n  cm_per_px_by_role: {child: 0.5}\n")

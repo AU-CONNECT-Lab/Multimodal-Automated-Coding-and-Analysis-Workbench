@@ -107,6 +107,7 @@ scale:                               # right only for people as far from the cam
   cm_per_px_by_role: {}              # role -> centimetres per pixel at that person's place, e.g. {child: 0.12}
   calibration: null                  # clip in project.calibration_dir, filmed with the cameras as they stood, for recordings not measured on their own video
   max_size_change: 0.1               # share by which a person's apparent size may change over a recording before the report flags it
+  size_window_s: 30                  # s; stretches compared for that change. 30 suits people who stay seated; about 5 when they walk about
 
 pose3d:                              # 3D from two or more cameras that see the same people
   calibration: null                  # in project.calibration_dir: a folder of board clips, one per camera (macaw calibrate-cameras), or a calibration .toml

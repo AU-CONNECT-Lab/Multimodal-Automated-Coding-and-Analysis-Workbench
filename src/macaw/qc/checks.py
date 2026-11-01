@@ -647,7 +647,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
     """With a scale set, whether one number fits each person: how big they look at it, and how much that
     changes over the recording. No scale, nothing to check."""
     from macaw.extractors.video.pose.keypoints import primary_views
-    from macaw.project.scale import MEASURED, SIZE_WINDOW_S, apparent_size, recording_scale, size_change, unusable
+    from macaw.project.scale import MEASURED, apparent_size, recording_scale, size_change, unusable
 
     rid = recording.recording_id
 
@@ -676,7 +676,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
             warnings.append(warning(subject_id, "info", "no scale at this person's place, so their measures stay in pixels"))
             continue
         person = keypoints[(keypoints["subject_id"] == subject_id) & (keypoints["video"] == view)]
-        measured = size_change(apparent_size(person))
+        measured = size_change(apparent_size(person), config.scale.size_window_s)
         if measured is None:
             continue
         typical, change = measured
@@ -689,7 +689,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
         if change > config.scale.max_size_change:
             warnings.append(warning(
                 subject_id, "warn",
-                f"looks up to {change:.0%} bigger or smaller across {SIZE_WINDOW_S:g} s stretches: they move toward or "
+                f"looks up to {change:.0%} bigger or smaller across {config.scale.size_window_s:g} s stretches: they move toward or "
                 "away from the camera, or stay bent over, and one scale fits them only part of the time",
                 change=change,
             ))

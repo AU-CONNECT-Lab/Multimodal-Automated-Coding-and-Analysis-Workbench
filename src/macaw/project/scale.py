@@ -20,8 +20,6 @@ MEASURED = "recording video"
 CALIBRATION = "calibration clip"
 CM_SUFFIX = "_cm"
 DEPTH_NOTE = "right only for people as far from the camera as the object measured"
-# a person's apparent size is taken over stretches this long, long enough to sit up straight once
-SIZE_WINDOW_S = 30.0
 _SIZE_MIN_FRAMES = 10
 _PIXEL_UNIT = re.compile(r"^px(?:\^(\d))?(/.*)?$")
 
@@ -213,7 +211,7 @@ def apparent_size(person: pd.DataFrame) -> pd.Series:
     return np.hypot(wide[("x", "nose")] - mid_x, wide[("y", "nose")] - mid_y).dropna()
 
 
-def size_change(size: pd.Series, window_s: float = SIZE_WINDOW_S) -> tuple[float, float] | None:
+def size_change(size: pd.Series, window_s: float) -> tuple[float, float] | None:
     """(typical size, largest share by which a stretch departs from it). Each stretch counts its 90th
     percentile, since turning or bending only ever shortens a body part on the picture."""
     if size.empty:

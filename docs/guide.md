@@ -388,7 +388,7 @@ To measure, open the Review page and go to *Pixels to centimetres*. Choose the r
 
 The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with each recording's scale for each person.
 
-The quality page gives each person's nose-to-shoulders length in centimetres at their scale (a value far from a real one means they sit nearer or further than the object was), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`), since then they moved toward or away from the camera.
+The quality page gives each person's nose-to-shoulders length in centimetres at their scale (a value far from a real one means they sit nearer or further than the object was), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`), since then they moved toward or away from the camera. It compares stretches of 30 s (`scale.size_window_s`), which suits people who stay seated: a few seconds bent over or looking down does not count. When people walk about, set it to about 5 s, or a walk to the far side of the room and back goes unseen; a person who bends over for a few seconds is then flagged too.
 
 (three-d)=
 ## Several cameras: 3D
