@@ -249,8 +249,9 @@ def clean(
     if not targets:
         return
     typer.confirm(
-        f"--all also deletes computed output for {len(targets)} recordings under "
-        f"{layout.output_dir}. Continue?",
+        f"--all also deletes the folders of {len(targets)} recordings under {layout.output_dir}: the computed "
+        "output and what people did there by hand (accepted offsets and cameras, measured scales, labelled "
+        "frames, corrected transcripts, review decisions, imported coding). Continue?",
         abort=True,
     )
     for path in targets:
