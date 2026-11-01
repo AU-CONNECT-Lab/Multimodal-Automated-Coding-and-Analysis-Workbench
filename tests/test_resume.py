@@ -100,3 +100,21 @@ class TestRunLock:
             pass
         with run_lock(tmp_path):
             pass
+
+
+def test_a_recording_with_its_own_settings_is_judged_by_them(tmp_path, monkeypatch):
+    """A recording's own file changes the settings its tasks hash, so a resumed run must hash them the same way."""
+    from macaw.config.hashing import hash_extractor_config
+    from macaw.execution.runner import recording_configs
+
+    project = tmp_path / "project.yaml"
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    (tmp_path / "recordings").mkdir()
+    (tmp_path / "recordings" / "rec1.yaml").write_text("segment:\n  task_start_s: 40.0\n", encoding="utf-8")
+    config = resolve_config(project)
+    monkeypatch.setattr(runner_module, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id))
+    own = recording_configs(config, ["rec1", "rec2"])
+    assert own["rec1"].segment.task_start_s == 40.0 and own["rec2"] is config
+    assert own["rec1"] == resolve_config(project, recording_id="rec1")
+    assert hash_extractor_config(own["rec1"], "prep.media") != hash_extractor_config(config, "prep.media")
+    assert not list(layout_for(config).output_dir.glob(".*"))

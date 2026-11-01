@@ -160,9 +160,10 @@ def completed_on_disk(config: MacawConfig, dag, recording_ids: list[str]) -> set
     on_disk = completed_tasks(layout.output_dir, _output_rules(config))
     gates = set(_gates(dag))
     current: set[str] = set()
+    own = recording_configs(config, recording_ids)
     for recording_id in recording_ids:
         try:
-            recording = build_recording(recording_id, config)
+            recording = build_recording(recording_id, own[recording_id])
         except MacawError:
             continue
         for name in dag.topological_order():
@@ -174,12 +175,33 @@ def completed_on_disk(config: MacawConfig, dag, recording_ids: list[str]) -> set
                 continue
             stamp = layout.completion_path(recording_id, name)
             try:
-                if stamp.is_file() and stamp.read_text(encoding="utf-8") == task_key(config, name, recording):
+                if stamp.is_file() and stamp.read_text(encoding="utf-8") == task_key(own[recording_id], name, recording):
                     current.add(task_id)
             except Exception:
                 # a key that cannot be worked out means run it again, which is where the error shows
                 continue
     return current
+
+
+def recording_configs(config: MacawConfig, recording_ids: list[str]) -> dict[str, MacawConfig]:
+    """The settings each recording's tasks run with: the project's as a run archives them, with the recording's own file
+    laid over them, read the way a task reads it. A recording without a file of its own runs the project's."""
+    from macaw.config.loader import RESOLVED_FILENAME, _dump_config, resolve_config
+
+    folder = Path(config.project.recording_config_dir)
+    own = [rid for rid in recording_ids if (folder / f"{rid}.yaml").is_file()]
+    configs = {rid: config for rid in recording_ids}
+    if not own:
+        return configs
+    output_dir = layout_for(config, create=False).output_dir
+    # beside where a run archives the settings, so a relative path in a recording's file resolves as a task resolves it
+    dumped = _dump_config(config, output_dir / f".{os.getpid()}_{RESOLVED_FILENAME}")
+    try:
+        for rid in own:
+            configs[rid] = resolve_config(dumped, recording_id=rid)
+    finally:
+        dumped.unlink(missing_ok=True)
+    return configs
 
 
 def task_states(config: MacawConfig, dag, recording_ids: list[str]) -> dict[str, str]:
