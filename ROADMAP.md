@@ -31,6 +31,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Kinematics of each coded gesture, and a summary of how each code was used.
 - Centimetres beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
 - 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and a page to calibrate the cameras.
+- Body points exported per recording, in pixels and in 3D.
 
 ### 0.1.0-alpha
 - Framework scaffold.
