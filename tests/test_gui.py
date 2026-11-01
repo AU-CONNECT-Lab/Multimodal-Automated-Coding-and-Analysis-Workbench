@@ -247,7 +247,7 @@ def calibrated(project, notes=(), together=40):
     folder.mkdir(parents=True)
     for name in ("room.mp4", "side.mp4"):
         (folder / name).write_bytes(b"")
-    target = [500.0, 0.0, 2000.0]
+    target = [0.0, 0.0, 2000.0]
     cameras = [look_at("room", [0, 0, 0], target), look_at("side", [1500, 0, 500], target)]
     metadata = {
         "made_by": "macaw calibrate-cameras", "made_at": "2026-10-31T10:00:00", "board": describe_board(config.pose3d.board),
@@ -276,7 +276,7 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
     shown = text_of(cameras.setup_view(project, "lab"))
     assert "Found on 2026-10-31T10:00:00" in shown and "side.mp4 has no sound" in shown
     assert "up to 2.6 px" in shown and "8 (few: film more where both see it)" in shown
-    assert "1.50, 0.00, 0.50" in shown and "used by this project" not in shown
+    assert "1.50, 0.50, 0.00" in shown and "used by this project" not in shown
     project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square_mm: 74.5\n", encoding="utf-8")
     assert "pose3d.board differs now" in text_of(cameras.setup_view(project, "lab"))
 
@@ -287,7 +287,29 @@ def test_the_cameras_are_drawn_where_they_stand(project):
 
     figure = cameras.cameras_figure(read_setup(calibrated(project)), "lab")
     shown = next(trace for trace in figure.data if trace.name == "cameras")
-    assert list(shown.text) == ["room", "side"] and list(shown.x) == pytest.approx([0.0, 1.5])
+    assert list(shown.text) == ["room", "side"] and list(shown.x) == pytest.approx([0.0, 1.5]) and list(shown.y) == pytest.approx([0.0, 0.5])
+
+
+def test_the_view_follows_the_first_camera_whatever_axes_a_file_uses(project):
+    from scipy.spatial.transform import Rotation
+
+    from macaw.extractors.video.pose.cameras import Camera, CameraSetup, read_setup
+    from macaw.interface.pages.results import in_first_camera
+
+    setup = read_setup(calibrated(project))
+    # the same cameras in a room whose z points up, as some calibration tools write it
+    turn = Rotation.from_euler("x", -90, degrees=True)
+    upright = CameraSetup([
+        Camera(camera.name, camera.size, camera.matrix, camera.distortions, (Rotation.from_rotvec(camera.rotation) * turn.inv()).as_rotvec(), camera.translation)
+        for camera in setup.cameras
+    ], setup.units)
+    points = np.random.default_rng(5).uniform(-1, 1, (20, 3)) + [0.0, 0.0, 2.0]
+    assert np.allclose(in_first_camera(upright, turn.apply(points)), in_first_camera(setup, points))
+
+
+def test_the_3d_view_opens_where_most_points_were_placed():
+    points = pd.DataFrame({"t": [0.0, 1.0, 1.0, 1.0, 2.0, 2.0], "joint": list("abcdef")})
+    assert results.fullest_moment(points) == 1.0
 
 
 def test_choosing_a_setup_writes_it_into_the_project(project):

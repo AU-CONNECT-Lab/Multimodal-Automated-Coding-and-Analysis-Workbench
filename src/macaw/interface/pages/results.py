@@ -106,8 +106,23 @@ def points_3d(config_path: Path, rid: str):
     return read_keypoints(path, recording_id=rid) if path.is_file() else None
 
 
+def fullest_moment(points) -> float:
+    """The time at which the most points were placed, where the view opens."""
+    counts = points.groupby("t").size()
+    return float(counts.idxmax())
+
+
+def in_first_camera(setup, xyz: np.ndarray) -> np.ndarray:
+    """Room points in metres as the first camera sees them; a calibration file from another tool may set its room's
+    axes any way, so the view and its labels always follow the first camera."""
+    from macaw.extractors.video.pose.cameras import UNITS_TO_METRES
+
+    per_unit = UNITS_TO_METRES[setup.units]
+    return setup.cameras[0].to_camera(np.asarray(xyz, dtype=float) / per_unit) * per_unit
+
+
 def _shown(xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Room axes as the first camera sees them (x right, y down, z ahead) turned so up is up on the page."""
+    """The first camera's axes (x right, y down, z ahead) turned so up is up on the page."""
     return xyz[..., 0], xyz[..., 2], -xyz[..., 1]
 
 
@@ -120,6 +135,11 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
     points = points_3d(config_path, rid) if points is None else points
     if points is None or points.empty:
         return html.P("No 3D for this recording: it needs pose3d.calibration and the pose.triangulate step.", className="none")
+    try:
+        setup = read_setup(calibration_path(config), config.pose3d.units)
+    except Exception:   # the cameras are context; the people still show without them, in the file's own axes
+        setup = None
+    place = (lambda xyz: _shown(in_first_camera(setup, xyz))) if setup else _shown
     times = np.sort(points["t"].unique())
     moment = points[points["t"] == times[np.abs(times - at_s).argmin()]]
     figure = go.Figure()
@@ -128,25 +148,23 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
         joint = {row.joint: np.array([row.x, row.y, row.z]) for row in own.itertuples()}
         segments = [np.vstack([joint[a], joint[b], [np.nan] * 3]) for a, b in [*SKELETON_EDGES, ("nose", "left_eye"), ("nose", "right_eye"), ("left_eye", "left_ear"), ("right_eye", "right_ear")] if a in joint and b in joint]
         if segments:
-            x, y, z = _shown(np.vstack(segments))
+            x, y, z = place(np.vstack(segments))
             figure.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", line={"color": colour, "width": 6}, name=str(subject_id), legendgroup=str(subject_id)))
-        x, y, z = _shown(np.vstack(list(joint.values())))
+        x, y, z = place(np.vstack(list(joint.values())))
         figure.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="markers", marker={"size": 3, "color": colour}, showlegend=False, legendgroup=str(subject_id), text=list(joint), hoverinfo="text"))
-    try:
-        setup = read_setup(calibration_path(config), config.pose3d.units)
-        where = np.vstack([camera.position() for camera in setup.cameras]) * UNITS_TO_METRES[setup.units]
-        x, y, z = _shown(where)
+    if setup is not None:
+        x, y, z = place(np.vstack([camera.position() for camera in setup.cameras]) * UNITS_TO_METRES[setup.units])
         figure.add_trace(go.Scatter3d(
             x=x, y=y, z=z, mode="markers+text", text=[camera.name for camera in setup.cameras], textposition="top center",
             marker={"size": 5, "symbol": "diamond", "color": "#8b8b90"}, name="cameras",
         ))
-    except Exception:   # the cameras are context; the people still show without them
-        pass
     axis = {"gridcolor": "rgba(128,128,128,0.25)", "zerolinecolor": "rgba(128,128,128,0.4)", "backgroundcolor": "rgba(0,0,0,0)"}
     figure.update_layout(
         height=560, margin={"l": 0, "r": 0, "t": 10, "b": 0}, paper_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90"},
         legend={"orientation": "h", "y": 1.02},
         scene={
+            # a little further out than the default, so cameras at the edge of the room stay in view
+            "camera": {"eye": {"x": 1.7, "y": 1.7, "z": 1.1}},
             "aspectmode": "data", "xaxis": {"title": "across (m)", **axis}, "yaxis": {"title": "ahead of the first camera (m)", **axis},
             "zaxis": {"title": "up (m)", **axis},
         },
@@ -217,7 +235,7 @@ def register(app, config_path: Path) -> None:
         if points is None or points.empty:
             return 0, 1, 0, {"display": "none"}
         start, end = float(points["t"].min()), float(points["t"].max())
-        return start, end, start, {}
+        return start, end, fullest_moment(points), {}
 
     @app.callback(Output("results-3d", "children"), Input("results-3d-time", "value"), State("results-recording", "value"))
     def show_3d(at_s, rid):
