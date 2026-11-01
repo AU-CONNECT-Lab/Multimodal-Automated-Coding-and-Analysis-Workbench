@@ -12,11 +12,12 @@ pytest.importorskip("ruamel.yaml")
 
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.exceptions import MacawError
+from macaw.execution.runner import task_id_for
 from macaw.extractors.video.pose.keypoints import PoseExtractor
 from macaw.interface import cli_bridge, project_file
 from macaw.interface.app import build_layout, create_app, page_for
 from macaw.interface.files import file_url, path_from_url
-from macaw.interface.pages import results, review, run
+from macaw.interface.pages import overview, results, review, run
 from macaw.project.layout import layout_for
 from macaw.qc.downsample import min_max_downsample
 from macaw.store.longtable import build_long_rows
@@ -207,7 +208,50 @@ def test_every_step_is_listed_with_how_a_run_would_find_it(project):
 
 
 def test_pages_open_by_their_address():
-    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/", "/nowhere")] == ["review", "settings", "cameras", "run", "run"]
+    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/", "/nowhere")] == [
+        "review", "settings", "cameras", "run", "overview", "overview",
+    ]
+
+
+def test_each_step_has_a_run_button_of_its_own(project):
+    order, _, counts, needs = run.step_states(project, ["003"])
+    shown = text_of(run._step_label("prep.media", counts["prep.media"], needs["prep.media"], 1))
+    assert '"type": "run-one"' in shown and '"step": "prep.media"' in shown
+    assert run.run_command(project, ["003"], ["prep.media"], ["003"], ["prep.media", "text.asr"])[-2:] == ["-e", "prep.media"]
+
+
+def test_the_overview_counts_what_there_is_and_what_waits(project):
+    found = overview.standing(project)
+    assert found.recordings == ["003"] and "prep.media" in found.steps
+    assert found.grid["003", "prep.media"] == "held" and not found.n_prepared
+    tiles = text_of(overview.tiles(resolve_config(project), found))
+    assert "parent, child" in tiles and "known once prep.media has run" in tiles and "0 of" in tiles
+    items = text_of(overview.next_up(found))
+    assert "wait for a person" in items and '"/review"' in items
+    grid = text_of(overview.grid(found))
+    assert "cell held" in grid and "003, prep.media: waiting for a person" in grid
+
+
+def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
+    monkeypatch.setattr(cli_bridge, "failed_last_time", lambda config_path: {task_id_for("003", "prep.media")})
+    found = overview.standing(project)
+    assert found.grid["003", "prep.media"] == "failed"
+    first = text_of(overview.next_up(found)[0])
+    assert "prep.media failed" in first and "for 003" in first and '"/run"' in first
+
+
+def test_steps_left_to_run_are_listed_after_the_rest_are_counted():
+    steps = [f"step{k}" for k in range(9)]
+    found = overview.Standing(["a", "b"], steps, {(rid, step): "current" if step == "step0" else "stale" for rid in "ab" for step in steps})
+    items = [text_of(item) for item in overview.next_up(found)]
+    assert len(items) == overview.NEXT_STEPS + 1 and "2 to run again" in items[0] and "and 2 more steps" in items[-1]
+    fresh = overview.Standing(["a"], steps, {("a", step): "new" for step in steps})
+    assert ["Nothing has run yet" in text_of(item) for item in overview.next_up(fresh)] == [True]
+
+
+def test_the_folder_button_is_only_offered_on_the_machine_that_has_the_folder(project):
+    assert "app-open-folder" in text_of(build_layout(project.resolve()))
+    assert "app-open-folder" not in text_of(build_layout(project.resolve(), local=False))
 
 
 def nav_style(project, name):
@@ -334,7 +378,7 @@ def test_the_board_says_which_paper_it_fits(project):
 
 def test_the_whole_workbench_lays_out(project):
     shown = text_of(build_layout(project.resolve()))
-    assert all(name in shown for name in ("run-steps", "review-body", "results-view", "settings-yaml", "theme-choice"))
+    assert all(name in shown for name in ("overview-grid", "run-steps", "review-body", "results-view", "settings-yaml", "theme-choice"))
 
 
 def test_a_file_that_does_not_check_still_opens_the_settings(project):
@@ -393,3 +437,9 @@ def test_the_form_hints_come_from_the_packaged_comments():
     hints = project_file.hints()
     assert "ISO code" in hints["text.language"] and "report titles" in hints["project.name"]
     assert project_file.control("align.review") == {"kind": "choice", "options": ["always", "flagged", "skip"], "optional": False}
+
+
+def test_the_latest_run_is_named_by_when_it_began(project, monkeypatch):
+    assert overview.latest_run(project) == "Nothing has run yet."
+    monkeypatch.setattr(cli_bridge, "poll_status", lambda config_path: ("20261031-214220-e17d5e", {"done": 36, "failed": 0}))
+    assert overview.latest_run(project) == "Latest run 2026-10-31 21:42: 36 done"

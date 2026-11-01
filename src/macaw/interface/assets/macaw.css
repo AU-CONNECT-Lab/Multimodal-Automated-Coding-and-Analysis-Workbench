@@ -242,3 +242,37 @@ textarea.yaml:focus { outline: none; border-color: var(--ink); }
   .sticky { position: static; }
   main, #topbar .bar, nav.tabs { padding-left: 1rem; padding-right: 1rem; }
 }
+
+/* a step's own Run button, at the end of its row */
+.steps .dash-options-list-option-text { flex: 1; min-width: 0; }
+.step { grid-template-columns: auto 1fr auto; }
+.step .run-one { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
+
+/* overview */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1.25rem; margin-bottom: 1.25rem; }
+.tile { background: var(--panel); border-radius: 18px; box-shadow: var(--card); padding: 1.1rem 1.5rem 1.2rem; }
+.tile .label { color: var(--muted); font-size: 0.88rem; }
+.tile .value { font-size: 2rem; font-weight: 600; line-height: 1.25; margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
+.tile .sub { color: var(--muted); font-size: 0.86rem; }
+.next { list-style: none; margin: 0; padding: 0; }
+.next li + li { border-top: 1px solid var(--rule); }
+.next a { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1.6rem; color: var(--ink); text-decoration: none; }
+.next a:hover { background: var(--hover); }
+.next .what { min-width: 0; }
+.next .detail { display: block; color: var(--muted); font-size: 0.86rem; }
+.next .where { margin-left: auto; flex: none; color: var(--muted); font-size: 0.86rem; }
+.next p.none { margin: 0; padding: 0.9rem 1.6rem; }
+.standing-wrap { overflow-x: auto; padding: 0.6rem 1.6rem 1rem; }
+table.standing { border-collapse: separate; border-spacing: 3px; font-size: 0.86rem; }
+table.standing th { font-weight: 500; color: var(--muted); }
+table.standing th.step-name { vertical-align: bottom; padding: 0 0 0.3rem; }
+table.standing th.step-name span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+table.standing th.recording { text-align: left; padding-right: 1rem; white-space: nowrap; color: var(--ink); }
+.cell { display: block; width: 1.25rem; height: 1.25rem; border-radius: 4px; border: 1.5px solid var(--border); }
+.cell.current { background: var(--ok); border-color: var(--ok); }
+.cell.stale { background: var(--warn); border-color: var(--warn); }
+.cell.held { background: var(--warn-soft); border-color: var(--warn); }
+.cell.failed { background: var(--bad); border-color: var(--bad); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; padding: 0.85rem 1.6rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.86rem; }
+.legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
+.legend .cell { width: 0.95rem; height: 0.95rem; }

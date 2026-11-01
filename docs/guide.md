@@ -74,7 +74,10 @@ macaw gui
 
 The first line creates a project folder with a settings file and a results folder. The last line opens the workbench. Next time, the last two lines are enough. If you prefer a browser tab to a window, use `macaw gui --browser`.
 
-The workbench has three pages along the top, a fourth for projects with several cameras, and a gear for the settings:
+The workbench has four pages along the top, a fifth for projects with several cameras, and a gear for the settings. **Open folder** opens the project folder on your computer.
+
+Overview
+: The page the workbench opens on. How many recordings, people and minutes the project has, what to do next (what failed, what waits for you, what is left to run), and a square for each recording and step showing where it stands.
 
 Run
 : Choose recordings and steps, start a run and watch it.
@@ -122,7 +125,7 @@ Does the task start at a different time in each recording? Each recording can ha
 
 {bdg-primary}`MACAW does this`
 
-On the Run page, tick the recordings and the steps you want, then press **Run**. Whatever a step needs runs with it. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Try one recording first to see that everything works.
+On the Run page, tick the recordings and the steps you want, then press **Run**. Whatever a step needs runs with it. The **Run** at the end of a step's row runs only that step, and what it needs, for the ticked recordings. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Try one recording first to see that everything works.
 
 Each step shows where it stands:
 

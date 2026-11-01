@@ -9,12 +9,12 @@ from pathlib import Path
 from macaw.exceptions import BackendNotAvailableError
 
 
-def _app(config_path: Path):
+def _app(config_path: Path, *, local: bool = True):
     try:
         from macaw.interface.app import create_app
     except ImportError as error:
         raise BackendNotAvailableError(f"the GUI needs the gui extra: pip install 'pymacaw[gui]' ({error})") from None
-    return create_app(config_path)
+    return create_app(config_path, local=local)
 
 
 def launch_window(config_path: Path, *, port: int = 8050, debug: bool = False) -> None:
@@ -38,4 +38,4 @@ def launch_browser(config_path: Path, *, host: str = "127.0.0.1", port: int = 80
 
 def launch_server(config_path: Path, *, host: str = "0.0.0.0", port: int = 8050) -> None:
     """For a lab server: open http://<server>:<port> from another machine, or tunnel the port over ssh."""
-    _app(config_path).run(host=host, port=port, debug=False)
+    _app(config_path, local=False).run(host=host, port=port, debug=False)

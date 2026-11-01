@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from dash import Dash, Input, Output, dcc, html
@@ -12,14 +15,15 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import cameras, results, review, run, settings
+from macaw.interface.pages import cameras, overview, results, review, run, settings
 
-PAGES = (run, review, results, cameras, settings)
+PAGES = (overview, run, review, results, cameras, settings)
 # the tabs along the top; settings is reached by the gear
-TABS = (run, review, results, cameras)
+TABS = (overview, run, review, results, cameras)
 
 
-def create_app(config_path: Path) -> Dash:
+def create_app(config_path: Path, *, local: bool = True) -> Dash:
+    """local is False for a server reached from another machine, where opening its folders would help nobody."""
     config_path = Path(config_path).resolve()
     app = Dash(
         __name__,
@@ -28,7 +32,7 @@ def create_app(config_path: Path) -> Dash:
         suppress_callback_exceptions=True,
     )
     # a function, so reloading the page reads the project afresh
-    app.layout = lambda: build_layout(config_path)
+    app.layout = lambda: build_layout(config_path, local=local)
     for page in PAGES:
         page.register(app, config_path)
     _register_navigation(app, config_path)
@@ -43,7 +47,14 @@ def create_app(config_path: Path) -> Dash:
     return app
 
 
-def _header(title: str, subtitle: str, *, with_cameras: bool = False):
+def open_folder(path: Path) -> None:
+    if sys.platform == "win32":
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+
+
+def _header(title: str, subtitle: str, *, with_cameras: bool = False, folder: Path | None = None):
     return html.Header(
         [
             html.Div(
@@ -52,6 +63,7 @@ def _header(title: str, subtitle: str, *, with_cameras: bool = False):
                     html.Span(subtitle, className="subtitle"),
                     html.Div(
                         [
+                            *([ui.button("Open folder", "app-open-folder", icon_name="open", title=str(folder))] if folder else []),
                             ui.button("Refresh", "app-refresh", icon_name="refresh"),
                             dcc.Link(ui.icon("settings"), href=settings.PATH, id="nav-settings", className="gear", title="Settings"),
                         ],
@@ -75,7 +87,7 @@ def _header(title: str, subtitle: str, *, with_cameras: bool = False):
     )
 
 
-def build_layout(config_path: Path):
+def build_layout(config_path: Path, *, local: bool = True):
     try:
         config = resolve_config(config_path)
     except (MacawError, ValueError) as error:
@@ -83,7 +95,7 @@ def build_layout(config_path: Path):
         return html.Div(
             [
                 dcc.Location(id="url"),
-                _header(config_path.parent.name, str(config_path)),
+                _header(config_path.parent.name, str(config_path), folder=config_path.parent if local else None),
                 html.Main([ui.note(str(error), "bad"), html.Div(settings.layout(config_path), id="page-settings", className="page shown")]),
             ]
         )
@@ -91,14 +103,15 @@ def build_layout(config_path: Path):
     return html.Div(
         [
             dcc.Location(id="url"),
-            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}", with_cameras=cameras.wanted(config)),
+            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}", with_cameras=cameras.wanted(config),
+                    folder=config_path.parent if local else None),
             html.Main([html.Div(page.layout(config_path), id=f"page-{page.LABEL.lower()}", className="page") for page in PAGES]),
         ]
     )
 
 
 def page_for(pathname: str | None) -> str:
-    """/review opens the Review page, so a page can be bookmarked or linked to; anything else opens Run."""
+    """/review opens the Review page, so a page can be bookmarked or linked to; anything else opens the Overview."""
     wanted = (pathname or "/").strip("/").lower()
     names = [page.LABEL.lower() for page in PAGES]
     return wanted if wanted in names else names[0]
@@ -106,23 +119,8 @@ def page_for(pathname: str | None) -> str:
 
 def waiting_count(config_path: Path) -> int:
     """Gates waiting for a person, plus coded units waiting for one, across the project."""
-    from macaw.coding.review_queue import export_review
-    from macaw.project.recording import build_recording
-    from macaw.qc.report import _waiting
-
-    config = resolve_config(config_path)
-    recordings = resolve_recordings(config, None)
-    count = 0
-    for rid in recordings:
-        try:
-            count += len(_waiting(config, build_recording(rid, config)))
-        except MacawError:
-            continue
-    try:
-        count += len(export_review(config, recordings))
-    except Exception:   # no codebook or nothing coded: no units are waiting
-        pass
-    return count
+    gates, units = overview.people_waiting(resolve_config(config_path))
+    return sum(len(waiting) for waiting in gates.values()) + units
 
 
 def _register_navigation(app: Dash, config_path: Path) -> None:
@@ -146,6 +144,11 @@ def _register_navigation(app: Dash, config_path: Path) -> None:
         except Exception:   # a badge that cannot be counted is left off rather than wrong
             return ""
         return str(count) if count else ""
+
+    @app.callback(Output("app-open-folder", "className"), Input("app-open-folder", "n_clicks"), prevent_initial_call=True)
+    def show_folder(_):
+        open_folder(config_path.parent)
+        return "button"
 
     app.clientside_callback(
         "function (clicks) { if (clicks) { window.location.reload(); } return window.dash_clientside.no_update; }",

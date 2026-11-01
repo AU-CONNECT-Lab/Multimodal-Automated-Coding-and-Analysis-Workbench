@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from dash import Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.execution.dag import build_dag, resolve_selection
@@ -40,23 +40,27 @@ def run_command(config_path: Path, recordings: list[str], chosen: list[str], eve
     return cli_bridge.build_command(["run"], config_path=config_path, recordings=narrowed, extractors=named)
 
 
-def step_states(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[str, Counter], dict[str, list[str]]]:
-    """Every step in run order, the ones this project runs, each step's task states, and what each needs."""
+def task_grid(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
+    """Every step in run order, the ones this project runs, the state of each (recording, step), and what each step needs."""
     config = resolve_config(config_path)
     everything = build_dag(config, steps())
     project = set(build_dag(config).topological_order())
     states = task_states(config, everything, recordings)
     failed = cli_bridge.failed_last_time(config_path)
     order = [name for name in everything.topological_order() if not issubclass(get_extractor(name), Gate)]
-    counts = {
-        name: Counter(
-            "failed" if task_id_for(rid, name) in failed and states[task_id_for(rid, name)] != "current" else states[task_id_for(rid, name)]
-            for rid in recordings
-        )
-        for name in order
-    }
+    grid = {}
+    for name in order:
+        for rid in recordings:
+            state = states[task_id_for(rid, name)]
+            grid[rid, name] = "failed" if task_id_for(rid, name) in failed and state != "current" else state
     needs = {name: sorted(everything.dependencies(name)) for name in order}
-    return order, [name for name in order if name in project], counts, needs
+    return order, [name for name in order if name in project], grid, needs
+
+
+def step_states(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[str, Counter], dict[str, list[str]]]:
+    """Every step in run order, the ones this project runs, each step's task states, and what each needs."""
+    order, project, grid, needs = task_grid(config_path, recordings)
+    return order, project, {name: Counter(grid[rid, name] for rid in recordings) for name in order}, needs
 
 
 def _step_label(name: str, counts: Counter, needs: list[str], n_recordings: int):
@@ -71,6 +75,12 @@ def _step_label(name: str, counts: Counter, needs: list[str], n_recordings: int)
             html.Span(className=f"dot {STATE_KIND[worst] if worst != 'new' else ''}"),
             html.Span([name, *pills], className="name"),
             *([html.Span("needs " + ", ".join(needs), className="meta")] if needs else []),
+            # a button inside the row's label runs the step without ticking it
+            html.Span(
+                ui.button("Run", {"type": "run-one", "step": name}, icon_name="play", small=True,
+                          title=f"Run {name}, and what it needs, for the chosen recordings"),
+                className="run-one",
+            ),
         ],
         className="step",
     )
@@ -138,7 +148,7 @@ def register(app, config_path: Path) -> None:
         State("run-recordings", "value"), State("run-steps", "value"), State("run-more", "value"),
     )
     def fill(pathname, _state, recordings, chosen, more):
-        if (pathname or "/").rstrip("/") not in ("", PATH):
+        if (pathname or "/").rstrip("/") != PATH:
             return (no_update,) * 8
         config = resolve_config(config_path)
         every = resolve_recordings(config, None)
@@ -182,12 +192,16 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output("run-message", "children"),
         Input("run-preview", "n_clicks"), Input("run-start", "n_clicks"), Input("run-stop", "n_clicks"),
+        Input({"type": "run-one", "step": ALL}, "n_clicks"),
         State("run-recordings", "value"), State("run-steps", "value"), State("run-more", "value"),
         prevent_initial_call=True,
     )
-    def act(_preview, _start, _stop, recordings, chosen, more):
+    def act(_preview, _start, _stop, _one, recordings, chosen, more):
         key = str(config_path)
-        chosen = [*(chosen or []), *(more or [])]
+        one = ctx.triggered_id if isinstance(ctx.triggered_id, dict) else None
+        if one is not None and not ctx.triggered[0]["value"]:
+            return no_update   # the rows were drawn again, nobody clicked
+        chosen = [one["step"]] if one is not None else [*(chosen or []), *(more or [])]
         current = _CURRENT.get(key)
         if ctx.triggered_id == "run-stop":
             if current is None or not cli_bridge.is_running(current):
@@ -205,7 +219,7 @@ def register(app, config_path: Path) -> None:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         log = layout_for(config, create=False).work_dir / "gui" / f"run_{stamp}.log"
         _CURRENT[key] = cli_bridge.launch(argv, log, cwd=config_path.parent)
-        return ui.note(f"Started; the full output goes to {log}.", "ok")
+        return ui.note(f"Started{' ' + one['step'] if one else ''}; the full output goes to {log}.", "ok")
 
     @app.callback(Output("run-progress", "children"), Output("run-state", "data"), Input("run-poll", "n_intervals"), State("run-state", "data"))
     def poll(_, known):
