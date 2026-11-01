@@ -30,6 +30,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
 - Centimetres beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
+- 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D, and a 3D view.
 
 ### 0.1.0-alpha
 - Framework scaffold.
@@ -39,4 +40,4 @@ Reviewing the output works the same way. The quality report points at the frames
 - A language-model observation pass before coding, transcript cleanup, and codebook refinement.
 - Who looks at whom, from gaze direction, on video where faces are large enough to tell.
 - Several kept segments per recording, and picking them on the video in the GUI.
-- Metric 3D output, with body models suited to children; the storage schema reserves room for it.
+- 3D from a single camera or a depth camera, with body models suited to children; the storage schema reserves room for it.
