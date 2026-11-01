@@ -59,7 +59,7 @@ def layout(config_path: Path):
             html.Div(
                 [
                     ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="review-recording", clearable=False, className="picker")),
-                    ui.field("Your name", dcc.Input(id="review-by", value=getpass.getuser(), placeholder="your name", debounce=True)),
+                    ui.field("Your name", dcc.Input(id="review-by", value=getpass.getuser(), placeholder="your name")),
                 ],
                 className="toolbar",
             ),

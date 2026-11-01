@@ -275,25 +275,33 @@ def test_the_folder_button_is_only_offered_on_the_machine_that_has_the_folder(pr
     assert "app-open-folder" not in text_of(build_layout(project.resolve(), local=False))
 
 
-def nav_style(project, name):
-    layout = build_layout(project.resolve()).to_plotly_json()
+def props_of(component, identity):
     found = []
 
     def walk(node):
         if hasattr(node, "to_plotly_json"):
             node = node.to_plotly_json()
         if isinstance(node, dict):
-            if node.get("props", {}).get("id") == f"nav-{name}":
-                found.append(node["props"].get("style"))
+            if node.get("props", {}).get("id") == identity:
+                found.append(node["props"])
             for value in node.get("props", {}).values():
                 walk(value)
         elif isinstance(node, (list, tuple)):
             for item in node:
                 walk(item)
 
-    walk(layout)
+    walk(component)
     assert len(found) == 1
     return found[0]
+
+
+def nav_style(project, name):
+    return props_of(build_layout(project.resolve()), f"nav-{name}").get("style")
+
+
+def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
+    """A file dropped on Import your coding does not move the focus, so a name waiting for it would be lost."""
+    assert not props_of(review.layout(project), "review-by").get("debounce")
 
 
 def test_the_cameras_tab_shows_only_where_two_cameras_film(project):
