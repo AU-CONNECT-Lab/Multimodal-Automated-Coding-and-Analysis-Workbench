@@ -130,9 +130,20 @@ face:
   landmarks: true                    # face landmarks kept in an artifact, not the long table; face.movement reads them
   blink_min_eye_px: 5.0              # px; eyes narrower than this in the picture are not read for blinks
   gaze: false                        # gaze direction per frame as well (pyfeat: v1 adds L2CS-Net, v2 has it built in)
-  mutual_gaze_angle_deg: 15.0        # deg; angular tolerance for calling two gazes mutual
   check_model: null                  # a second model (v1 or v2) for face.au_check, which only checks AU agreement
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
+
+gaze:
+  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture; fetched through torch.hub on first use
+  model: null                        # gazelle: gazelle_dinov2_vitl14_inout_childplay (default; tuned on children playing with adults) | gazelle_dinov2_vitb14_inout_childplay (about twice as fast) | gazelle_dinov2_vitl14_inout | gazelle_dinov2_vitb14_inout
+  device: auto                       # auto | cpu | cuda
+  batch_size: 16                     # frames the model takes at once
+  targets: []                        # things to tell apart as what people look at, in plain English words, e.g. [bottle, book]; people are looked for anyway
+  object_backend: grounding_dino     # grounding_dino: finds things by name, five times a second (Apache-2.0)
+  object_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
+  object_score: 0.35                 # 0-1; lower finds more things and more that are not there
+  seats: {}                          # backend angles: each role's place and the camera's seen from above, [x, depth, eye height] in one unit, x to the camera's right and depth straight ahead of it, e.g. {camera: [0, 0, 110], parent: [-50, 120, 115], child: [30, 140, 85]}
+  tolerance_deg: null                # deg; backend angles: a look within this of the direction to someone is a look at them; no default, as it depends on how far apart the people sit
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea

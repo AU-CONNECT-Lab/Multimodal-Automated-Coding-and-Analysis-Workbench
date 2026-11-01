@@ -96,6 +96,10 @@ class Layout:
     def voice_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "voice_owners.json"
 
+    # frames a person labelled with whom or what each person looks at; gaze.target's check, and its angles backend's input
+    def gaze_labels_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "gaze_labels.json"
+
     # the transcript a person corrected in ELAN; when there, text.asr reads it instead of recognising speech
     def corrected_transcript_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "transcript_corrected.eaf"

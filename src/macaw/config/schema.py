@@ -247,9 +247,32 @@ class FaceSection(_Section):
     landmarks: bool = True
     blink_min_eye_px: float = 5.0
     gaze: bool = False
-    mutual_gaze_angle_deg: float = 15.0
     check_model: str | None = None
     check_backend: str | None = None
+
+
+class GazeSection(_Section):
+    backend: str = "gazelle"
+    model: str | None = None
+    device: str = "auto"
+    batch_size: int = Field(default=16, ge=1)
+    targets: list[str] = Field(default_factory=list)
+    object_backend: str = "grounding_dino"
+    object_model: str | None = None
+    object_score: float = Field(default=0.35, gt=0, lt=1)
+    seats: dict[str, tuple[float, float, float]] = Field(default_factory=dict)
+    tolerance_deg: float | None = Field(default=None, gt=0, lt=180)
+
+    @model_validator(mode="after")
+    def _names(self) -> "GazeSection":
+        if len(set(self.targets)) != len(self.targets):
+            raise ValueError("gaze.targets names a thing twice")
+        clash = sorted(set(self.targets) & {"elsewhere", "off_screen", "unsure", "camera"})
+        if clash:
+            raise ValueError(f"gaze.targets cannot use {', '.join(clash)}, which MACAW already uses")
+        if self.seats and "camera" not in self.seats:
+            raise ValueError("gaze.seats needs the camera's place too, as camera: [x, depth, eye height]")
+        return self
 
 
 class MotionSection(_Section):
@@ -357,6 +380,7 @@ class MacawConfig(_Section):
     scale: ScaleSection = Field(default_factory=ScaleSection)
     pose3d: Pose3DSection = Field(default_factory=Pose3DSection)
     face: FaceSection = Field(default_factory=FaceSection)
+    gaze: GazeSection = Field(default_factory=GazeSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
     coding: CodingSection = Field(default_factory=CodingSection)
@@ -381,6 +405,12 @@ class MacawConfig(_Section):
             raise ValueError(
                 f"scale.cm_per_px_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
+        unknown = sorted(set(self.gaze.seats) - set(self.project.roles) - {"camera"})
+        if unknown:
+            raise ValueError(f"gaze.seats names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})")
+        clash = sorted(set(self.gaze.targets) & set(self.project.roles))
+        if clash:
+            raise ValueError(f"gaze.targets names {', '.join(clash)}, which are roles; people are looked for anyway")
         return self
 
 
@@ -395,6 +425,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "scale",
     "pose3d",
     "face",
+    "gaze",
     "motion",
     "turns",
     "coding",
