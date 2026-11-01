@@ -257,6 +257,20 @@ class TestAngles:
         assert child.label.tolist() == ["bottle"]
         assert any(w.subject_id == "parent" and "neither gaze.seats" in w.message for w in result.warnings)
 
+    def test_seats_without_labelled_frames_can_be_keyed(self, tmp_path, monkeypatch):
+        from macaw.store.cache import hash_inputs
+
+        labels = tmp_path / "gaze_labels.json"
+        monkeypatch.setattr(target_module, "_keypoints_file", lambda config, rid: tmp_path / "pose.parquet")
+        monkeypatch.setattr(target_module, "_face_rows_file", lambda config, rid: tmp_path / "face.parquet")
+        monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: labels))
+        for name in ("pose.parquet", "face.parquet"):
+            (tmp_path / name).write_bytes(b"rows")
+        step = GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(backend="angles", seats=self.SEATS, tolerance_deg=20)))
+        before = hash_inputs(step.inputs_for(SimpleNamespace(recording_id="r1")))
+        labels.write_text("[]", encoding="utf-8")
+        assert hash_inputs(step.inputs_for(SimpleNamespace(recording_id="r1"))) != before
+
     def test_the_angles_backend_needs_a_tolerance(self):
         from macaw.exceptions import ConfigError
 

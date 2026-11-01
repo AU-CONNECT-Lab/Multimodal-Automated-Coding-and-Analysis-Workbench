@@ -107,7 +107,8 @@ class GazeTargetExtractor(Extractor):
         rid = recording.recording_id
         files = [_keypoints_file(self.config, rid)]
         if not finds_points(self.config):
-            return files + [_face_rows_file(self.config, rid), layout_for(self.config, create=False).gaze_labels_path(rid)]
+            labels = layout_for(self.config, create=False).gaze_labels_path(rid)
+            return files + [_face_rows_file(self.config, rid)] + ([labels] if labels.is_file() else [])
         return files + ([objects_file(self.config, rid)] if self.config.gaze.targets else [])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
