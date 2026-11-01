@@ -36,9 +36,9 @@ ACTION_UNITS = {
     "AU25": "lips part", "AU26": "jaw drop", "AU28": "lip suck", "AU43": "eyes closed",
 }
 _POSE_SPECS = {
-    "face_pitch_deg": "Head pitch from the face model.",
+    "face_pitch_deg": "Head pitch from the face model, relative to the camera; tipped up is positive.",
     "face_roll_deg": "Head roll from the face model.",
-    "face_yaw_deg": "Head yaw from the face model.",
+    "face_yaw_deg": "Head yaw from the face model, relative to the camera; turned toward the person's own right is positive.",
     "gaze_pitch_deg": "Gaze pitch from the face model, both eyes together; up is positive.",
     "gaze_yaw_deg": "Gaze yaw from the face model, both eyes together; toward the person's own right is positive.",
 }
