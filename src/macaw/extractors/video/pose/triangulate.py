@@ -269,6 +269,10 @@ _PAIR_SPECS: dict[str, tuple[str, str]] = {
         "deg",
     ),
 }
+# compared with an independent 3D reconstruction of real recordings; the rest only with simulated cameras
+_AGAINST_REFERENCE = frozenset(
+    {"interpersonal_distance_3d", "head_distance_3d", "head_toward_deg_3d", "left_wrist_speed_3d", "right_wrist_speed_3d"}
+)
 
 
 def measures_3d(config) -> list:
@@ -348,7 +352,8 @@ class Kinematics3DExtractor(Extractor):
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
-                comparable_across_subjects=comparable, comparable_across_backends=False, validation="synthetic",
+                comparable_across_subjects=comparable, comparable_across_backends=False,
+                validation="against_reference" if name in _AGAINST_REFERENCE else "synthetic",
             )
             for name, (description, unit, comparable, spec_params) in catalog.items()
             if name in emitted

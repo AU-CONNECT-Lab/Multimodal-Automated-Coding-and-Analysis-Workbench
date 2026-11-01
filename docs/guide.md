@@ -397,7 +397,7 @@ It needs four things:
 - The cameras do not move or zoom after that clip. When they do, film the board again.
 
 :::{note}
-This part has so far been checked on simulated cameras only.
+Placing people in 3D has been checked on simulated cameras and on a public recording of an adult and a toddler filmed by four calibrated cameras, against that recording's own 3D reconstruction. Finding the cameras from a board has been checked on simulated cameras only.
 :::
 
 ### 1. Print the board
