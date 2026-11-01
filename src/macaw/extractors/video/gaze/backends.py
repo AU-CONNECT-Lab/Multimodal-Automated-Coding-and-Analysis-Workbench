@@ -26,13 +26,12 @@ class GazeBackend(Backend):
 
 @register_backend(BACKEND_GROUP)
 class GazeLLEBackend(GazeBackend):
-    """Gaze-LLE (Ryan et al. 2025): MIT code and decoder weights, on a DINOv2 backbone (Apache-2.0),
-    both fetched through torch.hub on first use."""
+    """Gaze-LLE: MIT code and decoder weights on a DINOv2 backbone (Apache-2.0), fetched through torch.hub on first use."""
 
     name = "gazelle"
     hub_repo = "fkryan/gazelle"
     weights_url = "https://github.com/fkryan/gazelle/releases/download/v1.0.0/{model}.pt"
-    # the in-or-out models also say whether the target is in the picture; the childplay ones were tuned on children playing with adults
+    # the in-or-out models also say whether the target is in the picture; those ending in _childplay were tuned on children with adults
     models = (
         "gazelle_dinov2_vitb14_inout", "gazelle_dinov2_vitl14_inout",
         "gazelle_dinov2_vitb14_inout_childplay", "gazelle_dinov2_vitl14_inout_childplay",

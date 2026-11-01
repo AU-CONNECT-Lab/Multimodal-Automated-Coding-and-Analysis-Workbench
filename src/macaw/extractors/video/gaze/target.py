@@ -54,6 +54,8 @@ _DISTANCE_SPECS = {
     ),
 }
 _MUTUAL_SPEC = ("1 while subject_id and subject_id_b each look at the other, else 0.", None, "mean")
+# compared with hand labels of where people look
+_CHECKED = ("looks_at", "looks_at_share")
 _SUMMARY_SPECS = {
     "looks_at_share": "Share of the frames subject_id's gaze was read in during which they looked at subject_id_b.",
     "looks_at_n": "Looks from subject_id to subject_id_b: runs of frames with looks_at 1.",
@@ -310,7 +312,8 @@ class GazeTargetExtractor(Extractor):
                 name=name, description=description, unit=unit,
                 scale=Scale.RECORDING if name in _SUMMARY_SPECS else Scale.FRAME, group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name, backend_version=backend.version,
-                params=params, interpolation="none", aggregation=aggregation, comparable_across_backends=False, validation="none",
+                params=params, interpolation="none", aggregation=aggregation, comparable_across_backends=False,
+                validation="against_reference" if backend.finds_points and name in _CHECKED else "none",
             )
             for name, (description, unit, aggregation) in described.items()
             if name in emitted

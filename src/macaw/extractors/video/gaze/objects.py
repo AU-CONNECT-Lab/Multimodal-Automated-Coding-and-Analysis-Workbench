@@ -21,7 +21,7 @@ BACKEND_GROUP = "objects"
 # one row per thing found: its name as gaze.targets gives it, its box in the video's pixels, and the detector's score
 OBJECT_COLUMNS = ("video", "frame", "label", "x0", "y0", "x1", "y1", "score")
 OBJECTS_NAME = "objects.parquet"
-# things are looked for this often, as the detector reads a handful of frames a second; gaze.target takes the nearest look
+# the detector is slow, so things are looked for this often and gaze.target takes the nearest look
 EVERY_S = 0.2
 # a named thing found in fewer of the frames read than this is reported, as the name may not suit the detector
 _RARELY_FOUND = 0.2
@@ -39,7 +39,7 @@ class ObjectBackend(Backend):
 
 @register_backend(BACKEND_GROUP)
 class GroundingDinoBackend(ObjectBackend):
-    """Grounding DINO (Liu et al. 2024) through transformers; Apache-2.0 code and weights from the Hugging Face hub."""
+    """Grounding DINO through transformers; Apache-2.0 code and weights from the Hugging Face hub."""
 
     name = "grounding_dino"
     default_model = "IDEA-Research/grounding-dino-tiny"

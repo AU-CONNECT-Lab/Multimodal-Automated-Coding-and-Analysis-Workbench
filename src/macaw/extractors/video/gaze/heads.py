@@ -7,8 +7,7 @@ import pandas as pd
 
 FACE_JOINTS = ("nose", "left_eye", "right_eye", "left_ear", "right_ear")
 SHOULDERS = ("left_shoulder", "right_shoulder")
-# a head box is this many times the spread of the face points, or of half the shoulder width when that is larger;
-# hand-drawn head boxes, which take in the hair, measure about this
+# a head box takes in the hair: this many times the spread of the face points, or of half the shoulder width when larger
 HEAD_SCALE = 2.0
 SHOULDER_SHARE = 0.5
 # the box centre sits this share of its side above the mean of the face points

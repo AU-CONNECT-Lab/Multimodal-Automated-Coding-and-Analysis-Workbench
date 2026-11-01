@@ -310,7 +310,7 @@ Every look also becomes a code on a `gaze_target` tier for each person (the pers
 `gaze.model` picks the model. The default was tuned on children playing with adults; `gazelle_dinov2_vitb14_inout_childplay` takes about half the time and is a little less exact.
 
 :::{note}
-Checked on 28 public clips of children playing with adults (ChildPlay), against hand labels of where each person looks. Of the frames MACAW said a person looked at someone, 66% were right for adults and 55% for children; of the frames a person was labelled looking at someone, MACAW found 75% for adults and 67% for children. Over each clip, the share of time a person spent looking at someone ranked people much as the labels did (rank correlation 0.80), though it came out too high for adults who look about a lot. Children look at faces less often than adults, so a few wrong frames weigh more for them. How well it does on your video depends on how large and how turned the heads are: label some frames (below) and the quality page tells you.
+Checked on public video of children playing with adults, against hand labels of where each person looks. Whom a person looks at was right in most frames, more often for adults than for children, and over a whole clip the share of time each person spent looking at someone ranked people much as the labels did, though it came out too high for adults who look about a lot. Children look at faces less often than adults, so a few wrong frames weigh more for them. How well it does on your video depends on how large and how turned the heads are: label some frames (below) and the quality page tells you.
 :::
 
 ### Check it on your own video
