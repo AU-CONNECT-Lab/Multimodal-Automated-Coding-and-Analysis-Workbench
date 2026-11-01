@@ -15,11 +15,13 @@ from macaw.config.loader import resolve_config
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
+from macaw.interop.coding_files import SUFFIXES as CODING_SUFFIXES
 from macaw.project.identity import pairing, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
+from macaw.store.annotations import read_annotations
 from macaw.qc.report import _alignment, _cameras, _waiting
 
 LABEL = "Review"
@@ -48,6 +50,10 @@ def layout(config_path: Path):
                 [
                     ui.button("Refresh", "review-refresh", icon_name="refresh"),
                     dcc.Upload(ui.button("Import a corrected transcript (.eaf)", icon_name="upload"), id="review-upload", accept=".eaf"),
+                    dcc.Upload(
+                        ui.button("Import your coding (.eaf, .csv, .xlsx)", icon_name="upload"), id="review-coding-upload",
+                        accept=",".join(CODING_SUFFIXES),
+                    ),
                 ],
             ),
             html.Div(
@@ -514,12 +520,30 @@ def body(config_path: Path, rid: str | None):
         _people_on_camera(layout, results, rid),
         _voices(config, layout, recording),
         _speech_acts(config, layout, recording),
+        _coding(layout, rid),
         _scale(resolve_config(config_path, recording_id=rid), layout, recording),
         _gaze(resolve_config(config_path, recording_id=rid), layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
         parts.append(_transcript(layout, rid))
     return [part for part in parts if part is not None]
+
+
+def _coding(layout, rid: str):
+    path = layout.imported_codes_path(rid)
+    if not path.is_file():
+        return None
+    codes = read_annotations(path)
+    counts = codes.groupby(["annotator", "subject_id", "tier"], dropna=False, sort=True).size().reset_index(name="n")
+    rows = [[row.annotator, row.subject_id if isinstance(row.subject_id, str) else "everyone", row.tier, int(row.n)] for row in counts.itertuples()]
+    first = counts.iloc[0]
+    return ui.card(
+        "Your coding",
+        ui.table(["Coder", "Person", "Tier", "Codes"], rows, numeric={"Codes"}),
+        ui.note("To compare it with the machine's codes or another coder's on the same tier, each unit of one coder taking the others' code that covers most of it:"),
+        ui.command(["macaw", "agreement", "--tier", str(first.tier), "--units", str(first.annotator)]),
+        desc="Brought in with Import your coding. Importing again under the same name replaces that coder's tiers.",
+    )
 
 
 def action_command(
@@ -638,6 +662,8 @@ def register(app, config_path: Path) -> None:
         Input({"type": ACT, "action": ALL, "target": ALL}, "n_clicks"),
         Input("review-upload", "contents"),
         State("review-upload", "filename"),
+        Input("review-coding-upload", "contents"),
+        State("review-coding-upload", "filename"),
         State("review-by", "value"),
         State({"type": "voice-pick", "label": ALL}, "value"),
         State({"type": "voice-pick", "label": ALL}, "id"),
@@ -655,7 +681,7 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
         State({"type": SCALE_PERSON, "key": ALL}, "value"),
     )
-    def update(rid, _refresh, clicks, upload, filename, by, picks, pick_ids, renames, rename_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
+    def update(rid, _refresh, clicks, upload, filename, coding, coding_name, by, picks, pick_ids, renames, rename_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
         trigger = ctx.triggered_id
         message = None
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
@@ -687,10 +713,21 @@ def register(app, config_path: Path) -> None:
                 argv = action_command(config_path, rid, action, target, by, voices, named, measured)
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         elif trigger == "review-upload" and upload:
-            directory = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "uploads"
-            directory.mkdir(parents=True, exist_ok=True)
-            path = directory / Path(filename or f"{rid}.eaf").name
-            path.write_bytes(base64.b64decode(upload.split(",", 1)[1]))
+            path = _uploaded(config_path, upload, filename or f"{rid}.eaf")
             argv = _transcript_command(config_path, rid, "transcript-import", path, by)
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
+        elif trigger == "review-coding-upload" and coding:
+            if not by:
+                return no_update, ui.note("Type your name first: your coding is kept under it.", "warn")
+            path = _uploaded(config_path, coding, coding_name or f"{rid}.eaf")
+            argv = ["macaw", "import-codes", str(path), "-c", str(config_path), "-r", rid, "--coder", by]
+            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         return body(config_path, rid), message
+
+
+def _uploaded(config_path: Path, contents: str, filename: str) -> Path:
+    directory = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "uploads"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / Path(filename).name
+    path.write_bytes(base64.b64decode(contents.split(",", 1)[1]))
+    return path

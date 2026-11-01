@@ -8,28 +8,32 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from macaw.exceptions import InputNotFoundError
+from macaw.exceptions import InputNotFoundError, MacawError
 from macaw.project.layout import layout_for
 from macaw.store.annotations import read_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame, empty_frame
 
 UNIT_KEY = ("recording_id", "subject_id", "tier", "t_start", "t_end")
-NO_CODE = "_none"  # grid mode only: this annotator left the cell blank
+NO_CODE = "_none"  # grid and coder modes: this annotator left the cell or unit blank
 REST = "_rest"     # the other side of a one-vs-rest split
 
 _UNIT_COLUMNS = ["unit_id", "annotator", "label"]
 _GROUP_KEY = ("recording_id", "subject_id", "tier")
 _SMALL_SAMPLE = 30
+_BLOCK = 500
 
 
 def _empty_units() -> pd.DataFrame:
     return pd.DataFrame({column: pd.Series(dtype="object") for column in _UNIT_COLUMNS})
 
 
-def build_units(annotations: pd.DataFrame, *, grid_s: float | None = None) -> pd.DataFrame:
+def build_units(annotations: pd.DataFrame, *, grid_s: float | None = None, units_of: str | None = None) -> pd.DataFrame:
     """One row per (unit, annotator). Without grid_s the interval itself is the unit, which
     holds whenever the coders worked from a shared list of candidates; with it the timeline is
-    cut into fixed cells so freely drawn boundaries can still be compared."""
+    cut into fixed cells so freely drawn boundaries can still be compared; with units_of each of
+    that coder's intervals is a unit, and the others give it the code covering most of it."""
+    if grid_s is not None and units_of is not None:
+        raise ValueError("compare on a grid or on one coder's units, not both")
     if annotations is None or annotations.empty:
         return _empty_units()
 
@@ -42,7 +46,10 @@ def build_units(annotations: pd.DataFrame, *, grid_s: float | None = None) -> pd
     if frame.empty:
         return _empty_units()
 
-    units = _exact_units(frame) if grid_s is None else _grid_units(frame, float(grid_s))
+    if units_of is not None:
+        units = _coder_units(frame, units_of)
+    else:
+        units = _exact_units(frame) if grid_s is None else _grid_units(frame, float(grid_s))
     duplicates = int(units.duplicated(subset=["unit_id", "annotator"]).sum())
     out = units.drop_duplicates(subset=["unit_id", "annotator"], keep="first").reset_index(drop=True)
     out.attrs["duplicate_ratings"] = duplicates
@@ -96,6 +103,43 @@ def _grid_units(frame: pd.DataFrame, grid_s: float) -> pd.DataFrame:
                     ties += 1
                 rows.append((f"{prefix}|{cell}", annotator, winners[0]))
 
+    out = pd.DataFrame(rows, columns=_UNIT_COLUMNS)
+    out.attrs["grid_ties"] = int(ties)
+    return out
+
+
+def _coder_units(frame: pd.DataFrame, coder: str) -> pd.DataFrame:
+    """A coder who coded nothing for this person and tier gives no rating; one who coded elsewhere gives NO_CODE."""
+    columns = [column for column in _GROUP_KEY if column in frame.columns]
+    rows: list[tuple[str, str, str]] = []
+    ties = 0
+    for keys, group in frame.groupby(columns, dropna=False, sort=False, observed=True):
+        prefix = "|" + "|".join(str(key) for key in (keys if isinstance(keys, tuple) else (keys,)))
+        names = group["annotator"].astype(str)
+        own = group[names == coder]
+        if own.empty:
+            continue
+        starts, ends = own["t_start"].to_numpy(dtype=float), own["t_end"].to_numpy(dtype=float)
+        ids = [f"{prefix}|{start}|{end}" for start, end in zip(own["t_start"], own["t_end"])]
+        rows += list(zip(ids, [coder] * len(own), own["label"].astype(str)))
+        for other, theirs in group[names != coder].groupby(names[names != coder], sort=True):
+            labels = theirs["label"].astype(str).to_numpy()
+            # how long each of their annotations overlaps each unit, a block of units at a time
+            for first in range(0, len(own), _BLOCK):
+                block = slice(first, first + _BLOCK)
+                overlap = np.clip(
+                    np.minimum(ends[block, None], theirs["t_end"].to_numpy(dtype=float)[None, :])
+                    - np.maximum(starts[block, None], theirs["t_start"].to_numpy(dtype=float)[None, :]),
+                    0.0, None,
+                )
+                for unit, seconds in zip(ids[block], overlap):
+                    if not (seconds > 0).any():
+                        rows.append((unit, str(other), NO_CODE))
+                        continue
+                    totals = pd.Series(seconds).groupby(labels).sum()
+                    winners = sorted(totals.index[totals == totals.max()])
+                    ties += len(winners) > 1
+                    rows.append((unit, str(other), winners[0]))
     out = pd.DataFrame(rows, columns=_UNIT_COLUMNS)
     out.attrs["grid_ties"] = int(ties)
     return out
@@ -260,6 +304,7 @@ def agreement_report(
     tier: str | None = None,
     layer: str | None = None,
     grid_s: float | None = None,
+    units_of: str | None = None,
 ) -> dict:
     """Everything a methods section needs about one tier. n_units is reported rather than turned
     into a pass/fail: how much agreement is enough is the analyst's call."""
@@ -268,8 +313,11 @@ def agreement_report(
         frame = frame[frame["tier"].astype(str) == tier]
     if layer is not None and not frame.empty:
         frame = frame[frame["layer"].astype(str) == layer]
+    if units_of is not None and units_of not in set(frame["annotator"].dropna().astype(str)):
+        coders = ", ".join(sorted(frame["annotator"].dropna().astype(str).unique())) or "none"
+        raise MacawError(f"no coder named {units_of} here; the coders are: {coders}")
 
-    units = build_units(frame, grid_s=grid_s)
+    units = build_units(frame, grid_s=grid_s, units_of=units_of)
     names = sorted(units["annotator"].astype(str).unique().tolist()) if not units.empty else []
     n_units = int(units["unit_id"].nunique()) if not units.empty else 0
     sizes = units.groupby("unit_id", sort=False).size() if not units.empty else pd.Series(dtype=int)
@@ -279,8 +327,9 @@ def agreement_report(
     report = {
         "tier": tier,
         "layer": layer,
-        "unit_mode": "exact" if grid_s is None else "grid",
+        "unit_mode": "coder" if units_of is not None else "exact" if grid_s is None else "grid",
         "grid_s": grid_s,
+        "units_of": units_of,
         "n_units": n_units,
         # the N alpha actually ran on: a unit only one coder touched carries no agreement
         "n_pairable": int((sizes >= 2).sum()),
@@ -307,7 +356,7 @@ def _report_warnings(report: dict, units: pd.DataFrame) -> list[str]:
     if report["n_pairable"] == 0 and report["n_annotators"] >= 2:
         warnings.append(
             "No unit was rated twice. In exact mode the coders have to work from the same "
-            "interval boundaries; pass grid_s to compare freely drawn annotations instead."
+            "interval boundaries; pass grid_s or units_of to compare freely drawn annotations instead."
         )
     elif 0 < report["n_pairable"] < _SMALL_SAMPLE:
         warnings.append(
@@ -327,7 +376,11 @@ def _report_warnings(report: dict, units: pd.DataFrame) -> list[str]:
             "Agreement assumes a single label per unit per coder."
         )
     ties = units.attrs.get("grid_ties", 0)
-    if ties:
+    if ties and report["unit_mode"] == "coder":
+        warnings.append(
+            f"{ties} unit(s) were covered evenly by two of a coder's labels; the first in alphabetical order was taken."
+        )
+    elif ties:
         warnings.append(
             f"{ties} grid cell(s) were split evenly between labels; the first in alphabetical "
             "order was taken. A finer grid_s removes the ambiguity."
@@ -338,7 +391,8 @@ def _report_warnings(report: dict, units: pd.DataFrame) -> list[str]:
 def format_report(report: dict) -> str:
     lines = [
         f"tier={report['tier'] or 'all'}  layer={report['layer'] or 'all'}  "
-        f"units={report['unit_mode']}" + (f"({report['grid_s']}s)" if report["grid_s"] else ""),
+        f"units={report['unit_mode']}" + (f"({report['grid_s']}s)" if report["grid_s"] else "")
+        + (f"({report['units_of']})" if report.get("units_of") else ""),
         f"n_units={report['n_units']}  n_pairable={report['n_pairable']}  "
         f"n_annotators={report['n_annotators']}  coverage={report['coverage']:.2f}",
         f"krippendorff_alpha={report['alpha']:.3f}",

@@ -479,7 +479,7 @@ GESTURES = """kinematics:
 
 
 def code_gestures(config, segments):
-    from macaw.store.annotations import write_annotations
+    from macaw.store._io import write_file
     from macaw.store.schema import ANNOTATION_SCHEMA
 
     rows = pd.DataFrame([
@@ -488,7 +488,7 @@ def code_gestures(config, segments):
          "task": None, "run": None, "confidence": np.nan, "execution_id": None, "config_hash": None}
         for who, start, end in segments
     ])
-    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).annotations_path("003"))
+    write_file(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).imported_codes_path("003"), ANNOTATION_SCHEMA, "annotations")
 
 
 @pytest.fixture

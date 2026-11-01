@@ -106,6 +106,16 @@ def test_the_review_page_labels_where_people_look_and_reports_agreement(project)
     assert "Looks at" in text_of(review.body(project, "003")) and "Looks at" not in shown
 
 
+def test_the_review_page_lists_coding_brought_in_and_how_to_compare_it(project, tmp_path):
+    assert "Your coding" not in text_of(review.body(project, "003"))
+    table = tmp_path / "coding.csv"
+    table.write_text("tier,start,end,code,person\nspeech,1.0,2.5,question,child\nspeech,3,4,answer,child\n", encoding="utf-8")
+    code, text = cli_bridge.run_now(["macaw", "import-codes", str(table), "-c", str(project), "-r", "003", "--coder", "ann"], cwd=project.parent)
+    assert code == 0, text
+    shown = text_of(review.body(project, "003"))
+    assert "Your coding" in shown and "agreement" in shown and "--units" in shown and "speech" in shown
+
+
 def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_names_it(project):
     from macaw.exceptions import ExternalToolError
     from macaw.media.ffmpeg import run_ffmpeg

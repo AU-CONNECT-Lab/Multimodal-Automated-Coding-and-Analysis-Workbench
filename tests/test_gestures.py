@@ -19,7 +19,7 @@ from macaw.extractors.video.pose.gestures import (
     holds,
     submovement_peaks,
 )
-from macaw.store.annotations import write_annotations
+from macaw.store._io import write_file
 from macaw.store.keypoints import write_keypoints
 from macaw.store.schema import ANNOTATION_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
 
@@ -174,8 +174,8 @@ def run(tmp_path, monkeypatch):
                 for who, start, end, by in segments
             ]
         )
-        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), coded)
-        monkeypatch.setattr(gestures_module, "layout_for", lambda config, create=False: SimpleNamespace(annotations_path=lambda rid: coded))
+        write_file(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), coded / "imported.parquet", ANNOTATION_SCHEMA, "annotations")
+        monkeypatch.setattr(gestures_module, "layout_for", lambda config, create=False: SimpleNamespace(imported_codes_path=lambda rid: coded / "imported.parquet"))
         gestures = GestureSection(tier="gesture", annotator=annotator, still_speed=10.0, peak_prominence=20.0, holds=holds)
         recording = SimpleNamespace(
             recording_id="sub-003_ses-12mo", subjects=[SimpleNamespace(subject_id="parent")], media=[],

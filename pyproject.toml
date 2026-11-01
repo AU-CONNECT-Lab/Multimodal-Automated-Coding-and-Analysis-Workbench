@@ -19,6 +19,7 @@ dependencies = [
   "scipy>=1.11",
   "pympi-ling>=1.70",       # .eaf round trip; pure python and tiny
   "jinja2>=3.1",            # QC report pages
+  "openpyxl>=3.1",          # people's coding brought in from Excel
   "tomli>=2.0; python_version < '3.11'",   # camera calibration files
 ]
 

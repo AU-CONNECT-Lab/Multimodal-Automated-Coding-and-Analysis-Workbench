@@ -12,11 +12,14 @@ from macaw.coding.agreement import (
     report_to_json,
 )
 from macaw.coding.describe import describe_codes, format_description
+from macaw.coding.imports import import_coding
 from macaw.coding.review_queue import apply_review, export_review, queue_summary, read_queue, write_queue
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution import runner
 from macaw.execution.runner import resolve_recordings
+from macaw.interop.coding_files import SUFFIXES
+from macaw.project.recording import build_recording
 
 app = typer.Typer()
 
@@ -85,17 +88,64 @@ def agreement(
     tier: str = typer.Option(None, "--tier", help="Restrict to one annotation tier."),
     layer: str = typer.Option(None, "--layer", "-l", help="A, B, or C."),
     grid_s: float = typer.Option(None, "--grid-s", help="Compare on a fixed time grid instead of on exact intervals."),
+    units: str = typer.Option(
+        None, "--units", help="Compare on this coder's intervals: each takes every other coder's code covering most of it."
+    ),
     out: Path = typer.Option(None, "--out", help="Write the report as json."),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
     """Inter-annotator agreement over the annotations table: Krippendorff alpha and Cohen kappa."""
+    if grid_s is not None and units is not None:
+        raise MacawError("give --grid-s or --units, not both")
     resolved = resolve_config(config, cli_overrides=set_ or ())
     annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
-    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s)
+    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units)
     typer.echo(format_report(report))
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")
+
+
+@app.command("import-codes")
+def import_codes(
+    paths: list[Path] = typer.Argument(..., help="Coding files (.eaf, .csv, .tsv, .xlsx), or folders of them."),
+    coder: str = typer.Option(..., "--coder", help="Who coded. Importing again replaces this coder's codes on the same tiers."),
+    recording: str = typer.Option(None, "--recording", "-r", help="The recording, when one file's name does not start with it."),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+) -> None:
+    """Bring your own coding in beside the machine's, for macaw agreement, describe-codes and the gesture measures.
+    coding.imports says whose each tier is and what it is called here. Each file's name starts with its recording."""
+    resolved = resolve_config(config)
+    files = [
+        found
+        for path in paths
+        for found in (sorted(item for item in path.iterdir() if item.suffix.lower() in SUFFIXES) if path.is_dir() else [path])
+    ]
+    if not files:
+        raise MacawError(f"no coding files ({', '.join(SUFFIXES)}) there")
+    if recording is not None and len(files) > 1:
+        raise MacawError("-r names the recording of one file; for several, start each file's name with its recording")
+    known = resolve_recordings(resolved, None)
+    owners = {path: recording or _recording_of(path, known) for path in files}
+    unnamed = [path.name for path, owner in owners.items() if owner is None]
+    if unnamed:
+        raise MacawError(f"{', '.join(unnamed)}: the name does not start with a recording; rename the file or give -r")
+    for path, owner in owners.items():
+        own = resolve_config(config, recording_id=owner)
+        report = import_coding(own, build_recording(owner, own), path, coder)
+        kept = ", ".join(f"{person or 'everyone'} {tier} {n}" for (person, tier), n in sorted(report.kept.items(), key=str))
+        typer.echo(f"{owner}  {path.name}  {coder}: {kept or 'nothing brought in'}")
+        for line in report.left_out:
+            typer.echo(f"  left out  {line}")
+        for line in report.notes:
+            typer.echo(f"  note  {line}")
+
+
+def _recording_of(path: Path, recordings: list[str]) -> str | None:
+    """The longest recording id the file's name starts with, followed by nothing or a separator."""
+    stem = path.stem
+    found = [rid for rid in recordings if stem == rid or (stem.startswith(rid) and stem[len(rid)] in "_-. ")]
+    return max(found, key=len) if found else None
 
 
 @app.command("describe-codes")

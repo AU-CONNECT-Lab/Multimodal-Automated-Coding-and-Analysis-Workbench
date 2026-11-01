@@ -314,6 +314,12 @@ class LLMSection(_Section):
         return get_backend(BACKEND_GROUP, self.provider).is_local
 
 
+class ImportedTier(_Section):
+    person: str | None = None
+    tier: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
+
+
 class CodingSection(_Section):
     layers: list[Literal["A", "B", "C"]] = Field(default_factory=lambda: ["A"])
     codebook: Path | None = None
@@ -321,6 +327,7 @@ class CodingSection(_Section):
     backchannel_max_s: float = 1.0
     min_turn_internal_pause_s: float = 0.2
     llm: LLMSection = Field(default_factory=LLMSection)
+    imports: dict[str, ImportedTier] = Field(default_factory=dict)
 
 
 class QCSection(_Section):

@@ -106,8 +106,7 @@ class GestureExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        coded = layout_for(self.config, create=False).annotations_path(recording.recording_id)
-        return [_keypoints_file(self.config, recording.recording_id), *sorted(coded.glob("*.parquet"))]
+        return [_keypoints_file(self.config, recording.recording_id), *_coded_file(self.config, recording)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.kinematics.gestures
@@ -163,8 +162,7 @@ class Gesture3DExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        coded = layout_for(self.config, create=False).annotations_path(recording.recording_id)
-        return [points_file(self.config, recording.recording_id), *sorted(coded.glob("*.parquet"))]
+        return [points_file(self.config, recording.recording_id), *_coded_file(self.config, recording)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.kinematics.gestures
@@ -198,10 +196,16 @@ class Gesture3DExtractor(Extractor):
         return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params), warnings=warnings)
 
 
+def _coded_file(config, recording: Recording) -> list[Path]:
+    """Gestures are coded by people, so only their imported coding is an input, not what the steps write beside it."""
+    path = layout_for(config, create=False).imported_codes_path(recording.recording_id)
+    return [path] if path.is_file() else []
+
+
 def coded_gestures(config, recording: Recording, check: str) -> tuple[pd.DataFrame, list[QCWarning]]:
     """The segments on the gesture tier that belong to a person, from one coder."""
     cfg = config.kinematics.gestures
-    path = layout_for(config, create=False).annotations_path(recording.recording_id)
+    path = layout_for(config, create=False).imported_codes_path(recording.recording_id)
     coded = read_annotations(path, tier=cfg.tier) if path.exists() else pd.DataFrame(columns=["subject_id", "annotator", "t_start", "t_end"])
     if cfg.annotator is not None:
         coded = coded[coded["annotator"] == cfg.annotator]

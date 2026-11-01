@@ -234,7 +234,7 @@ Type one of these in the project folder. Each one prints where it saved its file
 : Who is talking at each second, per person, for sequence analysis.
 
 `macaw export -f eaf`
-: One ELAN file per recording with the machine codes, as a starting point for your own coding.
+: One ELAN file per recording with the machine codes, as a starting point for your own coding, which comes back with `macaw import-codes` ({ref}`own-coding`).
 
 `macaw export -f skeleton`
 : Every person's body points, one CSV per recording: a row per person, video and frame, with each point's position in pixels and how sure the detector was (`nose_x`, `nose_y`, `nose_conf`, and so on), the same columns a function in the `scripts` folder gets ({ref}`measures`). Nothing is smoothed, and a point the detector was less sure of than `pose.min_confidence` has no position. With 3D ({ref}`three-d`), `<recording>_3d.csv` gives the points in metres, with `_z` added, on the calibration's axes: after `macaw calibrate-cameras` these are the first camera's (x to its right, y down, z straight ahead).
@@ -262,12 +262,45 @@ What comes to you
 : Units below 70% agreement, and every "cannot tell", appear under *Speech acts* on the Review page.
 
 Agreement
-: MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa.
+: MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa, and compares the model with coding you did yourself ({ref}`own-coding`).
 
 How the codes were used
 : `macaw describe-codes` lists, for each recording, coder and person, how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs mean the coding flips from unit to unit, which is worth a look before you analyse it. Add `--out codes.csv` to keep the table.
 
 To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
+
+(own-coding)=
+## Your own coding
+
+Coding done by people, in ELAN or another program, can come in beside the machine's codes. Then `macaw agreement` compares two coders, or a coder with the language model or with *Who looks at whom*, `macaw describe-codes` counts it, and gestures coded on a tier are measured ({ref}`gestures`).
+
+On the Review page, type your name under *Your name*, pick the recording and press **Import your coding**. In a terminal, give the files or the folder that holds them, each file's name starting with its recording (`dyad01_anna.eaf`, say), and who coded them:
+
+```
+macaw import-codes coding/anna --coder anna
+```
+
+A single file named otherwise takes `-r dyad01`. Importing again under the same name replaces that coder's codes for the same person and tier; other coders' codes stay.
+
+Files
+: ELAN files (`.eaf`), or a table (`.csv`, `.tsv` or `.xlsx`) with the columns `tier`, `start`, `end` and `code`, and optionally `person`, as most coding programs can export. Start and end are seconds or a clock time such as `1:02.5`, counted from the start of the recording's own video, as ELAN shows them when you code that file.
+
+Which tier is whose
+: Say it once in `project.yaml`, under each tier's name as your files have it:
+
+  ```yaml
+  coding:
+    imports:
+      Child Gaze:
+        person: child
+        tier: gaze_target
+        labels: {Mom: parent, Away: elsewhere}
+  ```
+
+  `person` is one of the roles; leave it out when the file says whose the tier is (the tier's *Participant* in ELAN, or the `person` column). `tier` is the name the codes get here: to compare them with the machine's, use the machine's name, `gaze_target` for where people look or the codebook's name for the language model. `labels` renames codes to the machine's or the codebook's; codes not listed keep their names. A tier that is neither listed nor given to a person in the file is left out, and the command says so. Files that MACAW itself wrote (`macaw export -f eaf`) come back without a list, except tiers of machine codes nobody changed, which are not your coding.
+
+Comparing
+: Coders who coded the same intervals: `macaw agreement --tier speech_acts`. When each drew their own boundaries, `--units` takes each interval of one coder as a unit and gives it every other coder's code that covers most of it, or no code when none does; name the language model as `macaw agreement` lists it to compare on its utterances. For states that last, such as where someone looks, `--grid-s 0.5` cuts the time into half-second cells instead. A coder who coded only part of a recording leaves the rest without a code, which counts as disagreement, so compare over what both coded.
 
 (gaze)=
 ## Who looks at whom
@@ -307,7 +340,7 @@ Read frame by frame, a look sometimes flickers to something else for a frame or 
 `gaze_x`, `gaze_y`, `gaze_in_frame`
 : The point itself, in pixels, and how sure the model is that what the person looks at is in the picture (0 to 1; below 0.5 counts as outside it).
 
-Every look also becomes a code on a `gaze_target` tier for each person (the person or thing looked at, `elsewhere`, or `off_screen`) and on a `mutual_gaze` tier, so `macaw export -f eaf` puts them in ELAN beside your own coding, and `macaw describe-codes` counts them.
+Every look also becomes a code on a `gaze_target` tier for each person (the person or thing looked at, `elsewhere`, or `off_screen`) and on a `mutual_gaze` tier, so `macaw export -f eaf` puts them in ELAN beside your own coding, `macaw agreement` compares them with gaze coding you bring in ({ref}`own-coding`), and `macaw describe-codes` counts them.
 
 `gaze.model` picks the model. The default was tuned on children playing with adults; `gazelle_dinov2_vitb14_inout_childplay` takes about half the time and is a little less exact.
 
@@ -373,9 +406,10 @@ per_body_size
 
 Two people are measured only on a camera that shows both of them.
 
+(gestures)=
 ### Gestures you coded
 
-If you code gestures in ELAN on a tier of each person, MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, the gesture space it uses, and in how many directions around the body's centre it reaches out (above, below, to either side and the four corners). Each gesture gives one row per measure and hand.
+If you code gestures in ELAN on a tier of each person and bring the file in ({ref}`own-coding`), MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, the gesture space it uses, and in how many directions around the body's centre it reaches out (above, below, to either side and the four corners). Each gesture gives one row per measure and hand.
 
 ```yaml
 kinematics:
