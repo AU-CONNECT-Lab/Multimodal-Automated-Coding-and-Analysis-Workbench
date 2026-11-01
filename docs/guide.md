@@ -233,6 +233,9 @@ Type one of these in the project folder. Each one prints where it saved its file
 `macaw export -f eaf`
 : One ELAN file per recording with the machine codes, as a starting point for your own coding.
 
+`macaw export -f skeleton`
+: Every person's body points, one CSV per recording: a row per person, video and frame, with each point's position in pixels and how sure the detector was (`nose_x`, `nose_y`, `nose_conf`, and so on), the same columns a function in the `scripts` folder gets ({ref}`measures`). Nothing is smoothed, and a point the detector was less sure of than `pose.min_confidence` has no position. With 3D ({ref}`three-d`), `<recording>_3d.csv` gives the points in metres, with `_z` added, on the calibration's axes: after `macaw calibrate-cameras` these are the first camera's (x to its right, y down, z straight ahead).
+
 `macaw methods`
 : A Methods section describing exactly the steps you ran, with its references.
 

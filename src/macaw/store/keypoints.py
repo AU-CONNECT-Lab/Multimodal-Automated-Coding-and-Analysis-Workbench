@@ -65,6 +65,27 @@ def to_array(df: pd.DataFrame, joint_order: list[str]):
     return out
 
 
+def to_wide(df: pd.DataFrame, joint_order: list[str]) -> pd.DataFrame:
+    """A row per person, video and frame with each joint's x, y, z when placed in 3D, and confidence;
+    joints outside joint_order follow it alphabetically."""
+    frame = coerce_frame(df, KEYPOINT_SCHEMA, NAME)
+    frame = frame[frame["subject_id"].notna()]
+    keys = ["recording_id", "subject_id", "video", "frame"]
+    if frame.empty:
+        return pd.DataFrame(columns=keys + ["t"])
+    values = ["x", "y", "z", "confidence"] if has_depth(frame) else ["x", "y", "confidence"]
+    points = frame.groupby(keys + ["joint"], observed=True)[values].first().unstack("joint")
+    present = set(points.columns.get_level_values("joint"))
+    joints = [joint for joint in joint_order if joint in present] + sorted(present - set(joint_order))
+    short = {"confidence": "conf"}
+    out = pd.DataFrame(
+        {f"{joint}_{short.get(value, value)}": points[(value, joint)] for joint in joints for value in values},
+        index=points.index,
+    )
+    out.insert(0, "t", frame.groupby(keys, observed=True)["t"].first())
+    return out.reset_index()
+
+
 def has_depth(df: pd.DataFrame) -> bool:
     """False when z is entirely NaN; feature code takes the 2D degenerate branch."""
     return "z" in df.columns and not df["z"].isna().all()

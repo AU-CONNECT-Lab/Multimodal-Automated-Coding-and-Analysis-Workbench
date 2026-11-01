@@ -5,6 +5,7 @@ import logging
 import sys
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -454,3 +455,74 @@ class TestExportArguments:
         result = invoke("export", "-c", str(project.config))
         assert result.exit_code != 0
         assert "macaw run" in str(result.exception)
+
+
+@needs_pydantic
+class TestSkeletonExport:
+    def points(self, project, step, frame):
+        from macaw.store.keypoints import write_keypoints
+
+        folder = make_layout(project.output).keypoints_path("003")
+        write_keypoints(frame.assign(recording_id="003", source=step), folder)
+
+    def people(self):
+        from test_kinematics import person
+
+        parent = person("parent", n_frames=4, centre=(300.0, 200.0))
+        child = person("child", n_frames=4, centre=(500.0, 260.0))
+        stranger = person("x", n_frames=4).assign(subject_id=None)
+        return pd.concat([parent, child, stranger], ignore_index=True)
+
+    def export(self, project, *extra):
+        out = project.root / "skeleton"
+        return invoke("export", "-c", str(project.config), "-f", "skeleton", "--out", str(out), *extra), out
+
+    def test_a_row_per_person_and_frame_with_each_point(self, project):
+        points = self.people()
+        unsure = (points["subject_id"] == "child") & (points["frame"] == 2) & (points["joint"] == "left_wrist")
+        points.loc[unsure, ["x", "y", "confidence"]] = [float("nan"), float("nan"), 0.1]
+        heel = points[points["joint"] == "left_ankle"].assign(joint="mediapipe:left_heel")
+        self.points(project, "pose.keypoints", pd.concat([points, heel], ignore_index=True))
+
+        result, out = self.export(project)
+        assert result.exit_code == 0, result.output + str(result.exception)
+        table = pd.read_csv(out / "003.csv")
+        assert list(table.columns[:8]) == ["recording_id", "subject_id", "video", "frame", "t", "nose_x", "nose_y", "nose_conf"]
+        # a backend's own points follow the standard ones; nobody unnamed is exported
+        assert table.columns[-3:].tolist() == ["mediapipe:left_heel_x", "mediapipe:left_heel_y", "mediapipe:left_heel_conf"]
+        assert sorted(table.subject_id.unique()) == ["child", "parent"] and len(table) == 8
+        assert "z" not in "".join(table.columns)
+        parent = table[table.subject_id == "parent"].iloc[0]
+        assert (parent.nose_x, parent.nose_y, parent.nose_conf) == (300.0, 140.0, 0.9)
+        child = table[(table.subject_id == "child") & (table.frame == 2)].iloc[0]
+        assert pd.isna(child.left_wrist_x) and child.left_wrist_conf == 0.1
+
+    def test_points_in_3d_get_a_file_of_their_own_in_metres(self, project):
+        from test_kinematics import person
+
+        self.points(project, "pose.keypoints", self.people())
+        room = person("parent", n_frames=3).assign(video="3d", units="metre", track_id=None)
+        room[["x", "y"]] /= 1000.0
+        room["z"] = 2.5
+        self.points(project, "pose.triangulate", room)
+
+        result, out = self.export(project)
+        assert result.exit_code == 0, result.output + str(result.exception)
+        table = pd.read_csv(out / "003_3d.csv")
+        assert "video" not in table.columns and len(table) == 3
+        assert list(table.columns[4:8]) == ["nose_x", "nose_y", "nose_z", "nose_conf"]
+        assert table.nose_z.tolist() == [2.5] * 3 and table.nose_y.iloc[0] == 0.14
+
+    def test_a_recording_without_points_is_passed_over(self, project):
+        self.points(project, "pose.keypoints", self.people())
+        result, out = self.export(project)
+        assert result.exit_code == 0 and sorted(path.name for path in out.iterdir()) == ["003.csv"]
+
+    def test_there_is_one_layout(self, project):
+        self.points(project, "pose.keypoints", self.people())
+        result, _ = self.export(project, "--long")
+        assert result.exit_code != 0 and "one layout" in str(result.exception)
+
+    def test_exporting_before_the_pose_steps_says_so(self, project):
+        result, _ = self.export(project)
+        assert result.exit_code != 0 and "macaw run" in str(result.exception)

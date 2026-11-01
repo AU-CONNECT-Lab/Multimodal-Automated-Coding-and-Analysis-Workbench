@@ -28,7 +28,7 @@ from macaw.store.wide import export_csv, export_rmd_template, to_wide
 app = typer.Typer()
 logger = get_logger("export")
 
-FORMATS = ("csv", "parquet", "eaf", "sequence")
+FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton")
 SEQUENCES = ("speech", "floor", "annotations")
 
 
@@ -36,7 +36,7 @@ SEQUENCES = ("speech", "floor", "annotations")
 def export(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence"),
+    format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence | skeleton"),
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
     wide: bool = typer.Option(True, "--wide/--long"),
     step: float = typer.Option(1.0, "--step", help="Sequence format only: sampling step in seconds."),
@@ -48,7 +48,7 @@ def export(
     out: Path = typer.Option(None, "--out"),
     rmd: bool = typer.Option(False, "--rmd", help="Also write an .Rmd starter script."),
 ) -> None:
-    """Export features for downstream analysis, annotations as .eaf, or a nominal state sequence."""
+    """Export features for downstream analysis, annotations as .eaf, a nominal state sequence, or each person's body points."""
     if format_ not in FORMATS:
         raise MacawError(f"Unknown format '{format_}'. Choose one of: {', '.join(FORMATS)}")
     if scale is not None and scale not in {member.value for member in Scale}:
@@ -61,6 +61,11 @@ def export(
 
     if format_ == "eaf":
         _export_eaf(resolved, layout, recording_ids, out)
+        return
+    if format_ == "skeleton":
+        if not wide:
+            raise MacawError("The skeleton export has one layout, a row per person and frame; leave out --long")
+        _export_skeleton(layout, recording_ids, out)
         return
     if format_ == "sequence":
         if of not in SEQUENCES:
@@ -175,6 +180,39 @@ def _export_eaf(resolved, layout, recording_ids: list[str], out: Path | None) ->
             controlled_vocabulary=vocabulary,
         )
         typer.echo(str(target))
+
+
+def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None:
+    """One csv per recording of the points as the measures read them, and one of the points in 3D."""
+    from macaw.extractors.video.pose.keypoints import PoseExtractor
+    from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
+    from macaw.extractors.video.pose.triangulate import TriangulationExtractor
+    from macaw.store.keypoints import read_keypoints, to_wide
+
+    directory = out or (layout.output_dir / "exports" / "skeleton")
+    written = 0
+    for recording_id in recording_ids:
+        folder = layout.keypoints_path(recording_id)
+        if not (folder / f"{PoseExtractor.name}.parquet").is_file():
+            logger.info("no body points yet for %s", recording_id)
+            continue
+        for step, suffix in ((PoseExtractor.name, ""), (TriangulationExtractor.name, "_3d")):
+            path = folder / f"{step}.parquet"
+            if not path.is_file():
+                continue
+            table = to_wide(read_keypoints(path, recording_id=recording_id), list(STANDARD_JOINTS))
+            if table.empty:
+                continue
+            if suffix:
+                table = table.drop(columns="video")
+            table = table.round({"t": 4, **{column: 3 for column in table.columns if column.endswith(("_x", "_y", "_z", "_conf"))}})
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / f"{recording_id}{suffix}.csv"
+            table.to_csv(target, index=False, encoding="utf-8")
+            typer.echo(str(target))
+            written += 1
+    if not written:
+        raise MacawError(f"No body points under {layout.recordings_dir}. Run the pose steps (macaw run) before exporting.")
 
 
 def _tiers(found: list[tuple[str, pd.DataFrame]]) -> set[str]:
