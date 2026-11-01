@@ -134,7 +134,7 @@ face:
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
 
 gaze:
-  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture; fetched through torch.hub on first use
+  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture, fetched through torch.hub on first use | angles: from face.au's head and eye angles against gaze.seats or labelled frames, for people looked at outside the picture
   model: null                        # gazelle: gazelle_dinov2_vitl14_inout_childplay (default; tuned on children playing with adults) | gazelle_dinov2_vitb14_inout_childplay (about twice as fast) | gazelle_dinov2_vitl14_inout | gazelle_dinov2_vitb14_inout
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the model takes at once

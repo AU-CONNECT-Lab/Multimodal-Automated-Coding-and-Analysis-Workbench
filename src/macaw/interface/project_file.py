@@ -35,7 +35,8 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     )),
     ("Tools", "Which program does each kind of measurement, and with which model.", (
         "prosody.backend", "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.diarization",
-        "text.extra_voices", "pose.backend", "pose.model", "face.backend", "face.model",
+        "text.extra_voices", "pose.backend", "pose.model", "face.backend", "face.model", "gaze.backend", "gaze.model",
+        "gaze.targets",
     )),
     ("Checks by a person", "Where the software waits for a person before going on: always, only when it is unsure, or never.", (
         "identity.confirm", "align.review", "pose.review", "text.voice_review",
@@ -74,6 +75,9 @@ LABELS = {
     "pose.model": "Body pose model",
     "face.backend": "Face",
     "face.model": "Face model",
+    "gaze.backend": "Where people look",
+    "gaze.model": "Gaze model",
+    "gaze.targets": "Things people look at",
     "identity.confirm": "Which file is whose",
     "align.review": "Offsets between files",
     "pose.review": "Who is on camera",
@@ -95,6 +99,7 @@ BACKEND_GROUPS = {
     "text.diarization": "diarization",
     "pose.backend": "pose",
     "face.backend": "face",
+    "gaze.backend": "gaze",
     "coding.llm.provider": "llm",
 }
 TEXT_DEVICES = ("auto", "cuda", "cpu")
