@@ -31,6 +31,8 @@ class ProjectSection(_Section):
     scripts_dir: Path = Path("scripts")
     # clips and files filmed or made before recording: an object of known length, a board per camera setup
     calibration_dir: Path = Path("calibration")
+    # named parts of recordings that the summaries are worked out again over; no file, no segments
+    segments: Path = Path("segments.csv")
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])

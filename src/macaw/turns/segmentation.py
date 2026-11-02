@@ -13,6 +13,7 @@ from macaw.extractors.audio.content.asr import (
     ASRExtractor,
     TRANSCRIPT_NAME,
     load_transcript,
+    transcript_between,
 )
 from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
@@ -184,6 +185,18 @@ def load_turns(config, recording_id: str, *, others: bool = False) -> pd.DataFra
     return turns if others else turns[turns["subject_id"] != OTHER].reset_index(drop=True)
 
 
+def turns_saved(config, recording_id: str) -> bool:
+    return (layout_for(config, create=False).artifacts_dir(recording_id, TurnStructureExtractor.name) / TURNS_NAME).is_file()
+
+
+def turns_between(config, recording_id: str, start_s: float, end_s: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The transcript cut at both edges, OTHER included, and the turns made from it as from a recording cut there."""
+    transcript = transcript_between(config, recording_id, start_s, end_s, others=True)
+    turns = utterances_to_turns(transcript, config.turns)
+    turns["recording_id"] = recording_id
+    return transcript, turns
+
+
 _TURN_SPECS = {
     "turn_duration_s": ("Length of one turn, from its first word to its last.", "s"),
     "n_utterances_in_turn": ("Utterances merged into this turn.", "count"),
@@ -252,14 +265,19 @@ class TurnStructureExtractor(Extractor):
             warnings=self._warnings(recording, turns, prep),
         )
 
-    def _rows(self, recording: Recording, turns, quiet, prep) -> pd.DataFrame:
-        entities = recording.entities()
-        common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
-        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-        minutes = prep.duration_s / 60.0
-        shares = dominance(turns)
-        frames = []
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not turns_saved(self.config, recording.recording_id):
+            return None
+        transcript, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
+        return self._summary(recording, turns, silences(transcript, min_s=self.config.turns.silence_min_s), (start_s, end_s))
 
+    def _rows(self, recording: Recording, turns, quiet, prep) -> pd.DataFrame:
+        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        return concat_long_tables([self._events(recording, turns, quiet), self._summary(recording, turns, quiet, window)])
+
+    def _events(self, recording: Recording, turns, quiet) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        frames = []
         for subject_id, group in turns.groupby("subject_id", dropna=False, observed=True):
             duration = (group["t_end"] - group["t_start"]).to_numpy(dtype=float)
             words = group["n_words"].to_numpy(dtype=float)
@@ -285,6 +303,30 @@ class TurnStructureExtractor(Extractor):
                     **common,
                 )
             )
+        if not quiet.empty:
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame(
+                        {
+                            "t_start": quiet["t_start"].to_numpy(dtype=float),
+                            "t_end": quiet["t_end"].to_numpy(dtype=float),
+                            "joint_silence_s": quiet["duration_s"].to_numpy(dtype=float),
+                        }
+                    ),
+                    scale=Scale.EVENT,
+                    **common,
+                )
+            )
+        return concat_long_tables(frames)
+
+    def _summary(self, recording: Recording, turns, quiet, window: tuple[float, float]) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        length = window[1] - window[0]
+        minutes = length / 60.0
+        shares = dominance(turns)
+        frames = []
+        for subject_id, group in turns.groupby("subject_id", dropna=False, observed=True):
+            duration = (group["t_end"] - group["t_start"]).to_numpy(dtype=float)
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(
@@ -305,21 +347,6 @@ class TurnStructureExtractor(Extractor):
                 )
             )
 
-        if not quiet.empty:
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame(
-                        {
-                            "t_start": quiet["t_start"].to_numpy(dtype=float),
-                            "t_end": quiet["t_end"].to_numpy(dtype=float),
-                            "joint_silence_s": quiet["duration_s"].to_numpy(dtype=float),
-                        }
-                    ),
-                    scale=Scale.EVENT,
-                    **common,
-                )
-            )
-
         silent = float(quiet["duration_s"].sum()) if not quiet.empty else 0.0
         frames.append(
             build_long_rows(
@@ -330,9 +357,7 @@ class TurnStructureExtractor(Extractor):
                         "n_turns_total": [float(len(turns))],
                         "n_joint_silences": [float(len(quiet))],
                         "joint_silence_total_s": [silent],
-                        "joint_silence_fraction": [
-                            silent / prep.duration_s if prep.duration_s > 0 else np.nan
-                        ],
+                        "joint_silence_fraction": [silent / length if length > 0 else np.nan],
                     }
                 ),
                 scale=Scale.RECORDING,

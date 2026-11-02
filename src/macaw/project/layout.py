@@ -127,6 +127,10 @@ class Layout:
     def annotations_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "annotations"
 
+    # the steps' summaries again over each named segment, beside the long table rather than in it
+    def segment_rows_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "segments"
+
     # people's own coding brought in with macaw import-codes, beside the parts the steps write
     def imported_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "imported.parquet"

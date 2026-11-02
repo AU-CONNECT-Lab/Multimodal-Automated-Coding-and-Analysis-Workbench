@@ -44,6 +44,7 @@ class ExtractorResult:
     keypoints: pd.DataFrame | None = None           # KEYPOINT_SCHEMA, pose backends only
     body_model: pd.DataFrame | None = None          # BODY_MODEL_SCHEMA, 3D backends only
     annotations: pd.DataFrame | None = None         # ANNOTATION_SCHEMA, coding only
+    segment_rows: pd.DataFrame | None = None        # SEGMENT_TABLE_SCHEMA, the segment summary only
     artifacts: dict[str, Path] = field(default_factory=dict)
     warnings: list[QCWarning] = field(default_factory=list)
 
@@ -67,6 +68,11 @@ class Extractor(ABC):
     def dependencies(cls, config: MacawConfig) -> tuple[str, ...]:
         """requires, plus any step this project's settings put in front of this one."""
         return cls.requires
+
+    @classmethod
+    def ordered_after(cls, config: MacawConfig) -> tuple[str, ...]:
+        """runs_after, plus any step this project's settings add."""
+        return cls.runs_after
 
     @classmethod
     def wanted_by_default(cls, config: MacawConfig) -> bool:
@@ -93,6 +99,14 @@ class Extractor(ABC):
     @abstractmethod
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         ...
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        """This step's recording-level rows over start_s to end_s from what its run saved, cut at both edges; None without."""
+        return None
+
+    def extra_key(self, recording: Recording) -> str:
+        """What decides this step's output for one recording besides the files it reads and its settings."""
+        return ""
 
     def backend_info(self) -> tuple[str | None, str | None]:
         """(backend name, backend version) recorded in the manifest for reproducibility."""

@@ -675,10 +675,18 @@ class ASRExtractor(Extractor):
         return warnings
 
     def _rows(self, recording: Recording, utterances: pd.DataFrame, prep) -> pd.DataFrame:
-        entities = recording.entities()
-        common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
-        frames = []
+        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        return concat_long_tables([self._events(recording, utterances), self._summary(recording, utterances, window)])
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not transcript_saved(self.config, recording.recording_id):
+            return None
+        utterances = transcript_between(self.config, recording.recording_id, start_s, end_s, others=True)
+        return self._summary(recording, utterances, (start_s, end_s))
+
+    def _events(self, recording: Recording, utterances: pd.DataFrame) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        frames = []
         for subject_id, group in utterances.groupby("subject_id", dropna=False, observed=True):
             duration = (group["t_end"] - group["t_start"]).to_numpy(dtype=float)
             counts = group["n_words"].to_numpy(dtype=float)
@@ -701,20 +709,25 @@ class ASRExtractor(Extractor):
                     **common,
                 )
             )
+        return concat_long_tables(frames)
 
+    def _summary(self, recording: Recording, utterances: pd.DataFrame, window: tuple[float, float]) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        length = window[1] - window[0]
+        frames = []
+        for subject_id, group in utterances.groupby("subject_id", dropna=False, observed=True):
+            duration = (group["t_end"] - group["t_start"]).to_numpy(dtype=float)
             total_speech = float(duration.sum())
-            total_words = float(counts.sum())
+            total_words = float(group["n_words"].to_numpy(dtype=float).sum())
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(
                         {
-                            "t_start": [prep.t_origin_s],
-                            "t_end": [prep.t_origin_s + prep.duration_s],
+                            "t_start": [window[0]],
+                            "t_end": [window[1]],
                             "n_utterances": [float(len(group))],
                             "total_speech_s": [total_speech],
-                            "speech_fraction": [
-                                total_speech / prep.duration_s if prep.duration_s > 0 else np.nan
-                            ],
+                            "speech_fraction": [total_speech / length if length > 0 else np.nan],
                             "total_words": [total_words],
                             "words_per_minute": [
                                 total_words / total_speech * 60.0 if total_speech > 0 else np.nan
@@ -948,6 +961,54 @@ def load_transcript(config, recording_id: str, *, others: bool = False) -> pd.Da
     )
     transcript = read_transcript(root / TRANSCRIPT_NAME)
     return transcript if others else transcript[transcript["subject_id"] != OTHER].reset_index(drop=True)
+
+
+def transcript_saved(config, recording_id: str) -> bool:
+    return (layout_for(config, create=False).artifacts_dir(recording_id, ASRExtractor.name) / TRANSCRIPT_NAME).is_file()
+
+
+def load_words(config, recording_id: str) -> pd.DataFrame:
+    path = layout_for(config, create=False).artifacts_dir(recording_id, ASRExtractor.name) / WORDS_NAME
+    return read_words(path) if path.is_file() else empty_frame(WORD_SCHEMA)
+
+
+def transcript_between(config, recording_id: str, start_s: float, end_s: float, *, others: bool = False) -> pd.DataFrame:
+    return cut_transcript(load_transcript(config, recording_id, others=others), load_words(config, recording_id), start_s, end_s)
+
+
+def cut_transcript(transcript: pd.DataFrame, words: pd.DataFrame, start_s: float, end_s: float) -> pd.DataFrame:
+    """The utterances within start_s to end_s; one crossing an edge is cut there and keeps the words whose middle falls inside."""
+    starts, ends = transcript["t_start"].to_numpy(dtype=float), transcript["t_end"].to_numpy(dtype=float)
+    out = transcript[(ends > start_s) & (starts < end_s)].copy()
+    crossing = ((out["t_start"] < start_s) | (out["t_end"] > end_s)).to_numpy()
+    emptied = np.zeros(len(out), dtype=bool)
+    for position, index in enumerate(out.index):
+        if not crossing[position]:
+            continue
+        text = " ".join(_words_inside(out.loc[index], words, start_s, end_s))
+        emptied[position] = int(out.at[index, "n_words"]) > 0 and not text
+        out.at[index, "text"] = text
+        out.at[index, "n_words"] = len(text.split())
+    out["t_start"] = out["t_start"].clip(lower=start_s)
+    out["t_end"] = out["t_end"].clip(upper=end_s)
+    return out[~emptied].reset_index(drop=True)
+
+
+def _words_inside(utterance, words: pd.DataFrame, start_s: float, end_s: float) -> list[str]:
+    own = (
+        words[(words["subject_id"] == utterance["subject_id"]) & (words["utterance_index"] == utterance["utterance_index"])]
+        if not words.empty else words
+    )
+    if not own.empty:
+        middle = (own["t_start"].to_numpy(dtype=float) + own["t_end"].to_numpy(dtype=float)) / 2.0
+        kept = own[(middle >= start_s) & (middle < end_s)].sort_values("t_start", kind="stable")
+        return [str(word).strip() for word in kept["word"] if str(word).strip()]
+    # without word times (a corrected transcript) the words are taken as evenly spread over the utterance
+    tokens = utterance["text"].split() if isinstance(utterance["text"], str) else []
+    if not tokens:
+        return []
+    step = (float(utterance["t_end"]) - float(utterance["t_start"])) / len(tokens)
+    return [token for i, token in enumerate(tokens) if start_s <= float(utterance["t_start"]) + (i + 0.5) * step < end_s]
 
 
 def _track_clock_turns(config, recording_id: str, prep, *, exclusive: bool = True) -> pd.DataFrame:

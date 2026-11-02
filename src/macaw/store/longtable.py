@@ -13,12 +13,14 @@ from macaw.store.schema import (
     LONG_TABLE_IDENTITY,
     LONG_TABLE_KEY,
     LONG_TABLE_SCHEMA,
+    SEGMENT_TABLE_SCHEMA,
     Scale,
     coerce_frame,
     empty_frame,
 )
 
 NAME = "long table"
+SEGMENT_NAME = "segment table"
 
 
 def write_long_table(df: pd.DataFrame, path: Path, *, append: bool = False) -> Path:
@@ -48,6 +50,17 @@ def read_long_table(
         _io.overlaps(t_range),
     )
     return _io.read_partitioned(path, LONG_TABLE_SCHEMA, NAME, predicate)
+
+
+def write_segment_rows(df: pd.DataFrame, path: Path) -> Path:
+    return _io.write_file(df, path, SEGMENT_TABLE_SCHEMA, SEGMENT_NAME)
+
+
+def read_segment_rows(path: Path) -> pd.DataFrame:
+    """A directory of them, or one file; nothing there reads as no rows."""
+    if not Path(path).exists():
+        return empty_frame(SEGMENT_TABLE_SCHEMA)
+    return _io.read_partitioned(path, SEGMENT_TABLE_SCHEMA, SEGMENT_NAME)
 
 
 def concat_long_tables(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:

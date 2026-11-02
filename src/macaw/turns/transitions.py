@@ -18,7 +18,7 @@ from macaw.project.recording import Recording
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns
+from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns, turns_between, turns_saved
 
 TRANSITIONS_NAME = "transitions.parquet"
 
@@ -109,6 +109,10 @@ def classify_overlaps(transitions: pd.DataFrame, *, interruption_s: float) -> pd
 
     out["transition_type"] = kind
     return out
+
+
+def transitions_from(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
+    return classify_overlaps(detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s)
 
 
 def floor_transfer_efficiency(transitions: pd.DataFrame, cfg: TurnsSection) -> dict[str, float]:
@@ -299,13 +303,10 @@ class TransitionExtractor(Extractor):
         return [root / TURNS_NAME]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        cfg = self.config.turns
         turns = load_turns(self.config, recording.recording_id, others=True)
         prep = load_prep(self.config, recording.recording_id)
 
-        transitions = classify_overlaps(
-            detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s
-        )
+        transitions = transitions_from(turns, self.config.turns)
         transitions["recording_id"] = recording.recording_id
 
         artifacts = {
@@ -320,15 +321,20 @@ class TransitionExtractor(Extractor):
             warnings=self._warnings(recording, transitions, prep),
         )
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not turns_saved(self.config, recording.recording_id):
+            return None
+        _, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
+        return self._summary(recording, turns, transitions_from(turns, self.config.turns), (start_s, end_s))
+
     def _rows(self, recording: Recording, turns, transitions, prep) -> pd.DataFrame:
-        entities = recording.entities()
-        common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-        minutes = prep.duration_s / 60.0
-        subject_ids = turn_takers(self.config, recording)
+        return concat_long_tables([self._events(recording, transitions), self._summary(recording, turns, transitions, window)])
+
+    def _events(self, recording: Recording, transitions) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         switches = transitions[_switch_mask(transitions)]
         frames = []
-
         for (giver, taker), group in switches.groupby(
             ["from_subject", "to_subject"], observed=True
         ):
@@ -353,7 +359,14 @@ class TransitionExtractor(Extractor):
                     **common,
                 )
             )
+        return concat_long_tables(frames)
 
+    def _summary(self, recording: Recording, turns, transitions, window: tuple[float, float]) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        minutes = (window[1] - window[0]) / 60.0
+        subject_ids = turn_takers(self.config, recording)
+        switches = transitions[_switch_mask(transitions)]
+        frames = []
         for taker, group in switches.groupby("to_subject", observed=True):
             fto = group["fto_s"].to_numpy(dtype=float)
             gaps = fto[fto >= 0.0]

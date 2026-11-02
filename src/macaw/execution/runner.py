@@ -12,7 +12,7 @@ import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from macaw.config.hashing import hash_extractor_config
+from macaw.config.hashing import hash_extractor_config, hash_value
 from macaw.config.schema import MacawConfig
 from macaw.exceptions import ConfigError, MacawError
 from macaw.execution.backends.base import JobSpec
@@ -27,6 +27,8 @@ from macaw.extractors.base import Phase, QCWarning
 from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
+from macaw.project.segments import SUMMARY_STEP
+from macaw.project.segments import check_recordings as check_segment_recordings
 from macaw.project_scripts import script_file_of
 from macaw.store import annotations as annotations_store
 from macaw.store import body_model as body_model_store
@@ -252,11 +254,12 @@ def task_key(config: MacawConfig, extractor_name: str, recording) -> str:
 
 def _make_key(config, cls, extractor, recording, config_hash):
     script = script_file_of(cls)
+    extra = extractor.extra_key(recording)
     return cache_store.make_key(
         extractor=cls.name,
         extractor_version=cls.version,
         inputs=[*extractor.inputs_for(recording), *([script] if script else [])],
-        config_hash=config_hash,
+        config_hash=hash_value([config_hash, extra]) if extra else config_hash,
     )
 
 
@@ -304,6 +307,8 @@ def _run(
     recording_ids = recordings if recordings is not None else resolve_recordings(config, None)
     dag = build_dag(config, extractors or None)
     check_recording_steps(config, dag, recording_ids, extractors)
+    if shared_files and SUMMARY_STEP in dag.nodes:
+        check_segment_recordings(config, resolve_recordings(config, None))
     order = dag.topological_order()
     gates = set(_gates(dag))
 
@@ -527,6 +532,7 @@ def run_task(
         entry = cache_store.lookup(cache_root, key) if caching else None
         if entry is not None:
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
+            (layout.segment_rows_path(recording_id) / f"{extractor_name}.parquet").unlink(missing_ok=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
             _write_stamp(stamp, key)
             database.set_status(task_id, "cached", finished_at=now())
@@ -582,6 +588,12 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
             _stamp(result.annotations, execution_id, config_hash),
             layout.annotations_path(recording_id),
         )
+    if result.segment_rows is not None:
+        target = layout.segment_rows_path(recording_id) / f"{extractor}.parquet"
+        # no rows replaces the old ones too, or a segment taken out of the table would linger
+        target.unlink(missing_ok=True)
+        if not result.segment_rows.empty:
+            longtable_store.write_segment_rows(_stamp(result.segment_rows, execution_id, config_hash), target)
 
     manifest = FeatureManifest()
     manifest.extend(list(result.specs))
@@ -613,6 +625,7 @@ def _stage_payload(layout, recording_id: str, extractor: str, result, payload: P
         ("features", layout.long_table_path(recording_id) / f"{extractor}.parquet"),
         ("keypoints", layout.keypoints_path(recording_id) / f"{extractor}.parquet"),
         ("body_model", layout.body_model_path(recording_id) / f"{extractor}.parquet"),
+        ("segments", layout.segment_rows_path(recording_id) / f"{extractor}.parquet"),
         ("manifest", layout.manifest_fragment_path(recording_id, extractor)),
         ("warnings", layout.warnings_path(recording_id, extractor)),
     ]

@@ -53,6 +53,14 @@ LONG_TABLE_IDENTITY = tuple(
 # The four entities parsed out of the path. Null whenever the pattern omits them.
 ENTITY_COLUMNS = ("group_id", "session_id", "task", "run")
 
+# A step's recording-level rows worked out again over one named segment of the recording.
+# Kept apart from the long table, so a changed segment reruns nothing but these.
+SEGMENT_TABLE_SCHEMA: dict[str, str] = {
+    **{name: kind for name, kind in LONG_TABLE_SCHEMA.items() if name in {"recording_id", *ENTITY_COLUMNS}},
+    "segment": "string",
+    **{name: kind for name, kind in LONG_TABLE_SCHEMA.items() if name not in {"recording_id", *ENTITY_COLUMNS}},
+}
+
 
 # Keypoints live outside the long table: 30 fps x 17 joints x 4 values x N people
 # is ~10^6 rows per 5 min recording, which the long table handles badly.

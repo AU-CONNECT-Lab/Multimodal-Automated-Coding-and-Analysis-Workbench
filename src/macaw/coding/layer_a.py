@@ -17,8 +17,8 @@ from macaw.project.recording import Recording
 from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_frame
-from macaw.turns.segmentation import TurnStructureExtractor, load_turns
-from macaw.turns.transitions import TransitionExtractor, detect_transitions, load_transitions
+from macaw.turns.segmentation import TurnStructureExtractor, load_turns, turns_between, turns_saved
+from macaw.turns.transitions import TransitionExtractor, detect_transitions, load_transitions, transitions_from
 
 LAYER = "A"
 BACKCHANNEL_TIER = "backchannel"
@@ -190,19 +190,28 @@ class LayerACodingExtractor(Extractor):
         transitions = load_transitions(self.config, recording.recording_id)
         transcript = load_transcript(self.config, recording.recording_id, others=True)
 
-        coded = {
-            BACKCHANNEL_TIER: code_backchannels(turns, self.config.coding),
-            PAUSE_TIER: code_pause_types(
-                turns, self.config.turns, transcript, min_internal_s=self.config.coding.min_turn_internal_pause_s
-            ),
-            INTERRUPTION_TIER: code_interruptions(transitions, self.config.coding),
-        }
+        coded = self._code(turns, transitions, transcript)
         return ExtractorResult(
             rows=self._rows(recording, turns, coded),
             specs=self._specs(),
             annotations=self._annotations(recording, coded),
             warnings=self._warnings(recording, turns, coded),
         )
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not turns_saved(self.config, recording.recording_id):
+            return None
+        transcript, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
+        return self._rows(recording, turns, self._code(turns, transitions_from(turns, self.config.turns), transcript))
+
+    def _code(self, turns: pd.DataFrame, transitions: pd.DataFrame, transcript: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        return {
+            BACKCHANNEL_TIER: code_backchannels(turns, self.config.coding),
+            PAUSE_TIER: code_pause_types(
+                turns, self.config.turns, transcript, min_internal_s=self.config.coding.min_turn_internal_pause_s
+            ),
+            INTERRUPTION_TIER: code_interruptions(transitions, self.config.coding),
+        }
 
     def _annotations(self, recording: Recording, coded: dict[str, pd.DataFrame]) -> pd.DataFrame:
         entities = recording.entities()

@@ -105,6 +105,10 @@ def _section_value(data: dict[str, Any], name: str) -> Any:
     return cursor
 
 
+def hash_value(value: Any) -> str:
+    return _digest(canonical(value))
+
+
 def hash_section(config: MacawConfig, section: str) -> str:
     return _digest(canonical(_section_value(_prepared(config), section)))
 

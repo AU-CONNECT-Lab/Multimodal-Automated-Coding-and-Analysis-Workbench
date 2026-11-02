@@ -17,12 +17,13 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns
+from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns, turns_between, turns_saved
 from macaw.turns.transitions import (
     TRANSITIONS_NAME,
     TransitionExtractor,
     load_transitions,
     transition_matrix,
+    transitions_from,
 )
 
 # five observations per state is the usual floor for a multinomial entropy estimate
@@ -265,11 +266,19 @@ class EntropyExtractor(Extractor):
             "speaker_entropy_norm": _normalise(even, math.log2(n_states)),
         }
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not turns_saved(self.config, recording.recording_id):
+            return None
+        _, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
+        return self._summary(recording, turns, transitions_from(turns, self.config.turns), (start_s, end_s))
+
     def _rows(self, recording: Recording, turns, transitions, prep) -> pd.DataFrame:
-        cfg = self.config.turns
-        entities = recording.entities()
-        common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        return concat_long_tables([self._summary(recording, turns, transitions, window), self._window_rows(recording, turns, prep)])
+
+    def _summary(self, recording: Recording, turns, transitions, window: tuple[float, float]) -> pd.DataFrame:
+        cfg = self.config.turns
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         subject_ids = turn_takers(self.config, recording)
         n_states = max(len(subject_ids), 1)
         frames = []
@@ -319,7 +328,12 @@ class EntropyExtractor(Extractor):
                     **common,
                 )
             )
+        return concat_long_tables(frames)
 
+    def _window_rows(self, recording: Recording, turns, prep) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        subject_ids = turn_takers(self.config, recording)
+        frames = []
         for low, high in self._window_edges(prep):
             inside = _turns_in(turns, low, high)
             values = self._state_values(inside, subject_ids)

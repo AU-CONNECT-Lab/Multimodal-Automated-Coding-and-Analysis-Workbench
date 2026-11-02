@@ -26,6 +26,7 @@ def graph(monkeypatch):
                     "phase": phase,
                     "config_sections": (),
                     "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True),
+                    "ordered_after": classmethod(lambda cls, config: cls.runs_after),
                 },
             )
             for name, (requires, phase) in spec.items()

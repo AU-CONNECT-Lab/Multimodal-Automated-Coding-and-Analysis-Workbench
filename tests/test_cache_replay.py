@@ -119,6 +119,7 @@ class TestProvenanceStamping:
             annotations=pd.DataFrame({"layer": ["A", "A"], "execution_id": blank, "config_hash": blank}),
             keypoints=None,
             body_model=None,
+            segment_rows=None,
             specs=[],
             warnings=[],
             artifacts={},
@@ -151,6 +152,7 @@ class TestProvenanceStamping:
             ),
             keypoints=None,
             body_model=None,
+            segment_rows=None,
             specs=[],
             warnings=[],
             artifacts={},
@@ -170,7 +172,7 @@ class TestNobodyFound:
         monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
         layout = make_layout(tmp_path / "derivatives")
         result = SimpleNamespace(
-            rows=None, annotations=None, keypoints=keypoints, body_model=None, specs=[], warnings=[], artifacts={}
+            rows=None, annotations=None, keypoints=keypoints, body_model=None, segment_rows=None, specs=[], warnings=[], artifacts={}
         )
         runner._write_result(layout, RECORDING, "pose.keypoints", result, "exec-1", "cfg-1")
         return layout.keypoints_path(RECORDING) / "pose.keypoints.parquet"
@@ -315,7 +317,7 @@ class TestStaleArtifacts:
         stale = _write(layout.artifacts_dir(RECORDING, EXTRACTOR) / "owners", "{}")
         fresh = _write(tmp_path / "workspace" / "swaps.json", "[]")
         result = SimpleNamespace(
-            rows=None, annotations=None, keypoints=None, body_model=None, specs=[], warnings=[],
+            rows=None, annotations=None, keypoints=None, body_model=None, segment_rows=None, specs=[], warnings=[],
             artifacts={"swaps": fresh},
         )
         runner._write_result(layout, RECORDING, EXTRACTOR, result, "exec-1", "cfg-1")
