@@ -151,7 +151,7 @@ class TestScripts:
     def test_the_model_server_starts_only_where_the_judge_runs(self, written):
         judged = [name for name, text in written.text.items() if "-e coding.judge" in text and name.startswith("segment")]
         assert len(judged) == 1
-        assert "ollama serve > ollama.log 2>&1 &" in written.text[judged[0]] and "http://localhost:11434/v1/models" in written.text[judged[0]]
+        assert "ollama serve > ollama.log 2>&1 &" in written.text[judged[0]] and "http://127.0.0.1:11434/v1/models" in written.text[judged[0]]
         assert all("ollama" not in text for name, text in written.text.items() if name not in judged)
 
     def test_scripts_are_plain_bash(self, written):

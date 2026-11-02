@@ -159,6 +159,14 @@ class OpenAICompatibleBackend(LLMBackend):
     def model_version(self) -> str:
         if not self.is_local:
             return super().model_version()
+        # a server on this machine is asked once, not with every answer
+        if self._served is None:
+            self._served = self._served_version()
+        return self._served
+
+    _served: str | None = None
+
+    def _served_version(self) -> str:
         try:
             listed = _get(f"{self.base_url}/models", self._headers()).get("data") or []
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
@@ -173,13 +181,14 @@ class OpenAICompatibleBackend(LLMBackend):
 class OllamaBackend(OpenAICompatibleBackend):
     name = "ollama"
     is_local = True
-    default_base_url = "http://localhost:11434/v1"
+    # 127.0.0.1, not localhost: Windows tries ::1 first and waits about 2 s on each refused connection
+    default_base_url = "http://127.0.0.1:11434/v1"
 
     def _think_fields(self, think: bool) -> dict:
         # its chat completions endpoint reads reasoning_effort and ignores a think field
         return {"reasoning_effort": "medium" if think else "none"}
 
-    def model_version(self) -> str:
+    def _served_version(self) -> str:
         # the tag can be pulled again with other weights; the digest cannot
         root = self.base_url.removesuffix("/v1")
         try:
@@ -196,7 +205,7 @@ class OllamaBackend(OpenAICompatibleBackend):
 class VLLMBackend(OpenAICompatibleBackend):
     name = "vllm"
     is_local = True
-    default_base_url = "http://localhost:8000/v1"
+    default_base_url = "http://127.0.0.1:8000/v1"
 
     def _think_fields(self, think: bool) -> dict:
         return {"chat_template_kwargs": {"enable_thinking": think}}
@@ -206,7 +215,7 @@ class VLLMBackend(OpenAICompatibleBackend):
 class LlamaCppBackend(OpenAICompatibleBackend):
     name = "llamacpp"
     is_local = True
-    default_base_url = "http://localhost:8080/v1"
+    default_base_url = "http://127.0.0.1:8080/v1"
 
     def _think_fields(self, think: bool) -> dict:
         return {"chat_template_kwargs": {"enable_thinking": think}}

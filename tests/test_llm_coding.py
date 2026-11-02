@@ -45,6 +45,7 @@ class Stub:
     def __init__(self, label=lambda text: "question" if "?" in text else "inform"):
         self.label = label
         self.requests: list[dict] = []
+        self.gets: list[str] = []
         self.fail_first = 0
         self.cut = None  # "all": stopped at max_tokens before any code; "part": after the first one
         self.reason = None  # text -> the reason given with its code
@@ -63,6 +64,7 @@ class Stub:
                 self.wfile.write(data)
 
             def do_GET(self):
+                stub.gets.append(self.path)
                 if self.path.endswith("/models"):
                     self._send(200, {"data": [{"id": "tiny"}]})
                 elif self.path == "/api/tags":
@@ -257,6 +259,14 @@ class TestBackends:
     def test_ollama_records_the_digest_not_only_the_tag(self, stub):
         backend = OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1"))
         assert backend.model_version() == "tiny@abcdef123456"
+
+    def test_a_local_server_is_asked_its_version_once_and_reached_without_localhost(self, stub):
+        backend = OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1"))
+        for _ in range(3):
+            assert backend.complete("s", "u").model == "tiny@abcdef123456"
+        assert stub.gets == ["/api/tags"]
+        # Windows waits on ::1 before it falls back to 127.0.0.1, about 2 s a request
+        assert all("localhost" not in cls.default_base_url for cls in (OllamaBackend, VLLMBackend, backends_module.LlamaCppBackend))
 
     def test_an_answer_stopped_at_max_tokens_is_marked(self, monkeypatch, stub):
         backend = VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1"))
