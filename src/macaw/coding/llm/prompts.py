@@ -12,6 +12,9 @@ from macaw.extractors.audio.content.diarization import OTHER
 
 ABSTAIN = "abstain"
 VOICE = ("pitch", "loudness", "rate")
+FRAMES = "frames"
+# where in a unit its frames are taken, as shares of its length
+FRAME_AT = (1 / 6, 1 / 2, 5 / 6)
 _VOICE_TERMS = {"pitch": "pitch in semitones", "loudness": "loudness in dB", "rate": "speech rate in percent"}
 
 
@@ -22,6 +25,9 @@ def build_annotation_prompt(
     *,
     allow_abstain: bool = True,
     show: Sequence[str] = ("timing",),
+    notes: str = "",
+    examples: pd.DataFrame | None = None,
+    reasons: bool = False,
 ) -> tuple[str, str]:
     """Returns (system, user). units and context carry unit_id, speaker, t_start, t_end, gap_before and text, and
     the voice items of show; a row of units without a unit_id is shown in its place as context."""
@@ -36,10 +42,17 @@ def build_annotation_prompt(
             f"Each line gives its {terms}, against the median of that speaker's lines in this conversation; "
             "one that could not be measured is left out."
         )
+    if FRAMES in show:
+        lines.append(
+            f"The unit to code comes with {len(FRAME_AT)} frames from the video, taken near its start, middle and end, in that order."
+        )
+    if notes.strip():
+        lines.append(f"Notes from the researchers: {notes.strip()}")
     lines += [f"Codebook: {codebook.name}. Each unit gets exactly one code.", ""]
     for definition in codebook.codes:
         lines.append(f"## {definition.code}")
-        lines.append(definition.description)
+        if definition.description:
+            lines.append(definition.description)
         for title, items in (
             ("Criteria", definition.criteria),
             ("Examples of this code", definition.positive_examples),
@@ -50,14 +63,24 @@ def build_annotation_prompt(
                 lines.append(f"{title}:")
                 lines.extend(f"- {item}" for item in items)
         lines.append("")
+    if examples is not None and not examples.empty:
+        lines.append("Units people coded in other conversations, as examples:")
+        for row in examples.itertuples(index=False):
+            said = f"{row.speaker or 'Unit'}: {row.text}"
+            lines.append(f"- Before it, {row.before}\n  {said}" if row.before else f"- {said}")
+            lines.append(f"  Code: {row.code}." + (f" Why: {row.why}" if row.why else ""))
+        lines.append("")
     choices = ", ".join(f'"{code}"' for code in codebook.labels())
     if allow_abstain:
         lines.append(f'If a unit gives too little to decide, answer "{ABSTAIN}" rather than guess.')
         choices += f', "{ABSTAIN}"'
+    entry = '{"id": "<unit id>", "label": "<code>", "reason": "<what it rests on>"}' if reasons else '{"id": "<unit id>", "label": "<code>"}'
     lines.append(
-        'Answer with one JSON object and nothing else: {"labels": [{"id": "<unit id>", "label": "<code>"}]}, '
+        f'Answer with one JSON object and nothing else: {{"labels": [{entry}]}}, '
         f"one entry per unit to code, in the order given. A label is one of {choices}."
     )
+    if reasons:
+        lines.append("A reason names in a few words what the code rests on: the words, the timing, the voice or the picture.")
 
     user = []
     if context is not None and not context.empty:

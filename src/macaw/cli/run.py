@@ -106,11 +106,12 @@ def _echo_reporting(config, dag) -> None:
         notices.append(get_backend(FACE_BACKENDS, config.face.backend).reporting)
     for name in sorted(node for node in dag.nodes if node == "coding.judge" or node.startswith("coding.judge.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
+        from macaw.coding.llm.judge import cloud_notice, units_per_request
 
         _, llm = get_extractor(name).settings(config)
-        notices.append(get_backend(LLM_BACKENDS, llm.provider).reporting)
+        notices.append(cloud_notice(get_backend(LLM_BACKENDS, llm.provider)(llm), llm))
         notices.append(
-            f"{name} sends {llm.n_samples} x ceil(units / {llm.batch_size}) requests per recording "
+            f"{name} sends {llm.n_samples} x ceil(units / {units_per_request(llm)}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
     from macaw.execution import models

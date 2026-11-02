@@ -17,11 +17,12 @@ _CLOSERS = {"{": "}", "[": "]"}
 def parse_annotation_response(
     text: str, codebook: Codebook, expected_ids: list[str], *, allow_abstain: bool = True
 ) -> pd.DataFrame:
-    """Missing or unparseable items become abstentions, never silent drops."""
+    """Missing or unparseable items become abstentions, never silent drops. reason is blank where none came."""
     by_code = {code.casefold(): code for code in codebook.labels()}
     if allow_abstain:
         by_code[ABSTAIN] = ABSTAIN
     labels = dict.fromkeys(expected_ids, ABSTAIN)
+    reasons = dict.fromkeys(expected_ids, "")
     for item in _items(text):
         if not isinstance(item, dict):
             continue
@@ -29,7 +30,8 @@ def parse_annotation_response(
         label = by_code.get(str(item.get("label", "")).strip().casefold())
         if unit_id in labels and label is not None:
             labels[unit_id] = label
-    return pd.DataFrame({"unit_id": list(labels), "label": list(labels.values())})
+            reasons[unit_id] = str(item.get("reason") or "").strip()
+    return pd.DataFrame({"unit_id": list(labels), "label": list(labels.values()), "reason": list(reasons.values())})
 
 
 def _items(text: str) -> list:

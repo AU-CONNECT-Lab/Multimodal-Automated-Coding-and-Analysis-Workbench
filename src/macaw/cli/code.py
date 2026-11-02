@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import typer
 
 from macaw.coding.agreement import (
+    add_words,
     agreement_report,
     format_report,
     load_annotations,
@@ -92,7 +94,10 @@ def agreement(
         None, "--units", help="Compare on this coder's intervals: each takes every other coder's code covering most of it."
     ),
     out: Path = typer.Option(
-        None, "--out", help="A folder for report.json and units.csv, each unit with every coder's code."
+        None, "--out", help="A folder for report.json and units.csv, each unit with every coder's code and its words."
+    ),
+    samples: bool = typer.Option(
+        False, "--samples", help="Also count each answer of the language model as a coder, <coder>#1, #2 ..., to set it against itself."
     ),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
@@ -102,10 +107,17 @@ def agreement(
     if out is not None and out.is_file():
         raise MacawError(f"{out} is a file; --out takes a folder")
     resolved = resolve_config(config, cli_overrides=set_ or ())
-    annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
+    chosen = resolve_recordings(resolved, recordings)
+    annotations = load_annotations(resolved, chosen)
+    if samples:
+        from macaw.coding.llm.judge import sample_annotations
+
+        annotations = pd.concat([annotations, sample_annotations(resolved, chosen)], ignore_index=True)
     report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units)
     typer.echo(format_report(report))
     if out is not None:
+        if grid_s is None:
+            report["units"] = add_words(resolved, report["units"])
         write_report(report, out)
         typer.echo(f"\nreport.json and units.csv in {out}")
 
@@ -143,6 +155,48 @@ def import_codes(
             typer.echo(f"  left out  {line}")
         for line in report.notes:
             typer.echo(f"  note  {line}")
+
+
+@app.command("draw-examples")
+def draw_examples_command(
+    out: Path = typer.Argument(..., help="The table to write (.csv), for coding.llm.examples."),
+    coder: str = typer.Option(..., "--coder", help="Whose codes to draw from, as macaw agreement names them."),
+    per_code: int = typer.Option(3, "--per-code", min=1, help="Units drawn for each code."),
+    recordings: str = typer.Option(None, "--recordings", "-r", help="Draw only from these (comma-separated ids or a txt file)."),
+    seed: int = typer.Option(0, "--seed", help="Fixes the draw, so running it again picks the same units."),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+) -> None:
+    """Draw units a person coded into a table of examples the language model is shown. Open it, change what you like,
+    fill in why if you want the model to read a reason, and set coding.llm.examples (or a version's) to it."""
+    from macaw.coding.codebook import read_codebook
+    from macaw.coding.examples import COLUMNS, draw_examples
+    from macaw.coding.llm.judge import coding_units
+
+    resolved = resolve_config(config)
+    if resolved.coding.codebook is None:
+        raise MacawError("set coding.codebook first: the examples are drawn for its codes")
+    codebook = read_codebook(resolved.coding.codebook)
+    annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
+    coded = annotations[(annotations["annotator"].astype(str) == coder) & (annotations["tier"].astype(str) == codebook.name)]
+    if coded.empty:
+        raise MacawError(f"no codes by {coder} on the tier {codebook.name} (the codebook's name) in these recordings")
+    lines = {}
+    for rid in sorted(coded["recording_id"].astype(str).unique()):
+        own = resolve_config(config, recording_id=rid)
+        try:
+            lines[rid] = coding_units(own, build_recording(rid, own), codebook.unit)
+        except (MacawError, OSError) as error:
+            typer.echo(f"{rid}: no transcript to take the words from, left out ({error})")
+    table, report = draw_examples(coded, lines, codebook, per_code=per_code, seed=seed)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    table[list(COLUMNS)].to_csv(out, index=False)
+    for code, (drawn, available) in report.counts.items():
+        typer.echo(f"{code}: {drawn} of {available}")
+    if report.no_words:
+        typer.echo(f"{report.no_words} unit(s) left out: no words of that person inside them")
+    for label, count in sorted(report.not_in_codebook.items()):
+        typer.echo(f"{count} unit(s) coded {label}, which the codebook does not have, left out")
+    typer.echo(f"{len(table)} examples written to {out}")
 
 
 def _recording_of(path: Path, recordings: list[str]) -> str | None:

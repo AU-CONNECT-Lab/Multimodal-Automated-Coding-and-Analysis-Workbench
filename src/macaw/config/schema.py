@@ -292,6 +292,9 @@ class TurnsSection(_Section):
     permutation_entropy_order: int = 3
 
 
+ShownToModel = Literal["timing", "pitch", "loudness", "rate", "frames"]
+
+
 class LLMSection(_Section):
     provider: str = "ollama"
     model: str | None = None
@@ -306,7 +309,11 @@ class LLMSection(_Section):
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
     coded_roles: list[str] = Field(default_factory=list)
-    show: list[Literal["timing", "pitch", "loudness", "rate"]] = Field(default_factory=lambda: ["timing"])
+    show: list[ShownToModel] = Field(default_factory=lambda: ["timing"])
+    notes: str = ""
+    examples: Path | None = None
+    reasons: bool = False
+    think: bool | None = None
 
     def is_local(self) -> bool:
         from macaw.coding.llm.backends import BACKEND_GROUP
@@ -331,7 +338,11 @@ class JudgeVersion(_Section):
     batch_size: int | None = Field(default=None, ge=1)
     context_units: int | None = Field(default=None, ge=0)
     coded_roles: list[str] | None = None
-    show: list[Literal["timing", "pitch", "loudness", "rate"]] | None = None
+    show: list[ShownToModel] | None = None
+    notes: str | None = None
+    examples: Path | None = None
+    reasons: bool | None = None
+    think: bool | None = None
 
 
 class ImportedTier(_Section):
@@ -494,6 +505,8 @@ NAME_OR_PATH_FIELDS: tuple[str, ...] = (
 CONTENT_HASHED_PATHS: tuple[str, ...] = (
     "coding.codebook",
     "coding.judges.*.codebook",
+    "coding.llm.examples",
+    "coding.judges.*.examples",
     "execution.output_rules",
     *NAME_OR_PATH_FIELDS,
 )

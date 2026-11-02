@@ -468,7 +468,11 @@ def _speech_acts(config, layout, recording):
         samples = pd.read_parquet(samples_path)
         for (subject, t_start), group in samples.groupby(["subject_id", "t_start"]):
             counted = group["label"].value_counts()
-            answers[(str(subject), round(float(t_start), 3))] = ", ".join(f"{label} {count}" for label, count in counted.items())
+            text = ", ".join(f"{label} {count}" for label, count in counted.items())
+            # the reason given with the commonest answer, where the model was asked for one
+            given = group.loc[group["label"] == counted.index[0], "reason"] if "reason" in group else pd.Series(dtype=str)
+            given = [reason for reason in given.fillna("").astype(str) if reason]
+            answers[(str(subject), round(float(t_start), 3))] = text + (f": {given[0]}" if given else "")
     rows = []
     for row in queue.head(_MAX_ACTS).itertuples():
         key = _act_key(row.subject_id, row.t_start, row.tier)

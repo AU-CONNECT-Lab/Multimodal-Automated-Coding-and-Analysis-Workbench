@@ -23,7 +23,7 @@ from macaw.coding.review_queue import apply_review, export_review, read_queue
 from macaw.config.hashing import hash_extractor_config
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import CodingSection, LLMSection
-from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
+from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.execution.dag import build_dag
 from macaw.project.layout import layout_for
 from macaw.store.annotations import write_annotations
@@ -47,6 +47,7 @@ class Stub:
         self.requests: list[dict] = []
         self.fail_first = 0
         self.cut = None  # "all": stopped at max_tokens before any code; "part": after the first one
+        self.reason = None  # text -> the reason given with its code
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -76,9 +77,9 @@ class Stub:
                     stub.fail_first -= 1
                     self._send(503, {"error": "busy"})
                     return
-                user = body["messages"][-1]["content"]
+                user = text_of(body["messages"][-1]["content"])
                 labels = [
-                    {"id": unit_id, "label": stub.label(text)}
+                    {"id": unit_id, "label": stub.label(text), **({"reason": stub.reason(text)} if stub.reason else {})}
                     for unit_id, text in re.findall(r"^id (u\d+) \|.*?: (.*)$", user, re.MULTILINE)
                 ]
                 text = json.dumps({"labels": labels})
@@ -95,6 +96,11 @@ class Stub:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+
+def text_of(content) -> str:
+    """The words of a message, whether sent as a string or as parts beside pictures."""
+    return content if isinstance(content, str) else next(part["text"] for part in content if part["type"] == "text")
 
 
 @pytest.fixture
@@ -559,3 +565,219 @@ class TestReview:
         # the same decision applied twice is still one row
         apply_review(project.resolved, queue)
         assert len(pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))) == 1
+
+
+class TestWhatTheModelIsTold:
+    def test_a_codebook_of_names_alone_is_coded_and_a_half_written_one_is_not(self, monkeypatch, tmp_path):
+        names = Codebook(name="acts", unit="utterance", codes=[CodeDefinition("question", ""), CodeDefinition("inform", "")])
+        config = SimpleNamespace(coding=CodingSection(codebook=write_codebook(names, tmp_path / "k0.yaml")))
+        assert JudgementExtractor(config)._codebook().names_only()
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        system, _ = build_annotation_prompt(names, coding_units(None, RECORDING, "utterance"))
+        assert "## question\n\n## inform\n" in system
+        half = Codebook(name="acts", unit="utterance", codes=[CODEBOOK.codes[0], CodeDefinition("inform", "")])
+        config = SimpleNamespace(coding=CodingSection(codebook=write_codebook(half, tmp_path / "half.yaml")))
+        with pytest.raises(CodebookError, match="'inform' has no description"):
+            JudgementExtractor(config)._codebook()
+
+    def test_the_researchers_note_goes_in_as_written(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        system, _ = build_annotation_prompt(CODEBOOK, coding_units(None, RECORDING, "utterance"), notes=" A is the mother, on the left. ")
+        assert "Notes from the researchers: A is the mother, on the left.\n" in system
+
+    def test_reasons_are_asked_for_and_kept_with_each_answer(self, monkeypatch, tmp_path, stub):
+        stub.reason = lambda text: "ends in a question mark" if "?" in text else "states a fact"
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, reasons=True)
+        assert '"reason": "<what it rests on>"' in stub.requests[0]["body"]["messages"][0]["content"]
+        samples = pd.read_parquet(result.artifacts["samples.parquet"]).sort_values("t_start")
+        assert samples["reason"].tolist() == ["ends in a question mark", "states a fact", "states a fact"]
+        assert parse_annotation_response('{"labels": [{"id": "u0", "label": "inform"}]}', CODEBOOK, ["u0"])["reason"].tolist() == [""]
+
+
+class TestThinking:
+    def test_each_local_server_is_told_in_its_own_terms_and_null_sends_nothing(self, stub):
+        OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1", think=False)).complete("s", "u")
+        VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1", think=True)).complete("s", "u")
+        OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1")).complete("s", "u")
+        first, second, third = (request["body"] for request in stub.requests)
+        assert first["reasoning_effort"] == "none"
+        assert second["chat_template_kwargs"] == {"enable_thinking": True}
+        assert "reasoning_effort" not in third and "chat_template_kwargs" not in third
+
+    def test_a_cloud_service_is_refused_rather_than_left_as_it_is(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        with pytest.raises(BackendNotAvailableError, match="think"):
+            OpenAIBackend(LLMSection(provider="openai", model="x", think=False)).check_available()
+
+
+class TestFrames:
+    def test_pictures_follow_the_words_in_each_protocol(self, monkeypatch, stub):
+        VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1")).complete("s", "u", images=[b"one", b"two"])
+        content = stub.requests[0]["body"]["messages"][-1]["content"]
+        assert content[0] == {"type": "text", "text": "u"} and len(content) == 3
+        assert content[1] == {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,b25l"}}
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+        AnthropicBackend(LLMSection(provider="anthropic", model="claude-x", base_url=f"{stub.url}/v1")).complete("s", "u", images=[b"one"])
+        blocks = stub.requests[1]["body"]["messages"][0]["content"]
+        assert blocks == [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "b25l"}}, {"type": "text", "text": "u"}]
+
+    def test_each_unit_goes_alone_with_its_three_frames(self, monkeypatch, tmp_path, stub):
+        monkeypatch.setattr(module, "unit_frames", lambda config, recording, units, directory: {u: [b"a", b"b", b"c"] for u in units["unit_id"]})
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, batch_size=20, show=["timing", "frames"])
+        assert len(stub.requests) == 3
+        assert [part["type"] for part in stub.requests[0]["body"]["messages"][-1]["content"]] == ["text"] + ["image_url"] * 3
+        assert "comes with 3 frames from the video" in stub.requests[0]["body"]["messages"][0]["content"]
+        assert result.annotations.sort_values("t_start")["label"].tolist() == ["question", "inform", "inform"]
+
+    def test_frames_come_from_the_speaker_s_own_camera_else_the_main_video(self, monkeypatch, tmp_path):
+        from macaw.project.recording import MediaFile, Recording, Subject
+
+        taken = []
+
+        def extract(src, at_s, dest, *, long_side=None, square_pixels=False):
+            taken.append((src.name, round(at_s, 3), long_side))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"jpg")
+            return dest
+
+        monkeypatch.setattr(module, "extract_frame", extract)
+        monkeypatch.setattr(module, "apply_prep_timing", lambda config, recording: None)
+        media = [
+            MediaFile(tmp_path / "room.mp4", "video", duration_s=100.0, offset_s=1.0),
+            MediaFile(tmp_path / "child.mp4", "video", subject_id="child", duration_s=50.0, offset_s=-2.0),
+            MediaFile(tmp_path / "a.wav", "audio", duration_s=200.0),
+        ]
+        recording = Recording("r1", tmp_path, subjects=[Subject("mother"), Subject("child")], media=media)
+        units = pd.DataFrame({"unit_id": ["u0", "u1"], "subject_id": ["mother", "child"], "t_start": [0.0, 3.0], "t_end": [6.0, 4.2]})
+        frames = module.unit_frames(None, recording, units, tmp_path / "frames")
+        assert frames == {"u0": [b"jpg"] * 3, "u1": [b"jpg"] * 3}
+        assert taken == [
+            ("room.mp4", 0.0, 960), ("room.mp4", 2.0, 960), ("room.mp4", 4.0, 960),
+            ("child.mp4", 5.2, 960), ("child.mp4", 5.6, 960), ("child.mp4", 6.0, 960),
+        ]
+        with pytest.raises(UnreadableMediaError, match="no video"):
+            module.unit_frames(None, Recording("r1", tmp_path, media=media[2:]), units, tmp_path / "frames")
+
+    def test_frames_need_the_prepared_video_and_a_cloud_service_is_told_they_go_too(self):
+        cfg = LLMSection(provider="openai", model="x", show=["frames"])
+        config = SimpleNamespace(coding=CodingSection(layers=["A", "B"], llm=cfg))
+        assert {"prep.media", "prep.video"} <= set(JudgementExtractor.dependencies(config))
+        assert module.cloud_notice(OpenAIBackend(cfg), cfg).endswith("Frames of the video are sent there too.")
+        assert module.cloud_notice(OllamaBackend(cfg), cfg) is None
+
+
+class TestExamples:
+    CODED = pd.DataFrame({
+        "recording_id": "r1",
+        "subject_id": ["mother", "child", "mother", "child", "mother"],
+        "t_start": [0.0, 1.4, 4.0, 10.0, 0.0],
+        "t_end": [2.0, 3.1, 5.0, 11.0, 2.0],
+        "label": ["question", "inform", "inform", "inform", "greeting"],
+    })
+
+    def test_drawn_by_code_with_the_words_and_the_line_before(self, monkeypatch):
+        from macaw.coding.examples import draw_examples
+
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        lines = {"r1": coding_units(None, RECORDING, "utterance")}
+        table, report = draw_examples(self.CODED, lines, CODEBOOK, per_code=5)
+        assert report.counts == {"question": (1, 1), "inform": (2, 2)}
+        assert report.no_words == 1 and report.not_in_codebook == {"greeting": 1}
+        assert table[["code", "speaker", "text", "before"]].values.tolist() == [
+            ["question", "A", "where is it?", ""], ["inform", "B", "it is red", "A: where is it?"], ["inform", "A", "ok", "B: it is red"],
+        ]
+        one, _ = draw_examples(self.CODED, lines, CODEBOOK, per_code=1, seed=3)
+        again, _ = draw_examples(self.CODED, lines, CODEBOOK, per_code=1, seed=3)
+        assert len(one) == 2 and one.equals(again)
+
+    def test_a_table_people_edited_is_read_and_checked_against_the_codebook(self, tmp_path):
+        from macaw.coding.examples import read_examples
+
+        path = tmp_path / "examples.csv"
+        pd.DataFrame({"code": ["inform", "question"], "text": ["it is red", " "], "why": ["a fact", ""]}).to_csv(path, index=False)
+        table = read_examples(path, CODEBOOK)
+        assert table[["code", "text", "why", "before"]].values.tolist() == [["inform", "it is red", "a fact", ""]]
+        pd.DataFrame({"code": ["greeting"], "text": ["hi"]}).to_csv(path, index=False)
+        with pytest.raises(CodebookError, match="greeting not in codebook 'acts'"):
+            read_examples(path, CODEBOOK)
+
+    def test_the_model_sees_them_but_never_ones_from_the_recording_it_codes(self, monkeypatch, tmp_path, stub):
+        path = tmp_path / "examples.csv"
+        pd.DataFrame({
+            "code": ["inform", "question"], "speaker": ["B", "A"], "text": ["it is blue", "where is it?"],
+            "before": ["A: what colour?", ""], "why": ["answers", ""], "recording_id": ["r2", "r1"],
+        }).to_csv(path, index=False)
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, examples=path)
+        system = stub.requests[0]["body"]["messages"][0]["content"]
+        assert "as examples:\n- Before it, A: what colour?\n  B: it is blue\n  Code: inform. Why: answers\n" in system
+        assert "where is it?" not in system
+        assert any(warning.check == "llm_own_examples" and warning.message.startswith("1 of the examples") for warning in result.warnings)
+
+    def test_editing_the_examples_codes_again(self, tmp_path):
+        write_codebook(CODEBOOK, tmp_path / "acts.yaml")
+        pd.DataFrame({"code": ["inform"], "text": ["it is red"]}).to_csv(tmp_path / "examples.csv", index=False)
+        config = project_with(tmp_path, {"layers": ["A", "B"], "codebook": "acts.yaml", "llm": {"model": "tiny", "examples": "examples.csv"}})
+        before = hash_extractor_config(resolve_config(config), "coding.judge")
+        pd.DataFrame({"code": ["inform"], "text": ["it is blue"]}).to_csv(tmp_path / "examples.csv", index=False)
+        assert hash_extractor_config(resolve_config(config), "coding.judge") != before
+
+    def test_the_command_writes_a_table_for_coding_llm_examples(self, monkeypatch, tmp_path):
+        write_codebook(CODEBOOK, tmp_path / "acts.yaml")
+        config = project_with(tmp_path, {"layers": ["A", "B"], "codebook": "acts.yaml"})
+        resolved = resolve_config(config)
+        rows = self.CODED.assign(
+            tier="acts", annotator="ann", layer="C", confidence=float("nan"), abstained=False, needs_review=False,
+            group_id="r1", session_id=None, task=None, run=None, execution_id="e1", config_hash="h1",
+        )
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).annotations_path("r1"))
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        out = tmp_path / "examples.csv"
+        result = CliRunner().invoke(app, ["draw-examples", str(out), "--coder", "ann", "--per-code", "1", "-c", str(config)])
+        assert result.exit_code == 0, result.output
+        assert "question: 1 of 1" in result.output and "inform: 1 of 2" in result.output and "coded greeting" in result.output
+        assert pd.read_csv(out)["code"].tolist() == ["question", "inform"]
+
+
+class TestAgainstItself:
+    def test_each_answer_is_a_coder_of_its_own(self, tmp_path):
+        config = project_with(tmp_path, {"layers": ["A", "B"]})
+        resolved = resolve_config(config)
+        layout = layout_for(resolved)
+        rows = pd.DataFrame({
+            "recording_id": "r1", "subject_id": "a", "tier": "acts", "t_start": [0.0, 2.0], "t_end": [1.0, 3.0],
+            "label": ["inform", None], "annotator": "llm:vllm/tiny", "layer": "B", "confidence": [1.0, 0.5],
+            "abstained": [False, False], "needs_review": [False, True], "group_id": "1", "session_id": None,
+            "task": None, "run": None, "execution_id": "e1", "config_hash": "h1",
+        })
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout.annotations_path("r1"))
+        samples = pd.DataFrame({
+            "unit_id": ["u0", "u1", "u0", "u1"], "sample": [0, 0, 1, 1], "label": ["inform", "question", "inform", ABSTAIN],
+            "reason": "", "subject_id": "a", "t_start": [0.0, 2.0, 0.0, 2.0], "t_end": [1.0, 3.0, 1.0, 3.0],
+        })
+        directory = layout.artifacts_dir("r1", "coding.judge")
+        directory.mkdir(parents=True, exist_ok=True)
+        samples.to_parquet(directory / "samples.parquet", index=False)
+
+        answers = module.sample_annotations(resolved, ["r1"]).sort_values(["annotator", "t_start"])
+        assert answers["annotator"].tolist() == ["llm:vllm/tiny#1"] * 2 + ["llm:vllm/tiny#2"] * 2
+        assert answers["label"].fillna("-").tolist() == ["inform", "question", "inform", "-"]
+        assert answers["abstained"].tolist() == [False, False, False, True]
+        result = CliRunner().invoke(app, ["agreement", "-c", str(config), "--samples", "--tier", "acts", "--out", str(tmp_path / "agreement")])
+        assert result.exit_code == 0, result.output
+        assert "llm:vllm/tiny#2" in result.output
+        assert {"words", "before"} <= set(pd.read_csv(tmp_path / "agreement" / "units.csv").columns)
+
+
+def test_the_unit_table_carries_what_was_said_and_the_line_before(monkeypatch):
+    from macaw.coding.agreement import add_words
+    from macaw.extractors.audio.content import asr
+
+    monkeypatch.setattr(asr, "load_transcript", transcript_of(TALK))
+    table = pd.DataFrame({
+        "recording_id": "r1", "subject_id": ["mother", "child", "mother", "child"], "tier": "acts",
+        "t_start": [0.0, 1.5, 4.0, 10.0], "t_end": [2.0, 3.0, 5.0, 11.0], "ann": ["question", "inform", "inform", "inform"],
+    })
+    out = add_words(None, table)
+    assert list(out.columns) == ["recording_id", "subject_id", "tier", "t_start", "t_end", "words", "before", "ann"]
+    assert out["words"].tolist() == ["where is it?", "it is red", "ok", ""]
+    assert out["before"].tolist() == ["", "mother: where is it?", "child: it is red", "mother: ok"]

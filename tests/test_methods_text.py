@@ -199,6 +199,27 @@ def test_what_the_model_was_shown_and_each_version_are_said():
     assert text.index("Each utterance was coded") < text.index("a version named voice") < text.index("a version named words")
 
 
+def test_names_only_notes_examples_reasons_reasoning_and_frames_are_said_and_a_version_says_only_its_own():
+    common = dict(codebook="acts", codebook_unit="utterance", provider="ollama", n_samples=1, context_units=5, temperature=0.3)
+    told = dict(notes="A is the mother.", n_examples=6, reasons=True, think=False)
+    judged = manifest(
+        spec("coding.judge", "n_units_judged", "ollama", "qwen3:8b@abc", show=["timing"], judge=None, names_only=True, **told, **common),
+        spec(
+            "coding.judge.seen", "n_units_judged_seen", "ollama", "qwen3-vl:8b-instruct@abc", show=["timing", "frames"],
+            judge="seen", batch_size=1, **told, **common,
+        ),
+    )
+    shared = config(coding={"llm": {"notes": "A is the mother.", "reasons": True, "think": False}, "judges": {"seen": {"show": ["timing", "frames"]}}})
+    text, _ = render(describe(judged, shared), load_references())
+    assert 'given only the names of the codes and the 5 preceding lines' in text
+    assert 'The prompt also held this note from the researchers: "A is the mother."' in text
+    assert "It showed six units people had coded in other recordings as examples, none from the recording being coded." in text
+    assert "asked to name in a few words what each code rested on" in text and "reasoning before answering was turned off" in text
+    assert "each unit to code came with three video frames near its start, middle and end, one unit per request" in text
+    # the version shares the note, reasons and reasoning with the main coding, so they are said once
+    assert text.count("A is the mother.") == 1 and text.count("turned off") == 1
+
+
 def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
     ran = manifest(spec("pose.kinematics", "hand_distance"))
     defined = config(kinematics={"measures": [

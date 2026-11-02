@@ -180,7 +180,11 @@ coding:
     batch_size: 20                   # units per request
     context_units: 5                 # earlier lines shown before each batch, not coded
     coded_roles: []                  # roles whose units are coded, the others' lines being context; [] codes everyone
-    show: [timing]                   # what each line carries besides speaker and words: timing (start, length, pause or overlap before), pitch, loudness, rate (against that speaker's usual); [] is the words only
+    show: [timing]                   # what each line carries besides speaker and words: timing (start, length, pause or overlap before), pitch, loudness, rate (against that speaker's usual), frames (three video frames per unit, for a model that reads images; one unit per request); [] is the words only
+    notes: ""                        # your own words to the model, given as written, e.g. "A is the mother, on the left; B is the child"
+    examples: null                   # a table of units people coded, shown to the model as examples (macaw draw-examples writes one)
+    reasons: false                   # true: the model also says in a few words what each code rests on, kept in samples.parquet
+    think: null                      # null = the model's own default; false asks a model that reasons first to answer at once, true to reason (local servers only)
   judges: {}                         # more codings by the language model beside this one, to compare, e.g. {k0: {codebook: names_only.yaml}, words_only: {show: []}}; each takes codebook and any coding.llm key, the rest as above
   imports: {}                        # for macaw import-codes: each tier of your coding files, as the file names it, and whose it is, e.g. {"Child Gaze": {person: child, tier: gaze_target, labels: {Mom: parent, Away: elsewhere}}}; tier and labels are optional
 

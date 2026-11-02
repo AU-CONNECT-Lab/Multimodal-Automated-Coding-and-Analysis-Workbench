@@ -424,7 +424,9 @@ def test_a_form_edit_keeps_the_files_comments(project):
 
 
 def test_a_yes_or_no_setting_is_asked_as_one_and_written_back(project):
-    assert project_file.control("video.normalise") == {"kind": "yes_no"}
+    assert project_file.control("video.normalise") == {"kind": "yes_no", "optional": False}
+    # null keeps the model's own default, so the answer may be left empty
+    assert project_file.control("coding.llm.think") == {"kind": "yes_no", "optional": True}
     form = {key: project_file.to_form(key, value) for key, value in project_file.file_values(project).items()}
     form["video.normalise"] = False
     assert project_file.changes(project, form) == {"video.normalise": (True, False)}

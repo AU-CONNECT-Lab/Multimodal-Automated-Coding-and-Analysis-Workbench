@@ -413,9 +413,28 @@ def _shown(show) -> str:
     voice = [term for item, term in (("pitch", "pitch"), ("loudness", "loudness"), ("rate", "speech rate")) if item in show]
     if voice:
         parts.append(f"its {_listed(voice)} relative to the median of that speaker's lines")
-    if len(parts) == 2:
-        return "the speaker letter and the words only"
-    return ", ".join(parts[:-1]) + ", and " + parts[-1]
+    shown = "the speaker letter and the words only" if len(parts) == 2 else ", ".join(parts[:-1]) + ", and " + parts[-1]
+    if "frames" in show:
+        shown += "; each unit to code came with three video frames near its start, middle and end, one unit per request"
+    return shown
+
+
+def _prompt_extras(params: dict) -> str:
+    """What else the prompt held: the researchers' note, examples people coded, reasons asked for, reasoning switched."""
+    text = ""
+    if params.get("notes"):
+        note = params["notes"]
+        text += f" The prompt also held this note from the researchers: \"{note}\"" + ("" if note[-1] in ".!?" else ".")
+    if params.get("n_examples"):
+        text += (
+            f" It showed {_count(params['n_examples'])} units people had coded in other recordings as examples, "
+            "none from the recording being coded."
+        )
+    if params.get("reasons"):
+        text += " The model was asked to name in a few words what each code rested on."
+    if params.get("think") is not None:
+        text += f" The model's reasoning before answering was turned {'on' if params['think'] else 'off'}."
+    return text
 
 
 def _judge(config, spec, names) -> str:
@@ -423,12 +442,13 @@ def _judge(config, spec, names) -> str:
     if params.get("judge"):
         return _judge_version(config, params, spec)
     model = spec.backend_version or params.get("model")
+    given = "only the names of the codes" if params.get("names_only") else "the codebook's definitions and examples"
     text = (
         f"Each {params.get('codebook_unit', 'unit')} was coded with the codebook \"{params.get('codebook')}\" by the language model "
-        f"{model} ({params.get('provider')}), given the codebook's definitions and examples and the "
+        f"{model} ({params.get('provider')}), given {given} and the "
         f"{params.get('context_units')} preceding lines as context. For each line the model was given "
         f"{_shown(params.get('show', ['timing']))}."
-    )
+    ) + _prompt_extras(params)
     coded = params.get("coded_roles") or []
     if coded:
         text += f" Only the units of the {_listed(coded)} were coded; the others' lines were shown in place as context."
@@ -452,18 +472,29 @@ _VERSION_TERMS = {
 
 def _judge_version(config, params: dict, spec) -> str:
     model = spec.backend_version or params.get("model")
+    names = " (code names only)" if params.get("names_only") else ""
     text = (
         f"For comparison, the same units were also coded in a version named {params['judge']}, with the codebook "
-        f"\"{params.get('codebook')}\" and the language model {model} ({params.get('provider')}), given for each line "
+        f"\"{params.get('codebook')}\"{names} and the language model {model} ({params.get('provider')}), given for each line "
         f"{_shown(params.get('show', ['timing']))}"
     )
     base = config.coding.llm
+    # with frames one unit per request is already said
+    framed = "frames" in params.get("show", [])
     others = [
         f"{term} {_setting(params.get(key))}"
         for key, term in _VERSION_TERMS.items()
-        if key in params and params[key] != getattr(base, key)
+        if key in params and params[key] != getattr(base, key) and not (framed and key == "batch_size")
     ]
-    return text + (f" ({'; '.join(others)})." if others else ".")
+    own = config.coding.judges.get(params["judge"])
+    changed = {
+        "notes": params.get("notes") != base.notes.strip(),
+        "n_examples": own is not None and own.examples is not None,
+        "reasons": params.get("reasons") != base.reasons,
+        "think": params.get("think") != base.think,
+    }
+    extras = _prompt_extras({key: value for key, value in params.items() if changed.get(key)})
+    return text + (f" ({'; '.join(others)})." if others else ".") + extras
 
 
 def _setting(value) -> str:

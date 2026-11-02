@@ -44,6 +44,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Coding", "Coding layers, and the language model that codes speech acts in layer B.", (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
         "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.coded_roles", "coding.llm.show",
+        "coding.llm.notes", "coding.llm.examples", "coding.llm.reasons", "coding.llm.think",
     )),
 )
 
@@ -91,6 +92,10 @@ LABELS = {
     "coding.llm.review_threshold": "Review below this agreement",
     "coding.llm.coded_roles": "People to code",
     "coding.llm.show": "What the model is shown besides the words",
+    "coding.llm.notes": "Note to the model",
+    "coding.llm.examples": "Examples people coded",
+    "coding.llm.reasons": "Model says why",
+    "coding.llm.think": "Model reasons before answering",
 }
 
 # keys that name a registered backend, so the choices are whatever is installed, plugins included
@@ -162,7 +167,7 @@ def control(dotted: str) -> dict[str, Any]:
     """How the form asks for a key: its kind (choice, multi, yes_no, number, text, list), its options, and whether it may be empty."""
     annotation, optional = _strip_none(_annotation(dotted))
     if annotation is bool:
-        return {"kind": "yes_no"}
+        return {"kind": "yes_no", "optional": optional}
     if dotted in BACKEND_GROUPS:
         return {"kind": "choice", "options": list_backends(BACKEND_GROUPS[dotted]), "optional": optional}
     if dotted == "text.device":

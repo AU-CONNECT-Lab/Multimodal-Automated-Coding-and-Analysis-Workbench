@@ -177,11 +177,19 @@ def normalise_video(
     return repeated, dropped
 
 
-def extract_frame(src: Path, at_s: float, dest: Path, *, square_pixels: bool = False) -> Path:
-    """square_pixels shapes the picture the way normalise_video does, so pixel positions match its copies."""
+def extract_frame(
+    src: Path, at_s: float, dest: Path, *, square_pixels: bool = False, long_side: int | None = None
+) -> Path:
+    """square_pixels shapes the picture the way normalise_video does, so pixel positions match its copies;
+    long_side shrinks a larger picture to at most that many pixels on its longer side."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shape = ["-vf", "scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2',setsar=1"] if square_pixels else []
+    filters = ["scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1"] if square_pixels else []
+    if long_side:
+        filters.append(
+            f"scale=w='if(gte(iw,ih),min(iw,{long_side}),-2)':h='if(gte(iw,ih),-2,min(ih,{long_side}))'"
+        )
+    shape = ["-vf", ",".join(filters)] if filters else []
     run_ffmpeg(["-ss", f"{max(at_s, 0.0):.3f}", "-i", str(src), *shape, "-frames:v", "1", "-q:v", "2", str(dest)])
     if not dest.is_file():
         raise UnreadableMediaError(f"{src} has no frame at {at_s:.3f} s")

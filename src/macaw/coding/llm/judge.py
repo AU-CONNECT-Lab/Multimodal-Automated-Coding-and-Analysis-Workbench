@@ -13,15 +13,18 @@ import numpy as np
 import pandas as pd
 
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
+from macaw.coding.examples import read_examples
 from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
 from macaw.coding.llm.parsing import parse_annotation_response
-from macaw.coding.llm.prompts import ABSTAIN, VOICE, build_annotation_prompt
+from macaw.coding.llm.prompts import ABSTAIN, FRAME_AT, FRAMES, VOICE, build_annotation_prompt
 from macaw.config.schema import LLMSection, MacawConfig
-from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
+from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
+from macaw.media.ffmpeg import extract_frame
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -36,6 +39,8 @@ VERSION_STEP = "coding.judge."
 VERSION_LAYER = "B."
 SAMPLES_NAME = "samples.parquet"
 _FRAME_FEATURES = {"pitch": "f0_semitone", "loudness": "intensity_db"}
+# px; enough for faces at a table in a full frame without the picture costing thousands of tokens more
+FRAME_LONG_SIDE = 960
 
 _SUBJECT_SPECS = {
     "n_units_judged": ("Units of this speaker the model coded.", "count"),
@@ -47,7 +52,7 @@ _SUBJECT_SPECS = {
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
@@ -55,7 +60,8 @@ class JudgementExtractor(Extractor):
     config_sections = (
         "coding.codebook", "turns", *(f"coding.llm.{key}" for key in (
             "provider", "model", "temperature", "max_tokens", "n_samples", "seed", "allow_abstain",
-            "review_threshold", "batch_size", "context_units", "coded_roles", "show",
+            "review_threshold", "batch_size", "context_units", "coded_roles", "show", "notes", "examples",
+            "reasons", "think",
         )),
     )
     requires = (ASRExtractor.name, TurnStructureExtractor.name)
@@ -77,8 +83,9 @@ class JudgementExtractor(Extractor):
 
     @classmethod
     def dependencies(cls, config: MacawConfig) -> tuple[str, ...]:
-        voiced = cls._present(config) and {"pitch", "loudness"} & set(cls.settings(config)[1].show)
-        return cls.requires + ((FrameProsodyExtractor.name,) if voiced else ())
+        shown = set(cls.settings(config)[1].show) if cls._present(config) else set()
+        voiced = (FrameProsodyExtractor.name,) if {"pitch", "loudness"} & shown else ()
+        return cls.requires + voiced + ((MediaPrepExtractor.name, VideoPrepExtractor.name) if FRAMES in shown else ())
 
     @classmethod
     def resources(cls, config: MacawConfig) -> str:
@@ -98,9 +105,15 @@ class JudgementExtractor(Extractor):
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         inputs = TurnStructureExtractor(self.config).inputs_for(recording)
+        shown = set(self.settings(self.config)[1].show)
         voice = prosody_rows_file(self.config, recording.recording_id)
-        if {"pitch", "loudness"} & set(self.settings(self.config)[1].show) and voice.is_file():
+        if {"pitch", "loudness"} & shown and voice.is_file():
             inputs.append(voice)
+        if FRAMES in shown:
+            # the offset table moves every frame on the recording clock
+            offsets = layout_for(self.config, create=False).offset_table_path(recording.recording_id)
+            inputs += sorted(item.path for item in recording.media if item.kind == "video")
+            inputs += [offsets] if offsets.is_file() else []
         return inputs
 
     def backend_info(self) -> tuple[str | None, str | None]:
@@ -114,8 +127,12 @@ class JudgementExtractor(Extractor):
         lines = coding_units(self.config, recording, codebook.unit, cfg.coded_roles)
         if set(VOICE) & set(cfg.show):
             lines = voice_figures(self.config, recording.recording_id, lines, cfg.show)
-        samples = sample_labels(lines, codebook, backend, cfg)
         units = lines[lines["unit_id"].notna()]
+        examples = self._examples(codebook)
+        # an example from the conversation being coded would hand the model the answer
+        own = examples["recording_id"] == recording.recording_id
+        frames = unit_frames(self.config, recording, units, workspace / "frames") if FRAMES in cfg.show else None
+        samples = sample_labels(lines, codebook, backend, cfg, examples=examples[~own], frames=frames)
         judged = aggregate_samples(units, samples, cfg)
 
         path = workspace / SAMPLES_NAME
@@ -123,14 +140,20 @@ class JudgementExtractor(Extractor):
         annotator = self.judge or f"llm:{backend.name}/{cfg.model}"
         return ExtractorResult(
             rows=self._rows(recording, judged),
-            specs=self._specs(codebook),
+            specs=self._specs(codebook, examples),
             annotations=self._annotations(recording, judged, codebook.name, annotator),
             artifacts={SAMPLES_NAME: path},
-            warnings=self._warnings(recording, judged, backend, samples.attrs),
+            warnings=self._warnings(recording, judged, backend, samples.attrs, int(own.sum())),
         )
 
+    def _examples(self, codebook: Codebook) -> pd.DataFrame:
+        _, cfg = self.settings(self.config)
+        if cfg.examples is None:
+            return pd.DataFrame(columns=["code", "speaker", "text", "before", "why", "recording_id"])
+        return read_examples(cfg.examples, codebook)
+
     def _codebook(self) -> Codebook:
-        path, _ = self.settings(self.config)
+        path, cfg = self.settings(self.config)
         if path is None:
             raise BackendNotAvailableError(f"{self.name} needs a codebook: set coding.codebook to its YAML file.")
         codebook = read_codebook(path)
@@ -141,6 +164,8 @@ class JudgementExtractor(Extractor):
             raise CodebookError(f"{path}: only mutually exclusive codebooks can be coded so far (one code per unit).")
         if codebook.unit == "window":
             raise CodebookError(f"{path}: unit 'window' cannot be coded yet; use utterance or turn.")
+        if cfg.examples is not None:
+            read_examples(cfg.examples, codebook)
         return codebook
 
     def _annotations(self, recording: Recording, judged: pd.DataFrame, tier: str, annotator: str) -> pd.DataFrame:
@@ -189,15 +214,23 @@ class JudgementExtractor(Extractor):
             )
         return concat_long_tables(frames)
 
-    def _warnings(self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict) -> list[QCWarning]:
+    def _warnings(
+        self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict, own_examples: int = 0
+    ) -> list[QCWarning]:
         _, cfg = self.settings(self.config)
         warnings = []
 
         def note(check: str, severity: str, message: str) -> None:
             warnings.append(QCWarning(check=check, recording_id=recording.recording_id, subject_id=None, severity=severity, message=message))
 
-        if backend.reporting:
-            note("llm_cloud", "info", backend.reporting)
+        notice = cloud_notice(backend, cfg)
+        if notice:
+            note("llm_cloud", "info", notice)
+        if own_examples:
+            note(
+                "llm_own_examples", "info",
+                f"{own_examples} of the examples come from this recording and were left out of its prompt; the others were shown.",
+            )
         if sampled.get("cut_off"):
             note(
                 "llm_cut_off", "warn",
@@ -220,13 +253,15 @@ class JudgementExtractor(Extractor):
             note("llm_review", "info", f"{review} of {len(judged)} units wait for a person: macaw review --export <file>.csv.")
         return warnings
 
-    def _specs(self, codebook: Codebook) -> list[FeatureSpec]:
+    def _specs(self, codebook: Codebook, examples: pd.DataFrame) -> list[FeatureSpec]:
         _, cfg = self.settings(self.config)
         params = {
-            "codebook": codebook.name, "codebook_unit": codebook.unit, "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples,
+            "codebook": codebook.name, "codebook_unit": codebook.unit, "names_only": codebook.names_only(),
+            "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples,
             "temperature": cfg.temperature, "seed": cfg.seed, "review_threshold": cfg.review_threshold,
-            "batch_size": cfg.batch_size, "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
-            "show": list(cfg.show), "judge": self.judge,
+            "batch_size": units_per_request(cfg), "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
+            "show": list(cfg.show), "notes": cfg.notes.strip(), "n_examples": len(examples), "reasons": cfg.reasons,
+            "think": cfg.think, "judge": self.judge,
         }
         return [
             FeatureSpec(
@@ -328,23 +363,98 @@ def version_steps(config: MacawConfig) -> list[str]:
     return [f"{VERSION_STEP}{name}" for name in config.coding.judges]
 
 
-def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
-    """One row per unit and sample: unit_id, sample, label (a code or abstain). A batch is batch_size units
-    with the uncoded lines between them in place."""
+def sample_annotations(config: MacawConfig, recording_ids: list[str]) -> pd.DataFrame:
+    """Every answer of every coding by the language model as a coder of its own, <coder>#<sample>, so that
+    agreement can set the model against itself."""
+    from macaw.extractors import get_extractor
+    from macaw.store.annotations import read_annotations
+
+    layout = layout_for(config, create=False)
+    frames = []
+    for rid in recording_ids:
+        directory = layout.annotations_path(rid)
+        if not directory.is_dir():
+            continue
+        coded = read_annotations(directory)
+        for step in (JudgementExtractor.name, *version_steps(config)):
+            path = layout.artifacts_dir(rid, step) / SAMPLES_NAME
+            mine = coded[coded["layer"].astype(str) == get_extractor(step).layer()]
+            if mine.empty or not path.is_file():
+                continue
+            samples = pd.read_parquet(path)
+            keys = _unit_keys(mine)
+            for sample, answers in samples.groupby("sample", sort=True):
+                said = dict(zip(_unit_keys(answers), answers["label"]))
+                labels = [said.get(key) for key in keys]
+                frames.append(mine.assign(
+                    annotator=f"{mine['annotator'].iloc[0]}#{int(sample) + 1}",
+                    label=pd.array([pd.NA if label in (None, ABSTAIN) else label for label in labels], dtype="string"),
+                    abstained=[label == ABSTAIN for label in labels], confidence=np.nan, needs_review=False,
+                ))
+    if not frames:
+        return empty_frame(ANNOTATION_SCHEMA)
+    return coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, "annotations")
+
+
+def _unit_keys(frame: pd.DataFrame) -> list[tuple]:
+    return list(zip(frame["subject_id"].astype(str), frame["t_start"].astype(float).round(6), frame["t_end"].astype(float).round(6)))
+
+
+def units_per_request(cfg: LLMSection) -> int:
+    # a model reading pictures gets one unit's frames at a time
+    return 1 if FRAMES in cfg.show else cfg.batch_size
+
+
+def cloud_notice(backend: LLMBackend, cfg: LLMSection) -> str | None:
+    if not backend.reporting:
+        return None
+    return backend.reporting + (" Frames of the video are sent there too." if FRAMES in cfg.show else "")
+
+
+def unit_frames(config: MacawConfig, recording: Recording, units: pd.DataFrame, directory: Path) -> dict[str, list[bytes]]:
+    """Each unit's frames from the camera that films its speaker, else from the recording's main video."""
+    apply_prep_timing(config, recording)
+    videos = [item for item in recording.media if item.kind == "video"]
+    if not videos:
+        raise UnreadableMediaError(f"{recording.recording_id}: coding.llm.show has frames, but the recording has no video")
+    own = {item.subject_id: item for item in videos if item.subject_id is not None}
+    main = recording.reference_media(videos)
+    frames = {}
+    for row in units.itertuples(index=False):
+        item = own.get(row.subject_id, main)
+        pictures = []
+        for index, share in enumerate(FRAME_AT):
+            at = row.t_start + share * (row.t_end - row.t_start)
+            dest = extract_frame(item.frames_path, at - item.offset_s, directory / f"{row.unit_id}_{index}.jpg", long_side=FRAME_LONG_SIDE)
+            pictures.append(dest.read_bytes())
+        frames[row.unit_id] = pictures
+    return frames
+
+
+def sample_labels(
+    lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection, *,
+    examples: pd.DataFrame | None = None, frames: dict[str, list[bytes]] | None = None,
+) -> pd.DataFrame:
+    """One row per unit and sample: unit_id, sample, label (a code or abstain), reason. A batch is
+    units_per_request units with the uncoded lines between them in place."""
     coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
+    size = units_per_request(cfg)
     answers = []
     cut_off = 0
     for sample in range(cfg.n_samples):
         seed = cfg.seed + sample if backend.takes_seed else None
-        for start in range(0, len(coded), cfg.batch_size):
-            first, last = coded[start], coded[min(start + cfg.batch_size, len(coded)) - 1]
+        for start in range(0, len(coded), size):
+            first, last = coded[start], coded[min(start + size, len(coded)) - 1]
             batch = lines.iloc[first : last + 1]
             context = lines.iloc[max(0, first - cfg.context_units) : first]
-            system, user = build_annotation_prompt(codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show)
-            response = backend.complete(system, user, seed=seed)
-            parsed = parse_annotation_response(
-                response.text, codebook, batch["unit_id"].dropna().tolist(), allow_abstain=cfg.allow_abstain
+            system, user = build_annotation_prompt(
+                codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show, notes=cfg.notes,
+                examples=examples, reasons=cfg.reasons,
             )
+            ids = batch["unit_id"].dropna().tolist()
+            images = [picture for unit_id in ids for picture in frames[unit_id]] if frames else ()
+            response = backend.complete(system, user, seed=seed, images=images)
+            parsed = parse_annotation_response(response.text, codebook, ids, allow_abstain=cfg.allow_abstain)
             # an answer that never came is not the model saying it cannot tell
             if response.cut_off and (parsed["label"] == ABSTAIN).all():
                 raise LLMBackendError(
@@ -354,9 +464,9 @@ def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, 
             cut_off += response.cut_off
             answers.append(parsed.assign(sample=sample))
     if not answers:
-        out = pd.DataFrame({"unit_id": pd.Series(dtype=str), "label": pd.Series(dtype=str), "sample": pd.Series(dtype=int)})
+        out = pd.DataFrame({column: pd.Series(dtype=int if column == "sample" else str) for column in ("unit_id", "sample", "label", "reason")})
     else:
-        out = pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label"]]
+        out = pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label", "reason"]]
     out.attrs.update(cut_off=cut_off, requests=len(answers))
     return out
 

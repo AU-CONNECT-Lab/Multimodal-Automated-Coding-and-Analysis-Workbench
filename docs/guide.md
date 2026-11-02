@@ -258,6 +258,27 @@ Whose talk
 What the model sees
 : Each line's speaker and words, and by default its timing: when it starts, how long it lasts, and the pause or overlap before it. Under *What the model is shown besides the words* (`coding.llm.show`) you can take the timing away (`[]` gives the words only) or add how the line sounds: `pitch` in semitones, `loudness` in dB and speech `rate` in percent, each against the median of that speaker's lines in the recording, so a child's high voice is not read as excitement. Pitch and loudness come from the voice measures, which then run first.
 
+Frames from the video
+: `frames` in the same list gives each unit three pictures, near its start, middle and end, taken from the camera that films the speaker, or from the main video when no camera is theirs. The model has to read pictures (on Ollama, for example `qwen3-vl:8b-instruct`), and each unit goes in a request of its own, so a run takes longer. The pictures are whole frames with nothing drawn on them: say in the note to the model who is who and where they sit. Three frames show what a person looks like at three moments, not how they move, and someone turned away or out of the picture gives the model nothing to go on. With a cloud service the frames are sent there too.
+
+A note to the model
+: *Note to the model* (`coding.llm.notes`) goes into the prompt as you write it, for what the model cannot know, such as "A is the mother, on the left; B is the child".
+
+Examples people coded
+: Units that people coded can be shown to the model as examples. Import the coding first ({ref}`own-coding`), then draw a few units of each code into a table:
+
+  ```
+  macaw draw-examples examples.csv --coder anna --per-code 3
+  ```
+
+  Each row has the code, the speaker, the words, the line before and where it came from. Open it, drop or change rows, and write a reason in `why` where you want the model to read one. Then set *Examples people coded* (`coding.llm.examples`) to the file. `-r` draws only from the recordings you name, for example those of one task to see whether examples carry over to another. A recording is never shown its own examples: those rows are left out of its prompt and its QC notes say how many. Units you will measure agreement on should not be the ones you drew examples from.
+
+Why the model chose a code
+: With *Model says why* (`coding.llm.reasons`) the model names in a few words what each code rests on: the words, the timing, the voice or the picture. The reasons are kept in `samples.parquet` beside each answer and shown on the Review page. Asking for a reason can itself change the answers, so compare with and without it as two versions rather than switching it on halfway.
+
+Reasoning before the answer
+: Some models (qwen3, for one) reason at length before they answer, which makes each request several times slower. *Model reasons before answering* (`coding.llm.think`) set to no asks them to answer at once, yes asks them to reason, and empty leaves the model's own default. It works with a model on your own computer or server (Ollama, vLLM, llama.cpp).
+
 How sure it is
 : Each unit is asked several times (five by default). The share of matching answers is its confidence. The model may also answer "cannot tell".
 
@@ -286,6 +307,11 @@ Several versions side by side
   ```
 
   A version takes `codebook` and any key of `coding.llm`. Each runs as its own step (`coding.judge.names_only`), so changing one recodes only that one, and its codes are kept under its name. To compare the versions with each other and with people, give every codebook the same `name`, so they code the same tier, then run `macaw agreement --tier <that name>`: the code-by-code table puts each version beside the people's own agreement. Versions do not send units to the review queue; only the coding settings' own version does. The Methods text describes each version.
+
+  A codebook that lists the codes by name alone, with no description, criteria or examples, is coded as it is, which tells you what the model makes of the names. One where only some codes are described is taken for a draft and stopped.
+
+The model against itself
+: Asked twice, a model does not always give the same code, so two versions can differ by chance alone. `macaw agreement --samples` counts each of the model's answers as a coder of its own (`llm:ollama/qwen3:8b#1`, `#2` and so on, or `words_only#1` for a version), and the kappa between them, code by code, is how far the model agrees with itself. A difference between two versions smaller than that is not one to read anything into. It needs more than one answer per unit (`n_samples`).
 
 (own-coding)=
 ## Your own coding
@@ -321,7 +347,7 @@ Comparing
 : Coders who coded the same intervals: `macaw agreement --tier speech_acts`. When each drew their own boundaries, `--units` takes each interval of one coder as a unit and gives it every other coder's code that covers most of it, or no code when none does; name the language model as `macaw agreement` lists it to compare on its utterances. For states that last, such as where someone looks, `--grid-s 0.5` cuts the time into half-second cells instead. A coder who coded only part of a recording leaves the rest without a code, which counts as disagreement, so compare over what both coded.
 
 What you get
-: Alpha over all coders together, kappa for each pair, and each code on its own against the rest: alpha over all coders, and kappa for every pair with how often each of the two gave the code. With two people and a language model, the model's kappa with each person sits beside the people's own on every code. `--out agreement` writes `report.json` and `units.csv`, one row per unit with its recording, person, tier, start and end and a column per coder: their code, `_none` where they coded that person and tier but put nothing on this unit, or blank where they gave it no rating. From it you can count which codes are taken for which, or see whether the model misses where the people also disagree.
+: Alpha over all coders together, kappa for each pair, and each code on its own against the rest: alpha over all coders, and kappa for every pair with how often each of the two gave the code. With two people and a language model, the model's kappa with each person sits beside the people's own on every code. `--out agreement` writes `report.json` and `units.csv`, one row per unit with its recording, person, tier, start and end, what that person said in it and the line before (where there is a transcript), and a column per coder: their code, `_none` where they coded that person and tier but put nothing on this unit, or blank where they gave it no rating. From it you can count which codes are taken for which, see whether the model misses where the people also disagree, or read the units two coders split on when you revise the codebook.
 
 (gaze)=
 ## Who looks at whom

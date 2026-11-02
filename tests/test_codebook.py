@@ -159,6 +159,11 @@ codes:
         book = Codebook(name="x", unit="turn", codes=[CodeDefinition("a", "d")])
         assert any("neither criteria" in problem for problem in validate_codebook(book))
 
+    def test_codes_given_by_name_alone_are_a_codebook_of_their_own(self):
+        book = Codebook(name="x", unit="turn", codes=[CodeDefinition("a", ""), CodeDefinition("b", "")])
+        assert book.names_only() and validate_codebook(book) == []
+        assert not Codebook(name="x", unit="turn").names_only()
+
     def test_a_positive_example_is_enough_on_its_own(self):
         book = Codebook(
             name="x", unit="turn", codes=[CodeDefinition("a", "d", positive_examples=["hi"])]

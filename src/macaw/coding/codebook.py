@@ -50,6 +50,13 @@ class Codebook:
     def labels(self) -> list[str]:
         return [definition.code for definition in self.codes]
 
+    def names_only(self) -> bool:
+        """Every code given by its name alone, as when a model is told nothing but the names."""
+        return bool(self.codes) and not any(
+            definition.description.strip() or any(getattr(definition, name) for name in _LIST_FIELDS)
+            for definition in self.codes
+        )
+
 
 def _as_list(value: Any) -> list[str]:
     if value is None:
@@ -129,6 +136,8 @@ def validate_codebook(codebook: Codebook) -> list[str]:
     if not codebook.codes:
         problems.append("codebook defines no codes")
 
+    # a codebook of bare names is a choice; one where only some codes are defined is a draft
+    defined = not codebook.names_only()
     seen: set[str] = set()
     for definition in codebook.codes:
         label = definition.code
@@ -147,6 +156,8 @@ def validate_codebook(codebook: Codebook) -> list[str]:
             problems.append(
                 f"code '{label}': layer '{definition.layer}' is not one of {', '.join(LAYERS)}"
             )
+        if not defined:
+            continue
         if not definition.description.strip():
             problems.append(f"code '{label}' has no description")
         if not definition.criteria and not definition.positive_examples:

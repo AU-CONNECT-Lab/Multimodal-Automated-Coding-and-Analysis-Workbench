@@ -489,6 +489,33 @@ def report_to_json(report: dict) -> dict:
     return out
 
 
+def add_words(config, table: pd.DataFrame) -> pd.DataFrame:
+    """The unit table with what its person said inside each unit and the line before it, from the transcript,
+    so the units people disagree on can be read where they are listed. Blank where there is no transcript."""
+    from macaw.extractors.audio.content.asr import load_transcript
+
+    words, before = [""] * len(table), [""] * len(table)
+    for rid, rows in table.groupby("recording_id", sort=False):
+        try:
+            lines = load_transcript(config, str(rid), others=True).sort_values("t_start", kind="stable").reset_index(drop=True)
+        except (MacawError, OSError):   # coded but never transcribed, such as gaze in a silent task
+            continue
+        middle = ((lines["t_start"] + lines["t_end"]) / 2).to_numpy()
+        for position, row in zip(rows.index, rows.itertuples(index=False)):
+            mine = (lines["subject_id"] == str(row.subject_id)).to_numpy() if pd.notna(row.subject_id) else np.ones(len(lines), bool)
+            inside = np.flatnonzero(mine & (middle >= row.t_start) & (middle <= row.t_end))
+            words[table.index.get_loc(position)] = " ".join(lines["text"].iloc[inside].astype(str))
+            opens = lines["t_start"].iloc[inside[0]] if inside.size else row.t_start
+            earlier = lines[lines["t_start"] < opens - 1e-9]
+            if not earlier.empty:
+                before[table.index.get_loc(position)] = f"{earlier.iloc[-1]['subject_id']}: {earlier.iloc[-1]['text']}"
+    at = list(table.columns).index("t_end") + 1
+    out = table.copy()
+    out.insert(at, "before", before)
+    out.insert(at, "words", words)
+    return out
+
+
 def write_report(report: dict, folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "report.json").write_text(json.dumps(report_to_json(report), indent=2), encoding="utf-8")

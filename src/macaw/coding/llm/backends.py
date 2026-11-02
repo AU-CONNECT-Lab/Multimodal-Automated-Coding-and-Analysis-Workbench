@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Sequence
 
 from macaw.config.schema import LLMSection
 from macaw.exceptions import BackendNotAvailableError, LLMBackendError
@@ -52,9 +54,18 @@ class LLMBackend(Backend):
                 f"coding.llm.model is not set. Name the model as {self.name} knows it "
                 "(for example the tag `ollama list` shows)."
             )
+        if self.cfg.think is not None and not self._think_fields(self.cfg.think):
+            raise BackendNotAvailableError(
+                f"coding.llm.think is for a model served on your own machine (ollama, vllm, llamacpp); leave it null for {self.name}."
+            )
 
-    def complete(self, system: str, user: str, *, seed: int | None = None) -> LLMResponse:
+    def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
+        """images are JPEG pictures sent after the text, for a model that reads them."""
         raise NotImplementedError
+
+    def _think_fields(self, think: bool) -> dict:
+        """What the request carries to turn reasoning before the answer on or off; empty where the server has no switch."""
+        return {}
 
     def model_version(self) -> str:
         return self._seen_model or str(self.cfg.model)
@@ -113,16 +124,22 @@ class OpenAICompatibleBackend(LLMBackend):
                 "or set coding.llm.base_url to where it listens."
             ) from None
 
-    def complete(self, system: str, user: str, *, seed: int | None = None) -> LLMResponse:
+    def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
+        content = user if not images else [
+            {"type": "text", "text": user},
+            *({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_base64(image)}"}} for image in images),
+        ]
         body = {
             "model": self.cfg.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_tokens,
             "response_format": {"type": "json_object"},
         }
         if seed is not None:
             body["seed"] = seed
+        if self.cfg.think is not None:
+            body.update(self._think_fields(self.cfg.think))
         answer = self._post(f"{self.base_url}/chat/completions", body, self._headers())
         try:
             choice = answer["choices"][0]
@@ -158,6 +175,10 @@ class OllamaBackend(OpenAICompatibleBackend):
     is_local = True
     default_base_url = "http://localhost:11434/v1"
 
+    def _think_fields(self, think: bool) -> dict:
+        # its chat completions endpoint reads reasoning_effort and ignores a think field
+        return {"reasoning_effort": "medium" if think else "none"}
+
     def model_version(self) -> str:
         # the tag can be pulled again with other weights; the digest cannot
         root = self.base_url.removesuffix("/v1")
@@ -177,12 +198,18 @@ class VLLMBackend(OpenAICompatibleBackend):
     is_local = True
     default_base_url = "http://localhost:8000/v1"
 
+    def _think_fields(self, think: bool) -> dict:
+        return {"chat_template_kwargs": {"enable_thinking": think}}
+
 
 @register_backend(BACKEND_GROUP)
 class LlamaCppBackend(OpenAICompatibleBackend):
     name = "llamacpp"
     is_local = True
     default_base_url = "http://localhost:8080/v1"
+
+    def _think_fields(self, think: bool) -> dict:
+        return {"chat_template_kwargs": {"enable_thinking": think}}
 
 
 @register_backend(BACKEND_GROUP)
@@ -216,11 +243,15 @@ class AnthropicBackend(LLMBackend):
                 "Keys are never read from project.yaml, which is archived with the outputs."
             )
 
-    def complete(self, system: str, user: str, *, seed: int | None = None) -> LLMResponse:
+    def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
+        content = user if not images else [
+            *({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _base64(image)}} for image in images),
+            {"type": "text", "text": user},
+        ]
         body = {
             "model": self.cfg.model,
             "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": [{"role": "user", "content": content}],
             "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_tokens,
         }
@@ -243,3 +274,7 @@ class AnthropicBackend(LLMBackend):
 
 def resolve_llm_backend(cfg: LLMSection) -> LLMBackend:
     return get_backend(BACKEND_GROUP, cfg.provider)(cfg)
+
+
+def _base64(image: bytes) -> str:
+    return base64.b64encode(image).decode("ascii")

@@ -234,3 +234,14 @@ class TestPreparedVideo:
     def test_standard_range_is_left_alone(self, sources, tmp_path):
         entry, warnings, _ = prepare(sources["sdr"], tmp_path)
         assert not entry["tone_mapped"] and "video_hdr" not in checks(warnings)
+
+
+@pytest.mark.parametrize("size,long_side,expected", [("640x480", 320, (320, 240)), ("480x640", 320, (240, 320)), ("320x240", 960, (320, 240))])
+def test_a_frame_is_shrunk_to_its_longer_side_and_never_enlarged(tmp_path, size, long_side, expected):
+    from macaw.media.ffmpeg import extract_frame
+
+    video = tmp_path / "v.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", f"testsrc2=s={size}:r=25:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    frame = extract_frame(video, 0.5, tmp_path / "f.jpg", long_side=long_side)
+    shown = probe(frame).video_streams()[0]
+    assert (shown.width, shown.height) == expected
