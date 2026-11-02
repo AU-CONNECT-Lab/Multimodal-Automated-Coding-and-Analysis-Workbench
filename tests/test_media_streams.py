@@ -245,3 +245,15 @@ def test_a_frame_is_shrunk_to_its_longer_side_and_never_enlarged(tmp_path, size,
     frame = extract_frame(video, 0.5, tmp_path / "f.jpg", long_side=long_side)
     shown = probe(frame).video_streams()[0]
     assert (shown.width, shown.height) == expected
+
+
+def test_the_last_moment_a_frame_can_be_taken_at_is_the_last_frame_s_start(tmp_path):
+    from macaw.coding.llm.judge import video_length
+    from macaw.media.ffmpeg import extract_frame
+
+    video = tmp_path / "v.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=320x240:r=25:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    assert video_length(video) == pytest.approx(1.96, abs=0.005)
+    extract_frame(video, video_length(video), tmp_path / "last.jpg", long_side=160)
+    with pytest.raises(ExternalToolError):
+        extract_frame(video, 2.5, tmp_path / "after.jpg", long_side=160)

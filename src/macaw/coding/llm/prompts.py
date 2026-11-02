@@ -44,7 +44,8 @@ def build_annotation_prompt(
         )
     if FRAMES in show:
         lines.append(
-            f"The unit to code comes with {len(FRAME_AT)} frames from the video, taken near its start, middle and end, in that order."
+            f"The unit to code comes with up to {len(FRAME_AT)} frames from the video, taken near its start, middle and end, "
+            "in that order; one the video does not reach comes with fewer or none."
         )
     if notes.strip():
         lines.append(f"Notes from the researchers: {notes.strip()}")

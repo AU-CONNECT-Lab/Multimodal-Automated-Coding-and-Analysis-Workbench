@@ -143,7 +143,10 @@ class JudgementExtractor(Extractor):
             specs=self._specs(codebook, examples),
             annotations=self._annotations(recording, judged, codebook.name, annotator),
             artifacts={SAMPLES_NAME: path},
-            warnings=self._warnings(recording, judged, backend, samples.attrs, int(own.sum())),
+            warnings=self._warnings(
+                recording, judged, backend, samples.attrs, int(own.sum()),
+                sum(not pictures for pictures in frames.values()) if frames is not None else 0,
+            ),
         )
 
     def _examples(self, codebook: Codebook) -> pd.DataFrame:
@@ -215,7 +218,8 @@ class JudgementExtractor(Extractor):
         return concat_long_tables(frames)
 
     def _warnings(
-        self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict, own_examples: int = 0
+        self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict, own_examples: int = 0,
+        unseen: int = 0,
     ) -> list[QCWarning]:
         _, cfg = self.settings(self.config)
         warnings = []
@@ -230,6 +234,11 @@ class JudgementExtractor(Extractor):
             note(
                 "llm_own_examples", "info",
                 f"{own_examples} of the examples come from this recording and were left out of its prompt; the others were shown.",
+            )
+        if unseen:
+            note(
+                "llm_no_frames", "info",
+                f"{unseen} of {len(judged)} units fall where the video does not reach and were coded from the words alone.",
             )
         if sampled.get("cut_off"):
             note(
@@ -412,23 +421,38 @@ def cloud_notice(backend: LLMBackend, cfg: LLMSection) -> str | None:
 
 
 def unit_frames(config: MacawConfig, recording: Recording, units: pd.DataFrame, directory: Path) -> dict[str, list[bytes]]:
-    """Each unit's frames from the camera that films its speaker, else from the recording's main video."""
+    """Each unit's frames from the camera that films its speaker, else from the recording's main video. A moment
+    the video does not reach, as when the camera stopped before the microphones, gives no frame."""
     apply_prep_timing(config, recording)
     videos = [item for item in recording.media if item.kind == "video"]
     if not videos:
         raise UnreadableMediaError(f"{recording.recording_id}: coding.llm.show has frames, but the recording has no video")
     own = {item.subject_id: item for item in videos if item.subject_id is not None}
     main = recording.reference_media(videos)
+    lengths = {}
     frames = {}
     for row in units.itertuples(index=False):
         item = own.get(row.subject_id, main)
+        if item.frames_path not in lengths:
+            lengths[item.frames_path] = video_length(item.frames_path)
         pictures = []
         for index, share in enumerate(FRAME_AT):
-            at = row.t_start + share * (row.t_end - row.t_start)
-            dest = extract_frame(item.frames_path, at - item.offset_s, directory / f"{row.unit_id}_{index}.jpg", long_side=FRAME_LONG_SIDE)
-            pictures.append(dest.read_bytes())
+            at = row.t_start + share * (row.t_end - row.t_start) - item.offset_s
+            if 0 <= at < lengths[item.frames_path]:
+                dest = extract_frame(item.frames_path, at, directory / f"{row.unit_id}_{index}.jpg", long_side=FRAME_LONG_SIDE)
+                pictures.append(dest.read_bytes())
         frames[row.unit_id] = pictures
     return frames
+
+
+def video_length(path: Path) -> float:
+    """Seconds up to the start of the last frame, the last moment a frame can be taken at."""
+    from macaw.media.probe import probe
+
+    info = probe(path)
+    stream = info.video_streams()[0]
+    duration = stream.duration_s or info.duration_s
+    return duration - 1.0 / stream.fps if stream.fps else duration
 
 
 def sample_labels(

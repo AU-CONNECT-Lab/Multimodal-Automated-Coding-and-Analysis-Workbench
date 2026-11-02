@@ -631,13 +631,16 @@ class TestFrames:
         blocks = stub.requests[1]["body"]["messages"][0]["content"]
         assert blocks == [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "b25l"}}, {"type": "text", "text": "u"}]
 
-    def test_each_unit_goes_alone_with_its_three_frames(self, monkeypatch, tmp_path, stub):
-        monkeypatch.setattr(module, "unit_frames", lambda config, recording, units, directory: {u: [b"a", b"b", b"c"] for u in units["unit_id"]})
+    def test_each_unit_goes_alone_with_its_frames(self, monkeypatch, tmp_path, stub):
+        # the last unit falls after the video stopped
+        monkeypatch.setattr(module, "unit_frames", lambda config, recording, units, directory: {"u0": [b"a", b"b", b"c"], "u1": [b"a"], "u2": []})
         result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, batch_size=20, show=["timing", "frames"])
         assert len(stub.requests) == 3
-        assert [part["type"] for part in stub.requests[0]["body"]["messages"][-1]["content"]] == ["text"] + ["image_url"] * 3
-        assert "comes with 3 frames from the video" in stub.requests[0]["body"]["messages"][0]["content"]
+        contents = [request["body"]["messages"][-1]["content"] for request in stub.requests]
+        assert [len(content) - 1 if isinstance(content, list) else 0 for content in contents] == [3, 1, 0]
+        assert "comes with up to 3 frames from the video" in stub.requests[0]["body"]["messages"][0]["content"]
         assert result.annotations.sort_values("t_start")["label"].tolist() == ["question", "inform", "inform"]
+        assert any(warning.check == "llm_no_frames" and warning.message.startswith("1 of 3 units") for warning in result.warnings)
 
     def test_frames_come_from_the_speaker_s_own_camera_else_the_main_video(self, monkeypatch, tmp_path):
         from macaw.project.recording import MediaFile, Recording, Subject
@@ -652,18 +655,23 @@ class TestFrames:
 
         monkeypatch.setattr(module, "extract_frame", extract)
         monkeypatch.setattr(module, "apply_prep_timing", lambda config, recording: None)
+        # the child's camera stops at 5.8 s of its own clock, 7.8 s of the recording's
+        monkeypatch.setattr(module, "video_length", lambda path: {"room.mp4": 100.0, "child.mp4": 5.8}[path.name])
         media = [
             MediaFile(tmp_path / "room.mp4", "video", duration_s=100.0, offset_s=1.0),
             MediaFile(tmp_path / "child.mp4", "video", subject_id="child", duration_s=50.0, offset_s=-2.0),
             MediaFile(tmp_path / "a.wav", "audio", duration_s=200.0),
         ]
         recording = Recording("r1", tmp_path, subjects=[Subject("mother"), Subject("child")], media=media)
-        units = pd.DataFrame({"unit_id": ["u0", "u1"], "subject_id": ["mother", "child"], "t_start": [0.0, 3.0], "t_end": [6.0, 4.2]})
+        units = pd.DataFrame({
+            "unit_id": ["u0", "u1", "u2"], "subject_id": ["mother", "child", "child"],
+            "t_start": [0.0, 3.0, 9.0], "t_end": [6.0, 4.2, 10.0],
+        })
         frames = module.unit_frames(None, recording, units, tmp_path / "frames")
-        assert frames == {"u0": [b"jpg"] * 3, "u1": [b"jpg"] * 3}
+        assert frames == {"u0": [b"jpg"] * 3, "u1": [b"jpg"] * 2, "u2": []}
         assert taken == [
             ("room.mp4", 0.0, 960), ("room.mp4", 2.0, 960), ("room.mp4", 4.0, 960),
-            ("child.mp4", 5.2, 960), ("child.mp4", 5.6, 960), ("child.mp4", 6.0, 960),
+            ("child.mp4", 5.2, 960), ("child.mp4", 5.6, 960),
         ]
         with pytest.raises(UnreadableMediaError, match="no video"):
             module.unit_frames(None, Recording("r1", tmp_path, media=media[2:]), units, tmp_path / "frames")
