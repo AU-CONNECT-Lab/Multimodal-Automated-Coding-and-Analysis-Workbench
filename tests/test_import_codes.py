@@ -177,6 +177,11 @@ class TestCoderUnits:
         units = build_units(frame, units_of="model")
         assert units["annotator"].tolist() == ["model"]
 
+    def test_an_edge_shared_but_for_float_error_is_no_overlap(self):
+        frame = self.frame([("model", 7.3, 8.0, "question"), ("anna", 7.0, 73 * 0.1, "answer")])
+        units = build_units(frame, units_of="model").pivot(index="unit_id", columns="annotator", values="label")
+        assert units["anna"].tolist() == [NO_CODE]
+
     def test_the_report_names_the_mode_and_refuses_an_unknown_coder(self):
         frame = self.frame([("model", 0.0, 1.0, "question"), ("anna", 0.0, 1.0, "question")])
         report = agreement_report(frame, units_of="model")

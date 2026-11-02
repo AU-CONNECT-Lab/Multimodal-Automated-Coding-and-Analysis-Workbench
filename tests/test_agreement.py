@@ -18,7 +18,7 @@ from macaw.coding.agreement import (
     per_code_alpha,
     per_code_pairs,
     report_to_json,
-    segment_annotations,
+    segment_spans,
     unit_table,
     write_report,
 )
@@ -136,6 +136,11 @@ class TestBuildUnits:
 
 
 class TestGridUnits:
+    def test_an_interval_starting_on_a_cell_edge_does_not_reach_the_cell_before(self):
+        # 0.3 / 0.1 falls just short of 3 and 3 * 0.1 just past 0.3, so cell 2 would seem to hold a hair of it
+        units = build_units(annotations([("A", 0.3, 1.0, "x"), ("B", 0.3, 1.0, "x")]), grid_s=0.1)
+        assert units["t_start"].min() == 0.3 and units["unit_id"].nunique() == 7
+
     def test_one_interval_becomes_several_cells(self):
         units = build_units(
             annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "x")]), grid_s=0.5
@@ -469,38 +474,47 @@ class TestAgreementReport:
 
 
 class TestSegments:
-    @pytest.fixture
-    def config(self, tmp_path):
-        table = tmp_path / "segments.csv"
-        table.write_text("recording,segment,start_s,end_s\nr1,early,0,10\nr1,late,10,20\nr2,late,0,5\n", encoding="utf-8")
-        return SimpleNamespace(project=SimpleNamespace(segments=table))
+    EARLY, LATE = {"r1": (0.0, 10.0)}, {"r1": (10.0, 20.0)}
 
-    def test_a_unit_across_an_edge_is_cut_and_counted_on_both_sides(self, config):
+    def test_a_unit_across_an_edge_is_cut_and_counted_on_both_sides(self):
         frame = annotations([(coder, *span) for coder in ("A", "B") for span in ((2.0, 4.0, "y"), (8.0, 12.0, "x"))])
-        early, _ = segment_annotations(config, frame, "early")
-        late, _ = segment_annotations(config, frame, "late")
-        assert unit_table(build_units(early))[["t_start", "t_end"]].values.tolist() == [[2.0, 4.0], [8.0, 10.0]]
-        assert unit_table(build_units(late))[["t_start", "t_end", "A", "B"]].values.tolist() == [[10.0, 12.0, "x", "x"]]
+        assert unit_table(build_units(frame, within=self.EARLY))[["t_start", "t_end"]].values.tolist() == [[2.0, 4.0], [8.0, 10.0]]
+        late = unit_table(build_units(frame, within=self.LATE))
+        assert late[["t_start", "t_end", "A", "B"]].values.tolist() == [[10.0, 12.0, "x", "x"]]
 
-    def test_the_others_code_is_the_one_covering_most_of_the_cut_unit(self, config):
+    def test_the_others_code_is_the_one_covering_most_of_the_cut_unit(self):
         frame = annotations([("A", 8.0, 12.0, "x"), ("B", 8.0, 9.5, "x"), ("B", 9.5, 12.0, "z")])
         assert unit_table(build_units(frame, units_of="A"))["B"].tolist() == ["z"]
-        early, _ = segment_annotations(config, frame, "early")
-        assert unit_table(build_units(early, units_of="A"))["B"].tolist() == ["x"]
+        assert unit_table(build_units(frame, units_of="A", within=self.EARLY))["B"].tolist() == ["x"]
 
-    def test_grid_cells_stay_inside_the_segment(self, config):
+    def test_grid_cells_stay_inside_the_segment(self):
         frame = annotations([("A", 0.0, 20.0, "x"), ("B", 0.0, 20.0, "x")])
-        early, _ = segment_annotations(config, frame, "early")
-        assert unit_table(build_units(early, grid_s=2.5))["t_end"].max() == 10.0
+        assert unit_table(build_units(frame, grid_s=2.5, within=self.EARLY))["t_end"].max() == 10.0
 
-    def test_recordings_without_the_segment_are_left_out_and_named(self, config):
+    @pytest.mark.parametrize("mode", [{"grid_s": 1.0}, {"units_of": "A"}])
+    def test_a_coder_who_coded_the_person_only_elsewhere_left_the_segment_blank(self, mode):
+        frame = annotations([("A", 2.0, 4.0, "x"), ("A", 12.0, 14.0, "x"), ("B", 12.0, 14.0, "x")])
+        table = unit_table(build_units(frame, within=self.EARLY, **mode))
+        assert set(table["B"]) == {NO_CODE}
+
+    # split on a cell edge, or on an edge of the units, so that nothing is cut
+    @pytest.mark.parametrize("mode, middle", [({"grid_s": 0.1}, 5.0), ({"units_of": "A"}, 4.7)])
+    def test_the_halves_together_are_the_whole(self, mode, middle):
+        frame = annotations([("A", 0.3, 4.7, "x"), ("A", 4.7, 9.9, "y"), ("B", 0.0, 6.2, "x"), ("B", 6.2, 9.0, "y"), ("A", 12.0, 13.0, "x")])
+        key = lambda units: set(zip(units["unit_id"], units["annotator"], units["label"]))
+        halves = key(build_units(frame, within={"r1": (0.0, middle)}, **mode)) | key(build_units(frame, within={"r1": (middle, 20.0)}, **mode))
+        assert halves == key(build_units(frame, **mode))
+
+    def test_recordings_without_the_segment_are_left_out_and_named(self, tmp_path):
+        table = tmp_path / "segments.csv"
+        table.write_text("recording,segment,start_s,end_s\nr1,early,0,10\nr1,late,10,20\nr2,late,0,5\n", encoding="utf-8")
+        config = SimpleNamespace(project=SimpleNamespace(segments=table))
         frame = pd.concat([annotations([("A", 0.0, 1.0, "x")]), annotations([("A", 0.0, 1.0, "x")], recording_id="r3")])
-        kept, missing = segment_annotations(config, frame, "early")
-        assert kept["recording_id"].unique().tolist() == ["r1"] and missing == ["r3"]
+        assert segment_spans(config, frame, "early") == ({"r1": (0.0, 10.0)}, ["r3"])
         with pytest.raises(MacawError, match="the segments are: early, late"):
-            segment_annotations(config, frame, "middle")
+            segment_spans(config, frame, "middle")
 
     def test_the_report_names_the_segment(self):
-        report = agreement_report(annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "x")]), segment="early")
+        report = agreement_report(annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "x")]), within=self.EARLY, segment="early")
         assert report_to_json(report)["segment"] == "early"
         assert "segment=early" in format_report(report)

@@ -10,7 +10,7 @@ from macaw.coding.agreement import (
     agreement_report,
     format_report,
     load_annotations,
-    segment_annotations,
+    segment_spans,
     write_report,
 )
 from macaw.coding.describe import describe_codes, format_description
@@ -120,11 +120,12 @@ def agreement(
         from macaw.coding.llm.judge import sample_annotations
 
         annotations = pd.concat([annotations, sample_annotations(resolved, chosen)], ignore_index=True)
+    within = None
     if segment is not None:
-        annotations, missing = segment_annotations(resolved, annotations, segment)
+        within, missing = segment_spans(resolved, annotations, segment)
         if missing:
             typer.echo(f"left out, no segment {segment}: {', '.join(missing)}\n")
-    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units, segment=segment)
+    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units, within=within, segment=segment)
     typer.echo(format_report(report))
     if out is not None:
         if grid_s is None:
