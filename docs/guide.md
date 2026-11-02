@@ -1,70 +1,69 @@
 # Using MACAW
 
+This page describes the standard procedure, from organising the recordings to exporting the data set. Optional analyses, such as language-model coding, imported human coding, gaze and three-dimensional pose, are described in [Optional features](extras.md).
+
 ## Before you start
 
-### You need
+### Requirements
 
-- Recordings: video, audio, or both. A microphone per person helps, but a single camera with its own sound works too.
-- A computer with an NVIDIA graphics card for anything beyond a few recordings. Without one everything still runs, only much slower.
-- Free disk space about the size of your videos, because MACAW makes one tidy copy of each video.
+- Audio or video recordings of the interaction, or both. A separate microphone per participant is preferable; a single camera with its built-in microphone is also supported.
+- A computer with an NVIDIA graphics card for more than a handful of recordings. Without one, every step still runs, but considerably more slowly.
+- Free disk space roughly equal to the size of the videos, since MACAW stores one normalised copy of each video.
 
-### Good to know
+### Scope
 
-- Your recording folder is never changed. Results go to a folder of their own.
-- Transcription works in many languages. Word and sentence measures are English only for now.
-- Two-person recordings are the most tested. Groups of three or more are supported.
+- The original recordings are never modified. All output is written to a separate project folder.
+- Transcription supports many languages. Lexical and syntactic measures are currently available for English only.
+- Dyadic recordings are the most thoroughly tested case. Groups of three or more participants are supported.
+- MACAW describes each recording. It does not perform statistical inference or compare groups; the analysis remains with the researcher.
+- Where a decision cannot be made reliably by software, MACAW pauses and asks the researcher rather than guessing.
 
-### What MACAW does not do
+### Installation
 
-- Run statistics or compare groups. Each recording is described on its own, and the analysis stays yours.
-- Guess silently. When it cannot decide something reliably, it asks you.
+MACAW is installed once per computer, usually by whoever maintains it.
 
-### Installing
-
-This part is for whoever sets up the computer. MACAW is installed once per computer.
-
-1. Install Python 3.10, 3.11 or 3.12, git, and ffmpeg.
-2. Install PyTorch for the computer's graphics card, following [pytorch.org](https://pytorch.org/get-started/locally/). Doing this first keeps the graphics card in use.
-3. Install MACAW with all its parts:
+1. Install Python 3.10, 3.11 or 3.12, git and ffmpeg.
+2. Install PyTorch for the computer's graphics card, following the instructions at [pytorch.org](https://pytorch.org/get-started/locally/). Installing it first ensures that the graphics card is used.
+3. Install MACAW with all its components:
 
    ```bash
    pip install "pymacaw[audio,asr,text,vision,gui,report] @ git+https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench.git"
    ```
 
-Some tools are not included because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (voice feature sets). Install them only if you choose them in the settings. Telling voices apart on a shared microphone uses a model on Hugging Face: accept its terms there once and log in to Hugging Face on this computer.
+Three tools are not bundled because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (standard acoustic feature sets). They need to be installed only if they are selected in the settings. Separating voices on a shared microphone uses a model hosted on Hugging Face: accept its terms once on the Hugging Face website and log in to Hugging Face on the computer.
 
-Once MACAW runs, the *This computer* section of its settings page shows whether it finds ffmpeg and the other programs.
+Once MACAW is installed, the *This computer* panel on its settings page reports whether ffmpeg and the optional programs are found.
 
-## 1. Organise your recordings
+## 1. Organise the recordings
 
 {bdg-warning}`You do this`
 
-Make one folder per recording. End each file's name with the person it belongs to, using your study's role names (`parent` and `child` unless you change them). A file whose name ends in anything else, such as `room`, belongs to everyone in the recording.
+Create one folder per recording. Each file name ends with the role of the participant it belongs to, using the study's role names (`parent` and `child` unless changed in the settings). A file whose name ends in anything else, such as `room`, is treated as shared by all participants of that recording.
 
 ```text
 recordings/
   dyad01/
-    dyad01_parent.wav     the parent's microphone
-    dyad01_child.wav      the child's microphone
-    dyad01_room.mp4       a camera both share
+    dyad01_parent.wav     microphone of the parent
+    dyad01_child.wav      microphone of the child
+    dyad01_room.mp4       camera filming both
   dyad02/
     ...
 ```
 
-One camera only
-: MACAW takes the sound from the video and tells the voices apart. Set *Microphones* to pyannote, the shared-microphone option, in the settings. You then say which voice is whose.
+Single camera
+: The sound is taken from the video and the voices are separated automatically. Set *Microphones* to `pyannote` (one shared microphone) in the settings. Each voice is then assigned to a participant in step 5.
 
-Several visits per family
-: Use a folder per family with a folder per visit inside, and describe that layout once in the settings under *Recording folder pattern*.
+Several sessions per participant
+: Use one folder per family or participant with one subfolder per session, for example `sub-01/ses-1`, and describe this layout once under *Recording folder pattern* in the settings, here `sub-{group_id}/ses-{session_id}`.
 
-Leaving a recording out
-: It can be excluded in the settings without moving any files.
+Excluding a recording
+: A recording can be excluded without moving any files, by adding `excluded_recordings: [dyad07]` under `project:` in the *project.yaml* box of the settings page.
 
 ## 2. Create a project and open the workbench
 
 {bdg-warning}`You do this`
 
-This is the only part that needs typing. Open a terminal and run these three lines, with your own project name and the folder that holds your recordings:
+This is the only step that requires the command line. In a terminal, run the following three commands, substituting the project name and the folder that holds the recordings:
 
 ```bash
 macaw init parent-child-play --name "Parent-child play" --raw-dir "D:/recordings"
@@ -72,543 +71,176 @@ cd parent-child-play
 macaw gui
 ```
 
-The first line creates a project folder with a settings file and a results folder. The last line opens the workbench. Next time, the last two lines are enough. If you prefer a browser tab to a window, use `macaw gui --browser`.
+The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window.
 
-The workbench has four pages along the top, a fifth for projects with several cameras, and a gear for the settings. **Open folder** opens the project folder on your computer.
+The workbench has four pages, a fifth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
 Overview
-: The page the workbench opens on. How many recordings, people and minutes the project has, what to do next (what failed, what waits for you, what is left to run), and a square for each recording and step showing where it stands.
+: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording.
 
 Run
-: Choose recordings and steps, start a run and watch it.
+: Selecting recordings and steps, starting a run and following its progress.
 
 Review
-: The things waiting for you. The number on the tab says how many.
+: Decisions that await the researcher. The number on the tab gives their count.
 
 Results
-: The quality page and every measure over time.
+: The quality-control report and every measure plotted over time.
 
 Cameras
-: Only when two or more cameras film the same people: calibrating them for 3D ({ref}`three-d`).
+: Shown only when two or more cameras film the same participants. Used to calibrate them for three-dimensional measures ({ref}`three-d`).
 
-Settings (the gear)
-: Everything about the project.
+Settings (gear icon)
+: All settings of the project.
 
-Steps appear under short names, such as `text.asr` for transcription and `pose.kinematics` for body movement.
+Processing steps appear under short names, for example `text.asr` for transcription and `pose.kinematics` for movement measures.
 
-## 3. Fill in the settings
+## 3. Configure the project
 
 {bdg-warning}`You do this`
 
-Click the gear. The choices most studies change are laid out as a form, in five groups. Everything else is below the form as text. When you save, MACAW checks the settings and tells you which finished results they would put out of date.
+The settings most studies adjust are arranged as a form in six groups. All other settings can be edited as text in the *project.yaml* box below the form. On saving, MACAW validates the settings and lists the finished results that the change would make out of date.
 
 Project
-: Where the recordings are, how many people each one has and their roles. *Task starts at* and *Task ends at*, in seconds, keep only the part you study, for example to skip the researcher's introduction.
+: Location of the recordings, the number of participants per recording and their roles. *Task starts at* and *Task ends at*, in seconds, restrict the analysis to the task period, for example to exclude the experimenter's instructions.
+
+Video
+: Whether videos are converted to one format and frame rate before analysis, and at what quality.
 
 Steps
-: Which measures a run makes, and how many recordings run side by side.
+: Which measures a run produces, and how many recordings are processed in parallel.
 
 Tools
-: Which program does each kind of measurement, the language spoken, and whether each person has a microphone or they share one. **Body pose has no default**: choose MediaPipe or YOLO yourself (see {ref}`privacy`).
+: The program used for each kind of measurement, the spoken language, and whether each participant has a microphone or the participants share one. **Body pose has no default**: select MediaPipe or YOLO explicitly (see {ref}`privacy`).
 
 Checks by a person
-: For each check in {ref}`step 5 <review>`: does MACAW always wait for you, wait only when it is unsure, or never wait.
+: For each check described in {ref}`step 5 <review>`, whether MACAW always waits for the researcher, waits only when uncertain, or never waits.
 
 Coding
-: The codebook and the language model. Only needed for {ref}`coding with a language model <coding>`.
+: The codebook and the language model, needed only for {ref}`language-model coding <coding>`.
 
 :::{tip}
-Does the task start at a different time in each recording? Each recording can have its own start and end. Put them in a small file named after the recording, such as `dyad01.yaml`, in the `recordings` folder inside the project. Such a file can change other settings too, except ones that add a step for that recording alone, such as the things people look at: those go in `project.yaml`, and a run says so.
+When the task starts or ends at a different time in each recording, give each recording its own times in a file named after it, such as `dyad01.yaml`, in the `recordings` folder of the project. Such a file can override other settings for that recording as well.
+
+```yaml
+segment:
+  task_start_s: 42
+  task_end_s: 402
+```
 :::
 
-## 4. Run
+:::{important}
+Backchannels (short responses such as "mm-hm") are coded only when the words that count as backchannels are listed, because these depend on the language spoken. An utterance is coded as a backchannel when it consists only of listed words, is short, and does not take the floor. Add the list in the *project.yaml* box:
+
+```yaml
+coding:
+  backchannel_lexicon: [mhm, mm, uh-huh, yeah, okay, right]
+```
+:::
+
+## 4. Run the analysis
 
 {bdg-primary}`MACAW does this`
 
-On the Run page, tick the recordings and the steps you want, then press **Run**. Whatever a step needs runs with it. The **Run** at the end of a step's row runs only that step, and what it needs, for the ticked recordings. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Try one recording first to see that everything works.
+On the Run page, select the recordings and the steps, then press **Run**. Steps that a selected step depends on are included automatically. The **Run** button at the end of a step's row runs that step alone, with its prerequisites, for the selected recordings. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Processing a single recording first is a quick way to confirm that the setup works.
 
-Each step shows where it stands:
+The status of each step is shown as follows:
 
-| Status | What it means |
+| Status | Meaning |
 |---|---|
-| {bdg-success}`up to date` | Done with the current settings. It is not run again. |
-| {bdg-info}`not run yet` | Runs the next time you press Run. |
-| {bdg-warning}`to run again` | A setting or a file it depends on changed since it ran. |
-| {bdg-warning}`waiting for a person` | Stopped at a check. See {ref}`step 5 <review>`. |
-| {bdg-danger}`failed last time` | The output at the bottom of the page says why. |
+| {bdg-success}`up to date` | Completed with the current settings. It is not run again. |
+| {bdg-info}`not run yet` | Runs the next time **Run** is pressed. |
+| {bdg-warning}`to run again` | A setting or an input file it depends on has changed since it ran. |
+| {bdg-warning}`waiting for a person` | Paused at a check. See {ref}`step 5 <review>`. |
+| {bdg-danger}`failed last time` | The output at the bottom of the page gives the reason. |
 
-You can close the window at any time. The next run picks up where the last one stopped and does not repeat finished work.
+The window may be closed at any time. The next run resumes where the previous one stopped and does not repeat completed work.
 
 (review)=
-## 5. Check what MACAW decided
+## 5. Review automatic decisions
 
 {bdg-warning}`You do this`
 
-Some things software cannot decide reliably. When MACAW meets one, that recording stops at that point and waits for you, while the rest of the project carries on. Open the Review page and choose a recording to see what is waiting.
+Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items.
 
 ### Which file is whose
 
 {bdg-secondary-line}`once per project`
 
-MACAW shows the files it assigned to each person, read from the file names. Check the list and press **Confirm for the whole project**.
+MACAW assigns each file to a participant on the basis of its name. Check the assignment and press **Confirm for the whole project**.
 
 ### Offsets between files
 
-{bdg-secondary-line}`only when unsure`
+{bdg-secondary-line}`only when uncertain`
 
-Separate devices start recording at different moments, and MACAW lines them up by their sound. Look at the file's figure, then keep the offset or set it by hand.
+Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file, then keep the estimated offset or enter one by hand.
 
 ### Who is on camera
 
-{bdg-secondary-line}`only when unsure`
+{bdg-secondary-line}`only when uncertain`
 
-MACAW decides which person in the picture is which. Press **Draw review frames**, look at the names on the boxes, and keep them or swap two that are mixed up.
+MACAW determines which person in the picture is which participant. Press **Draw review frames**, check the names on the boxes, and keep them or swap two that are mixed up.
 
-### Voices on a shared microphone
+### Voices on the shared microphone
 
 {bdg-secondary-line}`always`
 
-MACAW finds the separate voices and suggests whose each one is. Listen to the clips and pick the right person for each voice. A voice that belongs to nobody in the study, such as a researcher, is marked *none*.
-
-:::{tip}
-The suggestion can also use what each voice says and how high it is, if you tell it what to look for in `project.yaml`. Nothing is assumed about who your participants are: you write the rules.
-
-```yaml
-identity:
-  voice_hints:
-    - says: '^\s*(hey |look )?(mommy|mom|mama)[,.!?]'   # calling for mom: likely the child
-      role: child
-    - says: "\\b(mommy|mama)'s (gonna|going|not)\\b"  # speaking of herself: likely the mother
-      role: mother
-  pitch_order: [mother, child]   # lowest voice first; used when two voices differ by 40 Hz or more
-```
-
-`says` is a regular expression, matched against each line a voice said, ignoring case. A voice goes to a role when more of its lines match that role than any other. Where the words and the pitch disagree, or either disagrees with a microphone or a face, the suggestion says so, and with review set to flagged it waits for you.
-:::
+MACAW separates the voices and proposes a participant for each. Listen to the clips and assign each voice to a participant. A voice that belongs to none of the participants, such as an experimenter's, is assigned *none*. The proposal can also draw on what each voice says and on how high it is ({ref}`voice-hints`).
 
 (transcript)=
 ### Transcript
 
-{bdg-secondary-line}`whenever you want`
+{bdg-secondary-line}`optional`
 
-Export the transcript to ELAN, correct words, boundaries or speakers there, and import the corrected file. Speech the software left out sits on a tier of its own, so you can put it back. You can always go back to the automatic transcript.
+**Export to ELAN** writes the transcript as an ELAN file. Words, boundaries and speakers can be corrected in ELAN, and the corrected file is read back with **Import a corrected transcript (.eaf)**. Speech the recogniser omitted is placed on a tier of its own so that it can be restored. **Back to the recogniser's** returns to the automatic transcript at any time.
 
 ### Speech acts
 
-{bdg-secondary-line}`only with language-model coding`
+{bdg-secondary-line}`with language-model coding only`
 
-The units the language model was unsure about. Pick the right code for each and save. Your choice is kept beside the model's.
+The units the language model was uncertain about, together with a random sample of units it was certain about. Select the correct code for each and press **Save decisions**. The researcher's decision is stored alongside the model's.
 
-### After a check
+### After a review
 
-When a check is cleared, press Run again and that recording carries on from where it stopped. Every decision is kept with who made it and when, and is listed on the quality page.
+Once an item is resolved, press **Run** again; the recording continues from where it paused. Every decision is stored with who made it and when, and is listed in the quality-control report.
 
-How often each check asks is up to you: the labels above are the starting choices, and each check can be changed under *Checks by a person* in the settings.
+How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*Pixels to centimetres*, *Where people look*, *Your coding*) belong to optional features.
 
-## 6. Look at the results
+## 6. Inspect the results
 
 {bdg-primary}`MACAW does this` {bdg-warning}`You do this`
 
 The Results page has two parts.
 
-Quality page
-: Press **Write the QC page**, then open it. It lists what the checks flagged (a transcript that does not seem to fit its audio, a mouth that does not move while its owner is said to be talking, people the tracker kept losing, a pitch that jumps an octave, or that sits an octave high throughout when `qc.f0_median_max_by_role` gives the highest believable median for a role), every decision made by the software or by a person, an overview with each person's talk, movement, distance and codes on one clock (list other measures for it under `qc.overview_features` in `project.yaml`), and a set of frames to look at. Those frames are the moments the checks pointed at, plus frames picked at random so you also see ordinary moments. You look at a sample, not at every frame.
+Quality review
+: Press **Write the QC page**, then open it. The report lists what the automatic checks flagged (for example a transcript that does not seem to match its audio, a mouth that does not move while its owner is said to be speaking, participants the tracker repeatedly lost, or a pitch track that jumps by an octave), every decision made by the software or by a person, an overview of each participant's speech, movement, distance and codes on a common time axis, the meaning and unit of every measure, and a set of frames to inspect. These frames include the moments the checks pointed to and a random selection, so that ordinary moments are inspected as well. The review is thus based on a sample rather than on every frame.
 
-Measures over time
-: Pick a step and a measure to see it for each person across the recording.
+Measures
+: Select a step and a measure to plot it for each participant across the recording.
 
 :::{note}
-Something looks off? Change the setting and run again. Only the steps that setting affects are run again.
+When a result looks wrong, adjust the relevant setting and run again. Only the steps that depend on that setting are recomputed.
 :::
 
-## 7. Take your data with you
+## 7. Export the data
 
 {bdg-success}`What you get`
 
-Type one of these in the project folder. Each one prints where it saved its files.
+Run one of the following commands in the project folder. Each reports where it saved its files.
 
 `macaw export`
-: One table (CSV) with every measure, for every person, over time. Add `--rmd` for an R Markdown file that loads it. Recordings with a scale also get their pixel measures in centimetres ({ref}`scale`).
+: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. For recordings with a pixel scale, measures in pixels are also given in centimetres ({ref}`scale`).
 
 `macaw export -f sequence`
-: Who is talking at each second, per person, for sequence analysis.
+: For each participant, whether they are speaking at each second, for sequence analysis.
 
 `macaw export -f eaf`
-: One ELAN file per recording with the machine codes, as a starting point for your own coding, which comes back with `macaw import-codes` ({ref}`own-coding`).
+: One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`).
 
 `macaw export -f skeleton`
-: Every person's body points, one CSV per recording: a row per person, video and frame, with each point's position in pixels and how sure the detector was (`nose_x`, `nose_y`, `nose_conf`, and so on), the same columns a function in the `scripts` folder gets ({ref}`measures`). Nothing is smoothed, and a point the detector was less sure of than `pose.min_confidence` has no position. With 3D ({ref}`three-d`), `<recording>_3d.csv` gives the points in metres, with `_z` added, on the calibration's axes: after `macaw calibrate-cameras` these are the first camera's (x to its right, y down, z straight ahead).
+: Each participant's body keypoints frame by frame, one CSV per recording, in pixels with the detector's confidence for each point. With several calibrated cameras ({ref}`three-d`), a second file gives the points in metres.
 
 `macaw methods`
-: A Methods section describing exactly the steps you ran, with its references.
+: A Methods section describing the steps that were actually run, with references.
 
-Every run keeps its settings and the software versions it used, so anyone can rebuild the same table later.
-
-(coding)=
-## Coding speech with a language model
-
-This is optional. A language model can code each utterance or turn of the transcript with the codes in your codebook, such as question, instruction or praise. You write the codebook: each code with a description, the criteria, examples, counterexamples and borderline cases.
-
-Where it runs
-: On a model on your own computer or lab server, or on a cloud service (OpenAI, Anthropic). With a cloud service the transcript text is sent there, so check that your ethics approval allows it.
-
-Whose talk
-: Everyone's, unless you name roles under *People to code*, for example only the child. The others' talk, and a researcher's when other voices are on, is still shown to the model around each unit so it can tell an answer from a new topic, but it is not coded.
-
-What the model sees
-: Each line's speaker and words, and by default its timing: when it starts, how long it lasts, and the pause or overlap before it. Under *What the model is shown besides the words* (`coding.llm.show`) you can take the timing away (`[]` gives the words only) or add how the line sounds: `pitch` in semitones, `loudness` in dB and speech `rate` in percent, each against the median of that speaker's lines in the recording, so a child's high voice is not read as excitement. Pitch and loudness come from the voice measures, which then run first.
-
-Frames from the video
-: `frames` in the same list gives each unit three pictures, near its start, middle and end, taken from the camera that films the speaker, or from the main video when no camera is theirs. The model has to read pictures (on Ollama, for example `qwen3-vl:8b-instruct`), and each unit goes in a request of its own, so a run takes longer. The pictures are whole frames with nothing drawn on them: say in the note to the model who is who and where they sit. Three frames show what a person looks like at three moments, not how they move, and someone turned away or out of the picture gives the model nothing to go on. With a cloud service the frames are sent there too.
-
-A note to the model
-: *Note to the model* (`coding.llm.notes`) goes into the prompt as you write it, for what the model cannot know, such as "A is the mother, on the left; B is the child".
-
-Examples people coded
-: Units that people coded can be shown to the model as examples. Import the coding first ({ref}`own-coding`), then draw a few units of each code into a table:
-
-  ```
-  macaw draw-examples examples.csv --coder anna --per-code 3
-  ```
-
-  Each row has the code, the speaker, the words, the line before and where it came from. Open it, drop or change rows, and write a reason in `why` where you want the model to read one. Then set *Examples people coded* (`coding.llm.examples`) to the file. `-r` draws only from the recordings you name, for example those of one task to see whether examples carry over to another. A recording is never shown its own examples: those rows are left out of its prompt and its QC notes say how many. Units you will measure agreement on should not be the ones you drew examples from.
-
-Why the model chose a code
-: With *Model says why* (`coding.llm.reasons`) the model names in a few words what each code rests on: the words, the timing, the voice or the picture. The reasons are kept in `samples.parquet` beside each answer and shown on the Review page. Asking for a reason can itself change the answers, so compare with and without it as two versions rather than switching it on halfway.
-
-Reasoning before the answer
-: Some models (qwen3, for one) reason at length before they answer, which makes each request several times slower. *Model reasons before answering* (`coding.llm.think`) set to no asks them to answer at once, yes asks them to reason, and empty leaves the model's own default. It works with a model on your own computer or server (Ollama, vLLM, llama.cpp).
-
-How sure it is
-: Each unit is asked several times (five by default). The share of matching answers is its confidence. The model may also answer "cannot tell".
-
-What comes to you
-: Units below 70% agreement, and every "cannot tell", appear under *Speech acts* on the Review page. A model can give the same wrong code every time it is asked, so agreement among its answers finds only some of its mistakes. Five units per recording that it was sure of (*Sure units checked at random*, `coding.llm.review_random`) are therefore drawn at random and queued as well, marked *random check*. Once people have decided them, `macaw review --apply` and the QC report say how many of the checked units a person coded otherwise, which is how often the model's sure answers are wrong. The draw is the same each time the queue is exported, and changing the number does not code anything again.
-
-Agreement
-: MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa, and compares the model with coding you did yourself ({ref}`own-coding`).
-
-How the codes were used
-: `macaw describe-codes` lists, for each recording, coder and person, how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs mean the coding flips from unit to unit, which is worth a look before you analyse it. Add `--out codes.csv` to keep the table.
-
-To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
-
-Several versions side by side
-: To see what a fuller codebook, another model or more of the recording gives, code the same units several ways at once. Name each version under `coding.judges` in `project.yaml` with only what it changes; everything else is as in the coding settings:
-
-  ```yaml
-  coding:
-    codebook: codebook.yaml
-    llm: {model: qwen3:8b}
-    judges:
-      names_only: {codebook: codebook_names.yaml}
-      bigger: {model: qwen3:14b}
-      words_only: {show: []}
-  ```
-
-  A version takes `codebook` and any key of `coding.llm`. Each runs as its own step (`coding.judge.names_only`), so changing one recodes only that one, and its codes are kept under its name. To compare the versions with each other and with people, give every codebook the same `name`, so they code the same tier, then run `macaw agreement --tier <that name>`: the code-by-code table puts each version beside the people's own agreement. Versions do not send units to the review queue; only the coding settings' own version does. The Methods text describes each version.
-
-  A codebook that lists the codes by name alone, with no description, criteria or examples, is coded as it is, which tells you what the model makes of the names. One where only some codes are described is taken for a draft and stopped.
-
-The model against itself
-: Asked twice, a model does not always give the same code, so two versions can differ by chance alone. `macaw agreement --samples` counts each of the model's answers as a coder of its own (`llm:ollama/qwen3:8b#1`, `#2` and so on, or `words_only#1` for a version), and the kappa between them, code by code, is how far the model agrees with itself. A difference between two versions smaller than that is not one to read anything into. It needs more than one answer per unit (`n_samples`).
-
-(own-coding)=
-## Your own coding
-
-Coding done by people, in ELAN or another program, can come in beside the machine's codes. Then `macaw agreement` compares two coders, or a coder with the language model or with *Who looks at whom*, `macaw describe-codes` counts it, and gestures coded on a tier are measured ({ref}`gestures`).
-
-On the Review page, type your name under *Your name*, pick the recording and press **Import your coding**. In a terminal, give the files or the folder that holds them, each file's name starting with its recording (`dyad01_anna.eaf`, say), and who coded them:
-
-```
-macaw import-codes coding/anna --coder anna
-```
-
-A single file named otherwise takes `-r dyad01`. Importing again under the same name replaces that coder's codes for the same person and tier; other coders' codes stay.
-
-Files
-: ELAN files (`.eaf`), or a table (`.csv`, `.tsv` or `.xlsx`) with the columns `tier`, `start`, `end` and `code`, and optionally `person`, as most coding programs can export. Start and end are seconds or a clock time such as `1:02.5`, counted from the start of the recording's own video, as ELAN shows them when you code that file.
-
-Which tier is whose
-: Say it once in `project.yaml`, under each tier's name as your files have it:
-
-  ```yaml
-  coding:
-    imports:
-      Child Gaze:
-        person: child
-        tier: gaze_target
-        labels: {Mom: parent, Away: elsewhere}
-  ```
-
-  `person` is one of the roles; leave it out when the file says whose the tier is (the tier's *Participant* in ELAN, or the `person` column). `tier` is the name the codes get here: to compare them with the machine's, use the machine's name, `gaze_target` for where people look or the codebook's name for the language model. `labels` renames codes to the machine's or the codebook's; codes not listed keep their names. A tier that is neither listed nor given to a person in the file is left out, and the command says so. Files that MACAW itself wrote (`macaw export -f eaf`) come back without a list, except tiers of machine codes nobody changed, which are not your coding.
-
-Comparing
-: Coders who coded the same intervals: `macaw agreement --tier speech_acts`. When each drew their own boundaries, `--units` takes each interval of one coder as a unit and gives it every other coder's code that covers most of it, or no code when none does; name the language model as `macaw agreement` lists it to compare on its utterances. For states that last, such as where someone looks, `--grid-s 0.5` cuts the time into half-second cells instead. A coder who coded only part of a recording leaves the rest without a code, which counts as disagreement, so compare over what both coded.
-
-What you get
-: Alpha over all coders together, kappa for each pair, and each code on its own against the rest: alpha over all coders, and kappa for every pair with how often each of the two gave the code. With two people and a language model, the model's kappa with each person sits beside the people's own on every code. `--out agreement` writes `report.json` and `units.csv`, one row per unit with its recording, person, tier, start and end, what that person said in it and the line before (where there is a transcript), and a column per coder: their code, `_none` where they coded that person and tier but put nothing on this unit, or blank where they gave it no rating. From it you can count which codes are taken for which, see whether the model misses where the people also disagree, or read the units two coders split on when you revise the codebook.
-
-(gaze)=
-## Who looks at whom
-
-For each person in each frame, MACAW finds the point in the picture they look at, and from it whom they look at, which of the things you name, somewhere else in the picture, or something outside it. It reads this off the picture with a model trained for it (Gaze-LLE), from the person's head and the whole scene, so it also works when a face is half turned away. It needs nothing from you beyond the settings below, and the first run downloads the model (about 1.3 GB).
-
-:::{important}
-Whom a person looks at can only be read when the person they look at is in the same picture, so this needs a camera that shows everyone involved. A camera on one person alone gives where in the picture they look, nothing about whom; see *Your seats instead of the picture* below for that case. The point found is where the head and eyes point as the model reads them from the picture, not an eye tracker: it tells the other person's face from the table or the toys, not one toy from the one beside it.
-:::
-
-People
-: A person counts as looking at someone while the point lies on that person's head, as MACAW places it from their body points. Two people looking at each other at the same moment is mutual gaze.
-
-Things
-: Name them in `project.yaml`, in plain English words, and MACAW looks for them in the picture five times a second (with Grounding DINO, which finds things by name):
-
-  ```yaml
-  gaze:
-    targets: [bottle, book, toy car]
-  ```
-
-  The quality page warns when a name is rarely found; another word for the same thing often works better. Raise `gaze.object_score` (0.35) when it finds things that are not there, lower it when it misses them. A person's head counts before any thing in front of it.
-
-The results, for each person (`subject_id`) toward each other person (`subject_id_b`):
-
-`looks_at`, `gaze_to_head`
-: 1 while one looks at the other, else 0; and how far the point is from the other's head, in head widths (0 on the head), for setting a looser rule yourself.
-
-`mutual_gaze`
-: 1 while the two look at each other.
-
-`looks_at_share`, `looks_at_n`, `mutual_gaze_share`
-: For the whole recording: the share of the time one looked at the other, how many looks that was, and the share of mutual gaze.
-
-Read frame by frame, a look sometimes flickers to something else for a frame or two, and each flicker would count as a new look. So a look shorter than `gaze.min_look_s` (0.2 seconds) joins the look before it; set it to 0 to keep every frame as read. What each frame read before this stays in the step's `gaze_points.parquet`.
-
-`gaze_x`, `gaze_y`, `gaze_in_frame`
-: The point itself, in pixels, and how sure the model is that what the person looks at is in the picture (0 to 1; below 0.5 counts as outside it).
-
-Every look also becomes a code on a `gaze_target` tier for each person (the person or thing looked at, `elsewhere`, or `off_screen`) and on a `mutual_gaze` tier, so `macaw export -f eaf` puts them in ELAN beside your own coding, `macaw agreement` compares them with gaze coding you bring in ({ref}`own-coding`), and `macaw describe-codes` counts them.
-
-`gaze.model` picks the model. The default was tuned on children playing with adults; `gazelle_dinov2_vitb14_inout_childplay` takes about half the time and is a little less exact.
-
-:::{note}
-Checked on public video of children playing with adults, against hand labels of where each person looks. Whom a person looks at was right in most frames, more often for adults than for children, and over a whole clip the share of time each person spent looking at someone ranked people much as the labels did, though it came out too high for adults who look about a lot. Children look at faces less often than adults, so a few wrong frames weigh more for them. How well it does on your video depends on how large and how turned the heads are: label some frames (below) and the quality page tells you.
-:::
-
-### Check it on your own video
-
-On the Review page, *Where people look* shows a frame with each person's head marked. Say whom or what each person looks at and save; *A frame at random* picks the next one. Take frames at random rather than the clear ones, or the check says more than it should. About 20 frames per person tell you a good deal. The quality page then says, for each person, how often MACAW agreed with you and lists the frames where it did not. In a terminal the same is `macaw label-gaze -r 003 --at 12.4 --person child --looks-at parent`, with `elsewhere` for anything else and `unsure` when you cannot tell.
-
-### Your seats instead of the picture
-
-When the person looked at is often outside the picture, for example a parent sitting beside the camera that films the child, whom someone looks at can still be read from where their head (and, with `face.gaze: true`, their eyes) points, if MACAW knows where everyone sits. Set `gaze.backend: angles` and say where the people and the camera are, seen from above, and how high their eyes are, all in one unit (centimetres, say), with the camera at the start of the depth axis and x to its right:
-
-```yaml
-gaze:
-  backend: angles
-  seats:
-    camera: [0, 0, 110]
-    parent: [-50, 120, 115]
-    child: [30, 140, 85]
-  tolerance_deg: 20
-```
-
-A look within `tolerance_deg` of the direction to someone is a look at them (there is no default: it depends on how far apart people sit). This assumes people stay in their seats and the camera is level; a recording with other seats gets its own in `recordings/003.yaml`. Seats describe one camera, so when people are filmed by several (each their own, say), only labelled frames are used. Head angles from a single camera carry a bias of their own, so label some frames as above: MACAW then corrects each person's offset from them, and once a person has three or more frames looking at something, it takes that direction from the frames rather than the seats. Labelled frames alone, without seats, work too, and also name things such as a toy that stays put. The measure between two people is then `gaze_off_deg`, the angle off the direction to the other.
-
-(measures)=
-## Your own body measures
-
-This is optional, and is written in `project.yaml` rather than in the workbench. Besides the body measures MACAW always makes, you can define your own: from a point on one person to a point on another person, or on the same person. Each one becomes a measure over time like any other, with its own name.
-
-```yaml
-kinematics:
-  measures:
-    - name: hand_to_child_head
-      person: parent
-      joints: [left_wrist, right_wrist]
-      to_person: child
-      to_joints: [nose]
-      method: distance
-      per_body_size: true
-    - name: head_toward_parent
-      person: child
-      joints: [nose]
-      to_person: parent
-      to_joints: [nose]
-      method: offset_toward
-      per_body_size: true
-```
-
-person, to_person
-: A role from your project's roles. `to_person: self` measures within one person, for example a hand to their own face.
-
-joints, to_joints
-: The skeleton's points (`nose`, `left_eye`, `right_eye`, `left_ear`, `right_ear`, `left_shoulder`, `right_shoulder`, `left_elbow`, `right_elbow`, `left_wrist`, `right_wrist`, `left_hip`, `right_hip`, `left_knee`, `right_knee`, `left_ankle`, `right_ankle`), plus `shoulder_center` and `hip_center`. With several listed, the nearest pair counts.
-
-method
-: `distance`; `approach_speed`, how fast that distance shrinks (positive while coming closer); `offset_toward`, how far one point sits from the person's own shoulder midpoint toward the other person, such as a head turned toward them; or a function of your own (below).
-
-per_body_size
-: Divides by the person's shoulder width, so a measure does not depend on how far from the camera they sit.
-
-Two people are measured only on a camera that shows both of them.
-
-(gestures)=
-### Gestures you coded
-
-If you code gestures in ELAN on a tier of each person and bring the file in ({ref}`own-coding`), MACAW can measure every coded gesture from the wrists: peak speed, submovements (the speed peaks it is made of), holds between the first and last submovement, how regular the submovements are, the area the hand covers, how high it reaches relative to the body, the gesture space it uses, and in how many directions around the body's centre it reaches out (above, below, to either side and the four corners). Each gesture gives one row per measure and hand.
-
-```yaml
-kinematics:
-  gestures:
-    tier: gesture
-    still_speed: 15
-    peak_prominence: 40
-```
-
-still_speed, peak_prominence
-: In pixels per second, so they depend on your camera: a hand slower than `still_speed` is still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. Set `peak_prominence` well above the jitter of the tracking, or every wobble counts as a submovement: before trusting the counts, check a few gestures against the video. Speeds, distances and areas stay in pixels; exports add centimetres when a recording has a scale ({ref}`scale`).
-
-annotator
-: When two people coded the tier, name whose gestures to measure.
-
-holds
-: `each_hand` (the default) counts the holds of each hand on its own. `both_hands` counts a hold only while both hands are still, once per gesture; a hand that is out of view throughout leaves it empty.
-
-Height and gesture space need the hips in view. When a table hides them, those two stay empty.
-
-:::{important}
-Gesture space is drawn on the picture, so it follows the body only while the person faces the camera or has their back to it. Seen from the side, the body looks narrow and the hands seem to reach far out of it. Height is much less affected. With several cameras, the 3D gesture space below has no such limit.
-:::
-
-Tracking jitter adds a little to every speed and area, most to small, slow movements. Compare them between people and conditions measured the same way rather than reading them as true sizes.
-
-With several calibrated cameras ({ref}`three-d`), the same measures are also taken in the room, named with `_3d` at the end, once you set two more thresholds in metres per second:
-
-```yaml
-kinematics:
-  gestures:
-    still_speed_3d: 0.05
-    peak_prominence_3d: 0.1
-```
-
-These numbers are only an example: as in the picture, there is no default, and the 3D wrist speeds in the results help to choose them. In 3D the area, the height and the gesture space are taken in the person's own frontal plane, set by their hips and shoulders, so they hold whichever way the person faces a camera; the hips and shoulders must be placed in 3D.
-
-### A method of your own
-
-Put a Python file in the `scripts` folder next to `project.yaml`, and name its function as `method: file.function`. The function receives two tables, one per person, with a row per video frame, a column `t` for the time, and `<joint>_x` and `<joint>_y` for every point. It returns one number per row.
-
-```python
-# scripts/my_measures.py
-def wrist_height_gap(person, other):
-    return other["left_wrist_y"] - person["left_wrist_y"]
-```
-
-```yaml
-    - name: wrist_height_gap
-      person: parent
-      to_person: child
-      method: my_measures.wrist_height_gap
-```
-
-With several calibrated cameras ({ref}`three-d`), add `in_3d: true` to a measure whose function also makes sense on points in the room. It is then run a second time on tables that also have `<joint>_z`, with every position in metres, and gives `wrist_height_gap_3d`. Without it, a function written for the picture is not run in 3D.
-
-When you change the file, the next run recomputes this measure. The `scripts` folder can also hold whole new steps or backends: `macaw new-extractor` and `macaw new-backend` write a working example, and copying its `extractor.py` or `backend.py` into `scripts` is enough, with nothing to install.
-
-:::{warning}
-Every file in `scripts` runs as Python whenever MACAW reads the project. Only put files there that you trust.
-:::
-
-(scale)=
-## Centimetres instead of pixels
-
-This is optional. Distances, speeds and areas from the video are in pixels. They can be given in centimetres too, with one condition.
-
-:::{important}
-A scale is right only at the distance from the camera where it was measured. Something twice as far away looks half as big, so a scale taken at the parent's seat makes a child sitting further back look smaller than they are. Measure an object where each person sits. When people sit at different distances, measure at each person's place, and say whose place it was: each person then gets their own scale. A measure between two people, such as the distance between them, gets centimetres only when both have the same scale.
-:::
-
-Film it before you record (calibration)
-: Before the session, with the camera where it will stay, film an object of known length (a ruler or a sheet of paper) held at each person's place. Put the clip in a `calibration` folder next to `project.yaml`, and write `scale: {calibration: lab.mp4}` in `project.yaml` so every recording uses it. When the camera was moved for some sessions, film a new clip and name it in those recordings' own files, such as `recordings/003.yaml`. Moving or zooming the camera after the clip makes it wrong, and a clip carries over only to video of the same size.
-
-Measure it in the recording
-: When the object is in the recording itself, measure it there instead. A recording's own measurements come before a calibration clip.
-
-Write the number
-: Put `scale: {cm_per_px: 0.11}` in `project.yaml` for everyone, or `scale: {cm_per_px_by_role: {child: 0.12, parent: 0.09}}` for each person's place; in `recordings/003.yaml` for one recording. Numbers written this way come before any measurement.
-
-To measure, open the Review page and go to *Pixels to centimetres*. Choose the recording's video or a calibration clip, show a frame, click the two ends of the object, type its length, say whose place it was, and save. Measure two or three times: the page lists each measurement, and their spread shows how precise the clicks are. In a terminal the same is `macaw set-scale --calibration lab.mp4 --points 412,630,1508,641 --length-cm 30 --person child`, or `-r 003` in place of `--calibration` for a recording's own video.
-
-The results stay in pixels. `macaw export` adds every measure in pixels a second time in centimetres, named with `_cm` at the end, and writes `scale.csv` beside the table with each recording's scale for each person.
-
-The quality page gives each person's nose-to-shoulders length in centimetres at their scale (a value far from a real one means they sit nearer or further than the object was), and flags a person who looks more than 10% bigger or smaller at some point in the recording (`scale.max_size_change`), since then they moved toward or away from the camera. It compares stretches of 30 s (`scale.size_window_s`), which suits people who stay seated: a few seconds bent over or looking down does not count. When people walk about, set it to about 5 s, or a walk to the far side of the room and back goes unseen; a person who bends over for a few seconds is then flagged too.
-
-(three-d)=
-## Several cameras: 3D
-
-This is optional. When two or more cameras film the same people from different sides, MACAW can place each person's body points in the room, in metres. Distances then no longer depend on how far someone sits from a camera, and it becomes possible to say where a person's head points relative to the other person.
-
-It needs four things:
-
-- Every body point you care about is seen by at least two cameras, from clearly different directions.
-- The cameras film at the same time. MACAW lines them up by their sound, as it does for any recording.
-- The cameras are calibrated: MACAW knows each lens and where the cameras stand. This comes from a short clip of a printed board, filmed before the session.
-- The cameras do not move or zoom after that clip. When they do, film the board again.
-
-:::{note}
-Placing people in 3D has been checked on simulated cameras and on a public recording of an adult and a toddler filmed by four calibrated cameras, against that recording's own 3D reconstruction. Finding the cameras from a board has been checked on simulated cameras only.
-:::
-
-### 1. Print the board
-
-The workbench has a *Cameras* page for every step here; it appears once a recording has two or more videos, or a setup is in the `calibration` folder. Each button on it shows the command it runs.
-
-*Draw the board* on that page, or `macaw calibration-board`, writes a ChArUco board (a chessboard with small codes in its white squares) as `calibration/board_A2.png`. Print it at 100%, glue it flat on something stiff such as foam board, and measure one square with a ruler. Type that length on the page and save it, or write it in `project.yaml`:
-
-```yaml
-pose3d:
-  board:
-    square_mm: 74.6
-```
-
-The default board fills A2. For A3, set `square_mm: 50` and `marker_mm: 37` before printing (`--paper A3`).
-
-### 2. Film it before the session
-
-With the cameras where they will stay, clap once in view of all of them, then move the board slowly through the space where people will sit, tilting it towards and away from the cameras, for about a minute. Keep it in view of two or more cameras at a time, and near enough that it fills a good part of the picture. Put one clip per camera in a folder such as `calibration/lab`, each named like that camera in the recordings: `room.mp4` for the camera whose recordings are named `003_room.mp4`.
-
-### 3. Find the cameras
-
-```bash
-macaw calibrate-cameras lab
-```
-
-or choose the setup on the *Cameras* page and press *Find the cameras*. It takes a few minutes and reports, for each camera, how far the board's corners land from where the camera saw them (under 1 or 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, drawn in 3D on the page. The page also says when a clip or the board's size changed since, so the cameras need finding again. Then press *Use for this project*, or name the setup in `project.yaml`, or in a recording's own file when some sessions used another setup:
-
-```yaml
-pose3d:
-  calibration: lab
-```
-
-A lab that has calibrated its cameras with another tool can put that calibration file in the `calibration` folder instead and name it, such as `calibration: lab.toml`. MACAW reads Anipose's `calibration.toml`; set `pose3d.units` to what its positions are in when the file does not say.
-
-### 4. Run and look
-
-Run as usual. Each person must carry the same name on every camera (see *Who is on camera* in step 5 above). The results gain measures ending in `_3d`, in metres, beside the measures from the picture:
-
-`left_wrist_speed_3d`, `hand_distance_3d`, ...
-: Each person's wrist speed, acceleration and jerk, and the distance between their wrists.
-
-`interpersonal_distance_3d`, `head_distance_3d`
-: Between two people's shoulder midpoints and between their heads.
-
-`head_toward_deg_3d`
-: The angle between where a person's head points and the direction to the other person's head; 0 means the head points straight at them. This is head direction, not gaze.
-
-`gesture_left_peak_speed_3d`, ...
-: The measures of each gesture you coded, in the room, when `still_speed_3d` and `peak_prominence_3d` are set (see *Gestures you coded*).
-
-`<name>_3d`
-: Your own measures ({ref}`measures`) in the room. `distance`, `approach_speed` and `offset_toward` always get one; a method of your own only with `in_3d: true`. In 3D, `offset_toward` is how far the point sits from the shoulder midpoint in the direction of the other point, depth included. Two people are measured whenever both are placed in 3D, not only when one camera shows them both.
-
-On the Results page, *In 3D* shows everyone's skeleton and the cameras; drag to turn it and move the slider to go through the recording. The quality page says, for each person, how often they were placed in 3D, how well the cameras agree on them, and warns when a bone keeps changing length, which means some of its points were misplaced.
+Every run records its settings and the software versions it used, so that the same data set can be reproduced later.

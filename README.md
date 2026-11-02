@@ -2,7 +2,24 @@
 
 **M**ultimodal **A**utomated **C**oding **a**nd **A**nalysis **W**orkbench
 
-From one or more recordings of a natural two-person (or N-person) interaction to an analysable multimodal feature time series.
+MACAW derives time-resolved measures of voice, language, turn-taking, body movement, facial behaviour and gaze from audio and video recordings of dyadic and small-group interaction, and combines them in a single data set for statistical analysis. Decisions that software cannot make reliably, such as which voice belongs to which participant, are referred to the researcher, and every decision is recorded.
+
+![MACAW workflow](docs/workflow.png)
+
+## Scope
+
+- Alignment of recordings from separate devices by their sound.
+- Acoustic, lexical, syntactic and turn-taking measures from automatic transcription with speaker attribution.
+- Pose, movement, interpersonal distance, facial action units, head orientation and gaze, in two dimensions or, with several calibrated cameras, in three.
+- Rule-based coding of pauses, interruptions and backchannels, and speech-act coding by a language model from a codebook, with human review of uncertain units.
+- Import of human coding from ELAN or tables, inter-rater agreement (Krippendorff's alpha, Cohen's kappa), and export to ELAN.
+- A quality-control report, a Methods section generated from the steps that were run, and a graphical workbench.
+
+MACAW describes each recording; statistical inference and group comparisons remain with the researcher.
+
+## Documentation
+
+The [user guide](https://au-connect-lab.github.io/Multimodal-Automated-Coding-and-Analysis-Workbench/) covers installation, the standard procedure and the optional features.
 
 | | |
 |---|---|
@@ -10,23 +27,4 @@ From one or more recordings of a natural two-person (or N-person) interaction to
 | import | `macaw` |
 | CLI | `macaw` |
 
-Status: pre-alpha. The audio and pose chains run end to end; the rest is in progress.
-
-The [user guide](https://au-connect-lab.github.io/Multimodal-Automated-Coding-and-Analysis-Workbench/) walks through a project step by step.
-
-![MACAW workflow](docs/workflow.png)
-
-## What it covers
-
-Automatic multi-source alignment, feature extraction (prosody, transcript, pose, face, motion energy), quality control, rule-based and LLM-assisted behavioural coding, and two-way `.eaf` interchange with ELAN.
-
-## On a Slurm cluster
-
-Describe your cluster in an `hpc.yaml` next to `project.yaml`, starting from the one in the package (`macaw/config/hpc.yaml`): partitions, the GPU to ask for, the lines that load modules and activate the environment, and a shared folder for model weights. Then, on a login node:
-
-```bash
-macaw hpc prefetch-models -c project.yaml   # once: model weights into the shared folder; the jobs run offline
-macaw hpc generate -c project.yaml          # writes the job arrays and prints the submit command
-```
-
-Steps that need a GPU and steps that do not run in separate job arrays, one element per recording, and each recording moves on to its next array by itself. A recording that stops for a person (checking offsets, naming voices) waits there; once that is done, run `macaw hpc generate` again, which leaves out whatever has finished.
+Status: pre-release. Names and settings may still change.

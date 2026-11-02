@@ -1,63 +1,93 @@
 # MACAW
 
-**From recordings of people talking to one table you can analyse.**
+**Multimodal Automated Coding and Analysis Workbench**
 
-MACAW (Multimodal Automated Coding and Analysis Workbench) watches and listens to recordings of two or more people interacting. It measures their voices, words, bodies and faces over time and puts it all into one table for R, Python or SPSS. The software does the measuring. Wherever it is unsure, it stops and asks you.
+MACAW derives time-resolved measures of voice, language, turn-taking, body movement, facial behaviour and gaze from audio and video recordings of dyadic and small-group interaction, and combines them in a single data set for analysis in R, Python or SPSS. Decisions that software cannot make reliably are referred to the researcher.
 
-## How it works
+## Workflow
 
-You bring the recordings and a few settings. MACAW lines up the files from different devices, measures everything it can, codes what it can by rule or with a language model, and checks its own work. You confirm the things only a person can tell, such as who is who, and look over what the checks flag. Everything ends up in one table: every measure, for every person, over time.
+The researcher provides the recordings and a small number of settings. MACAW aligns the files from different devices, extracts the measures, codes behaviour by rule or with a language model, and checks its own output. The researcher confirms what only a person can judge, such as which participant is which, and inspects what the checks flag. Manual coding in ELAN proceeds in parallel and can be compared with the machine codes. The result is one table containing every measure for every participant over time.
 
 ```{figure} workflow.png
 :width: 100%
-:alt: MACAW workflow. Your recordings go into Prepare, where files are matched to people, lined up and trimmed, and you check the line-up and confirm who is who. Then Extract features, Machine coding and Check quality, where you decide. Alongside runs your own coding in ELAN. All of it ends in one table, ready to analyse.
+:alt: MACAW workflow. The recordings go into Prepare, where files are matched to people, lined up and trimmed, and the researcher checks the line-up and confirms who is who. Then Extract features, Machine coding and Check quality, where the researcher decides. Alongside runs the researcher's own coding in ELAN. All of it ends in one table, ready to analyse.
 
-The whole path at a glance (click to enlarge). Blue boxes are done by MACAW, orange marks the places where you step in, green is what you get.
+Overview of the workflow (click to enlarge). Blue steps are performed by MACAW, orange marks the points at which the researcher intervenes, and green is the output.
 ```
 
-Each step in this guide is marked the same way: {bdg-primary}`MACAW does this` {bdg-warning}`You do this` {bdg-success}`What you get`
+The same marking is used throughout this guide: {bdg-primary}`MACAW does this` {bdg-warning}`You do this` {bdg-success}`What you get`
 
-## What it measures
+## Measures
 
 ::::{grid} 1 2 3 3
 :gutter: 2
 
 :::{grid-item-card} Voice
-Pitch, loudness and voice quality for every turn, plus the standard voice feature sets used in speech research.
+Fundamental frequency, intensity and voice quality for every turn, and the standard acoustic feature sets eGeMAPS and ComParE.
 :::
 
-:::{grid-item-card} Words
-A transcript of who said what and when, word counts, vocabulary, sentence structure, and who brings in the words the pair come to share.
+:::{grid-item-card} Language
+A transcript with speaker and timing, word counts, lexical diversity, syntactic complexity, and which participant introduces the words the pair come to share.
 :::
 
 :::{grid-item-card} Turn-taking
-Who holds the floor, gaps and overlaps between speakers, interruptions, short "mm-hm" replies, pauses, and how predictable the turn-taking is.
+Floor holding, gaps and overlaps between speakers, interruptions, backchannels, pauses, and the predictability of turn transitions.
 :::
 
 :::{grid-item-card} Body
-Each person's pose, how fast they move, how far apart people are, and the amount of movement in a part of the picture you mark; with several calibrated cameras, all of it in 3D.
+Pose, movement speed, interpersonal distance, and motion energy within a marked region of the picture; in three dimensions with several calibrated cameras.
 :::
 
-:::{grid-item-card} Face
-Facial expressions as muscle movements (action units), head angle, mouth movement and blinks; whom each person looks at, which named things, and when two look at each other.
+:::{grid-item-card} Face and gaze
+Facial action units, head orientation, mouth movement and blinks; whom each participant looks at, which named objects, and mutual gaze.
 :::
 
 :::{grid-item-card} Codes
-Pauses, interruptions and backchannels coded by rule, and, if you want, speech acts coded by a language model from your own codebook.
+Pauses, interruptions and backchannels coded by rule, speech acts optionally coded by a language model from the researcher's codebook, and human coding imported for comparison.
 :::
 ::::
 
-Not there yet: several kept segments per recording, and 3D from a single camera.
+Not yet available: several analysed segments per recording, and three-dimensional pose from a single camera.
 
-## Where to begin
+## Principles
 
-[Using MACAW](guide.md) takes you from what you need to the finished table in seven steps. [Questions](questions.md) covers privacy, run times and special cases.
+- The original recordings are never modified; all output is written to a separate project folder.
+- Uncertain decisions, such as which file or voice belongs to whom and low-confidence codes, are referred to the researcher instead of being guessed, and every decision is recorded.
+- Quality control works on samples: the report points to the moments the checks flagged and to a random selection of ordinary ones.
+- Each recording is described on its own. Statistical analysis remains with the researcher.
+- Processing runs on the researcher's own computer. Transcripts and video frames leave it only when the researcher selects a cloud language model; {ref}`privacy` lists the tools that report usage statistics.
+- Every run records its settings and software versions, and `macaw methods` drafts a Methods section from them.
 
-MACAW is an early version, so names and settings may still change. Questions and problems go to the [GitHub page](https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench/issues).
+## Documentation
+
+::::{grid} 1 1 3 3
+:gutter: 2
+
+:::{grid-item-card} Using MACAW
+:link: guide
+:link-type: doc
+Requirements, installation, and the seven steps from the recordings to the finished table.
+:::
+
+:::{grid-item-card} Optional features
+:link: extras
+:link-type: doc
+Language-model coding, human coding and agreement, gaze, custom body measures, gestures, centimetres, three dimensions, clusters.
+:::
+
+:::{grid-item-card} Questions
+:link: questions
+:link-type: doc
+Privacy, run times, experimenters in the room, children's voices, and other special cases.
+:::
+::::
+
+MACAW is at an early stage of development, so names and settings may still change. Questions and problems can be reported on the [GitHub page](https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench/issues).
 
 ```{toctree}
 :hidden:
 
 guide
+extras
 questions
 ```

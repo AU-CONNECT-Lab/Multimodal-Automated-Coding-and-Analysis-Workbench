@@ -1,47 +1,54 @@
 # Questions
 
 (privacy)=
-## Do my recordings leave my computer?
+## Do the recordings leave the computer?
 
 MACAW itself sends nothing anywhere. Two choices in the settings can:
 
-- A cloud language model (OpenAI or Anthropic) receives the transcript lines it codes.
-- The MediaPipe tools, one of the options for body pose and for the face, send usage statistics to Google while they run. They do not send the video, but there is no way to turn this off.
+- A cloud language model (OpenAI or Anthropic) receives the transcript lines it codes, and the video frames when these are selected ({ref}`coding`).
+- The MediaPipe tools, one of the options for body pose and for the face, send usage statistics to Google while they run. They do not send the video, but this cannot be switched off.
 
-If nothing may leave the machine, choose YOLO for body pose and a language model on your own computer. A run first downloads any model it is missing, before anything else starts; models already on the computer are used as they are, and the steps themselves never go online.
+When no data may leave the computer, select YOLO for body pose and a language model running on the lab's own computer or server. A run first downloads any model that is missing, before processing starts; models already on the computer are used as they are, and the processing steps themselves never go online.
 
-## What happens when I change a setting?
+## What happens when a setting is changed?
 
-Only the results that depend on that setting are made again. The settings page names them before you save, so nothing is redone by surprise.
+Only the results that depend on that setting are computed again. The settings page lists them before saving, so that nothing is recomputed unexpectedly.
 
-## Can I stop halfway and continue later?
+## Can a run be interrupted and resumed later?
 
-Yes. Close the window or press Stop. The next run continues where the last one stopped.
+Yes. Close the window or press **Stop**. The next run continues where the previous one stopped.
 
-## How long does it take?
+## How long does processing take?
 
-It depends mostly on how long the videos are and whether the computer has a graphics card. Transcription and the face and body steps take the longest. Run one recording first and judge from that.
+It depends mainly on the length of the videos and on whether the computer has a graphics card. Transcription and the face and body steps take the longest. Processing one recording first gives a reliable estimate for the rest.
 
-## A researcher is in the room. Will their speech mix into the results?
+## An experimenter is present in the room. Is their speech mixed into the results?
 
-With a shared microphone or camera sound, set *Other voices on a shared microphone* to 1 in the settings, and name that voice *none* when you check the voices. Their speech still counts as a turn in the turn-taking, but stays out of everyone else's voice and language measures.
+With a shared microphone or the camera's sound, set *Other voices on a shared microphone* to 1 in the settings, and assign that voice *none* when reviewing the voices. The experimenter's speech still counts as a turn in the turn-taking measures, but is excluded from the participants' voice and language measures.
 
 ## Children have higher voices. Is pitch measured correctly?
 
-The pitch range can be set separately for each role, for example a higher range for the child. It is added in the text part of the settings page, with the other voice settings.
+The pitch range can be set separately for each role, for example a higher range for the child. A second setting makes the quality-control report flag a pitch track that lies an octave too high throughout, by giving the highest plausible median for a role. Both are added in the *project.yaml* box of the settings page:
 
-## Can I fix mistakes in the transcript?
+```yaml
+prosody:
+  f0_range_by_role: {child: [100, 600]}   # Hz, lowest and highest
+qc:
+  f0_median_max_by_role: {mother: 330}    # Hz
+```
 
-Yes, in ELAN. See {ref}`transcript`. Everything that uses the transcript is updated on the next run.
+## Can errors in the transcript be corrected?
 
-## We have hundreds of recordings.
+Yes, in ELAN; see {ref}`transcript`. Everything that uses the transcript is updated on the next run.
 
-MACAW can run on a university computing cluster that uses Slurm, one job per recording. The README on the GitHub page explains how to set it up.
+## The project has hundreds of recordings.
 
-## What do I write in my paper?
+MACAW can run on a computing cluster that uses Slurm, with one job per recording. See [Optional features](extras.md), section *Large projects on a computing cluster*.
 
-Run `macaw methods`. It writes a Methods section for the steps your project actually ran, with the references to cite.
+## What should be reported in the paper?
 
-## Something went wrong.
+Run `macaw methods`. It writes a Methods section for the steps the project actually ran, with the references to cite.
 
-A failed step says why at the bottom of the Run page. Fix the cause and press Run again; finished work is kept. If you are stuck, open an issue on the [GitHub page](https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench/issues).
+## A step failed.
+
+A failed step states the reason at the bottom of the Run page. Correct the cause and press **Run** again; completed work is kept. Unresolved problems can be reported on the [GitHub page](https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench/issues).
