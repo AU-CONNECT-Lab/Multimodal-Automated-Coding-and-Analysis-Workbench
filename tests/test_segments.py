@@ -90,10 +90,10 @@ def test_setting_a_segment_adds_or_moves_it_and_keeps_peoples_own_columns(projec
 
 
 def test_a_recording_the_project_does_not_have_is_a_typo(project):
-    _table(project, "recording,segment,start_s,end_s\n003,a,1,5\nP030,a,1,5\n")
-    with pytest.raises(ConfigError, match="does not have: P030"):
+    _table(project, "recording,segment,start_s,end_s\n003,a,1,5\nghost,a,1,5\n")
+    with pytest.raises(ConfigError, match="does not have: ghost"):
         check_recordings(project.config(), [RID])
-    check_recordings(project.config("project.excluded_recordings=[P030]"), [RID])
+    check_recordings(project.config("project.excluded_recordings=[ghost]"), [RID])
 
 
 def test_intervals_are_cut_at_the_edges_and_instants_kept_inside():
