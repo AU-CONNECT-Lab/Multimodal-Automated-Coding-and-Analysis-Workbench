@@ -25,7 +25,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Transcription from each person's microphone or a shared one, voices told apart and named, prosody and voice quality per turn, lexical and syntactic measures.
 - Turn structure, floor transfer and turn-taking entropy.
 - Pose from MediaPipe or YOLO with people kept apart across cameras, body movement, motion energy, facial action units, head angles, gaze direction, mouth movement and blinks.
-- Rule-based coding, language-model coding from a codebook with human review, coder agreement, and ELAN interchange both ways.
+- Rule-based coding, language-model coding from a codebook with human review, several versions of it side by side and a choice of what the model is shown, coder agreement, and ELAN interchange both ways.
 - People's own coding brought in from ELAN or a table and compared with other coders or the machine, on shared intervals, one coder's intervals or a time grid.
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
