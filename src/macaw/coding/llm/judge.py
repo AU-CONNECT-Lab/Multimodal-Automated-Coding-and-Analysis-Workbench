@@ -376,19 +376,19 @@ def sample_annotations(config: MacawConfig, recording_ids: list[str]) -> pd.Data
     """Every answer of every coding by the language model as a coder of its own, <coder>#<sample>, so that
     agreement can set the model against itself."""
     from macaw.extractors import get_extractor
-    from macaw.store.annotations import read_annotations
+    from macaw.store import _io
 
     layout = layout_for(config, create=False)
     frames = []
     for rid in recording_ids:
-        directory = layout.annotations_path(rid)
-        if not directory.is_dir():
-            continue
-        coded = read_annotations(directory)
         for step in (JudgementExtractor.name, *version_steps(config)):
             path = layout.artifacts_dir(rid, step) / SAMPLES_NAME
-            mine = coded[coded["layer"].astype(str) == get_extractor(step).layer()]
-            if mine.empty or not path.is_file():
+            # the layer's own file: people's review decisions share its layer but are kept apart
+            own = layout.annotations_path(rid) / f"{get_extractor(step).layer()}.parquet"
+            if not own.is_file() or not path.is_file():
+                continue
+            mine = _io.read_file(own, ANNOTATION_SCHEMA, "annotations")
+            if mine.empty:
                 continue
             samples = pd.read_parquet(path)
             keys = _unit_keys(mine)

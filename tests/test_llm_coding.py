@@ -26,7 +26,7 @@ from macaw.config.schema import CodingSection, LLMSection
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.execution.dag import build_dag
 from macaw.project.layout import layout_for
-from macaw.store.annotations import write_annotations
+from macaw.store.annotations import read_annotations, write_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
 
 CODEBOOK = Codebook(
@@ -829,6 +829,20 @@ class TestAgainstItself:
         assert result.exit_code == 0, result.output
         assert "llm:vllm/tiny#2" in result.output
         assert {"words", "before"} <= set(pd.read_csv(tmp_path / "agreement" / "units.csv").columns)
+
+    def test_a_person_s_decision_beside_the_model_s_code_is_not_an_answer(self, tmp_path):
+        from macaw.store import _io
+
+        self.test_each_answer_is_a_coder_of_its_own(tmp_path)
+        resolved = resolve_config(tmp_path / "project.yaml")
+        layout = layout_for(resolved)
+        decided = read_annotations(layout.annotations_path("r1")).iloc[[1]].assign(
+            label="question", annotator="anna", confidence=float("nan"), needs_review=False,
+        )
+        _io.write_file(coerce_frame(decided, ANNOTATION_SCHEMA, "annotations"), layout.reviewed_codes_path("r1"), ANNOTATION_SCHEMA, "annotations")
+
+        answers = module.sample_annotations(resolved, ["r1"])
+        assert sorted(answers["annotator"]) == ["llm:vllm/tiny#1"] * 2 + ["llm:vllm/tiny#2"] * 2
 
 
 def test_the_unit_table_carries_what_was_said_and_the_line_before(monkeypatch):
