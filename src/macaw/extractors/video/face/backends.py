@@ -98,7 +98,7 @@ class PyFeatBackend(FaceBackend):
         pieces = []
         try:
             first, stop = frames if frames is not None else (0, None)
-            index = _seek(capture, cv2, max(int(first), 0))
+            index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
             # one buffer the frames are copied into, so a chunk is held once rather than as a list, a stack and a tensor
             chunk, size = None, max(CHUNK_FRAMES, batch_size)
             while stop is None or index < stop:
@@ -330,7 +330,7 @@ class MediaPipeFaceBackend(FaceBackend):
             if fps <= 0:
                 raise ExternalToolError(f"video reports no frame rate: {video_path}")
             first, stop = frames if frames is not None else (0, None)
-            index = _seek(capture, cv2, max(int(first), 0))
+            index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
             with FaceLandmarker.create_from_options(options) as landmarker:
                 while stop is None or index < stop:
                     ok, image = capture.read()

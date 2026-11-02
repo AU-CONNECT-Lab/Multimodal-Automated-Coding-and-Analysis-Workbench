@@ -16,7 +16,7 @@ from macaw.extractors.video.pose.backends import (
     yolo_device,
     yolo_label_rows,
 )
-from macaw.media.ffmpeg import require_ffmpeg, run_ffmpeg
+from macaw.media.ffmpeg import extract_frame, require_ffmpeg, run_ffmpeg
 from macaw.media.probe import MediaInfo, StreamInfo
 
 
@@ -150,24 +150,31 @@ SIDE = 32
 NUMBERED = "geq=lum='16+13*if(lt(X,W/3),mod(N,16),if(lt(X,2*W/3),mod(floor(N/16),16),floor(N/256)))':cb=128:cr=128"
 
 
+def number_in(luma: np.ndarray) -> int:
+    """The number one frame shows, from its luma on the 16 to 235 scale."""
+    digits = [round((luma[4:-4, k * SIDE + 4 : (k + 1) * SIDE - 4].mean() - 16) / 13) for k in range(3)]
+    return digits[2] * 256 + digits[1] * 16 + digits[0]
+
+
 def numbers_shown(path: Path) -> list[int]:
     raw = subprocess.run(
         [require_ffmpeg(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"],
         capture_output=True, check=True,
     ).stdout
     luma = np.frombuffer(raw, np.uint8).reshape(-1, SIDE * SIDE * 9 // 2)[:, : 3 * SIDE * SIDE].reshape(-1, SIDE, 3 * SIDE)
-    digits = [np.round((luma[:, 4:-4, k * SIDE + 4 : (k + 1) * SIDE - 4].mean(axis=(1, 2)) - 16) / 13) for k in range(3)]
-    return (digits[2] * 256 + digits[1] * 16 + digits[0]).astype(int).tolist()
+    return [number_in(frame) for frame in luma]
 
 
 @pytest.fixture(scope="module", params=["mp4", "ts"])
 def numbered_video(request, tmp_path_factory):
-    """20 s at 29.97 fps with B-frames and a keyframe every 50; the transport stream starts its clock at 2.8 s."""
+    """20 s at 29.97 fps with B-frames and a keyframe every 50; the transport stream starts its clock at 2.8 s and has
+    a keyframe every 300, further apart than a jump's margin."""
     path = tmp_path_factory.mktemp("numbered") / f"numbered.{request.param}"
+    ts = request.param == "ts"
     run_ffmpeg([
         "-f", "lavfi", "-i", f"color=black:s={3 * SIDE}x{SIDE}:r=30000/1001:d=20", "-vf", NUMBERED,
-        "-c:v", "libx264", "-crf", "8", "-g", "50", "-bf", "3", "-pix_fmt", "yuv420p",
-        *(["-output_ts_offset", "1.4"] if request.param == "ts" else []), str(path),
+        "-c:v", "libx264", "-crf", "8", "-g", "300" if ts else "50", "-bf", "3", "-pix_fmt", "yuv420p",
+        *(["-output_ts_offset", "1.4"] if ts else []), str(path),
     ])
     shown = numbers_shown(path)
     assert shown == list(range(len(shown))) and len(shown) > 590
@@ -179,3 +186,24 @@ def test_a_window_holds_exactly_its_frames(numbered_video, tmp_path, first, stop
     path, n_frames = numbered_video
     clip = backends._window_clip(path, first, stop, tmp_path)
     assert numbers_shown(clip) == list(range(first, n_frames if stop is None else stop))
+
+
+@pytest.mark.parametrize("first", [0, 49, 120, 400])
+def test_reading_from_a_frame_starts_at_that_frame(numbered_video, first):
+    cv2 = pytest.importorskip("cv2")
+    path, _ = numbered_video
+    capture = cv2.VideoCapture(str(path))
+    try:
+        assert backends._seek(capture, cv2, first, path) == first
+        ok, image = capture.read()
+    finally:
+        capture.release()
+    assert ok
+    assert number_in(16 + cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) * (219 / 255)) == first
+
+
+@pytest.mark.parametrize("first", [0, 49, 120, 400])
+def test_a_frame_taken_at_a_time_is_the_frame_shown_then(numbered_video, tmp_path, first):
+    path, _ = numbered_video
+    still = extract_frame(path, first * 1001 / 30000, tmp_path / "still.png")
+    assert numbers_shown(still) == [first]

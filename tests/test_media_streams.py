@@ -53,6 +53,10 @@ def sources(tmp_path_factory) -> dict[str, Path]:
     run_ffmpeg(["-i", str(sound), "-itsoffset", "0.2", "-i", str(pictures), "-map", "1:v", "-map", "0:a", "-c:v", "copy", "-c:a", "aac", str(late_pictures)])
     run_ffmpeg(["-i", str(pictures), "-itsoffset", "0.2", "-i", str(sound), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", str(late_sound)])
     files = {"late_pictures": late_pictures, "late_sound": late_sound}
+    # as camcorders write them: a transport stream whose clock starts well after 0, with AC-3 sound
+    for name in ("late_pictures", "late_sound"):
+        files[f"{name}_ts"] = root / f"{name}.MTS"
+        run_ffmpeg(["-i", str(files[name]), "-c:v", "copy", "-c:a", "ac3", "-f", "mpegts", str(files[f"{name}_ts"])])
 
     def make(name, source, *video):
         files[name] = root / f"{name}.mp4"
@@ -92,11 +96,12 @@ class TestPreparedTrack:
         track = _extract_track(sources["late_sound"], tmp_path / "track.wav", start_s=-0.5, duration_s=3.0, sample_rate=RATE)
         assert beep_at(read_wav(track)) == pytest.approx(expected, abs=1e-3)
 
-    @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("variable", False)])
+    @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("late_sound_ts", True), ("variable", False)])
     def test_a_lone_camera_gives_its_sound_as_the_shared_track(self, sources, tmp_path, which, sounding):
         raw = tmp_path / "raw" / "003"
         raw.mkdir(parents=True)
-        shutil.copy(sources[which], raw / "003_room.mp4")
+        camera = f"003_room{sources[which].suffix}"
+        shutil.copy(sources[which], raw / camera)
         project = tmp_path / "project.yaml"
         scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
         config = resolve_config(project)
@@ -107,7 +112,7 @@ class TestPreparedTrack:
             assert shared == {}
             return
         expected = beep_at(decode_audio(sources[which], sample_rate=RATE))
-        assert beep_at(read_wav(tmp_path / "work" / shared["003_room.mp4"])) == pytest.approx(expected, abs=1e-3)
+        assert beep_at(read_wav(tmp_path / "work" / shared[camera])) == pytest.approx(expected, abs=1e-3)
 
 
 def prepare(path: Path, workspace: Path, **settings):
@@ -149,17 +154,18 @@ def checks(warnings) -> dict[str, str]:
 
 
 class TestPreparedVideo:
-    @pytest.mark.parametrize("which", ["late_pictures", "late_sound"])
+    @pytest.mark.parametrize("which", ["late_pictures", "late_sound", "late_pictures_ts", "late_sound_ts"])
     def test_frame_0_sits_at_the_first_sound_so_picture_and_sound_keep_their_distance(self, sources, tmp_path, which):
         """The white picture comes 0.2 s after the beep in one file and 0.2 s before it in the other."""
         entry, _, copy = prepare(sources[which], tmp_path)
         beep = beep_at(decode_audio(sources[which], sample_rate=RATE))
         flash = flash_frame(copy) / entry["fps"]
-        expected = 0.2 if which == "late_pictures" else -0.2
+        expected = 0.2 if which.startswith("late_pictures") else -0.2
         assert flash - beep == pytest.approx(expected, abs=0.5 / FPS)
 
-    def test_late_pictures_repeat_the_first_one_and_say_so(self, sources, tmp_path):
-        entry, warnings, _ = prepare(sources["late_pictures"], tmp_path)
+    @pytest.mark.parametrize("which", ["late_pictures", "late_pictures_ts"])
+    def test_late_pictures_repeat_the_first_one_and_say_so(self, sources, tmp_path, which):
+        entry, warnings, _ = prepare(sources[which], tmp_path)
         assert entry["frames_repeated"] == 5
         assert checks(warnings)["video_start"] == "info"
 
@@ -234,6 +240,17 @@ class TestPreparedVideo:
     def test_standard_range_is_left_alone(self, sources, tmp_path):
         entry, warnings, _ = prepare(sources["sdr"], tmp_path)
         assert not entry["tone_mapped"] and "video_hdr" not in checks(warnings)
+
+
+@pytest.mark.parametrize("which", ["late_pictures", "late_pictures_ts"])
+def test_a_frame_is_taken_counting_from_the_first_picture(sources, tmp_path, which):
+    """Frame 25 of the pictures is white; the file's sound starts 0.2 s before them."""
+    from macaw.media.ffmpeg import extract_frame
+
+    cv2 = pytest.importorskip("cv2")
+    before = extract_frame(sources[which], (FLASH_FRAME - 1) / FPS, tmp_path / "before.png")
+    white = extract_frame(sources[which], FLASH_FRAME / FPS, tmp_path / "white.png")
+    assert cv2.imread(str(before)).mean() < 128 < cv2.imread(str(white)).mean()
 
 
 @pytest.mark.parametrize("size,long_side,expected", [("640x480", 320, (320, 240)), ("480x640", 320, (240, 320)), ("320x240", 960, (320, 240))])

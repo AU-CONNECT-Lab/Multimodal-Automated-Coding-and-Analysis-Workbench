@@ -616,7 +616,7 @@ class VideoPrepExtractor(Extractor):
             name = f"{item.path.name}.mp4"
             tone_map = stream.color_transfer in HDR_TRANSFERS and has_filter("zscale")
             counts = normalise_video(
-                item.path, workspace / name, fps=target, start_s=clock - info.start_s, quality=cfg.quality, encoder=cfg.encoder,
+                item.path, workspace / name, fps=target, start_s=clock, quality=cfg.quality, encoder=cfg.encoder,
                 tone_map=stream if tone_map else None,
             )
             prepared = probe(workspace / name).video_streams()[0]

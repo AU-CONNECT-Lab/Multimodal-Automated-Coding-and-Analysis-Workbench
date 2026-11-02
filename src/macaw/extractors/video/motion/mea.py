@@ -196,7 +196,7 @@ def frame_difference_energy(
         if empty:
             raise ConfigError(f"{video_path.name}: the region for {', '.join(empty)} lies outside the {width}x{height} picture")
         first, stop = frames if frames is not None else (0, None)
-        index = _seek(capture, cv2, max(int(first), 0))
+        index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
         rows, previous = [], None
         while stop is None or index < stop:
             ok, image = capture.read()

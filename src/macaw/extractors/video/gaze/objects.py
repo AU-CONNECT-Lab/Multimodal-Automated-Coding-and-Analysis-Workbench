@@ -104,7 +104,7 @@ class GroundingDinoBackend(ObjectBackend):
 
         try:
             first, stop = frames
-            index = _seek(capture, cv2, max(int(first), 0))
+            index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
             while index < stop:
                 if (index - first) % step:
                     if not capture.grab():

@@ -14,8 +14,8 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors import register_backend
 from macaw.extractors.base import Backend
-from macaw.media.ffmpeg import run_ffmpeg
-from macaw.media.probe import frame_rate, probe
+from macaw.media.ffmpeg import SEEK_MARGIN_S, run_ffmpeg
+from macaw.media.probe import frame_rate, jumps_exactly, probe
 from macaw.telemetry import quiet_environment
 from macaw.extractors.video.pose.skeleton import (
     JOINT_SET,
@@ -310,7 +310,7 @@ class MediaPipeBackend(PoseBackend):
             )
 
             first, stop = frames if frames is not None else (0, None)
-            frame_index = _seek(capture, cv2, max(int(first), 0))
+            frame_index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
 
             rows: list[dict] = []
             with PoseLandmarker.create_from_options(options) as landmarker:
@@ -347,14 +347,16 @@ class MediaPipeBackend(PoseBackend):
         return PoseFrames(keypoints=frame, provides=self.provides, frame_size=(width, height))
 
 
-def _seek(capture, cv2, first: int) -> int:
-    """Jump to a frame, or read up to it when the container will not say where it landed."""
+def _seek(capture, cv2, first: int, path: Path) -> int:
+    """Jump to a frame, or read up to it in a transport stream or when the container will not say where it landed."""
     if first == 0:
         return 0
-    capture.set(cv2.CAP_PROP_POS_FRAMES, first)
-    if int(capture.get(cv2.CAP_PROP_POS_FRAMES)) == first:
-        return first
-    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    if jumps_exactly(probe(path)):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, first)
+        if int(capture.get(cv2.CAP_PROP_POS_FRAMES)) == first:
+            return first
+        # setting the position back to 0 does not always rewind
+        capture.open(str(path))
     index = 0
     while index < first and capture.grab():
         index += 1
@@ -530,10 +532,6 @@ class YOLOPoseBackend(PoseBackend):
         return out_path / "run" / "labels"
 
 
-# the jump lands on a keyframe at least this far ahead of a window, so decoding starts before its first frame
-SEEK_MARGIN_S = 1.0
-
-
 def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) -> Path:
     """Frames [first, stop) as a clip of their own, chosen by time on the file's own clock after a jump close to them."""
     info = probe(video_path)
@@ -547,10 +545,10 @@ def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) 
     if stop is not None:
         chosen += f"*lt(t\\,{origin + float((stop - Fraction(1, 2)) / rate):.6f})"
     clip = scratch / "window.mp4"
+    jump = ["-noaccurate_seek", "-ss", f"{max(float(first / rate) - SEEK_MARGIN_S, 0.0):.6f}"] if jumps_exactly(info) else []
     # an encoder every ffmpeg build has, at a quality the detector cannot tell from the source
     run_ffmpeg([
-        "-copyts", "-noaccurate_seek", "-ss", f"{max(float(first / rate) - SEEK_MARGIN_S, 0.0):.6f}",
-        "-i", str(video_path), "-an",
+        "-copyts", *jump, "-i", str(video_path), "-an",
         "-vf", f"select={chosen},setpts=PTS-STARTPTS", "-fps_mode", "passthrough",
         "-c:v", "mpeg4", "-q:v", "2", str(clip),
     ])

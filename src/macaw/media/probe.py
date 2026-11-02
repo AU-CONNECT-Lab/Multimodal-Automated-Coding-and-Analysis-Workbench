@@ -53,6 +53,7 @@ class MediaInfo:
     variable_frame_rate: bool = False
     creation_time: str | None = None    # as the device wrote it; its clock and time zone are unchecked
     start_s: float = 0.0                # where the container's own timeline starts
+    format_name: str = ""               # as ffprobe names it, e.g. mpegts for a transport stream
 
     def video_streams(self) -> list[StreamInfo]:
         return [stream for stream in self.streams if stream.codec_type == "video"]
@@ -208,7 +209,13 @@ def probe(path: Path) -> MediaInfo:
     return MediaInfo(
         path=path, duration_s=duration, streams=streams, variable_frame_rate=variable, creation_time=creation,
         start_s=_number(payload.get("format", {}).get("start_time")) or 0.0,
+        format_name=payload.get("format", {}).get("format_name", ""),
     )
+
+
+def jumps_exactly(info: MediaInfo) -> bool:
+    """A transport stream has no index: a jump in it lands near a time and decoding resumes at the next keyframe."""
+    return "mpegts" not in info.format_name.split(",")
 
 
 def frame_timestamps(path: Path, stream_index: int = 0) -> list[float]:

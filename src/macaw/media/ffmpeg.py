@@ -9,10 +9,12 @@ from pathlib import Path
 import numpy as np
 
 from macaw.exceptions import ExternalToolError, UnreadableMediaError
-from macaw.media.probe import StreamInfo, require_ffmpeg
+from macaw.media.probe import StreamInfo, jumps_exactly, probe, require_ffmpeg
 
 # every call starts with these: no banner, errors only, never prompt to overwrite
 _BASE = ["-hide_banner", "-loglevel", "error", "-y"]
+# a jump lands on a keyframe at least this far ahead of the wanted frame, so decoding starts before it
+SEEK_MARGIN_S = 1.0
 
 
 def run_ffmpeg(args: list[str]) -> str:
@@ -156,11 +158,12 @@ def normalise_video(
         *(tone_map_filters(tone_map) if tone_map else []),
         "scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1",
         # shifted first so the constant-rate grid starts exactly at start_s rather than at the nearest frame slot
-        f"setpts=PTS-{start_s:.6f}/TB",
+        f"setpts=PTS-({start_s:.6f}/TB)",
         f"fps=fps={fps.numerator}/{fps.denominator}:start_time=0",
     ]
     command = [
-        require_ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-loglevel", "verbose", "-y",
+        # -copyts: without it a transport stream read for its pictures alone starts at its first picture, not the file's start
+        require_ffmpeg(), "-hide_banner", "-nostdin", "-nostats", "-loglevel", "verbose", "-y", "-copyts",
         "-i", str(src), "-map", "0:v:0", "-an", "-sn", "-dn",
         "-vf", ",".join(filters), "-fps_mode", "passthrough",
         *_ENCODERS[encoder](quality), "-pix_fmt", "yuv420p",
@@ -180,17 +183,27 @@ def normalise_video(
 def extract_frame(
     src: Path, at_s: float, dest: Path, *, square_pixels: bool = False, long_side: int | None = None
 ) -> Path:
-    """square_pixels shapes the picture the way normalise_video does, so pixel positions match its copies;
-    long_side shrinks a larger picture to at most that many pixels on its longer side."""
+    """The first frame at or after at_s from the first picture; square_pixels shapes it like normalise_video's copies, long_side caps its longer side."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    filters = ["scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1"] if square_pixels else []
+    info = probe(src)
+    if not info.video_streams():
+        raise UnreadableMediaError(f"{src}: no video stream")
+    stream = info.video_streams()[0]
+    wanted = (stream.start_s if stream.start_s is not None else info.start_s) + max(at_s, 0.0)
+    # half a frame early absorbs rounded timestamps; with -copyts t is the file's own clock
+    filters = [f"select=gte(t\\,{wanted - (0.5 / stream.fps if stream.fps else 0.0):.6f})"]
+    if square_pixels:
+        filters += ["scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1"]
     if long_side:
         filters.append(
             f"scale=w='if(gte(iw,ih),min(iw,{long_side}),-2)':h='if(gte(iw,ih),-2,min(ih,{long_side}))'"
         )
-    shape = ["-vf", ",".join(filters)] if filters else []
-    run_ffmpeg(["-ss", f"{max(at_s, 0.0):.3f}", "-i", str(src), *shape, "-frames:v", "1", "-q:v", "2", str(dest)])
+    jump = ["-noaccurate_seek", "-ss", f"{max(wanted - info.start_s - SEEK_MARGIN_S, 0.0):.6f}"] if jumps_exactly(info) else []
+    run_ffmpeg([
+        "-copyts", *jump, "-i", str(src), "-vf", ",".join(filters), "-fps_mode", "passthrough",
+        "-frames:v", "1", "-q:v", "2", str(dest),
+    ])
     if not dest.is_file():
         raise UnreadableMediaError(f"{src} has no frame at {at_s:.3f} s")
     return dest

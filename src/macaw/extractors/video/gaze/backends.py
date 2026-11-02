@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
@@ -119,7 +121,7 @@ class GazeLLEBackend(GazeBackend):
 
         try:
             frames = list(by_frame)
-            index = _seek(capture, cv2, max(int(frames[0]), 0))
+            index = _seek(capture, cv2, max(int(frames[0]), 0), Path(video_path))
             for frame in frames:
                 while index < frame and capture.grab():
                     index += 1
