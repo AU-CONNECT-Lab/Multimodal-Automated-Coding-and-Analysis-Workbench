@@ -169,6 +169,10 @@ class Layout:
     def renders_dir(self, recording_id: str) -> Path:
         return self.work_dir / "renders" / recording_id
 
+    # a small copy of a recording to play in the workbench, made when someone marks segments on it
+    def preview_path(self, recording_id: str) -> Path:
+        return self.work_dir / "previews" / f"{recording_id}.mp4"
+
     def review_queue_path(self) -> Path:
         return self.output_dir / "review_queue.parquet"
 

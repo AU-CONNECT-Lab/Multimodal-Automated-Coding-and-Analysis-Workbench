@@ -216,3 +216,19 @@ def extract_thumbnails(src: Path, dest_dir: Path, *, every_s: float = 10.0) -> l
         ["-i", str(src), "-vf", f"fps=1/{every_s:g}", str(dest_dir / "thumb_%05d.jpg")]
     )
     return sorted(dest_dir.glob("thumb_*.jpg"))
+
+
+def make_preview(src: Path, dest: Path, *, height: int = 360) -> Path:
+    """A small copy of a recording file that a browser plays, its sound kept, timed like the file."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name(dest.stem + ".partial.mp4")
+    pictures = []
+    if probe(src).video_streams():
+        pictures = [
+            "-map", "0:v:0", "-vf", f"yadif=deint=interlaced,scale=-2:{height}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+        ]
+    run_ffmpeg(["-i", str(src), *pictures, "-map", "0:a:0?", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(partial)])
+    partial.replace(dest)
+    return dest

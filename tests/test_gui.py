@@ -476,3 +476,50 @@ def test_the_latest_run_is_named_by_when_it_began(project, monkeypatch):
     assert overview.latest_run(project) == "Nothing has run yet."
     monkeypatch.setattr(cli_bridge, "poll_status", lambda config_path: ("20261031-214220-e17d5e", {"done": 36, "failed": 0}))
     assert overview.latest_run(project) == "Latest run 2026-10-31 21:42: 36 done"
+
+
+def test_the_segments_page_plays_a_copy_and_saves_what_is_marked(project):
+    from macaw.exceptions import ExternalToolError
+    from macaw.interface.pages import segments
+    from macaw.media.ffmpeg import make_preview, run_ffmpeg
+    from macaw.media.probe import probe
+
+    video = project.parent / "raw" / "003" / "003_room.mp4"
+    try:
+        run_ffmpeg(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=2", "-f", "lavfi", "-i", "sine=duration=2",
+                    "-pix_fmt", "yuv420p", "-shortest", str(video)])
+    except ExternalToolError:
+        pytest.skip("needs ffmpeg")
+    assert "Make a copy to play here" in text_of(segments.body(project, "003"))
+    config = resolve_config(project)
+    copy = probe(make_preview(segments.played(config, "003"), layout_for(config).preview_path("003")))
+    assert copy.video_streams() and copy.audio_streams()
+    assert segments.PLAYER in text_of(segments.body(project, "003"))
+
+    argv = segments.segment_command(project, "003", "free_play", 0.5, 1.5)
+    assert argv[:2] == ["macaw", "set-segment"] and argv[-4:] == ["--start", "0.5", "--end", "1.5"]
+    code, text = cli_bridge.run_now(argv, cwd=project.parent)
+    assert code == 0, text
+    assert "free_play" in text_of(segments.body(project, "003"))
+    code, text = cli_bridge.run_now(segments.segment_command(project, "003", "free_play"), cwd=project.parent)
+    assert code == 0, text
+    assert "No segments yet" in text_of(segments.body(project, "003"))
+
+
+def test_the_analysed_part_is_written_to_the_recordings_own_file(project):
+    from macaw.interface.pages import segments
+
+    path = segments.set_window(project, "003", 1.5, 20.0)
+    assert path.name == "003.yaml"
+    own = resolve_config(project, recording_id="003")
+    assert (own.segment.task_start_s, own.segment.task_end_s) == (1.5, 20.0)
+    assert "Analysed part: 1.5 s to 20 s." in text_of(segments.body(project, "003"))
+
+
+def test_a_segment_is_set_only_on_a_recording_the_project_has(project):
+    from macaw.cli.segments import set_segment_command
+
+    with pytest.raises(MacawError, match="not one of this project's recordings"):
+        set_segment_command(config=project, recording="004", name="a", start=1.0, end=2.0, clear=False)
+    with pytest.raises(MacawError, match="give --start and --end"):
+        set_segment_command(config=project, recording="003", name="a", start=1.0, end=None, clear=False)
