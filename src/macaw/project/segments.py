@@ -91,7 +91,7 @@ def set_segment(config, recording_id: str, segment: Segment) -> Path:
     path = segments_path(config)
     frame = _read_frame(path) if path.is_file() else pd.DataFrame(columns=list(COLUMNS))
     same = (frame["recording"] == recording_id) & (frame["segment"] == segment.name)
-    row = {"recording": recording_id, "segment": segment.name, "start_s": _seconds_text(segment.start_s), "end_s": _seconds_text(segment.end_s)}
+    row = {"recording": recording_id, "segment": segment.name, "start_s": seconds_text(segment.start_s), "end_s": seconds_text(segment.end_s)}
     if same.any():
         for column, value in row.items():
             frame.loc[same, column] = value
@@ -111,7 +111,7 @@ def remove_segment(config, recording_id: str, name: str) -> Path:
     return path
 
 
-def _seconds_text(value: float) -> str:
+def seconds_text(value: float) -> str:
     # the shortest text that reads back as the same number, so a rewritten table changes no segment
     text = repr(float(value))
     return text[:-2] if text.endswith(".0") else text

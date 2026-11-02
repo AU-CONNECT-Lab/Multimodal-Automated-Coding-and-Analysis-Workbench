@@ -516,6 +516,15 @@ def test_the_analysed_part_is_written_to_the_recordings_own_file(project):
     assert "Analysed part: 1.5 s to 20 s." in text_of(segments.body(project, "003"))
 
 
+def test_a_long_recordings_times_reach_the_command_in_full(project):
+    from macaw.interface.pages import segments
+
+    argv = segments.segment_command(project, "003", "late", 10800.25, 12345.678)
+    assert argv[-4:] == ["--start", "10800.25", "--end", "12345.678"]
+    segments.set_window(project, "003", 10800.25, 12345.678)
+    assert "Analysed part: 10800.25 s to 12345.678 s." in text_of(segments.body(project, "003"))
+
+
 def test_a_segment_is_set_only_on_a_recording_the_project_has(project):
     from macaw.cli.segments import set_segment_command
 

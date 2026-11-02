@@ -7,7 +7,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
-from macaw.project.segments import Segment, remove_segment, set_segment
+from macaw.project.segments import Segment, remove_segment, seconds_text, set_segment
 
 app = typer.Typer()
 
@@ -32,4 +32,4 @@ def set_segment_command(
     if start is None or end is None:
         raise MacawError("give --start and --end, or --clear")
     path = set_segment(resolved, recording, Segment(name.strip(), start, end))
-    typer.echo(f"{recording}: {name.strip()} from {start:g} to {end:g} s in {path}; macaw run works out its measures")
+    typer.echo(f"{recording}: {name.strip()} from {seconds_text(start)} to {seconds_text(end)} s in {path}; macaw run works out its measures")

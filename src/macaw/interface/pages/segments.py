@@ -15,7 +15,7 @@ from macaw.interface.files import file_url
 from macaw.media.ffmpeg import make_preview
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.project.segments import segments_of, segments_path, summaries
+from macaw.project.segments import seconds_text, segments_of, segments_path, summaries
 
 LABEL = "Segments"
 PLAYER = "segments-player"
@@ -95,7 +95,7 @@ def body(config_path: Path, rid: str | None):
 def _listed(config, own, rid: str):
     window = own.segment
     analysed = (
-        f"Analysed part: {window.task_start_s or 0:g} s to {f'{window.task_end_s:g} s' if window.task_end_s is not None else 'the end'}."
+        f"Analysed part: {seconds_text(window.task_start_s or 0)} s to {f'{seconds_text(window.task_end_s)} s' if window.task_end_s is not None else 'the end'}."
         if window.task_start_s is not None or window.task_end_s is not None else "The whole recording is analysed."
     )
     found = segments_of(config, rid)
@@ -112,7 +112,7 @@ def _listed(config, own, rid: str):
 
 
 def segment_command(config_path: Path, rid: str, name: str, start: float | None = None, end: float | None = None) -> list[str]:
-    flags = ["--name", name, *(["--clear"] if start is None else ["--start", f"{start:g}", "--end", f"{end:g}"])]
+    flags = ["--name", name, *(["--clear"] if start is None else ["--start", seconds_text(start), "--end", seconds_text(end)])]
     return cli_bridge.build_command(["set-segment"], config_path=config_path, recordings=[rid], extra_flags=flags)
 
 
@@ -179,7 +179,7 @@ def register(app, config_path: Path) -> None:
                     path = set_window(config_path, rid, float(start), float(end))
                 except MacawError as error:
                     return no_update, ui.note(str(error), "bad")
-                message = ui.note(f"The analysed part is {float(start):g} to {float(end):g} s, in {path}. The next run works on this recording again from the start.", "ok")
+                message = ui.note(f"The analysed part is {seconds_text(start)} to {seconds_text(end)} s, in {path}. The next run works on this recording again from the start.", "ok")
         elif action == "prepare":
             config = resolve_config(config_path)
             try:
