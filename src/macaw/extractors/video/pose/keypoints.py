@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 from pathlib import Path
@@ -25,6 +26,7 @@ from macaw.extractors.video.pose.track_repair import (
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.store.keypoints import read_keypoints
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
 
@@ -101,7 +103,15 @@ def primary_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, st
     return views
 
 
+
+def _frames_between(item, start: float, end: float) -> int:
+    """The frames of one video from start to end on the recording clock, both ends included."""
+    fps = item.fps or 0.0
+    return max(math.floor((end - item.offset_s) * fps) - max(math.ceil((start - item.offset_s) * fps), 0) + 1, 0)
+
+
 DETECTIONS_NAME = "detections.parquet"
+SWAPS_NAME = "swaps.json"
 BACKEND_NAME = "backend.json"
 
 _DETECT_SPECS = {
@@ -195,7 +205,7 @@ class PoseDetectExtractor(Extractor):
             stop = math.ceil((end - item.offset_s) * fps) + 1
             if stop <= first:
                 continue
-            n_processed += math.floor((end - item.offset_s) * fps) - max(math.ceil((start - item.offset_s) * fps), 0) + 1
+            n_processed += _frames_between(item, start, end)
             expected = 1 if item.subject_id is not None else max(len(subjects), 1)
             frames = backend.infer(
                 item.frames_path,
@@ -233,18 +243,8 @@ class PoseDetectExtractor(Extractor):
             json.dumps({"name": backend.name, "version": backend.version, "joint_set": backend.joint_set}),
             encoding="utf-8",
         )
-        values = {
-            "t_start": [start],
-            "t_end": [end],
-            "n_videos_read": [float(len(sources))],
-            "frames_with_anyone": [n_with_anyone / n_processed if n_processed else float("nan")],
-        }
-        rows = build_long_rows(
-            values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id,
-            source=self.name, entities=recording.entities(),
-        )
         return ExtractorResult(
-            rows=rows,
+            rows=self._summary(recording, len(sources), n_with_anyone, n_processed, (start, end)),
             specs=[
                 FeatureSpec(
                     name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
@@ -257,13 +257,39 @@ class PoseDetectExtractor(Extractor):
             warnings=warnings,
         )
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        try:
+            detections, _ = load_detections(self.config, recording.recording_id)
+        except InputNotFoundError:
+            return None
+        recording = copy.deepcopy(recording)
+        apply_prep_timing(self.config, recording)
+        sources = self._sources(recording)[0]
+        times = detections["t"].to_numpy(dtype=float)
+        inside = detections[(times >= start_s) & (times <= end_s)]
+        n_with_anyone = int(inside.groupby("video", observed=True)["frame"].nunique().sum()) if not inside.empty else 0
+        n_processed = sum(_frames_between(item, start_s, end_s) for item in sources if item.fps)
+        return self._summary(recording, len(sources), n_with_anyone, n_processed, (start_s, end_s))
+
+    def _summary(self, recording: Recording, n_videos: int, n_with_anyone: int, n_processed: int, window) -> pd.DataFrame:
+        values = {
+            "t_start": [window[0]],
+            "t_end": [window[1]],
+            "n_videos_read": [float(n_videos)],
+            "frames_with_anyone": [n_with_anyone / n_processed if n_processed else float("nan")],
+        }
+        return build_long_rows(
+            values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id,
+            source=self.name, entities=recording.entities(),
+        )
+
 
 @register_extractor
 class PoseExtractor(Extractor):
     """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
 
     name = "pose.keypoints"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose",)
@@ -417,6 +443,19 @@ class PoseExtractor(Extractor):
             return None, speech_activity(tracks, prep.t_origin_s, edges), edges
         return None, None, None
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        layout = layout_for(self.config, create=False)
+        path = layout.keypoints_path(recording.recording_id) / f"{self.name}.parquet"
+        if not path.is_file():
+            return None
+        keypoints = read_keypoints(path, t_range=(start_s, end_s))
+        if keypoints.empty:
+            return concat_long_tables([])
+        saved = layout.artifacts_dir(recording.recording_id, self.name) / SWAPS_NAME
+        events = json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else {}
+        swaps = {name: [event for event in found if start_s <= event["t"] < end_s] for name, found in events.items()}
+        return self._rows(recording, keypoints, swaps, [])
+
     def _owner_warning(self, recording: Recording, file_name: str, owner: dict) -> QCWarning:
         spans = ", ".join(f"{start:.1f}-{end:.1f} s" for start, end in owner["spans"][:5])
         where = f" (look at {spans})" if spans else ""
@@ -441,7 +480,7 @@ class PoseExtractor(Extractor):
             ]
             for name, events in swaps_by_file.items()
         }
-        return {"swaps": self._write_json(workspace, "swaps.json", payload)}
+        return {SWAPS_NAME: self._write_json(workspace, SWAPS_NAME, payload)}
 
     def _write_json(self, workspace: Path, file_name: str, payload) -> Path:
         directory = workspace / self.name

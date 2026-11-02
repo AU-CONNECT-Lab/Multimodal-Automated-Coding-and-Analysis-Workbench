@@ -28,6 +28,8 @@ from macaw.media.ffmpeg import extract_frame
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import clip_intervals
+from macaw.store import _io
 from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_frame
@@ -192,6 +194,13 @@ class JudgementExtractor(Extractor):
     @classmethod
     def feature(cls, name: str) -> str:
         return name if cls.judge is None else f"{name}_{cls.judge}"
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        # the layer's own file: people's review decisions share its layer but are kept apart
+        own = layout_for(self.config, create=False).annotations_path(recording.recording_id) / f"{self.layer()}.parquet"
+        if not own.is_file():
+            return None
+        return self._rows(recording, clip_intervals(_io.read_file(own, ANNOTATION_SCHEMA, "annotations"), start_s, end_s))
 
     def _rows(self, recording: Recording, judged: pd.DataFrame) -> pd.DataFrame:
         span = (float(judged["t_start"].min()), float(judged["t_end"].max())) if not judged.empty else (np.nan, np.nan)

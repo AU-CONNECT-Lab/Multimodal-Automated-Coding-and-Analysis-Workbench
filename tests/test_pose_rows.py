@@ -210,7 +210,7 @@ class TestSharedCamera:
 
     def test_the_crossovers_are_written_out_as_evidence(self, shared):
         """The identity review step needs to show why a track was relabelled."""
-        assert shared[1].artifacts["swaps"].is_file()
+        assert shared[1].artifacts["swaps.json"].is_file()
 
     def test_a_crossover_is_reported(self, shared):
         assert any(warning.severity == "info" for warning in shared[1].warnings)
@@ -239,7 +239,7 @@ class TestPerSubjectCameras:
         """A camera pointed at one person has already answered the identity question."""
         rows = result[1].rows
         assert float(rows[rows.feature == "n_track_swaps"].value.iloc[0]) == 0.0
-        assert "swaps" not in result[1].artifacts
+        assert "swaps.json" not in result[1].artifacts
 
     def test_a_shared_camera_alongside_them_is_skipped_with_a_warning(
         self, extractor, recording, tmp_path

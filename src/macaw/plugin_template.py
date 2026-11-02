@@ -49,10 +49,7 @@ it under `pipeline.run` in project.yaml. Its parameters go under `plugins` in pr
       $name:
         quantiles: [0.1, 0.9]
 
-The example reads f0 from prosody.frame and reports each person's pitch spread. Replace the
-computation in `src/$module/extractor.py` and keep the shape: `requires` names what must run
-first, `inputs_for` lists the files whose content decides whether a cached result is still
-valid, and `run` returns long-table rows plus one FeatureSpec per feature.
+The example reads f0 from prosody.frame and reports each person's pitch spread. Replace the computation in `src/$module/extractor.py` and keep the shape: `requires` names what must run first, `inputs_for` lists the files whose content decides whether a cached result is still valid, `run` returns long-table rows plus one FeatureSpec per feature, and `summarise` gives the same recording-level rows over one named segment, for projects that list segments in segments.csv.
 ''')
 
 EXTRACTOR = Template('''\
@@ -108,6 +105,27 @@ class $cls(Extractor):
     def run(self, recording, workspace: Path) -> ExtractorResult:
         low, high = self.params()["quantiles"]
         f0 = read_long_table(self._upstream_file(recording.recording_id), features=["f0_hz"])
+        spec = FeatureSpec(
+            name="f0_spread_hz",
+            description=f"Spread of voiced f0 between its {low:g} and {high:g} quantiles.",
+            unit="Hz",
+            scale=Scale.RECORDING,
+            group=self.group,
+            extractor=self.name,
+            extractor_version=self.version,
+            params={"quantiles": [low, high]},
+            aggregation="mean",
+        )
+        return ExtractorResult(rows=self._rows(recording, f0), specs=[spec])
+
+    def summarise(self, recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        # the same rows again over one named segment of the recording, from the frames inside it
+        f0 = read_long_table(self._upstream_file(recording.recording_id), features=["f0_hz"])
+        times = f0["t_start"].to_numpy(dtype=float)
+        return self._rows(recording, f0[(times >= start_s) & (times < end_s)])
+
+    def _rows(self, recording, f0: pd.DataFrame) -> pd.DataFrame:
+        low, high = self.params()["quantiles"]
         frames = []
         for subject_id, rows in f0.groupby("subject_id", dropna=True):
             values = pd.DataFrame(
@@ -127,18 +145,7 @@ class $cls(Extractor):
                     subject_id=str(subject_id),
                 )
             )
-        spec = FeatureSpec(
-            name="f0_spread_hz",
-            description=f"Spread of voiced f0 between its {low:g} and {high:g} quantiles.",
-            unit="Hz",
-            scale=Scale.RECORDING,
-            group=self.group,
-            extractor=self.name,
-            extractor_version=self.version,
-            params={"quantiles": [low, high]},
-            aggregation="mean",
-        )
-        return ExtractorResult(rows=concat_long_tables(frames), specs=[spec])
+        return concat_long_tables(frames)
 ''')
 
 TEST = Template('''\

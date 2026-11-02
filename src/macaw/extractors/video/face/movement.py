@@ -15,6 +15,7 @@ from macaw.extractors.video.face.au import LANDMARKS_NAME, FaceExtractor
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import clip_intervals, clip_points
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import Scale
 
@@ -108,9 +109,7 @@ class FaceMovementExtractor(Extractor):
                     )
                 )
             measurable_s = float(readable.sum()) * _frame_period(faces["t"])
-            rate = len(blinks) / measurable_s * 60.0 if measurable_s > 0 else np.nan
             if blinks.empty and measurable_s >= _NO_BLINK_S:
-                rate = np.nan
                 warnings.append(
                     QCWarning(
                         check=self.name, recording_id=recording.recording_id, subject_id=subject_id, severity="warn",
@@ -120,19 +119,37 @@ class FaceMovementExtractor(Extractor):
                         ),
                     )
                 )
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame(
-                        {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s],
-                         "blinks_per_min": [rate], "eyes_measurable_s": [measurable_s]}
-                    ),
-                    scale=Scale.RECORDING,
-                    **common,
-                )
-            )
+            frames.append(self._summary(recording, subject_id, len(blinks), measurable_s, (prep.t_origin_s, prep.t_origin_s + prep.duration_s)))
             warnings += self._eye_warnings(recording, subject_id, eye_width, readable, min_eye_px)
         rows = concat_long_tables(frames)
         return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"]) if len(rows) else set()), warnings=warnings)
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
+        if not path.is_file():
+            return None
+        saved = read_long_table(path, features=["eye_opening", "blink_duration_s"])
+        frames = []
+        for subject_id, own in saved.groupby("subject_id", sort=True, observed=True):
+            eyes = own[own["feature"] == "eye_opening"].sort_values("t_start")
+            period = _frame_period(eyes["t_start"])
+            readable = clip_points(eyes, start_s, end_s, column="t_start")["value"].notna().sum()
+            blinks = clip_intervals(own[own["feature"] == "blink_duration_s"], start_s, end_s)
+            frames.append(self._summary(recording, str(subject_id), len(blinks), float(readable) * period, (start_s, end_s)))
+        return concat_long_tables(frames)
+
+    def _summary(self, recording: Recording, subject_id: str, n_blinks: int, measurable_s: float, window) -> pd.DataFrame:
+        rate = n_blinks / measurable_s * 60.0 if measurable_s > 0 else np.nan
+        # not one blink in a long readable stretch says the landmarks miss the lids, not that nobody blinked
+        if not n_blinks and measurable_s >= _NO_BLINK_S:
+            rate = np.nan
+        return build_long_rows(
+            values=pd.DataFrame(
+                {"t_start": [window[0]], "t_end": [window[1]], "blinks_per_min": [rate], "eyes_measurable_s": [measurable_s]}
+            ),
+            scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name, entities=recording.entities(),
+            subject_id=subject_id,
+        )
 
     def _eye_warnings(self, recording, subject_id, eye_width: pd.Series, readable: pd.Series, min_eye_px: float) -> list[QCWarning]:
         if not len(readable):

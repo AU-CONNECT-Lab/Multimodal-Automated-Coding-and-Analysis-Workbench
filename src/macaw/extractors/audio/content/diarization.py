@@ -18,6 +18,7 @@ from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import clip_intervals
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
@@ -328,7 +329,7 @@ class DiarizationExtractor(Extractor):
         prep = load_prep(self.config, recording.recording_id)
         values = {"n_shared_tracks_diarized": 0.0}
         if self.config.text.diarization != SHARED_MODE:
-            return ExtractorResult(rows=self._rows(recording, prep, values), specs=self._specs(values))
+            return ExtractorResult(rows=self._rows(recording, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), values), specs=self._specs(values))
 
         track = shared_track(prep, recording.recording_id)
         path = prep.shared_track_path(track)
@@ -350,16 +351,28 @@ class DiarizationExtractor(Extractor):
         }
         artifacts.update({clip["file"]: workspace / clip["file"] for voice in voices.values() for clip in voice["clips"]})
         return ExtractorResult(
-            rows=self._rows(recording, prep, values),
+            rows=self._rows(recording, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), values),
             specs=self._specs(values),
             artifacts=artifacts,
             warnings=self._warnings(recording, voices, track),
         )
 
-    def _rows(self, recording: Recording, prep, values: dict[str, float]) -> pd.DataFrame:
-        frame = pd.DataFrame(
-            {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s], **{name: [value] for name, value in values.items()}}
-        )
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if self.config.text.diarization != SHARED_MODE:
+            return self._rows(recording, (start_s, end_s), {"n_shared_tracks_diarized": 0.0})
+        path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / DIARIZATION_NAME
+        if not path.is_file():
+            return None
+        turns = clip_intervals(pd.read_parquet(path), start_s, end_s)
+        values = {
+            "n_shared_tracks_diarized": 1.0,
+            "n_voices_found": float(turns.loc[turns["exclusive"].astype(bool), "label"].nunique()),
+            "overlapped_speech_fraction": overlapped_fraction(turns),
+        }
+        return self._rows(recording, (start_s, end_s), values)
+
+    def _rows(self, recording: Recording, window: tuple[float, float], values: dict[str, float]) -> pd.DataFrame:
+        frame = pd.DataFrame({"t_start": [window[0]], "t_end": [window[1]], **{name: [value] for name, value in values.items()}})
         return build_long_rows(
             values=frame, scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
             entities=recording.entities(), subject_id=None,

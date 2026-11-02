@@ -30,7 +30,7 @@ from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import MediaFile, Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
-from macaw.store.schema import Scale
+from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 
 # every prepared track is written at this rate so downstream extractors never resample
 PREP_SAMPLE_RATE = 16000
@@ -470,6 +470,10 @@ class MediaPrepExtractor(Extractor):
                     "off by that much at the far end",
                 )
 
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        # its rows describe the files, which are the same in every segment
+        return empty_frame(LONG_TABLE_SCHEMA)
+
     def _rows(self, recording: Recording, start: float, end: float, n_tracks: int):
         entities = recording.entities()
         common = dict(
@@ -693,6 +697,10 @@ class VideoPrepExtractor(Extractor):
         if fixed and not math.isclose(entry["fps"], entry["source_fps"]):
             note("video_rate_changed", f"one frame in {round(entry['source_fps'] / entry['fps'])} kept, {entry['source_fps']:g} to {entry['fps']:g} fps (video.fps)")
         return notes
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        # its rows describe the files, which are the same in every segment
+        return empty_frame(LONG_TABLE_SCHEMA)
 
     def _rows(self, recording: Recording, entries: list[dict]) -> pd.DataFrame:
         def total(key: str) -> float:

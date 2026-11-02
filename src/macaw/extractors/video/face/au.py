@@ -15,6 +15,7 @@ from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate,
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import clip_points
 from macaw.store import keypoints as keypoints_store
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import Scale
@@ -243,17 +244,7 @@ class FaceAUCheckExtractor(FaceExtractor):
                 continue
             check = faces[["t", *[code for code in ACTION_UNITS if code in faces.columns]]].rename(columns=str.lower)
             checked.append(check.assign(subject_id=subject))
-            wide = mine.pivot_table(index="t_start", columns="feature", values="value", observed=True).reset_index()
-            agreement = au_agreement(wide.rename(columns={"t_start": "t"}), check)
-            values = {f"{au}_agreement": [rho] for au, rho in agreement.items()}
-            values["au_agreement_median"] = [float(pd.Series(agreement).median())]
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame({"t_start": [faces["t"].min()], "t_end": [faces["t"].max()], **values}),
-                    scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
-                    entities=recording.entities(), subject_id=subject,
-                )
-            )
+            frames.append(self._agreement(recording, subject, mine, check, (faces["t"].min(), faces["t"].max())))
         directory = workspace / self.name
         directory.mkdir(parents=True, exist_ok=True)
         artifacts = {}
@@ -262,6 +253,31 @@ class FaceAUCheckExtractor(FaceExtractor):
             artifacts[AU_CHECK_NAME] = directory / AU_CHECK_NAME
         rows = concat_long_tables(frames)
         return ExtractorResult(rows=rows, specs=self._check_specs(set(rows["feature"])), artifacts=artifacts)
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        saved = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / AU_CHECK_NAME
+        if not saved.is_file():
+            return None
+        checked = clip_points(pd.read_parquet(saved), start_s, end_s)
+        reference = read_long_table(_face_rows_file(self.config, recording.recording_id), features=[code.lower() for code in ACTION_UNITS])
+        reference = clip_points(reference, start_s, end_s, column="t_start")
+        frames = []
+        for subject, check in checked.groupby("subject_id", sort=True):
+            mine = reference[reference["subject_id"] == subject]
+            if not mine.empty:
+                frames.append(self._agreement(recording, str(subject), mine, check.drop(columns="subject_id"), (start_s, end_s)))
+        return concat_long_tables(frames)
+
+    def _agreement(self, recording: Recording, subject: str, mine: pd.DataFrame, check: pd.DataFrame, window) -> pd.DataFrame:
+        wide = mine.pivot_table(index="t_start", columns="feature", values="value", observed=True).reset_index()
+        agreement = au_agreement(wide.rename(columns={"t_start": "t"}), check)
+        values = {f"{au}_agreement": [rho] for au, rho in agreement.items()}
+        values["au_agreement_median"] = [float(pd.Series(agreement).median())]
+        return build_long_rows(
+            values=pd.DataFrame({"t_start": [window[0]], "t_end": [window[1]], **values}),
+            scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
+            entities=recording.entities(), subject_id=subject,
+        )
 
     def _check_specs(self, emitted: set[str]) -> list[FeatureSpec]:
         backend, cfg = self.check_backend(), self.config.face

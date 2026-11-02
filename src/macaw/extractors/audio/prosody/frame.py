@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -15,9 +16,10 @@ from macaw.extractors.audio.prosody.backends import (
 )
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording, Subject
-from macaw.store.longtable import build_long_rows, concat_long_tables
+from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import Scale
 
 # Pitch is perceived logarithmically, so a fixed Hz step means different things to a low and
@@ -149,21 +151,7 @@ class FrameProsodyExtractor(Extractor):
 
             fraction = float(np.mean(np.isfinite(voiced))) if voiced.size else 0.0
             frames.append(
-                _drop_missing(
-                    build_long_rows(
-                        values=pd.DataFrame(
-                            {
-                                "t_start": [prep.t_origin_s],
-                                "t_end": [prep.t_origin_s + prep.duration_s],
-                                "f0_median_hz": [median],
-                                "voiced_fraction": [fraction],
-                            }
-                        ),
-                        scale=Scale.RECORDING,
-                        subject_id=subject.subject_id,
-                        **common,
-                    )
-                )
+                self._summary(recording, subject.subject_id, voiced, voiced.size, (prep.t_origin_s, prep.t_origin_s + prep.duration_s))
             )
 
             if fraction < cfg.min_voiced_fraction:
@@ -193,6 +181,42 @@ class FrameProsodyExtractor(Extractor):
             rows=concat_long_tables(frames),
             specs=self._specs(backend),
             warnings=warnings,
+        )
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
+        if not path.is_file():
+            return None
+        prep = load_prep(self.config, recording.recording_id)
+        pitch = read_long_table(path, features=["f0_hz"], scale=Scale.FRAME)
+        frames = []
+        for subject_id, (track, _) in voice_sources(self.config, recording, prep).items():
+            with wave.open(str(track), "rb") as audio:
+                grid = prep.t_origin_s + frame_times(audio.getnframes(), audio.getframerate(), self.config.prosody.frame_step_s)
+            # the grid's last frame sits at the very end of the track, so a segment that reaches the end takes it too
+            high = end_s if end_s < grid[-1] else np.inf
+            mine = pitch[pitch["subject_id"] == subject_id]
+            times = mine["t_start"].to_numpy(dtype=float)
+            voiced = mine["value"].to_numpy(dtype=float)[(times >= start_s) & (times < high)]
+            frames.append(self._summary(recording, subject_id, voiced, int(((grid >= start_s) & (grid < high)).sum()), (start_s, end_s)))
+        return concat_long_tables(frames)
+
+    def _summary(self, recording: Recording, subject_id: str, voiced: np.ndarray, n_frames: int, window: tuple[float, float]) -> pd.DataFrame:
+        """voiced holds the pitch of every frame, NaN where there was none, or of the voiced frames alone out of n_frames."""
+        found = np.isfinite(voiced)
+        return _drop_missing(
+            build_long_rows(
+                values=pd.DataFrame(
+                    {
+                        "t_start": [window[0]],
+                        "t_end": [window[1]],
+                        "f0_median_hz": [float(np.median(voiced[found])) if found.any() else np.nan],
+                        "voiced_fraction": [float(found.sum()) / n_frames if n_frames else 0.0],
+                    }
+                ),
+                scale=Scale.RECORDING, subject_id=subject_id, recording_id=recording.recording_id, source=self.name,
+                entities=recording.entities(),
+            )
         )
 
     def _contours(

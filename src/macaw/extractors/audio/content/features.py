@@ -9,7 +9,10 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript, resolve_device
+from macaw.extractors.audio.content.asr import (
+    TRANSCRIPT_NAME, ASRExtractor, load_transcript, resolve_device, transcript_between, transcript_saved,
+)
+from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult
 from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
@@ -97,6 +100,40 @@ class TextFeatureExtractor(Extractor):
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         transcript = load_transcript(self.config, recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
+        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        frames = [self._summary(recording, transcript, window)]
+        artifacts = {}
+        model = self.config.text.embedding_model
+        if model is not None:
+            embedded = transcript.loc[:, ["subject_id", "utterance_index", "t_start", "t_end"]].reset_index(drop=True)
+            vectors = sentence_embeddings(transcript["text"].fillna("").astype(str).tolist(), model, device=self.config.text.device)
+            path = workspace / EMBEDDINGS_NAME
+            pd.concat([embedded, vectors], axis=1).to_parquet(path, index=False)
+            artifacts[EMBEDDINGS_NAME] = path
+            every = load_transcript(self.config, recording.recording_id, others=True)
+            frames.append(self._following(recording, window, every, _by_utterance(embedded, vectors)))
+        return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(), artifacts=artifacts)
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not transcript_saved(self.config, recording.recording_id):
+            return None
+        every = transcript_between(self.config, recording.recording_id, start_s, end_s, others=True)
+        frames = [self._summary(recording, every[every["subject_id"] != OTHER], (start_s, end_s))]
+        path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / EMBEDDINGS_NAME
+        if self.config.text.embedding_model is not None and path.is_file():
+            saved = pd.read_parquet(path)
+            vectors = _by_utterance(saved[["subject_id", "utterance_index"]], saved.drop(columns=["subject_id", "utterance_index", "t_start", "t_end"]))
+            whole = {(str(who), int(index)): (start, end) for who, index, start, end in saved[["subject_id", "utterance_index", "t_start", "t_end"]].itertuples(index=False)}
+            # a line cut at an edge is embedded again from the words left inside it
+            cut = [row for row in every.itertuples() if (str(row.subject_id), int(row.utterance_index)) in whole
+                   and whole[(str(row.subject_id), int(row.utterance_index))] != (row.t_start, row.t_end)]
+            if cut:
+                again = sentence_embeddings([str(row.text) for row in cut], self.config.text.embedding_model, device=self.config.text.device)
+                vectors.update({(str(row.subject_id), int(row.utterance_index)): again.iloc[i].to_numpy(dtype=float) for i, row in enumerate(cut)})
+            frames.append(self._following(recording, (start_s, end_s), every, vectors))
+        return concat_long_tables(frames)
+
+    def _summary(self, recording: Recording, transcript: pd.DataFrame, window: tuple[float, float]) -> pd.DataFrame:
         transcript = transcript.assign(tokens=transcript["text"].fillna("").astype(str).map(tokenize))
         text = self.config.text
         first = first_use_share(
@@ -110,8 +147,8 @@ class TextFeatureExtractor(Extractor):
             tokens = [token for tokens in spoken["tokens"] for token in tokens]
             values = pd.DataFrame(
                 {
-                    "t_start": [prep.t_origin_s],
-                    "t_end": [prep.t_origin_s + prep.duration_s],
+                    "t_start": [window[0]],
+                    "t_end": [window[1]],
                     "mlu_words": [mlu(spoken)],
                     "n_tokens": [float(len(tokens))],
                     "n_types": [float(len(set(tokens)))],
@@ -126,35 +163,27 @@ class TextFeatureExtractor(Extractor):
                     entities=recording.entities(), subject_id=str(subject_id),
                 )
             )
-        artifacts = {}
-        model = self.config.text.embedding_model
-        if model is not None:
-            embedded = transcript.loc[:, ["subject_id", "utterance_index", "t_start", "t_end"]].reset_index(drop=True)
-            vectors = sentence_embeddings(transcript["text"].fillna("").astype(str).tolist(), model, device=self.config.text.device)
-            path = workspace / EMBEDDINGS_NAME
-            pd.concat([embedded, vectors], axis=1).to_parquet(path, index=False)
-            artifacts[EMBEDDINGS_NAME] = path
-            frames += self._following(recording, prep, transcript, vectors)
-        return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(), artifacts=artifacts)
+        return concat_long_tables(frames)
 
-    def _following(self, recording: Recording, prep, transcript: pd.DataFrame, vectors: pd.DataFrame) -> list[pd.DataFrame]:
+    def _following(
+        self, recording: Recording, window: tuple[float, float], every: pd.DataFrame, vectors: dict[tuple[str, int], np.ndarray],
+    ) -> pd.DataFrame:
         # a line in a voice that is no participant's breaks the chain rather than being skipped over
-        every = load_transcript(self.config, recording.recording_id, others=True).sort_values(["t_start", "t_end"], kind="stable")
-        if every.empty:
-            return []
-        position = {(str(who), int(index)): row for row, (who, index) in enumerate(zip(transcript["subject_id"], transcript["utterance_index"]))}
-        missing = np.full(vectors.shape[1], np.nan)
+        every = every.sort_values(["t_start", "t_end"], kind="stable")
+        if every.empty or not vectors:
+            return concat_long_tables([])
+        missing = np.full(len(next(iter(vectors.values()))), np.nan)
         keys = [(str(who), int(index)) for who, index in zip(every["subject_id"], every["utterance_index"])]
-        ordered = np.array([vectors.iloc[position[key]].to_numpy(dtype=float) if key in position else missing for key in keys])
-        span = {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s]}
-        return [
+        ordered = np.array([vectors.get(key, missing) for key in keys])
+        span = {"t_start": [window[0]], "t_end": [window[1]]}
+        return concat_long_tables([
             build_long_rows(
                 values=pd.DataFrame({**span, "semantic_following": [value]}), scale=Scale.RECORDING,
                 recording_id=recording.recording_id, source=self.name, entities=recording.entities(), subject_id=follower,
                 subject_id_b=followed,
             )
             for (follower, followed), value in sorted(semantic_following([who for who, _ in keys], ordered).items())
-        ]
+        ])
 
     def _specs(self) -> list[FeatureSpec]:
         return [
@@ -177,6 +206,13 @@ class TextFeatureExtractor(Extractor):
             )
             for name, (description, unit) in {**_SPECS, **(_EMBEDDING_SPECS if self.config.text.embedding_model else {})}.items()
         ]
+
+
+def _by_utterance(keys: pd.DataFrame, vectors: pd.DataFrame) -> dict[tuple[str, int], np.ndarray]:
+    return {
+        (str(who), int(index)): vectors.iloc[row].to_numpy(dtype=float)
+        for row, (who, index) in enumerate(zip(keys["subject_id"], keys["utterance_index"]))
+    }
 
 
 def tokenize(text: str) -> list[str]:

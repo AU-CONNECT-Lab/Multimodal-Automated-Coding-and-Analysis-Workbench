@@ -142,6 +142,9 @@ class TestScaffold:
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert float(result.rows["value"].iloc[0]) == pytest.approx(50.0)
         assert result.specs[0].params == {"quantiles": [0.25, 0.75]}
+        # the first half second of the frames gives the spread of its own pitches
+        part = load_class(package)(cfg).summarise(recording, 0.0, 0.505)
+        assert float(part["value"].iloc[0]) == pytest.approx(25.0)
 
 
 class TestEntryPoints:

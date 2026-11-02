@@ -22,6 +22,7 @@ from macaw.project.gaze_labels import labels_frame, read_labels
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import clip_points
 from macaw.store import keypoints as keypoints_store
 from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
@@ -137,6 +138,14 @@ class GazeTargetExtractor(Extractor):
             artifacts={POINTS_NAME: directory / POINTS_NAME},
             warnings=warnings,
         )
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / POINTS_NAME
+        if not path.is_file():
+            return None
+        points = clip_points(pd.read_parquet(path), start_s, end_s)
+        rows = self._rows(recording, points, [subject.subject_id for subject in recording.subjects])
+        return rows[rows["scale"] == Scale.RECORDING.value].reset_index(drop=True)
 
     def _points(self, recording, backend, keypoints, views, by_name, span) -> tuple[pd.DataFrame, list[QCWarning]]:
         cfg = self.config.gaze

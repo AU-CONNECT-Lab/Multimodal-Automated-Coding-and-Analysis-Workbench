@@ -10,7 +10,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript
+from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript, transcript_between, transcript_saved
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
@@ -69,25 +69,18 @@ class SyntaxExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         return [layout_for(self.config, create=False).artifacts_dir(recording.recording_id, ASRExtractor.name) / TRANSCRIPT_NAME]
 
-    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        import spacy
+    def _parser(self):
+        if getattr(self, "_nlp", None) is None:
+            import spacy
 
-        nlp = spacy.load(self.config.text.syntax_model, exclude=["ner"])
+            self._nlp = spacy.load(self.config.text.syntax_model, exclude=["ner"])
+        return self._nlp
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        nlp = self._parser()
         transcript = load_transcript(self.config, recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
-        texts = transcript["text"].fillna("").astype(str).tolist()
-        parsed = [utterance_syntax(doc) for doc in nlp.pipe(texts)]
-        transcript = transcript.reset_index(drop=True).assign(parsed=parsed)
-        frames = []
-        for subject_id, spoken in transcript.groupby("subject_id", observed=True):
-            values = {"t_start": [prep.t_origin_s], "t_end": [prep.t_origin_s + prep.duration_s]}
-            values.update({name: [value] for name, value in speaker_syntax([item for item in spoken["parsed"] if item]).items()})
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id,
-                    source=self.name, entities=recording.entities(), subject_id=str(subject_id),
-                )
-            )
+        rows = self._summary(recording, transcript, (prep.t_origin_s, prep.t_origin_s + prep.duration_s))
         language = self.config.text.language
         warnings = [
             QCWarning(
@@ -102,7 +95,28 @@ class SyntaxExtractor(Extractor):
                     message=f"text.language is {language} but the parser {self.config.text.syntax_model} reads {nlp.lang}",
                 )
             )
-        return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(nlp), warnings=warnings)
+        return ExtractorResult(rows=rows, specs=self._specs(nlp), warnings=warnings)
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        if not transcript_saved(self.config, recording.recording_id):
+            return None
+        return self._summary(recording, transcript_between(self.config, recording.recording_id, start_s, end_s), (start_s, end_s))
+
+    def _summary(self, recording: Recording, transcript: pd.DataFrame, window: tuple[float, float]) -> pd.DataFrame:
+        texts = transcript["text"].fillna("").astype(str).tolist()
+        parsed = [utterance_syntax(doc) for doc in self._parser().pipe(texts)]
+        transcript = transcript.reset_index(drop=True).assign(parsed=parsed)
+        frames = []
+        for subject_id, spoken in transcript.groupby("subject_id", observed=True):
+            values = {"t_start": [window[0]], "t_end": [window[1]]}
+            values.update({name: [value] for name, value in speaker_syntax([item for item in spoken["parsed"] if item]).items()})
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id,
+                    source=self.name, entities=recording.entities(), subject_id=str(subject_id),
+                )
+            )
+        return concat_long_tables(frames)
 
     def _specs(self, nlp) -> list[FeatureSpec]:
         model = f"{nlp.meta.get('lang', '')}_{nlp.meta.get('name', '')}"
