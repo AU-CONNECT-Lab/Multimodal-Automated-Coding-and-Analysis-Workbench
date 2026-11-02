@@ -148,10 +148,13 @@ Coders who each set their own boundaries
 States that last, such as gaze
 : `macaw agreement --tier gaze_target --grid-s 0.5` divides time into half-second bins and compares the bins.
 
+Within one phase of the recordings
+: `macaw agreement --tier speech_acts --segment free_play` compares only the coding inside each recording's segment of that name ({ref}`segments`), cut at the segment's edges as the segment summaries are. It combines with `--units` and `--grid-s`. Recordings without such a segment are left out and listed.
+
 The report gives Krippendorff's alpha across all coders, Cohen's kappa for each pair, and the agreement on each code for each pair, so that with two human coders and a language model, the model's agreement with each person stands beside the agreement between the people. `--out agreement` additionally writes a folder with a table of every unit, each coder's code and the words spoken, which shows which codes are confused with which and helps when revising a codebook.
 
 :::{note}
-A coder who coded only part of a recording leaves the rest uncoded, which counts as disagreement. Restrict the comparison to the part all coders coded.
+A coder who coded only part of a recording leaves the rest uncoded, which counts as disagreement. Mark the part all coders coded as a segment and compare within it with `--segment`.
 :::
 
 ### Summary of code use
@@ -189,7 +192,7 @@ The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse 
 
 ### Results
 
-`macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, and `macaw methods` describes how the segments were summarised.
+`macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, `macaw methods` describes how the segments were summarised, and `macaw agreement --segment` compares coders within a segment.
 
 ## Gaze: who looks at whom
 
