@@ -560,21 +560,66 @@ class TestReview:
         result = CliRunner().invoke(app, ["review", "-c", str(project.config), "--export", str(tmp_path / "q.csv")])
         assert result.exit_code == 0, result.output
         queue = read_queue(tmp_path / "q.csv")
-        assert queue["t_start"].tolist() == [2.0, 4.0]
+        # the one unit the model was sure of comes as a random check
+        assert queue["t_start"].tolist() == [0.0, 2.0, 4.0]
+        assert queue["reason"].tolist() == ["random_check", "low_confidence", "abstained"]
 
         queue.loc[queue["t_start"] == 2.0, ["decision", "reviewer"]] = ["inform", "ann"]
         queue.to_csv(tmp_path / "q.csv", index=False)
         result = CliRunner().invoke(app, ["review", "-c", str(project.config), "--apply", str(tmp_path / "q.csv")])
         assert result.exit_code == 0, result.output
-        assert "r1: 1" in result.output
+        assert "r1: 1" in result.output and "random check" not in result.output
 
         reviewed = pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))
         assert reviewed[["annotator", "label", "t_start"]].values.tolist() == [["ann", "inform", 2.0]]
-        assert export_review(project.resolved, ["r1"])["t_start"].tolist() == [4.0]
+        assert export_review(project.resolved, ["r1"])["t_start"].tolist() == [0.0, 4.0]
 
         # the same decision applied twice is still one row
         apply_review(project.resolved, queue)
         assert len(pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))) == 1
+
+    def test_a_random_check_says_how_often_sure_answers_are_wrong(self, project, tmp_path):
+        queue = export_review(project.resolved, ["r1"])
+        queue.loc[queue["reason"] == "random_check", ["decision", "reviewer"]] = ["question", "ann"]
+        queue.to_csv(tmp_path / "q.csv", index=False)
+        result = CliRunner().invoke(app, ["review", "-c", str(project.config), "--apply", str(tmp_path / "q.csv")])
+        assert "random check: a person coded 1 of 1 units the model was sure of otherwise" in result.output
+        from macaw.qc.report import _model_coding
+
+        row = _model_coding(project.resolved, layout_for(project.resolved), "r1")
+        assert "a person coded 1 of 1 units the model was sure of, drawn at random, otherwise" in row["decided"]
+
+
+class TestRandomCheck:
+    def units(self, recordings=("r1", "r2"), n=12):
+        rows = [
+            {"recording_id": rid, "subject_id": "a", "tier": "acts", "t_start": float(i), "t_end": i + 0.5, "label": "inform",
+             "annotator": "llm", "layer": "B", "confidence": 0.4 if i == 0 else 1.0, "abstained": False, "needs_review": i == 0,
+             "group_id": rid, "session_id": None, "task": None, "run": None, "execution_id": "e1", "config_hash": "h1"}
+            for rid in recordings for i in range(n)
+        ]
+        return coerce_frame(pd.DataFrame(rows), ANNOTATION_SCHEMA, "annotations")
+
+    def test_drawn_per_recording_among_the_sure_units_the_same_way_each_time(self):
+        from macaw.coding.review_queue import build_queue, random_checks
+
+        units = self.units()
+        queue = build_queue(units, threshold=0.7)
+        drawn = random_checks(units, queue, per_recording=3, seed=0)
+        assert drawn.groupby("recording_id").size().to_dict() == {"r1": 3, "r2": 3}
+        assert (drawn["reason"] == "random_check").all() and 0.0 not in set(drawn["t_start"])
+        assert drawn.equals(random_checks(units, queue, per_recording=3, seed=0))
+        assert not drawn.equals(random_checks(units, queue, per_recording=3, seed=1))
+        assert random_checks(units, queue, per_recording=0, seed=0).empty
+        assert len(random_checks(units, queue, per_recording=50, seed=0)) == 22
+
+    def test_how_many_to_check_never_codes_anything_again(self, tmp_path):
+        hashes = []
+        for name, drawn in (("five", 5), ("twenty", 20)):
+            write_codebook(CODEBOOK, tmp_path / name / "acts.yaml")
+            config = project_with(tmp_path / name, {"layers": ["A", "B"], "codebook": "acts.yaml", "llm": {"model": "tiny", "review_random": drawn}})
+            hashes.append(hash_extractor_config(resolve_config(config), "coding.judge"))
+        assert hashes[0] == hashes[1]
 
 
 class TestWhatTheModelIsTold:

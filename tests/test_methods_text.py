@@ -218,6 +218,9 @@ def test_names_only_notes_examples_reasons_reasoning_and_frames_are_said_and_a_v
     assert "each unit to code came with three video frames near its start, middle and end, one unit per request" in text
     # the version shares the note, reasons and reasoning with the main coding, so they are said once
     assert text.count("A is the mother.") == 1 and text.count("turned off") == 1
+    assert "five units per recording that the model was sure of were drawn at random for a person to check" in text
+    unchecked = config(coding={"llm": {"review_random": 0}})
+    assert "drawn at random" not in render(describe(judged, unchecked), load_references())[0]
 
 
 def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():

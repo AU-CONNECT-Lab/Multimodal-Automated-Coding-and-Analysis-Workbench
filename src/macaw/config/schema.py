@@ -306,6 +306,7 @@ class LLMSection(_Section):
     seed: int = 0
     allow_abstain: bool = True
     review_threshold: float = 0.7
+    review_random: int = Field(default=5, ge=0)
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
     coded_roles: list[str] = Field(default_factory=list)

@@ -177,6 +177,7 @@ coding:
     seed: 0                          # sample i sends seed + i where the provider takes one
     allow_abstain: true              # the model may answer "cannot tell"
     review_threshold: 0.7            # 0-1; below this the unit enters the human review queue
+    review_random: 5                 # units the model was sure of, drawn at random per recording into the review queue, so people learn how often those are wrong; 0 draws none
     batch_size: 20                   # units per request
     context_units: 5                 # earlier lines shown before each batch, not coded
     coded_roles: []                  # roles whose units are coded, the others' lines being context; [] codes everyone

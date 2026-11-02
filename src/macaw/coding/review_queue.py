@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import zlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from macaw.exceptions import InputNotFoundError
@@ -15,6 +17,8 @@ NAME = "review queue"
 ABSTAINED = "abstained"
 LOW_CONFIDENCE = "low_confidence"
 FLAGGED = "flagged"
+# a unit the model was sure of, drawn at random: the only way to learn how often sure answers are wrong
+RANDOM_CHECK = "random_check"
 
 # what a decision points back at. The queue is a file that outlives the frame it came from, so
 # it keys on the row's own content rather than on a position.
@@ -100,6 +104,26 @@ def build_queue(annotations: pd.DataFrame, *, threshold: float) -> pd.DataFrame:
     queue["reviewer"] = pd.NA
     queue = queue.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable")
     return coerce_frame(queue.reset_index(drop=True), REVIEW_QUEUE_SCHEMA, NAME)
+
+
+def random_checks(annotations: pd.DataFrame, queue: pd.DataFrame, *, per_recording: int, seed: int) -> pd.DataFrame:
+    """per_recording of the units not already queued, drawn the same way every time for the same units."""
+    if per_recording <= 0 or annotations is None or annotations.empty:
+        return empty_frame(REVIEW_QUEUE_SCHEMA)
+    frame = coerce_frame(annotations, ANNOTATION_SCHEMA, "annotations")
+    sure = frame[~_unit_keys(frame).isin(set(_unit_keys(queue))).to_numpy()]
+    drawn = []
+    for recording_id, units in sure.groupby("recording_id", sort=True):
+        units = units.sort_values(["t_start", "subject_id", "tier"], kind="stable")
+        rng = np.random.default_rng([seed, zlib.crc32(str(recording_id).encode("utf-8"))])
+        drawn.append(units.iloc[np.sort(rng.choice(len(units), size=min(per_recording, len(units)), replace=False))])
+    if not drawn:
+        return empty_frame(REVIEW_QUEUE_SCHEMA)
+    checks = pd.concat(drawn, ignore_index=True)[list(_CARRIED)]
+    checks["reason"] = RANDOM_CHECK
+    checks["decision"] = pd.NA
+    checks["reviewer"] = pd.NA
+    return coerce_frame(checks, REVIEW_QUEUE_SCHEMA, NAME)
 
 
 def write_queue(queue: pd.DataFrame, path: Path) -> Path:
@@ -209,26 +233,56 @@ def _unit_keys(frame: pd.DataFrame) -> pd.Series:
 
 def export_review(config, recording_ids: list[str]) -> pd.DataFrame:
     """The queue across recordings, without units a person has already decided."""
+    queue = _full_queue(config, recording_ids)
+    decided = _decisions(config, recording_ids)
+    if not decided.empty and not queue.empty:
+        queue = queue[~_unit_keys(queue).isin(set(_unit_keys(decided))).to_numpy()].reset_index(drop=True)
+    return queue
+
+
+def random_check_result(config, recording_ids: list[str]) -> tuple[int, int]:
+    """(units drawn at random that a person has decided, how many of them the person coded otherwise)."""
+    queue = _full_queue(config, recording_ids)
+    checks = queue[queue["reason"].astype(str) == RANDOM_CHECK]
+    decided = _decisions(config, recording_ids)
+    if checks.empty or decided.empty:
+        return 0, 0
+    given = dict(zip(_unit_keys(decided), decided["label"].astype("string")))
+    said = [given.get(key) for key in _unit_keys(checks)]
+    looked = [(person, model) for person, model in zip(said, checks["label"].astype("string")) if person is not None]
+    return len(looked), sum(person != model for person, model in looked)
+
+
+def _full_queue(config, recording_ids: list[str]) -> pd.DataFrame:
     from macaw.coding.agreement import load_annotations
-    from macaw.coding.llm.judge import VERSION_LAYER
-    from macaw.project.layout import layout_for
+    from macaw.coding.llm.judge import LAYER
 
     annotations = load_annotations(config, recording_ids)
-    # the versions under coding.judges are there to be compared, not reviewed
-    annotations = annotations[~annotations["layer"].astype(str).str.startswith(VERSION_LAYER)]
+    # the model's own coding: not the versions under coding.judges, which are there to be compared, nor the
+    # people's decisions kept beside it under the same layer
+    annotations = annotations[annotations["layer"].astype(str) == LAYER]
+    decided = _decisions(config, recording_ids)
+    if not decided.empty:
+        annotations = annotations[~_keys(annotations).isin(set(_keys(decided))).to_numpy()]
     if annotations.empty:
         return empty_frame(REVIEW_QUEUE_SCHEMA)
-    queue = build_queue(annotations, threshold=config.coding.llm.review_threshold)
+    llm = config.coding.llm
+    queue = build_queue(annotations, threshold=llm.review_threshold)
+    checks = random_checks(annotations, queue, per_recording=llm.review_random, seed=llm.seed)
+    both = pd.concat([queue, checks], ignore_index=True) if not checks.empty else queue
+    return coerce_frame(both.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable").reset_index(drop=True), REVIEW_QUEUE_SCHEMA, NAME)
+
+
+def _decisions(config, recording_ids: list[str]) -> pd.DataFrame:
+    from macaw.project.layout import layout_for
+
     layout = layout_for(config, create=False)
     decided = [
         _io.read_file(path, ANNOTATION_SCHEMA, "annotations")
         for path in (layout.reviewed_codes_path(recording_id) for recording_id in recording_ids)
         if path.is_file()
     ]
-    if decided:
-        done = set(_unit_keys(pd.concat(decided, ignore_index=True)))
-        queue = queue[~_unit_keys(queue).isin(done).to_numpy()].reset_index(drop=True)
-    return queue
+    return pd.concat(decided, ignore_index=True) if decided else empty_frame(ANNOTATION_SCHEMA)
 
 
 def apply_review(config, queue: pd.DataFrame) -> dict[str, int]:

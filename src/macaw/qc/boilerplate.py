@@ -461,6 +461,12 @@ def _judge(config, spec, names) -> str:
             f"majority answer and its share the confidence. Units below {params.get('review_threshold')}, ties and units "
             "the model could not code were reviewed by a person."
         )
+    drawn = config.coding.llm.review_random
+    if drawn:
+        text += (
+            f" Besides those, {_count(drawn)} units per recording that the model was sure of were drawn at random for a person "
+            "to check, to estimate how often its sure answers were wrong."
+        )
     return text
 
 

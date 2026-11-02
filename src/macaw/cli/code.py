@@ -14,7 +14,7 @@ from macaw.coding.agreement import (
 )
 from macaw.coding.describe import describe_codes, format_description
 from macaw.coding.imports import import_coding
-from macaw.coding.review_queue import apply_review, export_review, queue_summary, read_queue, write_queue
+from macaw.coding.review_queue import apply_review, export_review, queue_summary, random_check_result, read_queue, write_queue
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution import runner
@@ -81,6 +81,9 @@ def review(
         typer.echo("No decisions filled in; nothing applied.")
     for recording_id, count in counts.items():
         typer.echo(f"{recording_id}: {count}")
+    checked, changed = random_check_result(resolved, resolve_recordings(resolved, recordings))
+    if checked:
+        typer.echo(f"random check: a person coded {changed} of {checked} units the model was sure of otherwise")
 
 
 @app.command("agreement")

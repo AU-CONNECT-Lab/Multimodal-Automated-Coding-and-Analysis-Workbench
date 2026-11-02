@@ -283,7 +283,7 @@ How sure it is
 : Each unit is asked several times (five by default). The share of matching answers is its confidence. The model may also answer "cannot tell".
 
 What comes to you
-: Units below 70% agreement, and every "cannot tell", appear under *Speech acts* on the Review page.
+: Units below 70% agreement, and every "cannot tell", appear under *Speech acts* on the Review page. A model can give the same wrong code every time it is asked, so agreement among its answers finds only some of its mistakes. Five units per recording that it was sure of (*Sure units checked at random*, `coding.llm.review_random`) are therefore drawn at random and queued as well, marked *random check*. Once people have decided them, `macaw review --apply` and the QC report say how many of the checked units a person coded otherwise, which is how often the model's sure answers are wrong. The draw is the same each time the queue is exported, and changing the number does not code anything again.
 
 Agreement
 : MACAW reports how well your choices and the model's agree, as Krippendorff's alpha and Cohen's kappa, and compares the model with coding you did yourself ({ref}`own-coding`).

@@ -43,7 +43,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     )),
     ("Coding", "Coding layers, and the language model that codes speech acts in layer B.", (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
-        "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.coded_roles", "coding.llm.show",
+        "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.review_random", "coding.llm.coded_roles", "coding.llm.show",
         "coding.llm.notes", "coding.llm.examples", "coding.llm.reasons", "coding.llm.think",
     )),
 )
@@ -90,6 +90,7 @@ LABELS = {
     "coding.llm.base_url": "Server address",
     "coding.llm.n_samples": "Answers per unit",
     "coding.llm.review_threshold": "Review below this agreement",
+    "coding.llm.review_random": "Sure units checked at random",
     "coding.llm.coded_roles": "People to code",
     "coding.llm.show": "What the model is shown besides the words",
     "coding.llm.notes": "Note to the model",
