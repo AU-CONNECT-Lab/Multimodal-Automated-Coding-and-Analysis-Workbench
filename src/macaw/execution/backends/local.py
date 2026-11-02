@@ -118,6 +118,9 @@ class LocalBackend(ExecBackend):
             return 1
 
         status = "done" if code == 0 else "failed"
+        # a task that found its result in the cache records that itself, and a clean exit keeps it
+        if code == 0 and self.job_db is not None and getattr(self.job_db.get(spec.task_id), "status", None) == "cached":
+            status = "cached"
         message = None if code == 0 else f"exit code {code}, see {log_path}"
         self._finish(spec.task_id, time.monotonic() - started, status, message, exit_code=code)
         return code

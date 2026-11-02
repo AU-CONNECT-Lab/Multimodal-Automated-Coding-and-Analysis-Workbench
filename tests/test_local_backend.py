@@ -73,6 +73,16 @@ def _finished_at(marker):
     return float(marker.read_text(encoding="utf-8"))
 
 
+def test_a_task_that_found_its_result_in_the_cache_is_counted_as_cached(tmp_path, database, make_spec):
+    spec, _ = make_spec("r1:prep.media")
+    spec.command = [
+        sys.executable, "-c",
+        f"from macaw.execution.job_db import JobDB; JobDB(r'{tmp_path / 'jobs'}').set_status('r1:prep.media', 'cached')",
+    ]
+    _run(database, [spec])
+    assert database.get("r1:prep.media").status == "cached"
+
+
 class TestRunning:
     def test_a_task_runs_and_is_marked_done(self, database, make_spec):
         spec, marker = make_spec("rec1:prep.media")
