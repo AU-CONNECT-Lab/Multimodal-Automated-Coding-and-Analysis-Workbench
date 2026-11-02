@@ -219,3 +219,21 @@ class TestCommand:
         assert (out / "report.json").is_file()
         result = CliRunner().invoke(app, ["agreement", "--out", str(out / "report.json"), "-c", str(project.path)])
         assert result.exit_code == 1 and "takes a folder" in str(result.exception)
+
+    def test_two_coders_compared_inside_a_segment(self, project, tmp_path):
+        project.configure(IMPORTS)
+        for coder, code in (("anna", "Mom"), ("ben", "Away")):
+            for rid in ("dyad01", "dyad010"):
+                path = write_eaf(tmp_path / f"{rid}_{coder}.eaf", {"Child Gaze": (None, [(0, 1000, code), (2000, 3000, "Mom")])})
+                CliRunner().invoke(app, ["import-codes", str(path), "--coder", coder, "-r", rid, "-c", str(project.path)])
+        CliRunner().invoke(app, ["set-segment", "-r", "dyad01", "--name", "early", "--start", "0.5", "--end", "2.5", "-c", str(project.path)])
+        out = tmp_path / "agreement"
+        result = CliRunner().invoke(app, ["agreement", "--segment", "early", "--units", "anna", "--out", str(out), "-c", str(project.path)])
+        assert result.exit_code == 0, result.output
+        assert "left out, no segment early: dyad010" in result.output and "segment=early" in result.output
+        units = pd.read_csv(out / "units.csv")
+        assert units[["recording_id", "t_start", "t_end", "anna", "ben"]].values.tolist() == [
+            ["dyad01", 0.5, 1.0, "parent", "elsewhere"], ["dyad01", 2.0, 2.5, "parent", "parent"],
+        ]
+        result = CliRunner().invoke(app, ["agreement", "--segment", "late", "-c", str(project.path)])
+        assert result.exit_code == 1 and "the segments are: early" in str(result.exception)

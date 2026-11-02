@@ -363,6 +363,7 @@ def agreement_report(
     layer: str | None = None,
     grid_s: float | None = None,
     units_of: str | None = None,
+    segment: str | None = None,
 ) -> dict:
     """Everything a methods section needs about one tier. n_units is reported rather than turned
     into a pass/fail: how much agreement is enough is the analyst's call."""
@@ -385,6 +386,7 @@ def agreement_report(
     report = {
         "tier": tier,
         "layer": layer,
+        "segment": segment,
         "unit_mode": "coder" if units_of is not None else "exact" if grid_s is None else "grid",
         "grid_s": grid_s,
         "units_of": units_of,
@@ -451,7 +453,8 @@ def _report_warnings(report: dict, units: pd.DataFrame) -> list[str]:
 def format_report(report: dict) -> str:
     lines = [
         f"tier={report['tier'] or 'all'}  layer={report['layer'] or 'all'}  "
-        f"units={report['unit_mode']}" + (f"({report['grid_s']}s)" if report["grid_s"] else "")
+        + (f"segment={report['segment']}  " if report.get("segment") else "")
+        + f"units={report['unit_mode']}" + (f"({report['grid_s']}s)" if report["grid_s"] else "")
         + (f"({report['units_of']})" if report.get("units_of") else ""),
         f"n_units={report['n_units']}  n_pairable={report['n_pairable']}  "
         f"n_annotators={report['n_annotators']}  coverage={report['coverage']:.2f}",
@@ -540,3 +543,21 @@ def load_annotations(config, recording_ids: Sequence[str]) -> pd.DataFrame:
     if not frames:
         return empty_frame(ANNOTATION_SCHEMA)
     return coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, "annotations")
+
+
+def segment_annotations(config, annotations: pd.DataFrame, name: str) -> tuple[pd.DataFrame, list[str]]:
+    """Each recording's annotations cut at the edges of its segment of that name, and the coded recordings without one."""
+    from macaw.project.segments import clip_intervals, read_segments
+
+    table = read_segments(config)
+    kept, missing = [], []
+    for rid, rows in annotations.groupby(annotations["recording_id"].astype(str), sort=True):
+        found = [segment for segment in table.get(rid, []) if segment.name == name]
+        if found:
+            kept.append(clip_intervals(rows, found[0].start_s, found[0].end_s))
+        else:
+            missing.append(rid)
+    if not kept:
+        named = sorted({segment.name for segments in table.values() for segment in segments})
+        raise MacawError(f"no coded recording has a segment named {name}; the segments are: {', '.join(named) or 'none'}")
+    return pd.concat(kept, ignore_index=True), missing

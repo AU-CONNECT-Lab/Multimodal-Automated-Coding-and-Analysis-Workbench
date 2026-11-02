@@ -10,6 +10,7 @@ from macaw.coding.agreement import (
     agreement_report,
     format_report,
     load_annotations,
+    segment_annotations,
     write_report,
 )
 from macaw.coding.describe import describe_codes, format_description
@@ -102,6 +103,9 @@ def agreement(
     samples: bool = typer.Option(
         False, "--samples", help="Also count each answer of the language model as a coder, <coder>#1, #2 ..., to set it against itself."
     ),
+    segment: str = typer.Option(
+        None, "--segment", help="Compare inside this named segment only, the coding cut at its edges; recordings without it are left out."
+    ),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
     """Inter-annotator agreement over the annotations table: Krippendorff alpha and Cohen kappa."""
@@ -116,7 +120,11 @@ def agreement(
         from macaw.coding.llm.judge import sample_annotations
 
         annotations = pd.concat([annotations, sample_annotations(resolved, chosen)], ignore_index=True)
-    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units)
+    if segment is not None:
+        annotations, missing = segment_annotations(resolved, annotations, segment)
+        if missing:
+            typer.echo(f"left out, no segment {segment}: {', '.join(missing)}\n")
+    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units, segment=segment)
     typer.echo(format_report(report))
     if out is not None:
         if grid_s is None:

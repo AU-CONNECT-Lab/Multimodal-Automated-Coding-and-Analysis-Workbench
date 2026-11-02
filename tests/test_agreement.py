@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -17,9 +18,11 @@ from macaw.coding.agreement import (
     per_code_alpha,
     per_code_pairs,
     report_to_json,
+    segment_annotations,
     unit_table,
     write_report,
 )
+from macaw.exceptions import MacawError
 
 
 def annotations(rows, *, tier="backchannel", layer="B", recording_id="r1", subject_id="parent"):
@@ -463,3 +466,41 @@ class TestAgreementReport:
     def test_format_report_mentions_the_headline_number(self):
         text = format_report(agreement_report(self.paired()))
         assert "krippendorff_alpha=1.000" in text
+
+
+class TestSegments:
+    @pytest.fixture
+    def config(self, tmp_path):
+        table = tmp_path / "segments.csv"
+        table.write_text("recording,segment,start_s,end_s\nr1,early,0,10\nr1,late,10,20\nr2,late,0,5\n", encoding="utf-8")
+        return SimpleNamespace(project=SimpleNamespace(segments=table))
+
+    def test_a_unit_across_an_edge_is_cut_and_counted_on_both_sides(self, config):
+        frame = annotations([(coder, *span) for coder in ("A", "B") for span in ((2.0, 4.0, "y"), (8.0, 12.0, "x"))])
+        early, _ = segment_annotations(config, frame, "early")
+        late, _ = segment_annotations(config, frame, "late")
+        assert unit_table(build_units(early))[["t_start", "t_end"]].values.tolist() == [[2.0, 4.0], [8.0, 10.0]]
+        assert unit_table(build_units(late))[["t_start", "t_end", "A", "B"]].values.tolist() == [[10.0, 12.0, "x", "x"]]
+
+    def test_the_others_code_is_the_one_covering_most_of_the_cut_unit(self, config):
+        frame = annotations([("A", 8.0, 12.0, "x"), ("B", 8.0, 9.5, "x"), ("B", 9.5, 12.0, "z")])
+        assert unit_table(build_units(frame, units_of="A"))["B"].tolist() == ["z"]
+        early, _ = segment_annotations(config, frame, "early")
+        assert unit_table(build_units(early, units_of="A"))["B"].tolist() == ["x"]
+
+    def test_grid_cells_stay_inside_the_segment(self, config):
+        frame = annotations([("A", 0.0, 20.0, "x"), ("B", 0.0, 20.0, "x")])
+        early, _ = segment_annotations(config, frame, "early")
+        assert unit_table(build_units(early, grid_s=2.5))["t_end"].max() == 10.0
+
+    def test_recordings_without_the_segment_are_left_out_and_named(self, config):
+        frame = pd.concat([annotations([("A", 0.0, 1.0, "x")]), annotations([("A", 0.0, 1.0, "x")], recording_id="r3")])
+        kept, missing = segment_annotations(config, frame, "early")
+        assert kept["recording_id"].unique().tolist() == ["r1"] and missing == ["r3"]
+        with pytest.raises(MacawError, match="the segments are: early, late"):
+            segment_annotations(config, frame, "middle")
+
+    def test_the_report_names_the_segment(self):
+        report = agreement_report(annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "x")]), segment="early")
+        assert report_to_json(report)["segment"] == "early"
+        assert "segment=early" in format_report(report)
