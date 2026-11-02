@@ -181,7 +181,7 @@ class OpenAICompatibleBackend(LLMBackend):
 class OllamaBackend(OpenAICompatibleBackend):
     name = "ollama"
     is_local = True
-    # 127.0.0.1, not localhost: Windows tries ::1 first and waits about 2 s on each refused connection
+    # 127.0.0.1, not localhost: Windows tries ::1 first and waits on each refused connection before it falls back
     default_base_url = "http://127.0.0.1:11434/v1"
 
     def _think_fields(self, think: bool) -> dict:

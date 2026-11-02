@@ -265,7 +265,7 @@ class TestBackends:
         for _ in range(3):
             assert backend.complete("s", "u").model == "tiny@abcdef123456"
         assert stub.gets == ["/api/tags"]
-        # Windows waits on ::1 before it falls back to 127.0.0.1, about 2 s a request
+        # Windows waits on ::1 before it falls back to 127.0.0.1, on every request
         assert all("localhost" not in cls.default_base_url for cls in (OllamaBackend, VLLMBackend, backends_module.LlamaCppBackend))
 
     def test_an_answer_stopped_at_max_tokens_is_marked(self, monkeypatch, stub):

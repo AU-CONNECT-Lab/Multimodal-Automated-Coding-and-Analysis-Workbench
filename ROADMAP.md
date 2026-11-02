@@ -25,7 +25,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Transcription from each person's microphone or a shared one, voices told apart and named, prosody and voice quality per turn, lexical and syntactic measures.
 - Turn structure, floor transfer and turn-taking entropy.
 - Pose from MediaPipe or YOLO with people kept apart across cameras, body movement, motion energy, facial action units, head angles, gaze direction, mouth movement and blinks.
-- Rule-based coding, language-model coding from a codebook with human review, several versions of it side by side and a choice of what the model is shown, coder agreement, and ELAN interchange both ways.
+- Rule-based coding, language-model coding from a codebook with human review, several versions of it side by side, a choice of what the model is shown (timing, voice, video frames, a note, examples people coded) and whether it reasons first or gives reasons, its agreement with itself, coder agreement, and ELAN interchange both ways.
 - People's own coding brought in from ELAN or a table and compared with other coders or the machine, on shared intervals, one coder's intervals or a time grid.
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
@@ -40,6 +40,6 @@ Reviewing the output works the same way. The quality report points at the frames
 
 ## Milestones
 
-- A language-model observation pass before coding, transcript cleanup, and codebook refinement.
+- A language-model observation pass before coding, and transcript cleanup.
 - Several kept segments per recording, and picking them on the video in the GUI.
 - 3D from a single camera or a depth camera, with body models suited to children; the storage schema reserves room for it.
