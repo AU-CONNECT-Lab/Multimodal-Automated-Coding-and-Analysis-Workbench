@@ -15,21 +15,27 @@ import pandas as pd
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
 from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
 from macaw.coding.llm.parsing import parse_annotation_response
-from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
+from macaw.coding.llm.prompts import ABSTAIN, VOICE, build_annotation_prompt
 from macaw.config.schema import LLMSection, MacawConfig
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
+from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.annotations import build_annotations
-from macaw.store.longtable import build_long_rows, concat_long_tables
+from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_frame
 from macaw.turns.segmentation import TurnStructureExtractor, load_turns
 
 LAYER = "B"
+# each version under coding.judges is its own step with its own layer, so none overwrites another
+VERSION_STEP = "coding.judge."
+VERSION_LAYER = "B."
 SAMPLES_NAME = "samples.parquet"
+_FRAME_FEATURES = {"pitch": "f0_semitone", "loudness": "intensity_db"}
 
 _SUBJECT_SPECS = {
     "n_units_judged": ("Units of this speaker the model coded.", "count"),
@@ -41,7 +47,7 @@ _SUBJECT_SPECS = {
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
@@ -49,49 +55,72 @@ class JudgementExtractor(Extractor):
     config_sections = (
         "coding.codebook", "turns", *(f"coding.llm.{key}" for key in (
             "provider", "model", "temperature", "max_tokens", "n_samples", "seed", "allow_abstain",
-            "review_threshold", "batch_size", "context_units", "coded_roles",
+            "review_threshold", "batch_size", "context_units", "coded_roles", "show",
         )),
     )
     requires = (ASRExtractor.name, TurnStructureExtractor.name)
+    judge: str | None = None  # the version under coding.judges this step codes; None is coding.llm's own
+
+    @classmethod
+    def settings(cls, config: MacawConfig) -> tuple[Path | None, LLMSection]:
+        if cls.judge is not None and cls.judge not in config.coding.judges:
+            raise ConfigError(f"coding.judges has no version {cls.judge}")
+        return config.coding.judge_settings(cls.judge)
+
+    @classmethod
+    def _present(cls, config: MacawConfig) -> bool:
+        return cls.judge is None or cls.judge in config.coding.judges
 
     @classmethod
     def wanted_by_default(cls, config: MacawConfig) -> bool:
-        return "B" in config.coding.layers
+        return "B" in config.coding.layers and cls._present(config)
+
+    @classmethod
+    def dependencies(cls, config: MacawConfig) -> tuple[str, ...]:
+        voiced = cls._present(config) and {"pitch", "loudness"} & set(cls.settings(config)[1].show)
+        return cls.requires + ((FrameProsodyExtractor.name,) if voiced else ())
 
     @classmethod
     def resources(cls, config: MacawConfig) -> str:
         # a model served inside the job needs the GPU; a remote one only the network
-        return "gpu_standard" if config.coding.llm.is_local() else cls.resource_profile
+        return "gpu_standard" if cls.settings(config)[1].is_local() else cls.resource_profile
 
     def check_available(self) -> None:
         self._codebook()
-        unknown = sorted(set(self.config.coding.llm.coded_roles) - set(self.config.project.roles))
+        _, cfg = self.settings(self.config)
+        unknown = sorted(set(cfg.coded_roles) - set(self.config.project.roles))
         if unknown:
             raise ConfigError(
-                f"coding.llm.coded_roles names {', '.join(unknown)}, which project.roles does not have "
+                f"coded_roles of {self.name} names {', '.join(unknown)}, which project.roles does not have "
                 f"({', '.join(self.config.project.roles)})"
             )
-        resolve_llm_backend(self.config.coding.llm).check_available()
+        resolve_llm_backend(cfg).check_available()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return TurnStructureExtractor(self.config).inputs_for(recording)
+        inputs = TurnStructureExtractor(self.config).inputs_for(recording)
+        voice = prosody_rows_file(self.config, recording.recording_id)
+        if {"pitch", "loudness"} & set(self.settings(self.config)[1].show) and voice.is_file():
+            inputs.append(voice)
+        return inputs
 
     def backend_info(self) -> tuple[str | None, str | None]:
-        backend = resolve_llm_backend(self.config.coding.llm)
+        backend = resolve_llm_backend(self.settings(self.config)[1])
         return backend.name, backend.model_version()
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        cfg = self.config.coding.llm
+        _, cfg = self.settings(self.config)
         codebook = self._codebook()
         backend = resolve_llm_backend(cfg)
         lines = coding_units(self.config, recording, codebook.unit, cfg.coded_roles)
+        if set(VOICE) & set(cfg.show):
+            lines = voice_figures(self.config, recording.recording_id, lines, cfg.show)
         samples = sample_labels(lines, codebook, backend, cfg)
         units = lines[lines["unit_id"].notna()]
         judged = aggregate_samples(units, samples, cfg)
 
         path = workspace / SAMPLES_NAME
         samples.merge(units[["unit_id", "subject_id", "t_start", "t_end"]], on="unit_id").to_parquet(path, index=False)
-        annotator = f"llm:{backend.name}/{cfg.model}"
+        annotator = self.judge or f"llm:{backend.name}/{cfg.model}"
         return ExtractorResult(
             rows=self._rows(recording, judged),
             specs=self._specs(codebook),
@@ -101,9 +130,9 @@ class JudgementExtractor(Extractor):
         )
 
     def _codebook(self) -> Codebook:
-        path = self.config.coding.codebook
+        path, _ = self.settings(self.config)
         if path is None:
-            raise BackendNotAvailableError("coding.judge needs a codebook: set coding.codebook to its YAML file.")
+            raise BackendNotAvailableError(f"{self.name} needs a codebook: set coding.codebook to its YAML file.")
         codebook = read_codebook(path)
         problems = validate_codebook(codebook)
         if problems:
@@ -118,7 +147,7 @@ class JudgementExtractor(Extractor):
         entities = recording.entities()
         frames = [
             build_annotations(
-                recording_id=recording.recording_id, tier=tier, layer=LAYER, annotator=annotator,
+                recording_id=recording.recording_id, tier=tier, layer=self.layer(), annotator=annotator,
                 intervals=group[["t_start", "t_end", "label", "confidence", "abstained", "needs_review"]].reset_index(drop=True),
                 entities=entities, subject_id=str(subject_id),
             )
@@ -128,9 +157,17 @@ class JudgementExtractor(Extractor):
             return empty_frame(ANNOTATION_SCHEMA)
         return coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, "annotations")
 
+    @classmethod
+    def layer(cls) -> str:
+        return LAYER if cls.judge is None else f"{VERSION_LAYER}{cls.judge}"
+
+    @classmethod
+    def feature(cls, name: str) -> str:
+        return name if cls.judge is None else f"{name}_{cls.judge}"
+
     def _rows(self, recording: Recording, judged: pd.DataFrame) -> pd.DataFrame:
         span = (float(judged["t_start"].min()), float(judged["t_end"].max())) if not judged.empty else (np.nan, np.nan)
-        coded = set(self.config.coding.llm.coded_roles)
+        coded = set(self.settings(self.config)[1].coded_roles)
         frames = []
         for subject in recording.subjects:
             if coded and subject.subject_id not in coded:
@@ -142,9 +179,9 @@ class JudgementExtractor(Extractor):
                     values=pd.DataFrame({
                         "t_start": [span[0]],
                         "t_end": [span[1]],
-                        "n_units_judged": [float(n)],
-                        "share_abstained": [float(mine["abstained"].mean()) if n else np.nan],
-                        "share_needs_review": [float(mine["needs_review"].mean()) if n else np.nan],
+                        self.feature("n_units_judged"): [float(n)],
+                        self.feature("share_abstained"): [float(mine["abstained"].mean()) if n else np.nan],
+                        self.feature("share_needs_review"): [float(mine["needs_review"].mean()) if n else np.nan],
                     }),
                     scale=Scale.RECORDING, subject_id=subject.subject_id,
                     recording_id=recording.recording_id, source=self.name, entities=recording.entities(),
@@ -153,7 +190,7 @@ class JudgementExtractor(Extractor):
         return concat_long_tables(frames)
 
     def _warnings(self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend) -> list[QCWarning]:
-        cfg = self.config.coding.llm
+        _, cfg = self.settings(self.config)
         warnings = []
 
         def note(check: str, severity: str, message: str) -> None:
@@ -172,20 +209,22 @@ class JudgementExtractor(Extractor):
                 "Check that the codebook fits this conversation and that the model follows the answer format.",
             )
         review = int(judged["needs_review"].sum()) if not judged.empty else 0
-        if review:
+        # a version is coded for comparison, so its unsure units do not join the review queue
+        if review and self.judge is None:
             note("llm_review", "info", f"{review} of {len(judged)} units wait for a person: macaw review --export <file>.csv.")
         return warnings
 
     def _specs(self, codebook: Codebook) -> list[FeatureSpec]:
-        cfg = self.config.coding.llm
+        _, cfg = self.settings(self.config)
         params = {
             "codebook": codebook.name, "codebook_unit": codebook.unit, "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples,
             "temperature": cfg.temperature, "seed": cfg.seed, "review_threshold": cfg.review_threshold,
             "batch_size": cfg.batch_size, "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
+            "show": list(cfg.show), "judge": self.judge,
         }
         return [
             FeatureSpec(
-                name=feature, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
+                name=self.feature(feature), description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
                 extractor=self.name, extractor_version=self.version, params=params, aggregation="none", validation="none",
             )
             for feature, (description, unit) in _SUBJECT_SPECS.items()
@@ -217,6 +256,72 @@ def coding_units(config: MacawConfig, recording: Recording, unit: str, coded_rol
     return frame[["unit_id", "subject_id", "speaker", "t_start", "t_end", "gap_before", "text"]]
 
 
+def prosody_rows_file(config: MacawConfig, recording_id: str) -> Path:
+    return layout_for(config, create=False).long_table_path(recording_id) / f"{FrameProsodyExtractor.name}.parquet"
+
+
+def voice_figures(config: MacawConfig, recording_id: str, lines: pd.DataFrame, show) -> pd.DataFrame:
+    """Each line's pitch (semitones), loudness (dB) and speech rate (percent) against the median of that speaker's lines."""
+    out = lines.copy()
+    wanted = [item for item in VOICE if item in show]
+    if "rate" in wanted:
+        seconds = (out["t_end"] - out["t_start"]).to_numpy(dtype=float)
+        words = out["text"].astype(str).str.split().str.len().to_numpy(dtype=float)
+        out["rate"] = np.where(seconds > 0, words / np.where(seconds > 0, seconds, 1.0), np.nan)
+    measured = [item for item in wanted if item in _FRAME_FEATURES]
+    if measured:
+        path = prosody_rows_file(config, recording_id)
+        rows = (
+            read_long_table(path, recording_id=recording_id, features=[_FRAME_FEATURES[item] for item in measured])
+            if path.is_file() else pd.DataFrame(columns=["subject_id", "t_start", "feature", "value"])
+        )
+        for item in measured:
+            out[item] = _line_medians(out, rows[rows["feature"] == _FRAME_FEATURES[item]])
+    for item in wanted:
+        usual = out.groupby("subject_id")[item].transform("median")
+        out[item] = (out[item] / usual - 1.0) * 100.0 if item == "rate" else out[item] - usual
+    return out
+
+
+def _line_medians(lines: pd.DataFrame, frames: pd.DataFrame) -> np.ndarray:
+    values = np.full(len(lines), np.nan)
+    for subject_id, own in frames.groupby("subject_id", sort=False):
+        own = own.sort_values("t_start")
+        times, measured = own["t_start"].to_numpy(dtype=float), own["value"].to_numpy(dtype=float)
+        for position in np.flatnonzero((lines["subject_id"] == str(subject_id)).to_numpy()):
+            first, last = np.searchsorted(times, [lines["t_start"].iloc[position], lines["t_end"].iloc[position]])
+            inside = measured[first:last]
+            inside = inside[np.isfinite(inside)]
+            if inside.size:
+                values[position] = float(np.median(inside))
+    return values
+
+
+_VERSIONS: dict[str, type[JudgementExtractor]] = {}
+
+
+def register_judge_versions(config: MacawConfig) -> None:
+    """Each version under coding.judges becomes the step coding.judge.<name>; a class per name, made once."""
+    for name in config.coding.judges:
+        if name not in _VERSIONS:
+            _VERSIONS[name] = register_extractor(
+                type(
+                    f"JudgementVersion_{name}",
+                    (JudgementExtractor,),
+                    {
+                        "name": f"{VERSION_STEP}{name}",
+                        "judge": name,
+                        "config_sections": (*JudgementExtractor.config_sections, f"coding.judges.{name}"),
+                        "__module__": __name__,
+                    },
+                )
+            )
+
+
+def version_steps(config: MacawConfig) -> list[str]:
+    return [f"{VERSION_STEP}{name}" for name in config.coding.judges]
+
+
 def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
     """One row per unit and sample: unit_id, sample, label (a code or abstain). A batch is batch_size units
     with the uncoded lines between them in place."""
@@ -228,7 +333,7 @@ def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, 
             first, last = coded[start], coded[min(start + cfg.batch_size, len(coded)) - 1]
             batch = lines.iloc[first : last + 1]
             context = lines.iloc[max(0, first - cfg.context_units) : first]
-            system, user = build_annotation_prompt(codebook, batch, context, allow_abstain=cfg.allow_abstain)
+            system, user = build_annotation_prompt(codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show)
             response = backend.complete(system, user, seed=seed)
             parsed = parse_annotation_response(
                 response.text, codebook, batch["unit_id"].dropna().tolist(), allow_abstain=cfg.allow_abstain

@@ -70,7 +70,8 @@ def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | Non
     sections: dict[str, list[str]] = {}
     for name in names:
         specs = by_extractor[name]
-        text = _WRITERS.get(name, _plugin)(config, specs[0], {spec.name for spec in specs})
+        writer = _WRITERS.get(name) or (_judge if name.startswith("coding.judge.") else _plugin)
+        text = writer(config, specs[0], {spec.name for spec in specs})
         if not text:
             continue
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
@@ -404,13 +405,29 @@ def _layer_a(config, spec, names) -> str:
     return text
 
 
+def _shown(show) -> str:
+    """What the model was given for each line, as a Methods phrase."""
+    parts = ["the speaker letter", "the words"]
+    if "timing" in show:
+        parts += ["its start and length", "the pause or overlap before it"]
+    voice = [term for item, term in (("pitch", "pitch"), ("loudness", "loudness"), ("rate", "speech rate")) if item in show]
+    if voice:
+        parts.append(f"its {_listed(voice)} relative to the median of that speaker's lines")
+    if len(parts) == 2:
+        return "the speaker letter and the words only"
+    return ", ".join(parts[:-1]) + ", and " + parts[-1]
+
+
 def _judge(config, spec, names) -> str:
     params = spec.params
+    if params.get("judge"):
+        return _judge_version(config, params, spec)
     model = spec.backend_version or params.get("model")
     text = (
         f"Each {params.get('codebook_unit', 'unit')} was coded with the codebook \"{params.get('codebook')}\" by the language model "
-        f"{model} ({params.get('provider')}), given the codebook's definitions and examples, the speaker letters and timing, "
-        f"and the {params.get('context_units')} preceding lines as context."
+        f"{model} ({params.get('provider')}), given the codebook's definitions and examples and the "
+        f"{params.get('context_units')} preceding lines as context. For each line the model was given "
+        f"{_shown(params.get('show', ['timing']))}."
     )
     coded = params.get("coded_roles") or []
     if coded:
@@ -425,6 +442,34 @@ def _judge(config, spec, names) -> str:
             "the model could not code were reviewed by a person."
         )
     return text
+
+
+_VERSION_TERMS = {
+    "temperature": "temperature", "n_samples": "answers per unit", "context_units": "earlier lines as context",
+    "batch_size": "units per request", "allow_abstain": "may answer that it cannot tell", "coded_roles": "people coded",
+}
+
+
+def _judge_version(config, params: dict, spec) -> str:
+    model = spec.backend_version or params.get("model")
+    text = (
+        f"For comparison, the same units were also coded in a version named {params['judge']}, with the codebook "
+        f"\"{params.get('codebook')}\" and the language model {model} ({params.get('provider')}), given for each line "
+        f"{_shown(params.get('show', ['timing']))}"
+    )
+    base = config.coding.llm
+    others = [
+        f"{term} {_setting(params.get(key))}"
+        for key, term in _VERSION_TERMS.items()
+        if key in params and params[key] != getattr(base, key)
+    ]
+    return text + (f" ({'; '.join(others)})." if others else ".")
+
+
+def _setting(value) -> str:
+    if isinstance(value, list):
+        return ", ".join(map(str, value)) or "everyone"
+    return str(value)
 
 
 _POSE = {

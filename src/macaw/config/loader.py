@@ -253,6 +253,10 @@ def resolve_config(
     from macaw.project_scripts import load_project_scripts
 
     load_project_scripts(config.project.scripts_dir)
+    if config.coding.judges:
+        from macaw.coding.llm.judge import register_judge_versions
+
+        register_judge_versions(config)
     return config
 
 
@@ -305,6 +309,10 @@ def _absolutise(model: BaseModel, base: Path) -> None:
             setattr(model, name, (base / value).resolve())
         elif isinstance(value, BaseModel):
             _absolutise(value, base)
+        elif isinstance(value, dict):
+            for entry in value.values():
+                if isinstance(entry, BaseModel):
+                    _absolutise(entry, base)
 
 
 def _anchor_names(config: MacawConfig, base: Path) -> None:

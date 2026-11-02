@@ -42,11 +42,12 @@ def code(
     unknown = [name for name in layers if name not in _LAYER_STEPS]
     if unknown:
         raise MacawError(f"Layer(s) {', '.join(unknown)} cannot be coded; available: {', '.join(_LAYER_STEPS)}")
-    summary = runner.run(
-        resolved,
-        recordings=resolve_recordings(resolved, recordings),
-        extractors=[_LAYER_STEPS[name] for name in layers],
-    )
+    steps = [_LAYER_STEPS[name] for name in layers]
+    if "B" in layers:
+        from macaw.coding.llm.judge import version_steps
+
+        steps += version_steps(resolved)
+    summary = runner.run(resolved, recordings=resolve_recordings(resolved, recordings), extractors=steps)
     typer.echo(f"tasks {summary.n_tasks}  done {summary.n_done}  cached {summary.n_cached}  failed {summary.n_failed}")
     if "B" in layers:
         pending = len(export_review(resolved, resolve_recordings(resolved, recordings)))

@@ -59,8 +59,13 @@ def _substitute_content(data: dict[str, Any], dotted: str) -> None:
     codebook invalidates the cache even though its path never changed."""
     parts = dotted.split(".")
     cursor: Any = data
-    for part in parts[:-1]:
+    for position, part in enumerate(parts[:-1]):
         if not isinstance(cursor, dict):
+            return
+        if part == "*":
+            # every entry of a mapping, such as each version under coding.judges
+            for entry in cursor.values():
+                _substitute_content(entry, ".".join(parts[position + 1 :]))
             return
         cursor = cursor.get(part)
     if not isinstance(cursor, dict):

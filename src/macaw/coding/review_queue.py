@@ -210,9 +210,12 @@ def _unit_keys(frame: pd.DataFrame) -> pd.Series:
 def export_review(config, recording_ids: list[str]) -> pd.DataFrame:
     """The queue across recordings, without units a person has already decided."""
     from macaw.coding.agreement import load_annotations
+    from macaw.coding.llm.judge import VERSION_LAYER
     from macaw.project.layout import layout_for
 
     annotations = load_annotations(config, recording_ids)
+    # the versions under coding.judges are there to be compared, not reviewed
+    annotations = annotations[~annotations["layer"].astype(str).str.startswith(VERSION_LAYER)]
     if annotations.empty:
         return empty_frame(REVIEW_QUEUE_SCHEMA)
     queue = build_queue(annotations, threshold=config.coding.llm.review_threshold)

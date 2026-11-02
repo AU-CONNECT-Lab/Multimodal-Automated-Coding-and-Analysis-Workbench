@@ -255,6 +255,9 @@ Where it runs
 Whose talk
 : Everyone's, unless you name roles under *People to code*, for example only the child. The others' talk, and a researcher's when other voices are on, is still shown to the model around each unit so it can tell an answer from a new topic, but it is not coded.
 
+What the model sees
+: Each line's speaker and words, and by default its timing: when it starts, how long it lasts, and the pause or overlap before it. Under *What the model is shown besides the words* (`coding.llm.show`) you can take the timing away (`[]` gives the words only) or add how the line sounds: `pitch` in semitones, `loudness` in dB and speech `rate` in percent, each against the median of that speaker's lines in the recording, so a child's high voice is not read as excitement. Pitch and loudness come from the voice measures, which then run first.
+
 How sure it is
 : Each unit is asked several times (five by default). The share of matching answers is its confidence. The model may also answer "cannot tell".
 
@@ -268,6 +271,21 @@ How the codes were used
 : `macaw describe-codes` lists, for each recording, coder and person, how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs mean the coding flips from unit to unit, which is worth a look before you analyse it. Add `--out codes.csv` to keep the table.
 
 To start, open *Coding* in the settings, add layer B, choose your codebook file and the model, then run as usual.
+
+Several versions side by side
+: To see what a fuller codebook, another model or more of the recording gives, code the same units several ways at once. Name each version under `coding.judges` in `project.yaml` with only what it changes; everything else is as in the coding settings:
+
+  ```yaml
+  coding:
+    codebook: codebook.yaml
+    llm: {model: qwen3:8b}
+    judges:
+      names_only: {codebook: codebook_names.yaml}
+      bigger: {model: qwen3:14b}
+      words_only: {show: []}
+  ```
+
+  A version takes `codebook` and any key of `coding.llm`. Each runs as its own step (`coding.judge.names_only`), so changing one recodes only that one, and its codes are kept under its name. To compare the versions with each other and with people, give every codebook the same `name`, so they code the same tier, then run `macaw agreement --tier <that name>`: the code-by-code table puts each version beside the people's own agreement. Versions do not send units to the review queue; only the coding settings' own version does. The Methods text describes each version.
 
 (own-coding)=
 ## Your own coding

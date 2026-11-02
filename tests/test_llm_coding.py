@@ -20,6 +20,7 @@ from macaw.coding.llm.judge import JudgementExtractor, aggregate_samples, coding
 from macaw.coding.llm.parsing import parse_annotation_response, repair_json
 from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
 from macaw.coding.review_queue import apply_review, export_review, read_queue
+from macaw.config.hashing import hash_extractor_config
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import CodingSection, LLMSection
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
@@ -369,6 +370,117 @@ class TestJudge:
         data.setdefault("coding", {})["layers"] = ["A", "B"]
         config.write_text(yaml.safe_dump(data), encoding="utf-8")
         assert "coding.judge" in build_dag(resolve_config(config)).nodes
+
+
+class TestShow:
+    def test_words_only_leave_the_timing_out(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        found = coding_units(None, RECORDING, "utterance")
+        _, user = build_annotation_prompt(CODEBOOK, found, None, show=[])
+        assert "id u0 | speaker A: where is it?" in user
+        assert " s," not in user and "pause" not in user
+
+    def test_voice_is_measured_against_the_speaker_s_own_lines(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        found = coding_units(None, RECORDING, "utterance")
+        frames = pd.DataFrame({
+            "subject_id": ["mother"] * 4 + ["child"] * 2,
+            "t_start": [0.5, 1.0, 4.2, 4.6, 2.0, 2.5],
+            "feature": "f0_semitone",
+            "value": [2.0, 2.0, 4.0, 4.0, 9.0, float("nan")],
+        })
+        rows_file = tmp_path / "prosody.frame.parquet"
+        rows_file.write_bytes(b"")
+        monkeypatch.setattr(module, "prosody_rows_file", lambda config, rid: rows_file)
+        monkeypatch.setattr(module, "read_long_table", lambda path, **kw: frames[frames["feature"].isin(kw["features"])])
+        out = module.voice_figures(None, "r1", found, ["timing", "pitch", "rate"]).set_index("unit_id")
+        assert out["pitch"].tolist() == [-1.0, 0.0, 1.0]
+        # where is it? is 3 words in 2 s and ok 1 word in 1 s: 1.5 and 1.0 words/s against a median of 1.25
+        assert out.loc["u0", "rate"] == pytest.approx(20.0) and out.loc["u2", "rate"] == pytest.approx(-20.0)
+
+    def test_the_prompt_says_what_the_voice_figures_are_and_leaves_out_a_missing_one(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        found = coding_units(None, RECORDING, "utterance").assign(pitch=[-1.0, float("nan"), 1.0], rate=[20.0, 0.0, -20.0])
+        system, user = build_annotation_prompt(CODEBOOK, found, None, show=["timing", "pitch", "rate"])
+        assert "pitch in semitones, speech rate in percent, against the median of that speaker's lines" in system
+        assert "after a 1.0 s pause | pitch +1.0 st, rate -20%: ok" in user
+        assert "| rate +0%: it is red" in user
+
+    @pytest.mark.parametrize("show,needed", [(["timing", "loudness"], True), (["pitch"], True), (["timing", "rate"], False)])
+    def test_pitch_or_loudness_put_the_voice_step_before_it(self, show, needed):
+        config = SimpleNamespace(coding=CodingSection(layers=["A", "B"], llm=LLMSection(show=show)))
+        assert ("prosody.frame" in JudgementExtractor.dependencies(config)) == needed
+
+
+def project_with(tmp_path, coding):
+    (tmp_path / "raw" / "r1").mkdir(parents=True, exist_ok=True)
+    config = tmp_path / "project.yaml"
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    data["coding"] = coding
+    config.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return config
+
+
+class TestVersions:
+    def test_a_version_takes_coding_llm_and_changes_what_it_names(self, tmp_path):
+        coding = CodingSection(
+            codebook=tmp_path / "k1.yaml", llm=LLMSection(model="qwen3:8b"),
+            judges={"k0": {"codebook": tmp_path / "k0.yaml"}, "words": {"show": [], "n_samples": 1}},
+        )
+        assert coding.judge_settings("k0") == (tmp_path / "k0.yaml", coding.llm)
+        codebook, llm = coding.judge_settings("words")
+        assert codebook == tmp_path / "k1.yaml" and llm.model == "qwen3:8b" and llm.show == [] and llm.n_samples == 1
+        assert coding.llm.show == ["timing"]
+
+    def test_a_name_that_cannot_be_a_step_is_refused(self):
+        with pytest.raises(ValueError, match="letters, digits and _"):
+            CodingSection(judges={"k 0": {}})
+
+    def test_each_version_is_its_own_step_keyed_on_its_own_settings(self, tmp_path):
+        write_codebook(CODEBOOK, tmp_path / "acts.yaml")
+        write_codebook(CODEBOOK, tmp_path / "k0.yaml")
+        config = project_with(tmp_path, {
+            "layers": ["A", "B"], "codebook": "acts.yaml", "llm": {"model": "tiny"},
+            "judges": {"k0": {"codebook": "k0.yaml"}, "words": {"show": []}},
+        })
+        resolved = resolve_config(config)
+        assert {"coding.judge", "coding.judge.k0", "coding.judge.words"} <= set(build_dag(resolved).nodes)
+        before = {name: hash_extractor_config(resolved, name) for name in ("coding.judge", "coding.judge.k0", "coding.judge.words")}
+        write_codebook(Codebook(name="acts", unit="utterance", codes=CODEBOOK.codes[:1] + [CodeDefinition("other", "x")]), tmp_path / "k0.yaml")
+        after = {name: hash_extractor_config(resolve_config(config), name) for name in before}
+        assert [before[name] == after[name] for name in before] == [True, False, True]
+
+    def test_a_version_codes_under_its_own_name_and_layer_and_waits_for_nobody(self, monkeypatch, tmp_path, stub):
+        path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        answers = iter(["question", "inform", "question"] * 10)
+        stub.label = lambda text: next(answers) if text == "ok" else "inform"
+        coding = CodingSection(
+            codebook=path, layers=["A", "B"], llm=LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1", n_samples=3),
+            judges={"words": {"show": []}},
+        )
+        config = SimpleNamespace(coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
+        module.register_judge_versions(config)
+        version = module._VERSIONS["words"]
+        result = version(config).run(RECORDING, tmp_path)
+        assert set(result.annotations["annotator"]) == {"words"} and set(result.annotations["layer"]) == {"B.words"}
+        assert set(result.rows["feature"]) == {"n_units_judged_words", "share_abstained_words", "share_needs_review_words"}
+        assert "after a" not in stub.requests[0]["body"]["messages"][-1]["content"]
+        assert not any(warning.check == "llm_review" for warning in result.warnings)
+        assert version.name == "coding.judge.words" and version.wanted_by_default(config)
+
+    def test_versions_stay_out_of_the_review_queue(self, tmp_path):
+        config = project_with(tmp_path, {"layers": ["A", "B"]})
+        resolved = resolve_config(config)
+        rows = pd.DataFrame({
+            "recording_id": "r1", "subject_id": "a", "tier": "acts", "t_start": [0.0, 0.0], "t_end": [1.0, 1.0],
+            "label": ["inform", "inform"], "annotator": ["llm:vllm/tiny", "words"], "layer": ["B", "B.words"],
+            "confidence": [0.4, 0.4], "abstained": False, "needs_review": True, "group_id": "1", "session_id": None,
+            "task": None, "run": None, "execution_id": "e1", "config_hash": "h1",
+        })
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).annotations_path("r1"))
+        assert export_review(resolved, ["r1"])["annotator"].tolist() == ["llm:vllm/tiny"]
 
 
 class TestReview:

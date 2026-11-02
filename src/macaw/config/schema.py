@@ -306,12 +306,32 @@ class LLMSection(_Section):
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
     coded_roles: list[str] = Field(default_factory=list)
+    show: list[Literal["timing", "pitch", "loudness", "rate"]] = Field(default_factory=lambda: ["timing"])
 
     def is_local(self) -> bool:
         from macaw.coding.llm.backends import BACKEND_GROUP
         from macaw.extractors import get_backend
 
         return get_backend(BACKEND_GROUP, self.provider).is_local
+
+
+class JudgeVersion(_Section):
+    """What another coding by the language model changes; anything left out is as in coding.codebook and coding.llm."""
+
+    codebook: Path | None = None
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    n_samples: int | None = Field(default=None, ge=1)
+    seed: int | None = None
+    allow_abstain: bool | None = None
+    review_threshold: float | None = None
+    batch_size: int | None = Field(default=None, ge=1)
+    context_units: int | None = Field(default=None, ge=0)
+    coded_roles: list[str] | None = None
+    show: list[Literal["timing", "pitch", "loudness", "rate"]] | None = None
 
 
 class ImportedTier(_Section):
@@ -327,7 +347,25 @@ class CodingSection(_Section):
     backchannel_max_s: float = 1.0
     min_turn_internal_pause_s: float = 0.2
     llm: LLMSection = Field(default_factory=LLMSection)
+    judges: dict[str, JudgeVersion] = Field(default_factory=dict)
     imports: dict[str, ImportedTier] = Field(default_factory=dict)
+
+    @field_validator("judges")
+    @classmethod
+    def _judge_names(cls, value: dict[str, JudgeVersion]) -> dict[str, JudgeVersion]:
+        # the name becomes a step name, a file name and a coder in agreement
+        bad = [name for name in value if not re.fullmatch(r"[A-Za-z0-9_]+", name)]
+        if bad:
+            raise ValueError(f"{', '.join(bad)}: a version's name takes letters, digits and _ only")
+        return value
+
+    def judge_settings(self, version: str | None = None) -> tuple[Path | None, LLMSection]:
+        """The codebook and model settings of one coding by the language model; None is coding.llm's own."""
+        if version is None:
+            return self.codebook, self.llm
+        changes = self.judges[version].model_dump(exclude_none=True)
+        codebook = changes.pop("codebook", self.codebook)
+        return codebook, self.llm.model_copy(update=changes)
 
 
 class QCSection(_Section):
@@ -455,6 +493,7 @@ NAME_OR_PATH_FIELDS: tuple[str, ...] = (
 
 CONTENT_HASHED_PATHS: tuple[str, ...] = (
     "coding.codebook",
+    "coding.judges.*.codebook",
     "execution.output_rules",
     *NAME_OR_PATH_FIELDS,
 )

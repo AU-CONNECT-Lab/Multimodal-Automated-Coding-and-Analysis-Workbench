@@ -181,6 +181,24 @@ def test_coding_only_some_people_and_other_voices_as_context_is_said():
     assert "other voices" not in text
 
 
+def test_what_the_model_was_shown_and_each_version_are_said():
+    common = dict(codebook="acts", codebook_unit="utterance", provider="ollama", n_samples=5, context_units=5, temperature=0.3)
+    judged = manifest(
+        spec("coding.judge", "n_units_judged", "ollama", "qwen3:8b@abc", show=["timing"], judge=None, **common),
+        spec("coding.judge.words", "n_units_judged_words", "ollama", "qwen3:8b@abc", show=[], judge="words", **common),
+        spec(
+            "coding.judge.voice", "n_units_judged_voice", "ollama", "qwen3:8b@abc", show=["timing", "pitch", "rate"],
+            judge="voice", **{**common, "n_samples": 3},
+        ),
+    )
+    text, _ = render(describe(judged, config()), load_references())
+    assert "the speaker letter, the words, its start and length, and the pause or overlap before it." in text
+    assert "a version named words" in text and "the speaker letter and the words only." in text
+    assert "a version named voice" in text and "before it, and its pitch and speech rate relative to the median of that speaker's lines" in text
+    assert "lines (answers per unit 3)." in text
+    assert text.index("Each utterance was coded") < text.index("a version named voice") < text.index("a version named words")
+
+
 def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
     ran = manifest(spec("pose.kinematics", "hand_distance"))
     defined = config(kinematics={"measures": [

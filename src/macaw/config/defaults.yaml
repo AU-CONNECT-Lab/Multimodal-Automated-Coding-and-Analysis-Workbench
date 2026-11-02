@@ -180,6 +180,8 @@ coding:
     batch_size: 20                   # units per request
     context_units: 5                 # earlier lines shown before each batch, not coded
     coded_roles: []                  # roles whose units are coded, the others' lines being context; [] codes everyone
+    show: [timing]                   # what each line carries besides speaker and words: timing (start, length, pause or overlap before), pitch, loudness, rate (against that speaker's usual); [] is the words only
+  judges: {}                         # more codings by the language model beside this one, to compare, e.g. {k0: {codebook: names_only.yaml}, words_only: {show: []}}; each takes codebook and any coding.llm key, the rest as above
   imports: {}                        # for macaw import-codes: each tier of your coding files, as the file names it, and whose it is, e.g. {"Child Gaze": {person: child, tier: gaze_target, labels: {Mom: parent, Away: elsewhere}}}; tier and labels are optional
 
 qc:
