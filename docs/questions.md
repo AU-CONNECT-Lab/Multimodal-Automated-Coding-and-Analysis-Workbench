@@ -26,6 +26,10 @@ It depends mainly on the length of the videos and on whether the computer has a 
 
 With a shared microphone or the camera's sound, set *Other voices on a shared microphone* to 1 in the settings, and assign that voice *none* when reviewing the voices. The experimenter's speech still counts as a turn in the turn-taking measures, but is excluded from the participants' voice and language measures.
 
+## A session contains several tasks. Can they be analysed separately?
+
+Yes. When the tasks were filmed in one file, name each task as a segment ({ref}`segments`); every measure that is one number per recording is then also given within each. When each task is a separate file, each file is a recording of its own and needs no segments.
+
 ## Children have higher voices. Is pitch measured correctly?
 
 The pitch range can be set separately for each role, for example a higher range for the child. A second setting makes the quality-control report flag a pitch track that lies an octave too high throughout, by giving the highest plausible median for a role. Both are added in the *project.yaml* box of the settings page:

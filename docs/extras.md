@@ -159,6 +159,38 @@ A coder who coded only part of a recording leaves the rest uncoded, which counts
 `macaw describe-codes` lists for each recording, coder and participant how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs indicate that the coding alternates from unit to unit, which deserves a closer look before analysis. `--out codes.csv` saves the table.
 
 (gaze)=
+(segments)=
+## Several parts of one recording
+
+When a recording contains several phases, for example free play followed by clean-up, each phase can be named as a segment. Every measure that is a single number per recording, such as each participant's share of the talk, the number of turns or the median floor transfer offset, is then also computed within each segment. The recording is still processed as a whole: transcription, the separation of voices and the tracking of participants use the full recording, and decisions such as which voice belongs to whom are made once and hold in every segment.
+
+### Marking segments
+
+On the Segments page, select the recording and press **Make a copy to play here**. While it plays, press **Start here** at the beginning of a phase and **End here** at its end, type a name and press **Save as a segment**. Segments can also be written directly into the file `segments.csv` next to `project.yaml`, one row per segment, which is convenient when the times come from session logs:
+
+```text
+recording,segment,start_s,end_s
+dyad01,free_play,35,335
+dyad01,clean_up,350,470
+dyad02,free_play,28,330
+```
+
+Times are in seconds from the start of the recording's main video (with several devices, of the file the others are aligned to). Segments may overlap, and a recording without rows is summarised only as a whole. After saving, press **Run**: only the summaries within the segments are computed, so a segment can be moved without processing the recording again.
+
+### How a segment is summarised
+
+:::{important}
+A segment is summarised as if the recording had been cut at its edges. An utterance, turn, code, look or blink that crosses an edge counts only with its part inside, a word belongs to the segment in which its middle falls, and turns, pauses and floor transfers are formed again from what remains, so a pause across an edge belongs to neither segment. Rates are per minute of the segment. Values scaled to a participant's level over the whole recording, such as relative pitch, keep that reference. A short segment rests on few turns and events, and the checks of the quality report concern the whole recording, so measures from short segments call for caution.
+:::
+
+### Segments and the analysed part
+
+The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse only this part** on the Segments page, restricts what every step reads, and changing it processes the recording again from the start. Segments only add summaries within the analysed part. A segment that reaches outside it is left out, and the quality report says so.
+
+### Results
+
+`macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, and `macaw methods` describes how the segments were summarised.
+
 ## Gaze: who looks at whom
 
 For each participant in each frame, MACAW estimates the point in the picture they look at, and from it whom they look at, which named object, somewhere else in the picture, or something outside it. The estimate is made from the participant's head and the whole scene, so it also works when a face is partly turned away. The first run downloads a model of about 1.3 GB.

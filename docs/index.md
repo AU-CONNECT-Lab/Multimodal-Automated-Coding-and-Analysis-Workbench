@@ -47,7 +47,7 @@ Pauses, interruptions and backchannels coded by rule, speech acts optionally cod
 :::
 ::::
 
-Not yet available: several analysed segments per recording, and three-dimensional pose from a single camera.
+Not yet available: three-dimensional pose from a single camera.
 
 ## Principles
 

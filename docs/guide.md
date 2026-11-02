@@ -73,7 +73,7 @@ macaw gui
 
 The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window.
 
-The workbench has four pages, a fifth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
+The workbench has five pages, a sixth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
 Overview
 : The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording.
@@ -83,6 +83,9 @@ Run
 
 Review
 : Decisions that await the researcher. The number on the tab gives their count.
+
+Segments
+: Naming parts of a recording, such as a free-play and a clean-up phase, within which every measure is computed again ({ref}`segments`), and setting the part of a recording that is analysed.
 
 Results
 : The quality-control report and every measure plotted over time.
@@ -120,7 +123,7 @@ Coding
 : The codebook and the language model, needed only for {ref}`language-model coding <coding>`.
 
 :::{tip}
-When the task starts or ends at a different time in each recording, give each recording its own times in a file named after it, such as `dyad01.yaml`, in the `recordings` folder of the project. Such a file can override other settings for that recording as well.
+When the task starts or ends at a different time in each recording, give each recording its own times in a file named after it, such as `dyad01.yaml`, in the `recordings` folder of the project. **Analyse only this part** on the Segments page writes this file from times marked while the recording plays. Such a file can override other settings for that recording as well.
 
 ```yaml
 segment:
@@ -216,7 +219,7 @@ Quality review
 : Press **Write the QC page**, then open it. The report lists what the automatic checks flagged (for example a transcript that does not seem to match its audio, a mouth that does not move while its owner is said to be speaking, participants the tracker repeatedly lost, or a pitch track that jumps by an octave), every decision made by the software or by a person, an overview of each participant's speech, movement, distance and codes on a common time axis, the meaning and unit of every measure, and a set of frames to inspect. These frames include the moments the checks pointed to and a random selection, so that ordinary moments are inspected as well. The review is thus based on a sample rather than on every frame.
 
 Measures
-: Select a step and a measure to plot it for each participant across the recording.
+: Select a step and a measure to plot it for each participant across the recording. A measure that is one number per recording is listed per participant, beside its value within each segment ({ref}`segments`).
 
 :::{note}
 When a result looks wrong, adjust the relevant setting and run again. Only the steps that depend on that setting are recomputed.
@@ -229,7 +232,7 @@ When a result looks wrong, adjust the relevant setting and run again. Only the s
 Run one of the following commands in the project folder. Each reports where it saved its files.
 
 `macaw export`
-: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. For recordings with a pixel scale, measures in pixels are also given in centimetres ({ref}`scale`).
+: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. For recordings with a pixel scale, measures in pixels are also given in centimetres ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`).
 
 `macaw export -f sequence`
 : For each participant, whether they are speaking at each second, for sequence analysis.

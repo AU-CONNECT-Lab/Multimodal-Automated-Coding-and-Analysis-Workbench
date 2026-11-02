@@ -34,6 +34,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and a page to calibrate the cameras.
 - Body points exported per recording, in pixels and in 3D.
 - Who looks at whom and at which named things, from the picture or from where people sit, mutual gaze, and labelled frames to check it.
+- Named segments of a recording, each with every recording-level measure worked out again as if the recording had been cut there, marked on the video in the workbench.
 
 ### 0.1.0-alpha
 - Framework scaffold.
@@ -41,5 +42,4 @@ Reviewing the output works the same way. The quality report points at the frames
 ## Milestones
 
 - A language-model observation pass before coding, and transcript cleanup.
-- Several kept segments per recording, and picking them on the video in the GUI.
 - 3D from a single camera or a depth camera, with body models suited to children; the storage schema reserves room for it.

@@ -12,6 +12,7 @@ MACAW derives time-resolved measures of voice, language, turn-taking, body movem
 - Acoustic, lexical, syntactic and turn-taking measures from automatic transcription with speaker attribution.
 - Pose, movement, interpersonal distance, facial action units, head orientation and gaze, in two dimensions or, with several calibrated cameras, in three.
 - Rule-based coding of pauses, interruptions and backchannels, and speech-act coding by a language model from a codebook, with human review of uncertain units.
+- Every recording-level measure also within named segments of a recording, such as the phases of a task, marked on the video in the workbench.
 - Import of human coding from ELAN or tables, inter-rater agreement (Krippendorff's alpha, Cohen's kappa), and export to ELAN.
 - A quality-control report, a Methods section generated from the steps that were run, and a graphical workbench.
 
