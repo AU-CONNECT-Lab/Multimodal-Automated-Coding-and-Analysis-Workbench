@@ -26,6 +26,7 @@ class LLMResponse:
     model: str
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cut_off: bool = False  # stopped at max_tokens, not at the end of the answer
 
 
 class LLMBackend(Backend):
@@ -124,7 +125,8 @@ class OpenAICompatibleBackend(LLMBackend):
             body["seed"] = seed
         answer = self._post(f"{self.base_url}/chat/completions", body, self._headers())
         try:
-            text = answer["choices"][0]["message"]["content"] or ""
+            choice = answer["choices"][0]
+            text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):
             raise LLMBackendError(f"{self.name} returned no message: {str(answer)[:300]}") from None
         usage = answer.get("usage") or {}
@@ -132,6 +134,7 @@ class OpenAICompatibleBackend(LLMBackend):
         return LLMResponse(
             text=text,
             model=self.model_version(),
+            cut_off=choice.get("finish_reason") == "length",
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
         )
@@ -224,13 +227,15 @@ class AnthropicBackend(LLMBackend):
         headers = {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""), "anthropic-version": "2023-06-01"}
         answer = self._post(f"{self.base_url}/messages", body, headers)
         parts = [part.get("text", "") for part in answer.get("content") or [] if part.get("type") == "text"]
-        if not parts:
+        cut_off = answer.get("stop_reason") == "max_tokens"
+        if not parts and not cut_off:
             raise LLMBackendError(f"anthropic returned no text: {str(answer)[:300]}")
         usage = answer.get("usage") or {}
         self._seen_model = answer.get("model") or self._seen_model
         return LLMResponse(
             text="".join(parts),
             model=self.model_version(),
+            cut_off=cut_off,
             prompt_tokens=usage.get("input_tokens"),
             completion_tokens=usage.get("output_tokens"),
         )

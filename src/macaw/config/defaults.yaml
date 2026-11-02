@@ -171,7 +171,7 @@ coding:
     model: null                      # required for layer B; the name the provider knows it by
     base_url: null                   # null = provider default endpoint
     temperature: 0.3                 # above 0 so repeated samples can disagree
-    max_tokens: 1024
+    max_tokens: 8192                 # a cap per answer; a model that reasons first spends tokens on that before the codes
     timeout_s: 300                   # s; one request
     n_samples: 5                     # answers per unit; the label is the majority, confidence its share
     seed: 0                          # sample i sends seed + i where the provider takes one

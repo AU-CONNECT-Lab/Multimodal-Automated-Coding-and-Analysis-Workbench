@@ -297,7 +297,7 @@ class LLMSection(_Section):
     model: str | None = None
     base_url: str | None = None
     temperature: float = 0.3
-    max_tokens: int = 1024
+    max_tokens: int = 8192
     timeout_s: int = 300
     n_samples: int = Field(default=5, ge=1)
     seed: int = 0

@@ -17,7 +17,7 @@ from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
 from macaw.coding.llm.parsing import parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, VOICE, build_annotation_prompt
 from macaw.config.schema import LLMSection, MacawConfig
-from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError
+from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
@@ -126,7 +126,7 @@ class JudgementExtractor(Extractor):
             specs=self._specs(codebook),
             annotations=self._annotations(recording, judged, codebook.name, annotator),
             artifacts={SAMPLES_NAME: path},
-            warnings=self._warnings(recording, judged, backend),
+            warnings=self._warnings(recording, judged, backend, samples.attrs),
         )
 
     def _codebook(self) -> Codebook:
@@ -189,7 +189,7 @@ class JudgementExtractor(Extractor):
             )
         return concat_long_tables(frames)
 
-    def _warnings(self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend) -> list[QCWarning]:
+    def _warnings(self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict) -> list[QCWarning]:
         _, cfg = self.settings(self.config)
         warnings = []
 
@@ -198,6 +198,12 @@ class JudgementExtractor(Extractor):
 
         if backend.reporting:
             note("llm_cloud", "info", backend.reporting)
+        if sampled.get("cut_off"):
+            note(
+                "llm_cut_off", "warn",
+                f"{sampled['cut_off']} of {sampled['requests']} answers were cut off at max_tokens ({cfg.max_tokens}); the units "
+                "they did not reach count as ones the model could not tell. Raise coding.llm.max_tokens.",
+            )
         if cfg.n_samples == 1:
             note("llm_single_sample", "info", "coding.llm.n_samples is 1, so no confidence was measured; only abstentions go to the review queue.")
         if not backend.takes_seed and cfg.n_samples > 1:
@@ -327,6 +333,7 @@ def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, 
     with the uncoded lines between them in place."""
     coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
     answers = []
+    cut_off = 0
     for sample in range(cfg.n_samples):
         seed = cfg.seed + sample if backend.takes_seed else None
         for start in range(0, len(coded), cfg.batch_size):
@@ -338,10 +345,20 @@ def sample_labels(lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, 
             parsed = parse_annotation_response(
                 response.text, codebook, batch["unit_id"].dropna().tolist(), allow_abstain=cfg.allow_abstain
             )
+            # an answer that never came is not the model saying it cannot tell
+            if response.cut_off and (parsed["label"] == ABSTAIN).all():
+                raise LLMBackendError(
+                    f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
+                    "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
+                )
+            cut_off += response.cut_off
             answers.append(parsed.assign(sample=sample))
     if not answers:
-        return pd.DataFrame({"unit_id": pd.Series(dtype=str), "label": pd.Series(dtype=str), "sample": pd.Series(dtype=int)})
-    return pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label"]]
+        out = pd.DataFrame({"unit_id": pd.Series(dtype=str), "label": pd.Series(dtype=str), "sample": pd.Series(dtype=int)})
+    else:
+        out = pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label"]]
+    out.attrs.update(cut_off=cut_off, requests=len(answers))
+    return out
 
 
 def aggregate_samples(units: pd.DataFrame, samples: pd.DataFrame, cfg: LLMSection) -> pd.DataFrame:

@@ -46,6 +46,7 @@ class Stub:
         self.label = label
         self.requests: list[dict] = []
         self.fail_first = 0
+        self.cut = None  # "all": stopped at max_tokens before any code; "part": after the first one
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -81,10 +82,15 @@ class Stub:
                     for unit_id, text in re.findall(r"^id (u\d+) \|.*?: (.*)$", user, re.MULTILINE)
                 ]
                 text = json.dumps({"labels": labels})
+                if stub.cut:
+                    text = "" if stub.cut == "all" else text[: text.index("}") + 1]
                 if self.path.endswith("/messages"):
-                    self._send(200, {"model": "claude-x", "content": [{"type": "text", "text": text}], "usage": {"input_tokens": 5, "output_tokens": 3}})
+                    content = [{"type": "text", "text": text}] if text else []
+                    stop = "max_tokens" if stub.cut else "end_turn"
+                    self._send(200, {"model": "claude-x", "content": content, "stop_reason": stop, "usage": {"input_tokens": 5, "output_tokens": 3}})
                 else:
-                    self._send(200, {"model": "tiny", "choices": [{"message": {"content": text}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}})
+                    choice = {"message": {"content": text}, "finish_reason": "length" if stub.cut else "stop"}
+                    self._send(200, {"model": "tiny", "choices": [choice], "usage": {"prompt_tokens": 5, "completion_tokens": 3}})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_port}"
@@ -246,6 +252,14 @@ class TestBackends:
         backend = OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1"))
         assert backend.model_version() == "tiny@abcdef123456"
 
+    def test_an_answer_stopped_at_max_tokens_is_marked(self, monkeypatch, stub):
+        backend = VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1"))
+        assert not backend.complete("s", "id u0 | speaker A: hi").cut_off
+        stub.cut = "all"
+        assert backend.complete("s", "id u0 | speaker A: hi").cut_off
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+        assert AnthropicBackend(LLMSection(provider="anthropic", model="claude-x", base_url=f"{stub.url}/v1")).complete("s", "u").cut_off
+
     def test_a_busy_server_is_retried(self, stub):
         stub.fail_first = 2
         backend = VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1"))
@@ -344,6 +358,18 @@ class TestJudge:
         flagged = result.annotations[result.annotations["needs_review"]]
         assert flagged["t_start"].tolist() == [4.0]
         assert any(warning.check == "llm_review" for warning in result.warnings)
+
+    def test_an_answer_cut_off_before_any_code_stops_the_step_and_says_what_to_raise(self, monkeypatch, tmp_path, stub):
+        stub.cut = "all"
+        with pytest.raises(LLMBackendError, match="raise coding.llm.max_tokens"):
+            run_judge(monkeypatch, tmp_path, stub, n_samples=1)
+
+    def test_an_answer_cut_off_partway_keeps_what_came_and_warns(self, monkeypatch, tmp_path, stub):
+        stub.cut = "part"
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, batch_size=10)
+        assert result.annotations.sort_values("t_start")["abstained"].tolist() == [False, True, True]
+        warning = next(warning for warning in result.warnings if warning.check == "llm_cut_off")
+        assert warning.message.startswith("1 of 1 answers were cut off")
 
     def test_a_model_that_never_answers_in_format_abstains_and_warns(self, monkeypatch, tmp_path, stub):
         stub.label = lambda text: "something else"
