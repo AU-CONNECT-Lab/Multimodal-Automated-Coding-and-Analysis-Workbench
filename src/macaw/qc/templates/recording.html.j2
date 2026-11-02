@@ -153,6 +153,35 @@
 {% endfor %}
 {% endif %}
 
+{% if segments %}
+<h2 id="Segments">Segments</h2>
+<p class="desc">The parts of this recording named in the segments table, with every recording-level value again within each. A segment is summarised as if the recording had been cut at its edges: whatever crosses an edge counts only with its part inside. Transcription, voices and tracking still had the whole recording to work from.</p>
+<table class="flat">
+  <thead><tr><th>Segment</th><th class="num">From (s)</th><th class="num">To (s)</th><th class="num">Length (s)</th><th>State</th></tr></thead>
+  <tbody>
+  {%- for segment in segments.list %}
+  <tr><td>{{ segment.name }}</td><td class="num">{{ segment.start }}</td><td class="num">{{ segment.end }}</td><td class="num">{{ segment.length }}</td><td>{{ segment.state }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% for table in segments.tables %}
+<details{% if loop.first %} open{% endif %}>
+  <summary>{{ table.source }} <span class="hint">{{ table.features | length }} value row(s)</span></summary>
+  <div class="details-body">
+  <table class="flat">
+    <thead><tr><th>Measure</th><th>Segment</th>{% for who in table.columns %}<th class="num">{{ who }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {%- for feature in table.features %}
+    <tr><td title="{{ feature.description }}">{% if feature.first %}{{ feature.name }}{% if feature.unit %} <span class="hint">{{ feature.unit }}</span>{% endif %}{% endif %}</td><td>{{ feature.segment }}</td>
+      {%- for value in feature.cells %}<td class="num{% if value is none %} na{% endif %}">{{ value if value is not none else "-" }}</td>{% endfor %}</tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
+{% endfor %}
+{% endif %}
+
 {% if frames %}
 <h2 id="Frames">Review frames</h2>
 <p class="desc">Frames drawn by <code>macaw qc --render</code>: where a check found something worth a look, and a baseline sample from the whole task. Each box is labelled with the person it was given to and its track id. Click a frame for full size.</p>

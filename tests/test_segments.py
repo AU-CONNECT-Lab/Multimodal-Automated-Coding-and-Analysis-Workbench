@@ -287,3 +287,83 @@ def test_segment_rows_are_written_stamped_and_an_empty_result_removes_them(tmp_p
     assert written[["segment", "value", "execution_id", "config_hash"]].values.tolist() == [["first", 3.0, "exec-1", "cfg-1"]]
     runner._write_result(layout, RID, SUMMARY_STEP, result(empty_frame(SEGMENT_TABLE_SCHEMA)), "exec-2", "cfg-1")
     assert read_segment_rows(layout.segment_rows_path(RID)).empty
+
+
+def _summarised(saved, project, tmp_path, rows):
+    """segments.summary run and written the way a run writes it, for the steps whose whole-recording rows are on disk."""
+    _table(project, rows)
+    config = project.config()
+    for step in (TurnStructureExtractor.name, LayerACodingExtractor.name, MediaPrepExtractor.name):
+        _stamp(saved.layout, step)
+    transitions = transitions_from(saved.turns, config.turns)
+    layer_a = LayerACodingExtractor(config)
+    whole = pd.concat([
+        _whole(saved)[TurnStructureExtractor],
+        layer_a._rows(saved.recording, saved.turns, layer_a._code(saved.turns, transitions, saved.transcript)),
+    ], ignore_index=True)
+    from macaw.store.longtable import write_long_table
+
+    write_long_table(whole, saved.layout.long_table_path(RID))
+    result = SegmentSummaryExtractor(config).run(build_recording(RID, config), tmp_path)
+    runner._write_result(saved.layout, RID, SUMMARY_STEP, result, "exec-1", "cfg-1")
+    return config, whole
+
+
+def test_the_export_gives_a_person_one_row_per_segment_whichever_step_gave_the_number(saved, project, tmp_path):
+    from macaw.cli.export import _whole_and_segments
+    from macaw.store.wide import to_wide
+
+    config, whole = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,second,12,30\n")
+    table = _whole_and_segments(config, RID, whole, None)
+    summaries_only = table[table["scale"] == Scale.RECORDING.value]
+    wide = to_wide(summaries_only)
+    parent = wide[wide["subject_id"] == "parent"]
+    # turns.structure spans the task window and coding.layer_a the conversation, yet each is one row per segment
+    assert sorted(parent["segment"].fillna("whole").tolist()) == ["first", "second", "whole"]
+    assert parent.loc[parent["segment"].isna(), ["t_start", "t_end"]].values.tolist() == [[0.0, 30.0]]
+    assert parent[["n_turns", "n_turn_internal_pauses"]].notna().all().all()
+
+
+def test_a_segment_changed_since_the_last_run_shows_no_old_numbers(saved, project, tmp_path):
+    from macaw.project.segments import summaries
+    from macaw.qc.report import _segments
+
+    config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,second,12,30\n")
+    assert set(summaries(config, RID)["segment"]) == {"first", "second"}
+    set_segment(config, RID, Segment("first", 0, 13))
+    set_segment(config, RID, Segment("late", 25, 40))
+    assert set(summaries(config, RID)["segment"]) == {"second"}
+    states = {row["name"]: row["state"] for row in _segments(config, saved.layout, RID, {})["list"]}
+    assert states == {"first": "not yet summarised; run macaw run", "second": "summarised", "late": "outside the analysed part, left out"}
+
+
+def test_the_report_lists_each_measure_per_segment(saved, project, tmp_path):
+    from macaw.qc.report import _segments
+
+    config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,second,12,30\n")
+    tables = {table["source"]: table for table in _segments(config, saved.layout, RID, {})["tables"]}
+    turns = tables[TurnStructureExtractor.name]
+    rows = [(row["name"], row["segment"], row["first"]) for row in turns["features"] if row["name"] == "n_turns"]
+    assert rows == [("n_turns", "first", True), ("n_turns", "second", False)]
+    assert turns["columns"][-1] == "everyone"
+
+
+def test_the_methods_say_how_segments_were_summarised(saved, project, tmp_path):
+    from macaw.project.manifest import FeatureManifest
+    from macaw.qc.boilerplate import describe
+
+    config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,free_play,0,12\n003,clean_up,12,30\n")
+    manifest = FeatureManifest()
+    manifest.extend(TurnStructureExtractor(config)._specs())
+    text = " ".join(describe(manifest, config)["Segments"])
+    assert "(clean_up and free_play)" in text and "cut at the segment's edges" in text
+
+
+def test_the_results_page_puts_each_segment_beside_the_whole_recording(saved, project, tmp_path):
+    from macaw.interface.pages.results import _who, per_person
+
+    config, whole = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,second,12,30\n")
+    rows = whole[(whole["feature"] == "talk_time_s") & (whole["scale"] == Scale.RECORDING.value)]
+    table = per_person(config, RID, TurnStructureExtractor.name, "talk_time_s", rows.assign(who=_who(rows)))
+    head = [cell.children for cell in table.children[0].children.children]
+    assert head == ["Person", "Whole recording", "first", "second"]

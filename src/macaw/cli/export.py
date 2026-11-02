@@ -12,7 +12,9 @@ from macaw.execution.runner import resolve_recordings
 from macaw.interop.eaf import export_eaf
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
+from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.project.recording import build_recording
+from macaw.project.segments import summaries
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import concat_long_tables, read_long_table
 from macaw.store.schema import Scale
@@ -23,7 +25,7 @@ from macaw.store.sequence import (
     speaking_intervals,
     to_state_sequence,
 )
-from macaw.store.wide import export_csv, export_rmd_template, to_wide
+from macaw.store.wide import export_csv, export_rmd_template, to_wide, with_segment
 
 app = typer.Typer()
 logger = get_logger("export")
@@ -82,8 +84,8 @@ def export(
         if not path.exists():
             logger.info("no features yet for %s", recording_id)
             continue
-        frames.append(read_long_table(path, scale=scale))
-    table = concat_long_tables(frames)
+        frames.append(_whole_and_segments(resolved, recording_id, read_long_table(path, scale=scale), scale))
+    table = with_segment(pd.concat(frames, ignore_index=True)) if frames else with_segment(concat_long_tables([]))
     if table.empty:
         raise MacawError(
             f"No feature rows under {layout.recordings_dir}. Run `macaw run` before exporting."
@@ -101,6 +103,21 @@ def export(
     typer.echo(str(out))
     if rmd:
         typer.echo(str(export_rmd_template(out.parent, out.name, layout.manifest_path.name)))
+
+
+def _whole_and_segments(config, recording_id: str, rows: pd.DataFrame, scale: str | None) -> pd.DataFrame:
+    """A recording's rows and its per-segment ones, each summary spanning what it covers, so a person in a segment is one wide row."""
+    whole = rows.copy()
+    prepared = layout_for(config, create=False).artifacts_dir(recording_id, MediaPrepExtractor.name) / PREP_INFO_NAME
+    if prepared.is_file():
+        prep = load_prep(config, recording_id)
+        summary = whole["scale"].astype(str).to_numpy() == Scale.RECORDING.value
+        whole.loc[summary, "t_start"] = prep.t_origin_s
+        whole.loc[summary, "t_end"] = prep.t_origin_s + prep.duration_s
+    parts = summaries(config, recording_id)
+    if scale is not None:
+        parts = parts[parts["scale"].astype(str) == scale]
+    return with_segment(pd.concat([with_segment(whole), parts], ignore_index=True))
 
 
 def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
@@ -139,7 +156,7 @@ def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: P
     path = out_dir / "scale.csv"
     pd.DataFrame(used).to_csv(path, index=False)
     logger.info("features in pixels also given in centimetres, named *%s, for %d recording(s); see %s", CM_SUFFIX, len(used), path)
-    return concat_long_tables(pieces)
+    return with_segment(pd.concat(pieces, ignore_index=True))
 
 
 def _annotation_frames(layout, recording_ids: list[str]) -> list[tuple[str, pd.DataFrame]]:

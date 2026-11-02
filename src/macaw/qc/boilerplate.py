@@ -13,6 +13,7 @@ from macaw.extractors.audio.content.diarization import others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
 from macaw.project.scale import pixel_power
+from macaw.project.segments import read_segments
 
 METHODS_NAME = "methods.md"
 BIB_NAME = "references.bib"
@@ -78,7 +79,24 @@ def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | Non
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
         sections.setdefault("Body", []).append(_centimetres(*scaled))
+    found = read_segments(config)
+    if found and sections:
+        sections.setdefault("Segments", []).append(_segments(found))
     return sections
+
+
+def _segments(found: dict) -> str:
+    names = sorted({segment.name for segments in found.values() for segment in segments})
+    named = f" ({_listed(names)})" if len(names) <= 6 else ""
+    where = "a recording" if len(found) == 1 else f"{len(found)} recordings"
+    return (
+        f"Within {where}, named segments{named} were set by hand, and every recording-level measure was computed again "
+        "within each from the output of the whole recording, as if the recording had been cut at the segment's edges: an "
+        "utterance, turn, code, look or blink that crossed an edge counted only with its part inside, a word where its middle "
+        "fell, and turns, pauses and floor transfers were formed again from what remained. Speech recognition, the "
+        "separation of voices, the tracking of people and the decisions about who was who were made once over the whole "
+        "recording and held in every segment."
+    )
 
 
 def _centimetres(with_scale: int, recordings: int) -> str:

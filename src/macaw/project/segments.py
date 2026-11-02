@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 
 from macaw.exceptions import ConfigError
+from macaw.project.layout import layout_for
+from macaw.store.longtable import read_segment_rows
 
 COLUMNS = ("recording", "segment", "start_s", "end_s")
 SUMMARY_STEP = "segments.summary"
@@ -89,7 +91,7 @@ def set_segment(config, recording_id: str, segment: Segment) -> Path:
     path = segments_path(config)
     frame = _read_frame(path) if path.is_file() else pd.DataFrame(columns=list(COLUMNS))
     same = (frame["recording"] == recording_id) & (frame["segment"] == segment.name)
-    row = {"recording": recording_id, "segment": segment.name, "start_s": f"{segment.start_s:g}", "end_s": f"{segment.end_s:g}"}
+    row = {"recording": recording_id, "segment": segment.name, "start_s": _seconds_text(segment.start_s), "end_s": _seconds_text(segment.end_s)}
     if same.any():
         for column, value in row.items():
             frame.loc[same, column] = value
@@ -107,6 +109,26 @@ def remove_segment(config, recording_id: str, name: str) -> Path:
         raise ConfigError(f"{path} has no segment {name} for {recording_id}")
     _write_frame(frame[~same], path)
     return path
+
+
+def _seconds_text(value: float) -> str:
+    # the shortest text that reads back as the same number, so a rewritten table changes no segment
+    text = repr(float(value))
+    return text[:-2] if text.endswith(".0") else text
+
+
+def summaries(config, recording_id: str) -> pd.DataFrame:
+    """The per-segment rows on disk for the segments the table holds now; one changed since the last run has none yet."""
+    rows = read_segment_rows(layout_for(config, create=False).segment_rows_path(recording_id))
+    current = segments_of(config, recording_id)
+    if rows.empty or not current:
+        return rows.iloc[0:0]
+    keep = np.zeros(len(rows), dtype=bool)
+    names = rows["segment"].astype(str).to_numpy()
+    starts, ends = rows["t_start"].to_numpy(dtype=float), rows["t_end"].to_numpy(dtype=float)
+    for segment in current:
+        keep |= (names == segment.name) & np.isclose(starts, segment.start_s, rtol=0, atol=1e-6) & np.isclose(ends, segment.end_s, rtol=0, atol=1e-6)
+    return rows[keep].reset_index(drop=True)
 
 
 def _write_frame(frame: pd.DataFrame, path: Path) -> None:

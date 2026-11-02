@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, coerce_frame
+from macaw.store.schema import SEGMENT_TABLE_SCHEMA, Scale, coerce_frame
 
 # entity plus time columns; enough to identify a row once features become columns
 DEFAULT_INDEX = [
@@ -15,6 +15,7 @@ DEFAULT_INDEX = [
     "session_id",
     "task",
     "run",
+    "segment",
     "subject_id",
     "subject_id_b",
     "t_start",
@@ -64,7 +65,7 @@ def to_wide(
     scale: Scale | None = None,
 ) -> pd.DataFrame:
     """Pivot long rows to one column per feature."""
-    frame = coerce_frame(df, LONG_TABLE_SCHEMA, "long table")
+    frame = with_segment(df)
     if scale is not None:
         wanted = scale.value if isinstance(scale, Scale) else scale
         frame = frame[frame["scale"] == wanted]
@@ -79,10 +80,15 @@ def to_wide(
     return pivoted.reset_index()
 
 
+def with_segment(df: pd.DataFrame) -> pd.DataFrame:
+    """Long-table rows, or per-segment ones, in one layout; a row of the whole recording has no segment."""
+    return coerce_frame(df if "segment" in df.columns else df.assign(segment=pd.NA), SEGMENT_TABLE_SCHEMA, "export")
+
+
 def export_csv(df: pd.DataFrame, path: Path, *, wide: bool = True) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    out = to_wide(df) if wide else coerce_frame(df, LONG_TABLE_SCHEMA, "long table")
+    out = to_wide(df) if wide else with_segment(df)
     out.to_csv(path, index=False, encoding="utf-8")
     return path
 

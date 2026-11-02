@@ -14,6 +14,7 @@ from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
 from macaw.project.layout import layout_for
+from macaw.project.segments import segments_of, summaries
 from macaw.qc.checks import RecordingResults
 from macaw.qc.downsample import min_max_downsample
 from macaw.store.schema import Scale
@@ -49,7 +50,7 @@ def layout(config_path: Path):
                     className="toolbar",
                 ),
                 dcc.Loading(html.Div(id="results-view")),
-                desc="A measure over time per person, or its value per person when it is one number for the recording.",
+                desc="A measure over time per person, or its value per person when it is one number for the recording, then also within each named segment.",
             ),
             ui.card(
                 "In 3D",
@@ -76,12 +77,9 @@ def view(config_path: Path, rid: str, source: str, feature: str):
     rows = RecordingResults(layout_for(config, create=False), rid).long_table(source, features=[feature])
     if rows.empty:
         return html.P("No values.", className="none")
-    who = rows["subject_id"].astype(object).where(rows["subject_id"].notna(), "everyone")
-    pair = rows["subject_id_b"].notna()
-    who[pair] = rows.loc[pair, "subject_id"].astype(str) + " & " + rows.loc[pair, "subject_id_b"].astype(str)
-    rows = rows.assign(who=who)
+    rows = rows.assign(who=_who(rows))
     if set(rows["scale"].astype(str)) == {Scale.RECORDING.value}:
-        return ui.table(["Person", feature], [[name, f"{value:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={feature})
+        return per_person(config, rid, source, feature, rows)
     figure = go.Figure()
     for index, (name, group) in enumerate(rows.sort_values("t_start").groupby("who", sort=True)):
         t, y = min_max_downsample(group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float), config.qc.report_downsample_px)
@@ -95,6 +93,33 @@ def view(config_path: Path, rid: str, source: str, feature: str):
         xaxis={"title": "recording time (s)", **axis}, yaxis={"title": feature, **axis}, legend={"orientation": "h", "y": 1.08},
     )
     return dcc.Graph(figure=figure, config={"displaylogo": False})
+
+
+def _who(rows):
+    who = rows["subject_id"].astype(object).where(rows["subject_id"].notna(), "everyone")
+    pair = rows["subject_id_b"].notna()
+    who[pair] = rows.loc[pair, "subject_id"].astype(str) + " & " + rows.loc[pair, "subject_id_b"].astype(str)
+    return who
+
+
+def per_person(config, rid: str, source: str, feature: str, rows):
+    """One number per person, and beside it the same within each named segment once the segments are summarised."""
+    parts = summaries(config, rid)
+    parts = parts[(parts["source"].astype(str) == source) & (parts["feature"].astype(str) == feature)] if not parts.empty else parts
+    named = [segment.name for segment in segments_of(config, rid) if (parts["segment"].astype(str) == segment.name).any()]
+    if not named:
+        return ui.table(["Person", feature], [[name, f"{value:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={feature})
+    within = {name: dict(zip(_who(own), own["value"])) for name, own in parts.groupby("segment", observed=True)}
+    columns = ["Person", "Whole recording", *named]
+    table = [
+        [name, f"{value:.4g}", *(_shown_value(within.get(segment, {}).get(name)) for segment in named)]
+        for name, value in zip(rows["who"], rows["value"])
+    ]
+    return ui.table(columns, table, numeric=set(columns[1:]))
+
+
+def _shown_value(value) -> str:
+    return "-" if value is None or not np.isfinite(value) else f"{value:.4g}"
 
 
 def points_3d(config_path: Path, rid: str):

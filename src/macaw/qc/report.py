@@ -15,6 +15,7 @@ import pandas as pd
 
 from macaw.config.schema import MacawConfig
 from macaw.extractors.base import Gate, QCWarning
+from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.media.align import describe_drift, drift_flagged, read_offset_table, review_reason
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
@@ -23,6 +24,7 @@ from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
 from macaw.project.identity import read_confirmation
 from macaw.project.scale import DEPTH_NOTE, HAND, recording_scale
+from macaw.project.segments import segments_of, summaries
 from macaw.store import _io
 from macaw.qc.downsample import min_max_downsample
 from macaw.qc.figures import (
@@ -402,10 +404,7 @@ def _measures(layout, results: RecordingResults, recording_id: str, notes: dict)
         rows = rows[rows["scale"].astype(str) == Scale.RECORDING.value]
         if rows.empty:
             continue
-        who = rows["subject_id"].astype(object).where(rows["subject_id"].notna(), "everyone")
-        pair = rows["subject_id_b"].notna()
-        who[pair] = rows.loc[pair, "subject_id"].astype(str) + " & " + rows.loc[pair, "subject_id_b"].astype(str)
-        values = rows.assign(who=who).pivot_table(index="feature", columns="who", values="value", aggfunc="first")
+        values = rows.assign(who=_people(rows)).pivot_table(index="feature", columns="who", values="value", aggfunc="first")
         columns = [column for column in values.columns if column != "everyone"]
         columns += ["everyone"] if "everyone" in values.columns else []
         tables.append(
@@ -424,6 +423,51 @@ def _measures(layout, results: RecordingResults, recording_id: str, notes: dict)
             }
         )
     return tables
+
+
+def _people(rows: pd.DataFrame) -> pd.Series:
+    who = rows["subject_id"].astype(object).where(rows["subject_id"].notna(), "everyone")
+    pair = rows["subject_id_b"].notna()
+    who[pair] = rows.loc[pair, "subject_id"].astype(str) + " & " + rows.loc[pair, "subject_id_b"].astype(str)
+    return who
+
+
+def _segments(config: MacawConfig, layout, recording_id: str, notes: dict) -> dict | None:
+    """Each segment the table names for this recording, and every step's recording-level values again within each."""
+    found = segments_of(config, recording_id)
+    if not found:
+        return None
+    rows = summaries(config, recording_id)
+    prepared = layout.artifacts_dir(recording_id, MediaPrepExtractor.name) / PREP_INFO_NAME
+    prep = load_prep(config, recording_id) if prepared.is_file() else None
+    listed = []
+    for segment in found:
+        outside = prep is not None and (segment.start_s < prep.t_origin_s or segment.end_s > prep.t_origin_s + prep.duration_s)
+        done = bool((rows["segment"].astype(str) == segment.name).any()) if not rows.empty else False
+        state = "outside the analysed part, left out" if outside else "summarised" if done else "not yet summarised; run macaw run"
+        listed.append({"name": segment.name, "start": f"{segment.start_s:.2f}", "end": f"{segment.end_s:.2f}",
+                       "length": f"{segment.end_s - segment.start_s:.1f}", "state": state})
+    order = {segment.name: index for index, segment in enumerate(found)}
+    tables = []
+    for source, own in rows.groupby("source", sort=True, observed=True) if not rows.empty else []:
+        own = own.assign(who=_people(own))
+        values = own.pivot_table(index=["feature", "segment"], columns="who", values="value", aggfunc="first", observed=True)
+        columns = [column for column in values.columns if column != "everyone"]
+        columns += ["everyone"] if "everyone" in values.columns else []
+        keys = sorted(values.index, key=lambda key: (key[0], order.get(key[1], len(order))))
+        tables.append({
+            "source": str(source),
+            "columns": columns,
+            "features": [
+                {
+                    "name": feature, "segment": segment, "first": index == 0 or keys[index - 1][0] != feature,
+                    "description": notes.get(feature, {}).get("description", ""), "unit": notes.get(feature, {}).get("unit"),
+                    "cells": [_number(values.at[(feature, segment), column]) for column in columns],
+                }
+                for index, (feature, segment) in enumerate(keys)
+            ],
+        })
+    return {"list": listed, "tables": tables}
 
 
 def _frames(layout, recording_id: str, page: Path) -> list[dict]:
@@ -608,6 +652,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "dropped": dropped,
         "over_time": _over_time(config, layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
         "measures": _measures(layout, results, recording_id, notes),
+        "segments": _segments(config, layout, recording_id, notes),
         "frames": frames,
         "warnings": [
             {**asdict(warning), "when": f"{warning.t_start:.1f}" if warning.t_start is not None else ""}
@@ -622,6 +667,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     sections += [("Dropped", "Speech left out")] if dropped else []
     sections += [("Time", "Over time")] if context["over_time"] else []
     sections += [("Measures", "Measures")] if context["measures"] else []
+    sections += [("Segments", "Segments")] if context["segments"] else []
     sections += [("Frames", "Review frames")] if context["frames"] else []
     sections += [("Warnings", "Warnings"), ("Versions", "Versions")]
     context.update(_base(f"QC {recording_id}", f"Quality review: {recording_id}", config.project.name, sections))
