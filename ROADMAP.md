@@ -26,7 +26,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Turn structure, floor transfer and turn-taking entropy.
 - Pose from MediaPipe or YOLO with people kept apart across cameras, body movement, motion energy, facial action units, head angles, gaze direction, mouth movement and blinks.
 - Rule-based coding, language-model coding from a codebook with human review, several versions of it side by side, a choice of what the model is shown (timing, voice, video frames, a note, examples people coded) and whether it reasons first or gives reasons, its agreement with itself, coder agreement, and ELAN interchange both ways.
-- People's own coding brought in from ELAN or a table and compared with other coders or the machine, on shared intervals, one coder's intervals or a time grid.
+- People's own coding brought in from ELAN or a table and compared with other coders or the machine, on shared intervals, one coder's intervals or a time grid, over whole recordings or within a segment.
 - Quality checks and an HTML report listing every automatic decision, a Methods text with references, exports, a GUI, and Slurm job arrays for clusters.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
