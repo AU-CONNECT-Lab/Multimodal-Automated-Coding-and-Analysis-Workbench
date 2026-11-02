@@ -216,6 +216,24 @@ class TestRenderReview:
         )
         assert list(index.frame) == [5]
 
+    @pytest.mark.parametrize("suffix", ["mp4", "ts"])
+    def test_each_image_is_the_frame_it_names(self, tmp_path, suffix):
+        """Frame n is a flat grey of luma 16 + 2n; the transport stream has a single keyframe."""
+        from macaw.media.ffmpeg import run_ffmpeg
+
+        video = tmp_path / f"room.{suffix}"
+        run_ffmpeg([
+            "-f", "lavfi", "-i", "color=black:s=320x240:r=10:d=12", "-vf", "geq=lum='16+2*N':cb=128:cr=128",
+            "-c:v", "libx264", "-crf", "8", "-g", "300", "-pix_fmt", "yuv420p", str(video),
+        ])
+        index = render_review(
+            recording([media(video)]), body("parent", frame=0),
+            moments([(None, None, BASELINE, 3.0), ("parent", "track_quality", "low_confidence", 3.0), (None, None, BASELINE, 7.5)]),
+            tmp_path / "renders",
+        )
+        shown = [cv2.imread(str(tmp_path / "renders" / name), cv2.IMREAD_GRAYSCALE)[60:].mean() * 219 / 255 for name in index.file]
+        assert [round(grey / 2) for grey in shown] == list(index.frame) == [30, 30, 75]
+
     def test_a_moment_outside_the_file_is_skipped(self, tmp_path):
         video = write_video(tmp_path / "room.avi")
         index = render_review(

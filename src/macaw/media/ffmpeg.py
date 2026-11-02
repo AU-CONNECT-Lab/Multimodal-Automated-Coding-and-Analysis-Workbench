@@ -183,7 +183,7 @@ def normalise_video(
 def extract_frame(
     src: Path, at_s: float, dest: Path, *, square_pixels: bool = False, long_side: int | None = None
 ) -> Path:
-    """The first frame at or after at_s from the first picture; square_pixels shapes it like normalise_video's copies, long_side caps its longer side."""
+    """The frame nearest at_s from the first picture; square_pixels shapes it like normalise_video's copies, long_side caps its longer side."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     info = probe(src)

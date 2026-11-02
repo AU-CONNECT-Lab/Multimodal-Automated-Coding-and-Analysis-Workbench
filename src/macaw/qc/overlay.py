@@ -11,6 +11,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors.video.pose.keypoints import select_videos
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
+from macaw.media.probe import jumps_exactly, probe
 from macaw.project.recording import Recording
 from macaw.store.schema import coerce_frame, empty_frame
 
@@ -172,14 +173,25 @@ def render_review(
     for job in jobs:
         by_video.setdefault(job[0].path, []).append(job)
     for path, work in by_video.items():
-        capture = cv2.VideoCapture(str(work[0][0].frames_path))
+        source = work[0][0].frames_path
+        capture = cv2.VideoCapture(str(source))
+        # a transport stream is read forward, as a jump in it lands after the wanted frame
+        jumps, position = jumps_exactly(probe(source)), 0
         try:
             n_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
             for item, frame, index, row in sorted(work, key=lambda job: job[1]):
                 if frame < 0 or (n_frames > 0 and frame >= n_frames):
                     continue
-                capture.set(cv2.CAP_PROP_POS_FRAMES, frame)
+                if jumps:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, frame)
+                else:
+                    if frame < position:
+                        capture.open(str(source))
+                        position = 0
+                    while position < frame and capture.grab():
+                        position += 1
                 ok, image = capture.read()
+                position = frame + 1
                 if not ok:
                     continue
                 people = keypoints[(keypoints["frame"] == frame) & (keypoints["video"] == Path(path).name)]
