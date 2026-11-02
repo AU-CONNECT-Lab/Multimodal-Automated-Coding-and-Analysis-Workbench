@@ -470,6 +470,20 @@ class TestVersions:
         assert not any(warning.check == "llm_review" for warning in result.warnings)
         assert version.name == "coding.judge.words" and version.wanted_by_default(config)
 
+    def test_the_run_plan_warns_about_a_version_that_sends_the_transcript_to_a_cloud_service(self, tmp_path, capsys):
+        from macaw.cli.run import _echo_reporting
+
+        write_codebook(CODEBOOK, tmp_path / "acts.yaml")
+        config = project_with(tmp_path, {
+            "layers": ["A", "B"], "codebook": "acts.yaml", "llm": {"model": "tiny"},
+            "judges": {"cloud": {"provider": "openai", "model": "gpt-x", "n_samples": 1}},
+        })
+        resolved = resolve_config(config)
+        _echo_reporting(resolved, build_dag(resolved))
+        shown = capsys.readouterr().out
+        assert "coding.judge sends 5 x" in shown and "coding.judge.cloud sends 1 x" in shown
+        assert "sent to" in shown and "OpenAI" in shown
+
     def test_versions_stay_out_of_the_review_queue(self, tmp_path):
         config = project_with(tmp_path, {"layers": ["A", "B"]})
         resolved = resolve_config(config)

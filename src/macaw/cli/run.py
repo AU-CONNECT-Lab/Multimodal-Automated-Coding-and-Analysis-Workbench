@@ -104,13 +104,13 @@ def _echo_reporting(config, dag) -> None:
         notices.append(get_backend(POSE_BACKENDS, config.pose.backend).reporting)
     if "face.au" in dag.nodes:
         notices.append(get_backend(FACE_BACKENDS, config.face.backend).reporting)
-    if "coding.judge" in dag.nodes:
+    for name in sorted(node for node in dag.nodes if node == "coding.judge" or node.startswith("coding.judge.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
 
-        llm = config.coding.llm
+        _, llm = get_extractor(name).settings(config)
         notices.append(get_backend(LLM_BACKENDS, llm.provider).reporting)
         notices.append(
-            f"coding.judge sends {llm.n_samples} x ceil(units / {llm.batch_size}) requests per recording "
+            f"{name} sends {llm.n_samples} x ceil(units / {llm.batch_size}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
     from macaw.execution import models
