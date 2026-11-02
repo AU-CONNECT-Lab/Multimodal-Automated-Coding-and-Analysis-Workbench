@@ -208,7 +208,7 @@ class TestWiring:
 
 
 @pytest.fixture
-def fake_line(monkeypatch):
+def fake_line(monkeypatch, tmp_path):
     """prep -> gate -> after, with a gate that is cleared for every recording but rec2."""
     import macaw.extractors as extractors
 
@@ -223,6 +223,10 @@ def fake_line(monkeypatch):
         def dependencies(cls, config):
             return cls.requires
 
+        @classmethod
+        def ordered_after(cls, config):
+            return cls.runs_after
+
         def pending(self, recording):
             return "look at it" if recording.recording_id == "rec2" else None
 
@@ -233,7 +237,8 @@ def fake_line(monkeypatch):
             return None
 
     def plain(name, requires, phase):
-        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True)})
+        return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True),
+                                 "ordered_after": classmethod(lambda cls, config: cls.runs_after)})
 
     registry = {
         "prep": plain("prep", (), Phase.PREP),
@@ -245,7 +250,8 @@ def fake_line(monkeypatch):
     monkeypatch.setattr(
         runner_module, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id)
     )
-    return SimpleNamespace(project=SimpleNamespace(excluded_recordings=[]), pipeline=PipelineSection())
+    # no recording has a settings file of its own, so the plan is the project's for every one
+    return SimpleNamespace(project=SimpleNamespace(excluded_recordings=[], recording_config_dir=tmp_path / "recordings"), pipeline=PipelineSection())
 
 
 class TestRunnerGates:
