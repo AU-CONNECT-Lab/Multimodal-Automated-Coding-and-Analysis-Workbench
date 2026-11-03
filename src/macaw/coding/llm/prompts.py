@@ -119,8 +119,3 @@ def _describe(row, show: Sequence[str]) -> str:
     if voice:
         parts.append(", ".join(voice))
     return f"{' | '.join(parts)}: {row.text}"
-
-
-def build_observation_prompt(utterances: pd.DataFrame, context: pd.DataFrame | None = None) -> tuple[str, str]:
-    """No codebook argument on purpose: the observation pass must not know the categories."""
-    raise NotImplementedError

@@ -14,7 +14,6 @@ from macaw.coding.codebook import (
 )
 from macaw.coding.layer_a import LayerACodingExtractor
 from macaw.coding.llm.judge import JudgementExtractor
-from macaw.coding.llm.observe import ObservationExtractor
 from macaw.coding.review_queue import (
     apply_decisions,
     build_queue,
@@ -30,7 +29,6 @@ __all__ = [
     "write_codebook",
     "validate_codebook",
     "LayerACodingExtractor",
-    "ObservationExtractor",
     "JudgementExtractor",
     "build_queue",
     "read_queue",

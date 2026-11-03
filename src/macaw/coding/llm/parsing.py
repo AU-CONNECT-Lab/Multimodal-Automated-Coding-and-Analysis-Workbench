@@ -44,10 +44,6 @@ def _items(text: str) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
-def parse_observation_response(text: str, expected_ids: list[str]) -> pd.DataFrame:
-    raise NotImplementedError
-
-
 def repair_json(text: str) -> str:
     """Small local models often wrap JSON in prose or truncate it."""
     text = _THINKING.sub("", text)
