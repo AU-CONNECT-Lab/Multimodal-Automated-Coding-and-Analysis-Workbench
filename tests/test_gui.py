@@ -20,7 +20,7 @@ from macaw.extractors.video.pose.keypoints import PoseExtractor
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.app import build_layout, create_app, page_for
 from macaw.interface.files import file_url, path_from_url
-from macaw.interface.pages import overview, results, review, run
+from macaw.interface.pages import agreement, overview, results, review, run
 from macaw.project.layout import layout_for
 from macaw.qc.downsample import min_max_downsample
 from macaw.store.longtable import build_long_rows
@@ -117,6 +117,36 @@ def test_the_review_page_lists_coding_brought_in_and_how_to_compare_it(project, 
     assert code == 0, text
     shown = text_of(review.body(project, "003"))
     assert "Your coding" in shown and "agreement" in shown and "--units" in shown and "speech" in shown
+
+
+def test_the_agreement_page_compares_coders_across_the_recordings(project, tmp_path):
+    config = resolve_config(project)
+    assert agreement.coded_tiers(config) == {}
+    table = tmp_path / "coding.csv"
+    for coder, second in (("ann", "answer"), ("bob", "question")):
+        table.write_text(f"tier,start,end,code,person\nspeech,1.0,2.5,question,child\nspeech,3,4,{second},child\n", encoding="utf-8")
+        code, text = cli_bridge.run_now(["macaw", "import-codes", str(table), "-c", str(project), "-r", "003", "--coder", coder], cwd=project.parent)
+        assert code == 0, text
+    assert agreement.coded_tiers(config) == {"speech": ["ann", "bob"]}
+    assert '"/agreement?tier=speech&units=ann"' in text_of(review.body(project, "003"))
+
+    app = create_app(project)
+    fill = callback(app, "..agreement-tier.options...agreement-tier.value...agreement-segment.options...agreement-recordings.options...agreement-message.children..")
+    assert fill("/agreement", "?tier=speech&units=bob", None)[1] == "speech"
+    assert callback(app, "..agreement-coder.options...agreement-coder.value..")("speech", "?tier=speech&units=bob", None) == (["ann", "bob"], "bob")
+
+    argv = agreement.agreement_command(project, "speech", "units", "bob", None, None, None, False, "compared")
+    assert argv[1] == "agreement" and argv[argv.index("--units") + 1] == "bob" and argv[-2:] == ["--out", "compared"]
+    grid = agreement.agreement_command(project, "speech", "grid", "bob", 0.5, "free_play", ["003"], True, None)
+    assert grid[grid.index("--grid-s") + 1] == "0.5" and "--units" not in grid and grid[grid.index("--segment") + 1] == "free_play"
+    assert "--samples" in grid and grid[grid.index("-r") + 1] == "003" and grid[-1] == agreement.FOLDER
+    assert agreement.missing_choice("speech", "grid", "bob", None) and not agreement.missing_choice("speech", "exact", None, None)
+
+    shown = text_of(agreement.compare(project, argv, "compared"))
+    assert (project.parent / "compared" / "units.csv").is_file()
+    assert "Each pair of coders" in shown and "Each code, each pair of coders" in shown and "0.000" in shown
+    broken = text_of(agreement.compare(project, agreement.agreement_command(project, "speech", "units", "nobody", None, "late", None, False, "x"), "x"))
+    assert "failed" in broken
 
 
 def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_names_it(project):
@@ -234,8 +264,8 @@ def test_every_step_is_listed_with_how_a_run_would_find_it(project):
 
 
 def test_pages_open_by_their_address():
-    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/", "/nowhere")] == [
-        "review", "settings", "cameras", "run", "overview", "overview",
+    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/agreement", "/", "/nowhere")] == [
+        "review", "settings", "cameras", "run", "agreement", "overview", "overview",
     ]
 
 

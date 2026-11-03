@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import getpass
 from pathlib import Path
+from urllib.parse import urlencode
 
 import numpy as np
 import pandas as pd
@@ -578,10 +579,12 @@ def _coding(layout, rid: str):
     counts = codes.groupby(["annotator", "subject_id", "tier"], dropna=False, sort=True).size().reset_index(name="n")
     rows = [[row.annotator, row.subject_id if isinstance(row.subject_id, str) else "everyone", row.tier, int(row.n)] for row in counts.itertuples()]
     first = counts.iloc[0]
+    compare = f"/agreement?{urlencode({'tier': str(first.tier), 'units': str(first.annotator)})}"
     return ui.card(
         "Your coding",
         ui.table(["Coder", "Person", "Tier", "Codes"], rows, numeric={"Codes"}),
-        ui.note("To compare it with the machine's codes or another coder's on the same tier, each unit of one coder taking the others' code that covers most of it:"),
+        ui.note(["To compare it with the machine's codes or another coder's on the same tier, open ",
+                 dcc.Link("the Agreement page", href=compare), ", or in a terminal:"]),
         ui.command(["macaw", "agreement", "--tier", str(first.tier), "--units", str(first.annotator)]),
         desc="Brought in with Import your coding. Importing again under the same name replaces that coder's tiers.",
     )

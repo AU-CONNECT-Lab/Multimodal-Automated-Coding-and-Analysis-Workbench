@@ -15,11 +15,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import cameras, overview, results, review, run, segments, settings
+from macaw.interface.pages import agreement, cameras, overview, results, review, run, segments, settings
 
-PAGES = (overview, run, review, segments, results, cameras, settings)
+PAGES = (overview, run, review, agreement, segments, results, cameras, settings)
 # the tabs along the top; settings is reached by the gear
-TABS = (overview, run, review, segments, results, cameras)
+TABS = (overview, run, review, agreement, segments, results, cameras)
 
 
 def create_app(config_path: Path, *, local: bool = True) -> Dash:
