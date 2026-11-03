@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
-from dash import Input, Output, State, ctx, dcc, html
+from dash import Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.execution.runner import resolve_recordings
@@ -20,6 +20,7 @@ from macaw.qc.downsample import min_max_downsample
 from macaw.store.schema import Scale
 
 LABEL = "Results"
+PATH = "/results"
 # colours of the QC report figures, one per person in order
 COLOURS = ["#1d4e89", "#d1495b", "#2a9d8f", "#e9a03b", "#6c5b7b", "#57606a"]
 
@@ -70,6 +71,14 @@ def sources(config_path: Path, rid: str | None) -> list[str]:
         return []
     directory = layout_for(resolve_config(config_path), create=False).long_table_path(rid)
     return sorted(path.stem for path in directory.glob("*.parquet"))
+
+
+def chosen_source(found: list[str], linked: str | None, current: str | None) -> str | None:
+    """The step a link asked for, else the one already shown, else the first; a step without measures is passed over."""
+    for name in (linked, current):
+        if name in found:
+            return name
+    return found[0] if found else None
 
 
 def view(config_path: Path, rid: str, source: str, feature: str):
@@ -203,6 +212,13 @@ def register(app, config_path: Path) -> None:
     def recordings(_):
         return resolve_recordings(resolve_config(config_path), None)
 
+    @app.callback(Output("results-recording", "value"), Input("url", "pathname"), Input("url", "search"))
+    def linked_recording(pathname, search):
+        rid = ui.asked(search).get("recording")
+        if (pathname or "/").rstrip("/") != PATH or rid not in resolve_recordings(resolve_config(config_path), None):
+            return no_update
+        return rid
+
     @app.callback(
         Output("results-report", "children"),
         Output("results-report-message", "children"),
@@ -226,10 +242,15 @@ def register(app, config_path: Path) -> None:
         )
         return link, message
 
-    @app.callback(Output("results-source", "options"), Output("results-source", "value"), Input("results-recording", "value"))
-    def pick_source(rid):
+    @app.callback(
+        Output("results-source", "options"), Output("results-source", "value"),
+        Input("results-recording", "value"), Input("url", "search"), State("url", "pathname"), State("results-source", "value"),
+    )
+    def pick_source(rid, search, pathname, current):
+        if ctx.triggered_id == "url" and (pathname or "/").rstrip("/") != PATH:
+            return no_update, no_update
         found = sources(config_path, rid)
-        return found, found[0] if found else None
+        return found, chosen_source(found, ui.asked(search).get("step"), current)
 
     @app.callback(
         Output("results-feature", "options"), Output("results-feature", "value"),

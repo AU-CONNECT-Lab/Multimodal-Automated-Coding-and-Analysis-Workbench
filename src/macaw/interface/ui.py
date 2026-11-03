@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs
+
 from dash import html
 
 PILL_CLASS = {"ok": "ok", "warn": "warn", "bad": "bad", "info": "info"}
+
+
+def asked(search: str | None) -> dict[str, str]:
+    """What a link from another page asks this one to show, from ?recording=...&step=..."""
+    return {key: values[0] for key, values in parse_qs((search or "").lstrip("?")).items()}
 
 
 def icon(name: str):

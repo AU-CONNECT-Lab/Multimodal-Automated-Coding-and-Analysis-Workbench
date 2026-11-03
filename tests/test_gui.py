@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -10,11 +11,13 @@ import pytest
 pytest.importorskip("dash")
 pytest.importorskip("ruamel.yaml")
 
+from dash import no_update
+
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import task_id_for
 from macaw.extractors.video.pose.keypoints import PoseExtractor
-from macaw.interface import cli_bridge, project_file
+from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.app import build_layout, create_app, page_for
 from macaw.interface.files import file_url, path_from_url
 from macaw.interface.pages import overview, results, review, run
@@ -261,6 +264,38 @@ def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
     assert found.grid["003", "prep.media"] == "failed"
     first = text_of(overview.next_up(found)[0])
     assert "prep.media failed" in first and "for 003" in first and '"/run"' in first
+
+
+def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
+    assert overview.cell_link("003", "turns.structure", "current") == ("/results?recording=003&step=turns.structure", "Results")
+    assert overview.cell_link("003", "prep.media", "held") == ("/review?recording=003", "Review")
+    assert [overview.cell_link("003", "text.asr", state)[0] for state in ("new", "stale", "failed")] == ["/run?recording=003&step=text.asr"] * 3
+    grid = text_of(overview.grid(overview.standing(project)))
+    assert '"href": "/review?recording=003"' in grid and "Opens Review." in grid
+    assert ui.asked("?recording=a%20b&step=text.asr") == {"recording": "a b", "step": "text.asr"} and ui.asked(None) == {}
+
+
+def callback(app, output: str):
+    return app.callback_map[output]["callback"].__wrapped__
+
+
+def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
+    app = create_app(project)
+    assert callback(app, "review-recording.value")("/review", "?recording=003") == "003"
+    assert callback(app, "results-recording.value")("/results", "?recording=003&step=x") == "003"
+    for page, search in (("/review", "?recording=nowhere"), ("/run", "?recording=003")):
+        assert callback(app, "review-recording.value")(page, search) is no_update
+    assert results.chosen_source(["text.asr", "turns.structure"], "turns.structure", "text.asr") == "turns.structure"
+    assert results.chosen_source(["text.asr", "turns.structure"], "prep.video", "turns.structure") == "turns.structure"
+    assert results.chosen_source(["text.asr"], None, None) == "text.asr" and results.chosen_source([], "x", None) is None
+
+    fill = callback(app, "..run-recordings.options...run-recordings.value...run-steps.options...run-steps.value...run-more.options...run-more.value...run-more-summary.children...run-summary.children..")
+    monkeypatch.setattr(run, "ctx", SimpleNamespace(triggered_id="url"))
+    linked = fill("/run", "?recording=003&step=prep.media", None, ["003"], ["text.asr", "turns.structure"], [])
+    assert linked[1] == ["003"] and linked[3] == ["prep.media"] and linked[5] == []
+    monkeypatch.setattr(run, "ctx", SimpleNamespace(triggered_id="run-state"))
+    kept = fill("/run", "?recording=003&step=prep.media", "done", ["003"], ["text.asr"], [])
+    assert kept[3] == ["text.asr"]
 
 
 def test_steps_left_to_run_are_listed_after_the_rest_are_counted():

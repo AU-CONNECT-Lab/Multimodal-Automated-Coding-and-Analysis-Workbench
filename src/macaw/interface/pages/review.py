@@ -654,6 +654,13 @@ def register(app, config_path: Path) -> None:
     def recordings(_):
         return resolve_recordings(resolve_config(config_path), None)
 
+    @app.callback(Output("review-recording", "value"), Input("url", "pathname"), Input("url", "search"))
+    def linked_recording(pathname, search):
+        rid = ui.asked(search).get("recording")
+        if (pathname or "/").rstrip("/") != f"/{LABEL.lower()}" or rid not in resolve_recordings(resolve_config(config_path), None):
+            return no_update
+        return rid
+
     @app.callback(
         Output({"type": SCALE_GRAPH, "key": MATCH}, "figure"),
         Output({"type": SCALE_POINTS, "key": MATCH}, "data"),

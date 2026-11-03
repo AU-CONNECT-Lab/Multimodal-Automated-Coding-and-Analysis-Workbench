@@ -6,6 +6,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlencode
 
 from dash import Input, Output, dcc, html, no_update
 
@@ -13,7 +14,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
-from macaw.interface.pages import review, run
+from macaw.interface.pages import results, review, run
 
 LABEL = "Overview"
 PATH = "/overview"
@@ -145,12 +146,24 @@ def next_up(found: Standing) -> list:
     return items
 
 
+def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
+    """Where a square leads, and that page's name: what it produced, the checks it waits on, or the Run page."""
+    if state == "current":
+        return f"{results.PATH}?{urlencode({'recording': rid, 'step': step})}", results.LABEL
+    if state == "held":
+        return f"{REVIEW_PATH}?{urlencode({'recording': rid})}", review.LABEL
+    return f"{run.PATH}?{urlencode({'recording': rid, 'step': step})}", run.LABEL
+
+
+def _cell(rid: str, step: str, state: str):
+    href, page = cell_link(rid, step, state)
+    return html.Td(dcc.Link(html.Span(className=f"cell {state}"), href=href, title=f"{rid}, {step}: {run.STATE_TEXT[state]}. Opens {page}."))
+
+
 def grid(found: Standing):
     head = html.Tr([html.Th(), *[html.Th(html.Span(step), className="step-name") for step in found.steps]])
     rows = [
-        html.Tr([html.Th(rid, className="recording"),
-                 *[html.Td(html.Span(className=f"cell {found.grid[rid, step]}", title=f"{rid}, {step}: {run.STATE_TEXT[found.grid[rid, step]]}"))
-                   for step in found.steps]])
+        html.Tr([html.Th(rid, className="recording"), *[_cell(rid, step, found.grid[rid, step]) for step in found.steps]])
         for rid in found.recordings
     ]
     legend = [html.Span([html.Span(className=f"cell {state}"), run.STATE_TEXT[state]]) for state in LEGEND]
@@ -178,7 +191,10 @@ def layout(config_path: Path):
                     html.Div(id="overview-tiles", className="tiles"),
                     ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
                     ui.card("Where each recording stands", html.Div(id="overview-grid"),
-                            desc="A row per recording and a column per step, in the order they run. Point at a square for its state.",
+                            desc=(
+                                "A row per recording and a column per step, in the order they run. Point at a square for its state; "
+                                "click it for what the step produced, the checks it waits on, or to run it."
+                            ),
                             flush=True),
                 ],
                 delay_show=300,

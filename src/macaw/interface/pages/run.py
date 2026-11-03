@@ -144,15 +144,19 @@ def register(app, config_path: Path) -> None:
         Output("run-steps", "options"), Output("run-steps", "value"),
         Output("run-more", "options"), Output("run-more", "value"),
         Output("run-more-summary", "children"), Output("run-summary", "children"),
-        Input("url", "pathname"), Input("run-state", "data"),
+        Input("url", "pathname"), Input("url", "search"), Input("run-state", "data"),
         State("run-recordings", "value"), State("run-steps", "value"), State("run-more", "value"),
     )
-    def fill(pathname, _state, recordings, chosen, more):
+    def fill(pathname, search, _state, recordings, chosen, more):
         if (pathname or "/").rstrip("/") != PATH:
             return (no_update,) * 8
         config = resolve_config(config_path)
         every = resolve_recordings(config, None)
+        # a square on the Overview links here with its recording and step; a run finishing keeps what is ticked
+        linked = ui.asked(search) if ctx.triggered_id != "run-state" else {}
         recordings = [rid for rid in recordings if rid in every] if recordings is not None else every
+        if linked.get("recording") in every:
+            recordings = [linked["recording"]]
         try:
             order, project, counts, needs = step_states(config_path, every)
         except Exception as error:   # the list still shows; the run itself reports what is wrong
@@ -161,7 +165,9 @@ def register(app, config_path: Path) -> None:
         else:
             message = None
         others = [name for name in order if name not in project]
-        if chosen is None:
+        if linked.get("step") in order:
+            chosen, more = [name for name in project if name == linked["step"]], [name for name in others if name == linked["step"]]
+        elif chosen is None:
             default = set(default_steps(config))
             chosen, more = [name for name in project if name in default], [name for name in others if name in default]
 
