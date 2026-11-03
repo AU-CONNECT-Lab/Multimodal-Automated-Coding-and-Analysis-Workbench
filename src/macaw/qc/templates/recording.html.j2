@@ -155,12 +155,13 @@
 
 {% if segments %}
 <h2 id="Segments">Segments</h2>
-<p class="desc">The parts of this recording named in the segments table, with every recording-level value again within each. A segment is summarised as if the recording had been cut at its edges: whatever crosses an edge counts only with its part inside. Transcription, voices and tracking still had the whole recording to work from.</p>
+<p class="desc">The parts of this recording named in the segments table, with every recording-level value again within each. A segment is summarised as if the recording had been cut at its edges: whatever crosses an edge counts only with its part inside. Transcription, voices and tracking still had the whole recording to work from. The checks on turns are made again within each segment, with the same thresholds as for the whole recording.</p>
 <table class="flat">
-  <thead><tr><th>Segment</th><th class="num">From (s)</th><th class="num">To (s)</th><th class="num">Length (s)</th><th>State</th></tr></thead>
+  <thead><tr><th>Segment</th><th class="num">From (s)</th><th class="num">To (s)</th><th class="num">Length (s)</th><th>State</th><th>Warnings</th></tr></thead>
   <tbody>
   {%- for segment in segments.list %}
-  <tr><td>{{ segment.name }}</td><td class="num">{{ segment.start }}</td><td class="num">{{ segment.end }}</td><td class="num">{{ segment.length }}</td><td>{{ segment.state }}</td></tr>
+  <tr><td>{{ segment.name }}</td><td class="num">{{ segment.start }}</td><td class="num">{{ segment.end }}</td><td class="num">{{ segment.length }}</td><td>{{ segment.state }}</td>
+    <td class="message">{% for line in segment.warnings %}<div>{{ line }}</div>{% else %}<span class="hint">none</span>{% endfor %}</td></tr>
   {%- endfor %}
   </tbody>
 </table>

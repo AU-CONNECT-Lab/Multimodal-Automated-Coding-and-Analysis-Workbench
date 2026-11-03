@@ -21,6 +21,7 @@ from macaw.extractors.prep import IdentityConfirmGate, MediaPrepExtractor, load_
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
@@ -271,6 +272,12 @@ class TurnStructureExtractor(Extractor):
         transcript, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
         return self._summary(recording, turns, silences(transcript, min_s=self.config.turns.silence_min_s), (start_s, end_s))
 
+    def segment_warnings(self, recording: Recording, segment: Segment) -> list[QCWarning]:
+        if not turns_saved(self.config, recording.recording_id):
+            return []
+        _, turns = turns_between(self.config, recording.recording_id, segment.start_s, segment.end_s)
+        return self._warnings_over(recording, turns, (segment.start_s, segment.end_s), f"segment {segment.name}")
+
     def _rows(self, recording: Recording, turns, quiet, prep) -> pd.DataFrame:
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         return concat_long_tables([self._events(recording, turns, quiet), self._summary(recording, turns, quiet, window)])
@@ -367,9 +374,10 @@ class TurnStructureExtractor(Extractor):
         return concat_long_tables(frames)
 
     def _warnings(self, recording: Recording, turns, prep) -> list[QCWarning]:
-        warnings = []
-        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        return self._warnings_over(recording, turns, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), "the task window")
 
+    def _warnings_over(self, recording: Recording, turns, window: tuple[float, float], scope: str) -> list[QCWarning]:
+        warnings = []
         if len(turns) < _MIN_TURNS:
             warnings.append(
                 QCWarning(
@@ -378,8 +386,8 @@ class TurnStructureExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"Only {len(turns)} turns in the task window. Turn statistics from this "
-                        "recording are not stable enough to interpret."
+                        f"Only {len(turns)} turns in {scope}. Turn statistics from so few are not "
+                        "stable enough to interpret."
                     ),
                     t_start=window[0],
                     t_end=window[1],
@@ -395,7 +403,7 @@ class TurnStructureExtractor(Extractor):
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
                         severity="warn",
-                        message="This speaker never took a turn.",
+                        message=f"This speaker never took a turn in {scope}.",
                         t_start=window[0],
                         t_end=window[1],
                     )
@@ -410,7 +418,7 @@ class TurnStructureExtractor(Extractor):
                         subject_id=subject_id,
                         severity="warn",
                         message=(
-                            f"This speaker holds {share:.0%} of the floor. Check that the other "
+                            f"This speaker holds {share:.0%} of the floor in {scope}. Check that the other "
                             "tracks were transcribed and attributed to the right people."
                         ),
                         t_start=window[0],

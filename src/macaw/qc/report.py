@@ -440,8 +440,9 @@ def _people(rows: pd.DataFrame) -> pd.Series:
     return who
 
 
-def _segments(config: MacawConfig, layout, recording_id: str, notes: dict) -> dict | None:
-    """Each segment the table names for this recording, and every step's recording-level values again within each."""
+def _segments(config: MacawConfig, layout, recording_id: str, notes: dict, warnings: list[QCWarning]) -> dict | None:
+    """Each segment the table names for this recording with the warnings given within it, and every step's
+    recording-level values again within each."""
     found = segments_of(config, recording_id)
     if not found:
         return None
@@ -453,8 +454,10 @@ def _segments(config: MacawConfig, layout, recording_id: str, notes: dict) -> di
         outside = prep is not None and (segment.start_s < prep.t_origin_s or segment.end_s > prep.t_origin_s + prep.duration_s)
         done = bool((rows["segment"].astype(str) == segment.name).any()) if not rows.empty else False
         state = "outside the analysed part, left out" if outside else "summarised" if done else "not yet summarised; run macaw run"
+        within = [warning for warning in warnings if warning.details.get("segment") == segment.name]
         listed.append({"name": segment.name, "start": f"{segment.start_s:.2f}", "end": f"{segment.end_s:.2f}",
-                       "length": f"{segment.end_s - segment.start_s:.1f}", "state": state})
+                       "length": f"{segment.end_s - segment.start_s:.1f}", "state": state,
+                       "warnings": [f"{w.subject_id}: {w.message}" if w.subject_id else w.message for w in within]})
     order = {segment.name: index for index, segment in enumerate(found)}
     tables = []
     for source, own in rows.groupby("source", sort=True, observed=True) if not rows.empty else []:
@@ -683,7 +686,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "dropped": dropped,
         "over_time": _over_time(config, layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
         "measures": _measures(layout, results, recording_id, notes),
-        "segments": _segments(config, layout, recording_id, notes),
+        "segments": _segments(config, layout, recording_id, notes, warnings),
         "frames": frames,
         "warnings": [
             {**asdict(warning), "when": f"{warning.t_start:.1f}" if warning.t_start is not None else ""}

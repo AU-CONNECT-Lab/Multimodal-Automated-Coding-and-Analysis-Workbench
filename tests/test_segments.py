@@ -252,6 +252,45 @@ def test_the_summary_step_works_each_finished_step_out_again_per_segment(saved, 
     assert len(outside) == 1 and "past_the_end" in outside[0].message
 
 
+def test_the_turn_checks_are_made_again_within_each_segment(saved, project, tmp_path):
+    _table(project, "recording,segment,start_s,end_s\n003,all,0,30\n003,late,16,30\n")
+    steps = (TurnStructureExtractor, TransitionExtractor, EntropyExtractor)
+    for step in (*[step.name for step in steps], MediaPrepExtractor.name):
+        _stamp(saved.layout, step)
+    config = project.config()
+    warnings = SegmentSummaryExtractor(config).run(build_recording(RID, config), tmp_path).warnings
+
+    late = {(w.check, w.subject_id) for w in warnings if w.details.get("segment") == "late"}
+    # only the child speaks after 16 s
+    assert {("turns_too_few", None), ("turns_silent_speaker", "parent"), ("transitions_too_few", None),
+            ("transitions_never_responds", "parent"), ("entropy_few_transitions", None)} <= late
+    assert ("turns_silent_speaker", "child") not in late
+    silent = next(w for w in warnings if w.check == "turns_silent_speaker")
+    assert silent.message == "This speaker never took a turn in segment late." and (silent.t_start, silent.t_end) == (16.0, 30.0)
+
+    # a segment over the whole window warns as the steps do, with the same thresholds
+    transitions = transitions_from(saved.turns, config.turns)
+    own = (
+        TurnStructureExtractor(config)._warnings(saved.recording, saved.turns, saved.prep)
+        + TransitionExtractor(config)._warnings(saved.recording, transitions, saved.prep)
+        + EntropyExtractor(config)._sample_warnings(saved.recording, saved.turns, transitions, (0.0, 30.0), "the task window")
+    )
+    assert own and {(w.check, w.subject_id) for w in warnings if w.details.get("segment") == "all"} == {(w.check, w.subject_id) for w in own}
+
+
+def test_the_report_lists_the_warnings_under_their_segment(saved, project, tmp_path):
+    from macaw.qc.report import _segments, write_recording_report
+
+    config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,late,16,30\n")
+    warnings = SegmentSummaryExtractor(config).run(build_recording(RID, config), tmp_path).warnings
+    listed = {row["name"]: row["warnings"] for row in _segments(config, saved.layout, RID, {}, warnings)["list"]}
+    assert "parent: This speaker never took a turn in segment late." in listed["late"]
+    assert not any("segment late" in line for line in listed["first"])
+    page = write_recording_report(config, RID)[0].read_text(encoding="utf-8")
+    section = page[page.index('id="Segments"'):page.index('id="Warnings"')]
+    assert "parent: This speaker never took a turn in segment late." in section
+
+
 def test_a_changed_segment_changes_the_summary_steps_key_alone(saved, project):
     _table(project, "recording,segment,start_s,end_s\n003,first,0,12\n")
     config = project.config()
@@ -333,7 +372,7 @@ def test_a_segment_changed_since_the_last_run_shows_no_old_numbers(saved, projec
     set_segment(config, RID, Segment("first", 0, 13))
     set_segment(config, RID, Segment("late", 25, 40))
     assert set(summaries(config, RID)["segment"]) == {"second"}
-    states = {row["name"]: row["state"] for row in _segments(config, saved.layout, RID, {})["list"]}
+    states = {row["name"]: row["state"] for row in _segments(config, saved.layout, RID, {}, [])["list"]}
     assert states == {"first": "not yet summarised; run macaw run", "second": "summarised", "late": "outside the analysed part, left out"}
 
 
@@ -341,7 +380,7 @@ def test_the_report_lists_each_measure_per_segment(saved, project, tmp_path):
     from macaw.qc.report import _segments
 
     config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,first,0,12\n003,second,12,30\n")
-    tables = {table["source"]: table for table in _segments(config, saved.layout, RID, {})["tables"]}
+    tables = {table["source"]: table for table in _segments(config, saved.layout, RID, {}, [])["tables"]}
     turns = tables[TurnStructureExtractor.name]
     rows = [(row["name"], row["segment"], row["first"]) for row in turns["features"] if row["name"] == "n_turns"]
     assert rows == [("n_turns", "first", True), ("n_turns", "second", False)]

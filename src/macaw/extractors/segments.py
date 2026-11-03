@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -27,7 +28,7 @@ def summarising_steps() -> list[str]:
 @register_extractor
 class SegmentSummaryExtractor(Extractor):
     name = SUMMARY_STEP
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "segments"
     phase = Phase.DERIVE
@@ -69,6 +70,10 @@ class SegmentSummaryExtractor(Extractor):
                     break
                 if not rows.empty:
                     frames.append(rows.assign(segment=segment.name, t_start=segment.start_s, t_end=segment.end_s))
+                warnings += [
+                    replace(warning, details={**warning.details, "segment": segment.name})
+                    for warning in step.segment_warnings(recording, segment)
+                ]
         if without and segments:
             warnings.append(
                 QCWarning(

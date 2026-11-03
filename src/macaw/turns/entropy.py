@@ -15,6 +15,7 @@ from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import Segment
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
 from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns, turns_between, turns_saved
@@ -272,6 +273,13 @@ class EntropyExtractor(Extractor):
         _, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
         return self._summary(recording, turns, transitions_from(turns, self.config.turns), (start_s, end_s))
 
+    def segment_warnings(self, recording: Recording, segment: Segment) -> list[QCWarning]:
+        if not turns_saved(self.config, recording.recording_id):
+            return []
+        _, turns = turns_between(self.config, recording.recording_id, segment.start_s, segment.end_s)
+        transitions = transitions_from(turns, self.config.turns)
+        return self._sample_warnings(recording, turns, transitions, (segment.start_s, segment.end_s), f"segment {segment.name}")
+
     def _rows(self, recording: Recording, turns, transitions, prep) -> pd.DataFrame:
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         return concat_long_tables([self._summary(recording, turns, transitions, window), self._window_rows(recording, turns, prep)])
@@ -357,9 +365,8 @@ class EntropyExtractor(Extractor):
             )
         return concat_long_tables(frames)
 
-    def _warnings(self, recording: Recording, turns, transitions, prep) -> list[QCWarning]:
+    def _sample_warnings(self, recording: Recording, turns, transitions, window: tuple[float, float], scope: str) -> list[QCWarning]:
         cfg = self.config.turns
-        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         n_states = max(len(turn_takers(self.config, recording)), 1) ** 2
         n_transitions = max(len(turns) - 1, 0)
         fto = self._fto_series(transitions)
@@ -375,7 +382,7 @@ class EntropyExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"{n_transitions} turn pairs across {n_states} states, below the "
+                        f"{n_transitions} turn pairs across {n_states} states in {scope}, below the "
                         f"{_MIN_PER_STATE} per state these estimates want. The transition and "
                         "conditional entropies are bias corrected but still unstable here."
                     ),
@@ -392,7 +399,7 @@ class EntropyExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"{patterns} ordinal patterns from the floor transfer offsets, below "
+                        f"{patterns} ordinal patterns from the floor transfer offsets in {scope}, below "
                         f"the {needed_patterns} that order {cfg.permutation_entropy_order} "
                         "wants. Read permutation_entropy_fto with that in mind."
                     ),
@@ -400,6 +407,13 @@ class EntropyExtractor(Extractor):
                     t_end=window[1],
                 )
             )
+        return warnings
+
+    def _warnings(self, recording: Recording, turns, transitions, prep) -> list[QCWarning]:
+        cfg = self.config.turns
+        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        n_states = max(len(turn_takers(self.config, recording)), 1) ** 2
+        warnings = self._sample_warnings(recording, turns, transitions, window, "the task window")
 
         edges = self._window_edges(prep)
         if cfg.window_s and len(edges) < _MIN_WINDOWS:

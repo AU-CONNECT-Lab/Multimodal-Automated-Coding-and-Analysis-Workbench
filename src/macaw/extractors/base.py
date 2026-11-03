@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -14,6 +15,9 @@ from macaw.exceptions import GateNotClearedError
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.schema import Scale
+
+if TYPE_CHECKING:
+    from macaw.project.segments import Segment
 
 
 class Phase(str, Enum):
@@ -103,6 +107,10 @@ class Extractor(ABC):
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         """This step's recording-level rows over start_s to end_s from what its run saved, cut at both edges; None without."""
         return None
+
+    def segment_warnings(self, recording: Recording, segment: Segment) -> list[QCWarning]:
+        """The warnings this step gives the whole recording, given again over one segment as summarise cuts it."""
+        return []
 
     def extra_key(self, recording: Recording) -> str:
         """What decides this step's output for one recording besides the files it reads and its settings."""

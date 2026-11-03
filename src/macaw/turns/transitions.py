@@ -15,6 +15,7 @@ from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
@@ -327,6 +328,12 @@ class TransitionExtractor(Extractor):
         _, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
         return self._summary(recording, turns, transitions_from(turns, self.config.turns), (start_s, end_s))
 
+    def segment_warnings(self, recording: Recording, segment: Segment) -> list[QCWarning]:
+        if not turns_saved(self.config, recording.recording_id):
+            return []
+        _, turns = turns_between(self.config, recording.recording_id, segment.start_s, segment.end_s)
+        return self._warnings_over(recording, transitions_from(turns, self.config.turns), (segment.start_s, segment.end_s), f"segment {segment.name}")
+
     def _rows(self, recording: Recording, turns, transitions, prep) -> pd.DataFrame:
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         return concat_long_tables([self._events(recording, transitions), self._summary(recording, turns, transitions, window)])
@@ -446,8 +453,10 @@ class TransitionExtractor(Extractor):
         return concat_long_tables(frames)
 
     def _warnings(self, recording: Recording, transitions, prep) -> list[QCWarning]:
+        return self._warnings_over(recording, transitions, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), "the task window")
+
+    def _warnings_over(self, recording: Recording, transitions, window: tuple[float, float], scope: str) -> list[QCWarning]:
         warnings = []
-        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         switches = transitions[_switch_mask(transitions)]
 
         if len(switches) < _MIN_SWITCHES:
@@ -458,8 +467,8 @@ class TransitionExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"Only {len(switches)} floor transfers in the task window. Transition "
-                        "statistics from this recording are not stable enough to interpret."
+                        f"Only {len(switches)} floor transfers in {scope}. Transition statistics "
+                        "from so few are not stable enough to interpret."
                     ),
                     t_start=window[0],
                     t_end=window[1],
@@ -475,7 +484,7 @@ class TransitionExtractor(Extractor):
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
                         severity="warn",
-                        message="This speaker never took the floor from anybody else.",
+                        message=f"This speaker never took the floor from anybody else in {scope}.",
                         t_start=window[0],
                         t_end=window[1],
                     )
@@ -490,7 +499,7 @@ class TransitionExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"{overlap_ratio:.0%} of floor transfers overlap. Check that crosstalk "
+                        f"{overlap_ratio:.0%} of floor transfers in {scope} overlap. Check that crosstalk "
                         "suppression removed the leaked copies of each utterance."
                     ),
                     t_start=window[0],
