@@ -9,6 +9,7 @@ from macaw.exceptions import MacawError
 from macaw.project.layout import layout_for
 from macaw.project.manifest import read_manifest
 from macaw.qc.boilerplate import recordings_scaled, write_methods
+from macaw.qc.look import project_summary
 
 app = typer.Typer()
 
@@ -25,6 +26,9 @@ def methods(
     # the settings the features were made with, not whatever project.yaml says now
     settings = layout.resolved_config_path if layout.resolved_config_path.exists() else config
     scaled = recordings_scaled(config, resolve_config(config))
-    text, bib = write_methods(read_manifest(layout.manifest_path), resolve_config(settings), out or layout.output_dir / "methods", scaled=scaled)
+    looked = project_summary(resolve_config(config))
+    text, bib = write_methods(
+        read_manifest(layout.manifest_path), resolve_config(settings), out or layout.output_dir / "methods", scaled=scaled, looked=looked,
+    )
     typer.echo(f"methods {text}")
     typer.echo(f"references {bib}")

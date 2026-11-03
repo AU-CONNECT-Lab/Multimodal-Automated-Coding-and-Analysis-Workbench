@@ -51,9 +51,11 @@ def load_references() -> dict[str, dict]:
     return yaml.safe_load(files("macaw.qc").joinpath("references.yaml").read_text(encoding="utf-8"))
 
 
-def write_methods(manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None) -> tuple[Path, Path]:
+def write_methods(
+    manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
+) -> tuple[Path, Path]:
     references = load_references()
-    text, used = render(describe(manifest, config, scaled=scaled), references)
+    text, used = render(describe(manifest, config, scaled=scaled, looked=looked), references)
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
     methods.write_text(text, encoding="utf-8")
@@ -62,8 +64,10 @@ def write_methods(manifest: FeatureManifest, config, out_dir: Path, *, scaled: t
     return methods, bib
 
 
-def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None) -> dict[str, list[str]]:
-    """scaled is (recordings with a scale, recordings), when known."""
+def describe(
+    manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
+) -> dict[str, list[str]]:
+    """scaled is (recordings with a scale, recordings), when known; looked is what qc.look.project_summary gives."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
         by_extractor.setdefault(spec.extractor, []).append(spec)
@@ -82,7 +86,28 @@ def describe(manifest: FeatureManifest, config, *, scaled: tuple[int, int] | Non
     found = read_segments(config)
     if found and sections:
         sections.setdefault("Segments", []).append(_segments(found))
+    if looked:
+        sections.setdefault("Quality review", []).append(_looked(looked))
     return sections
+
+
+def _looked(found: dict) -> str:
+    where = "each recording" if found["recordings"] == 1 else f"{found['recordings']} recordings"
+    text = (
+        f"In {where}, the frames drawn for review were also shown to the vision language model {_listed(found['models'])} "
+        f"({_listed(found['providers'])}). For each frame it was asked how many people were in view and, for each person the "
+        "tracker had drawn, cut out with only that person's skeleton, whether it was a real person"
+        + (f" and, given a description of the {_listed(found['described'])}, which of them it was" if found.get("described") else "")
+        + "; a frame where its answers disagreed with the tracker was flagged for a person to check. "
+        f"It flagged {found['flagged']} of {found['frames']} frames"
+    )
+    text += f", and a person confirmed {found['flagged_right']} of the {found['flagged_checked']} checked." if found["flagged_checked"] else "."
+    if found["drawn_checked"]:
+        text += (
+            f" Of the frames it passed, {found['drawn_checked']} drawn at random were checked by a person, who found "
+            f"{found['drawn_wrong']} of them wrong."
+        )
+    return text
 
 
 def _segments(found: dict) -> str:

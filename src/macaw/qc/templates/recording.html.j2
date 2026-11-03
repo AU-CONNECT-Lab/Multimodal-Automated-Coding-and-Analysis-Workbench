@@ -184,13 +184,13 @@
 
 {% if frames %}
 <h2 id="Frames">Review frames</h2>
-<p class="desc">Frames drawn by <code>macaw qc --render</code>: where a check found something worth a look, and a baseline sample from the whole task. Each box is labelled with the person it was given to and its track id. Click a frame for full size.</p>
+<p class="desc">Frames drawn by <code>macaw qc --render</code>: where a check found something worth a look, and a baseline sample from the whole task. Each box is labelled with the person it was given to and its track id. With <code>--look</code>, the frames a model flagged and a few it passed come first, with what it said and whether a person agreed. Click a frame for full size.</p>
 {% for group in frames %}
 <details{% if loop.index <= 2 %} open{% endif %}>
   <summary>{{ group.reason }} <span class="hint">{{ group.shots | length }} frame(s)</span></summary>
   <div class="details-body thumbs">
     {%- for item in group.shots %}
-    <figure><a href="{{ item.href }}"><img src="{{ item.href }}" alt="{{ item.caption }}" loading="lazy"/></a><figcaption>{{ item.caption }}</figcaption></figure>
+    <figure><a href="{{ item.href }}"><img src="{{ item.href }}" alt="{{ item.caption }}" loading="lazy"/></a><figcaption>{{ item.caption }}{% if item.note %}<br/><span class="hint">{{ item.note }}</span>{% endif %}</figcaption></figure>
     {%- endfor %}
   </div>
 </details>

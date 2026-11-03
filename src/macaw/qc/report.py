@@ -20,6 +20,7 @@ from macaw.media.align import describe_drift, drift_flagged, read_offset_table, 
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.exceptions import BackendNotAvailableError
+from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
 from macaw.project.identity import read_confirmation
@@ -302,6 +303,13 @@ def _decisions(
     coded = _model_coding(config, layout, recording_id)
     if coded is not None:
         rows.append(coded)
+    looked = look_summary(layout, recording_id)
+    if looked is not None:
+        settled = looked["flagged_checked"] == looked["flagged"] and looked["drawn_checked"] == looked["drawn"]
+        rows.append({
+            "what": "Review frames a model looked at", "decided": f"{describe_look(looked)}; macaw check-look -r {recording_id}",
+            "by": "person" if settled else "software", "href": "#Frames" if frames else None,
+        })
     scale = recording_scale(config, layout, recording_id)
     if scale is not None:
         people = ", ".join(sorted({item.by for item in scale.measurements if item.by}))
@@ -476,7 +484,7 @@ def _frames(layout, recording_id: str, page: Path) -> list[dict]:
     if not index.is_file():
         return []
     table = pd.read_csv(index)
-    groups = []
+    groups = _looked_at(layout, recording_id, page)
     for reason, rows in table.groupby("reason", sort=False):
         items = []
         for row in rows.itertuples():
@@ -490,6 +498,29 @@ def _frames(layout, recording_id: str, page: Path) -> list[dict]:
         groups.append({"reason": str(reason).replace("_", " "), "shots": items})
     # the baseline is the sample to compare against, so it reads last
     return sorted(groups, key=lambda group: group["reason"] == "baseline")
+
+
+def _looked_at(layout, recording_id: str, page: Path) -> list[dict]:
+    """The frames the model flagged and those it passed that a person is to check, each with what it said and the verdict."""
+    look = read_look(layout, recording_id)
+    checks = read_checks(layout, recording_id)
+    directory = layout.renders_dir(recording_id)
+    said = {RIGHT: "a person agreed", WRONG: "a person disagreed", None: "not checked yet"}
+    groups = []
+    for title, entries in (
+        ("flagged by the model", [entry for entry in look.get("frames", []) if entry["problems"]]),
+        ("passed by the model, drawn for a person to check", [entry for entry in look.get("frames", []) if entry.get("random_check")]),
+    ):
+        shots = [
+            {
+                "href": _href(directory / entry["file"], page), "caption": f"{entry['t']:.1f} s, {entry['video']}",
+                "note": f"{'; '.join(item['says'] for item in entry['problems']) or 'nothing wrong, says the model'}; {said[look_verdict(entry, checks)]}",
+            }
+            for entry in entries
+        ]
+        if shots:
+            groups.append({"reason": title, "shots": shots})
+    return groups
 
 
 def _over_time(config, layout, results: RecordingResults, recording_id: str, subjects: list[str], page: Path) -> list[dict]:

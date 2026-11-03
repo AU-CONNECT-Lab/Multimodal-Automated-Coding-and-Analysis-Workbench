@@ -382,6 +382,20 @@ class CodingSection(_Section):
         return codebook, self.llm.model_copy(update=changes)
 
 
+class LookSection(_Section):
+    provider: str = "ollama"
+    model: str | None = None
+    base_url: str | None = None
+    timeout_s: int = 300
+    # role -> what that person looks like; only the people described have their names checked
+    people: dict[str, str] = Field(default_factory=dict)
+    random_check: int = Field(default=5, ge=0)
+
+    def llm(self) -> LLMSection:
+        """The same server settings as coding.llm takes, answering as plainly as it can."""
+        return LLMSection(provider=self.provider, model=self.model, base_url=self.base_url, timeout_s=self.timeout_s, temperature=0.0, max_tokens=512)
+
+
 class QCSection(_Section):
     checks: list[str] = Field(
         default_factory=lambda: [
@@ -404,6 +418,7 @@ class QCSection(_Section):
     review_max_candidates: int = 40
     review_baseline: int = 25
     review_seed: int = 0
+    look: LookSection = Field(default_factory=LookSection)
 
 
 class ExecutionSection(_Section):

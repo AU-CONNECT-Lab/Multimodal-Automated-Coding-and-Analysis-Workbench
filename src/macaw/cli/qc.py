@@ -21,6 +21,7 @@ from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
+from macaw.qc.look import PLAIN
 from macaw.qc.report import write_project_report, write_recording_report
 
 app = typer.Typer()
@@ -35,6 +36,9 @@ def qc(
     render: bool = typer.Option(
         False, "--render/--no-render", help="Draw the frames worth reviewing into work_dir/renders."
     ),
+    look: bool = typer.Option(
+        False, "--look", help="Draw the review frames and have the model in qc.look check the people drawn on them; a person checks the model."
+    ),
     report: bool = typer.Option(False, "--report/--no-report", help="Write an HTML page per recording and one for the project."),
     open_report: bool = typer.Option(False, "--open", help="Write the pages and open the project page."),
 ) -> None:
@@ -44,6 +48,14 @@ def qc(
     layout = layout_for(resolved, create=False)
     pages = {}
     failed = None
+    backend = None
+    if look:
+        from macaw.qc.look import backend_for, notice
+
+        warning = notice(resolved.qc.look)
+        if warning:
+            typer.echo(warning, err=True)
+        backend = backend_for(resolved.qc.look)
     for recording_id in resolve_recordings(resolved, recordings):
         # what this recording ran with, its own recordings/<id>.yaml included
         own = resolve_config(config, recording_id=recording_id)
@@ -65,8 +77,10 @@ def qc(
         )
         typer.echo(str(directory))
 
-        if render:
-            _render(resolved, layout, recording, results, outcome.candidates)
+        if render or look:
+            index = _render(resolved, layout, recording, results, outcome.candidates, plain=look)
+            if look and index is not None:
+                _look(resolved, layout, recording, results, index, backend)
         if report or open_report:
             pages[recording_id] = write_recording_report(own, recording_id)
         if severities["fail"] and resolved.qc.fail_fast:
@@ -83,14 +97,14 @@ def qc(
         raise typer.Exit(code=1)
 
 
-def _render(resolved, layout, recording, results, candidates) -> None:
+def _render(resolved, layout, recording, results, candidates, *, plain: bool = False):
     from macaw.extractors.prep import apply_prep_timing
     from macaw.qc.overlay import render_review, review_sample
 
     # a run that found nobody still renders: the bare frames show why
     if not (layout.keypoints_path(recording.recording_id) / f"{POSE_SOURCE}.parquet").is_file():
         logger.info("%s: %s has not run, nothing to render", recording.recording_id, POSE_SOURCE)
-        return
+        return None
     keypoints = results.keypoints()
     # frame numbers come from the same clock pose.keypoints used
     prep = apply_prep_timing(resolved, recording)
@@ -105,9 +119,39 @@ def _render(resolved, layout, recording, results, candidates) -> None:
         seed=cfg.review_seed,
     )
     out_dir = layout.renders_dir(recording.recording_id)
-    index = render_review(recording, keypoints, sample, out_dir, read_shared=resolved.pose.read_shared)
+    index = render_review(
+        recording, keypoints, sample, out_dir, read_shared=resolved.pose.read_shared, plain_dir=out_dir / PLAIN if plain else None,
+    )
     logger.info("%s: %d frame(s) rendered", recording.recording_id, len(index))
     typer.echo(str(out_dir))
+    return index
+
+
+def _look(resolved, layout, recording, results, index, backend) -> None:
+    from macaw.qc.look import describe, look_at_recording, summary
+
+    look_at_recording(backend, resolved.qc.look, layout, recording, results.keypoints(), index, seed=resolved.qc.review_seed)
+    typer.echo(f"{recording.recording_id}: {describe(summary(layout, recording.recording_id))}")
+
+
+@app.command("check-look")
+def check_look(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recording: str = typer.Option(..., "--recording", "-r"),
+    frame: str = typer.Option(..., "--frame", help="The review frame's file name, as macaw qc --look lists it."),
+    verdict: str = typer.Option(None, "--verdict", help="right when the model was right about the frame, wrong when not."),
+    clear: bool = typer.Option(False, "--clear", help="Take the verdict back."),
+    by: str = typer.Option(None, "--by", help="Who checked. Default: the login name."),
+) -> None:
+    """Say whether the model in qc.look was right about one review frame, one it flagged or one it passed that was drawn at random."""
+    from macaw.qc.look import describe, set_check, summary
+
+    if clear == (verdict is not None):
+        raise MacawError("give --verdict right or wrong, or --clear")
+    resolved = resolve_config(config)
+    layout = layout_for(resolved, create=False)
+    set_check(layout, recording, frame, None if clear else verdict, by or getpass.getuser())
+    typer.echo(f"{recording}: {describe(summary(layout, recording))}")
 
 
 @app.command("identify")

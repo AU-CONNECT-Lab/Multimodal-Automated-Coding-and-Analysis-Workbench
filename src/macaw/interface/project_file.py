@@ -12,6 +12,7 @@ import typing
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel
 
 from macaw.config.hashing import hash_extractor_config
@@ -45,6 +46,9 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
         "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.review_random", "coding.llm.coded_roles", "coding.llm.show",
         "coding.llm.notes", "coding.llm.examples", "coding.llm.reasons", "coding.llm.think",
+    )),
+    ("A model looks at the review frames", "A model that reads pictures checks the people drawn on the review frames; a person then checks the model on the Review page.", (
+        "qc.look.provider", "qc.look.model", "qc.look.base_url", "qc.look.people", "qc.look.random_check",
     )),
 )
 
@@ -97,6 +101,11 @@ LABELS = {
     "coding.llm.examples": "Examples people coded",
     "coding.llm.reasons": "Model says why",
     "coding.llm.think": "Model reasons before answering",
+    "qc.look.provider": "Model server",
+    "qc.look.model": "Model that reads pictures",
+    "qc.look.base_url": "Server address",
+    "qc.look.people": "What each person looks like",
+    "qc.look.random_check": "Passed frames checked at random",
 }
 
 # keys that name a registered backend, so the choices are whatever is installed, plugins included
@@ -108,6 +117,7 @@ BACKEND_GROUPS = {
     "face.backend": "face",
     "gaze.backend": "gaze",
     "coding.llm.provider": "llm",
+    "qc.look.provider": "llm",
 }
 TEXT_DEVICES = ("auto", "cuda", "cpu")
 
@@ -165,7 +175,7 @@ def _strip_none(annotation) -> tuple[Any, bool]:
 
 
 def control(dotted: str) -> dict[str, Any]:
-    """How the form asks for a key: its kind (choice, multi, yes_no, number, text, list), its options, and whether it may be empty."""
+    """How the form asks for a key: its kind (choice, multi, yes_no, number, text, list, mapping), its options, and whether it may be empty."""
     annotation, optional = _strip_none(_annotation(dotted))
     if annotation is bool:
         return {"kind": "yes_no", "optional": optional}
@@ -182,6 +192,8 @@ def control(dotted: str) -> dict[str, Any]:
         if typing.get_origin(item) is Literal:
             return {"kind": "multi", "options": list(typing.get_args(item))}
         return {"kind": "list"}
+    if typing.get_origin(annotation) is dict:
+        return {"kind": "mapping"}
     if annotation in (int, float):
         return {"kind": "number", "integer": annotation is int, "optional": optional}
     return {"kind": "text", "optional": optional}
@@ -206,6 +218,9 @@ def file_values(path: Path) -> dict[str, Any]:
 def to_form(dotted: str, value: Any) -> Any:
     if control(dotted)["kind"] == "list":
         return ", ".join(str(item) for item in value or [])
+    if control(dotted)["kind"] == "mapping":
+        # written as project.yaml writes it, so the hint's example can be typed as it stands
+        return yaml.safe_dump(dict(value), default_flow_style=True, sort_keys=False).strip() if value else ""
     if control(dotted)["kind"] == "text":
         return "" if value is None else str(value)
     return value
@@ -217,6 +232,14 @@ def from_form(dotted: str, value: Any) -> Any:
         return [item.strip() for item in str(value or "").split(",") if item.strip()]
     if kind["kind"] == "multi":
         return list(value or [])
+    if kind["kind"] == "mapping":
+        if not str(value or "").strip():
+            return {}
+        try:
+            parsed = yaml.safe_load(str(value))
+        except yaml.YAMLError:
+            return value  # left as typed, for the check before saving to name
+        return parsed if isinstance(parsed, dict) else value
     if kind["kind"] in ("text", "choice") and value in ("", None):
         return None if kind.get("optional") else ("" if kind["kind"] == "text" else None)
     if kind["kind"] == "number" and value is not None and kind["integer"]:
@@ -230,7 +253,7 @@ def changes(path: Path, form: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
     found = {}
     for dotted, value in form.items():
         new = from_form(dotted, value)
-        if new != now.get(dotted) and not (new in ("", None, []) and now.get(dotted) in ("", None, [])):
+        if new != now.get(dotted) and not (new in ("", None, [], {}) and now.get(dotted) in ("", None, [], {})):
             found[dotted] = (now.get(dotted), new)
     return found
 
@@ -256,6 +279,9 @@ def with_values(text: str, values: dict[str, Any]) -> str:
             cursor = cursor[part]
         if isinstance(value, list):
             value = CommentedSeq(value)
+            value.fa.set_flow_style()
+        elif isinstance(value, dict):
+            value = CommentedMap(value)
             value.fa.set_flow_style()
         cursor[parts[-1]] = value
     out = io.StringIO()

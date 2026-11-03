@@ -70,7 +70,7 @@ def review_sample(
     return coerce_frame(sample.reset_index(drop=True), REVIEW_SCHEMA, "review sample")
 
 
-def _cv2():
+def cv2_module():
     try:
         import cv2
     except ImportError as error:
@@ -84,11 +84,11 @@ def _colour(subject_id, subjects: list[str]) -> tuple[int, int, int]:
     return _PALETTE[subjects.index(subject_id) % len(_PALETTE)]
 
 
-def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], header: list[str]) -> np.ndarray:
+def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], header: list[str], *, labels: bool = True) -> np.ndarray:
     """people is one frame's keypoint rows. Each person gets a box labelled with who they were
     assigned to and the mean confidence of the joints drawn, so a reviewer can name the box
     that is wrong."""
-    cv2 = _cv2()
+    cv2 = cv2_module()
     out = image.copy()
     height = out.shape[0]
     font_scale = max(0.4, height / 1200.0)
@@ -116,6 +116,8 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
         pad = 4 * thickness
         top_left = (min(xs) - pad, min(ys) - pad)
         cv2.rectangle(out, top_left, (max(xs) + pad, max(ys) + pad), colour, thickness)
+        if not labels:
+            continue
         # joints never in view, such as legs under a table, would pull every label down alike
         label = f"{name}  conf {drawn['confidence'].mean():.2f}"
         _text(cv2, out, label, (top_left[0], top_left[1] - 6), font_scale, colour, thickness)
@@ -154,11 +156,14 @@ def render_review(
     out_dir: Path,
     *,
     read_shared: bool = False,
+    plain_dir: Path | None = None,
 ) -> pd.DataFrame:
-    """One image per sampled moment and camera, plus an index.csv that says why each was drawn."""
-    cv2 = _cv2()
+    """One image per sampled moment and camera, plus an index.csv that says why each was drawn; plain_dir also keeps each frame undrawn."""
+    cv2 = cv2_module()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if plain_dir is not None:
+        plain_dir.mkdir(parents=True, exist_ok=True)
     videos, _ = select_videos(recording, read_shared=read_shared)
     subjects = [subject.subject_id for subject in recording.subjects]
 
@@ -201,6 +206,8 @@ def render_review(
                 ]
                 name = f"{index:03d}_{row.reason}_{row.t:09.3f}s_{Path(path).stem}.jpg"
                 cv2.imwrite(str(out_dir / name), draw_overlay(image, people, subjects, header))
+                if plain_dir is not None:
+                    cv2.imwrite(str(plain_dir / name), image)
                 entries.append(
                     {
                         "file": name,

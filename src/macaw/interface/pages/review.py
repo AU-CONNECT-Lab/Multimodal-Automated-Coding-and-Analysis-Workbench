@@ -21,6 +21,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
+from macaw.qc.look import RIGHT, describe, read_checks, read_look, summary, to_check, verdict
 from macaw.store.annotations import read_annotations
 from macaw.qc.report import _alignment, _cameras, _waiting
 
@@ -153,6 +154,40 @@ def _people_on_camera(layout, results, rid):
         html.Div(_button("Draw review frames", "render"), className="buttons"),
         html.Div(thumbs, className="thumbs"),
         desc="Each box in the review frames carries the name it was given and its track id. Rename corrects who is who on one camera: P1=P3,P3=P1.",
+    )
+
+
+def _model_look(config, layout, rid):
+    look = read_look(layout, rid)
+    if not look and not config.qc.look.model:
+        return None
+    ask = html.Div(_button("Ask the model about the review frames", "look"), className="buttons")
+    desc = (
+        "A model that reads pictures counts the people on each review frame and says, for each person drawn, whether it is a person, "
+        "and who it is for the people described in qc.look.people."
+    )
+    if not look:
+        return ui.card("What a model saw on the review frames", ask, desc=desc)
+    checks = read_checks(layout, rid)
+    renders = layout.renders_dir(rid)
+    shots = []
+    for entry in to_check(look):
+        said = "; ".join(item["says"] for item in entry["problems"]) or "nothing wrong, says the model; drawn at random to check"
+        decided = verdict(entry, checks)
+        shots.append(html.Figure([
+            html.A(html.Img(src=file_url(renders / entry["file"])), href=file_url(renders / entry["file"]), target="_blank"),
+            html.Figcaption([
+                f"{entry['t']:.1f} s, {entry['video']}: {said} ",
+                ui.pill("the model was right", "ok") if decided == RIGHT else ui.pill("the model was wrong", "warn") if decided else "",
+                html.Div([_button("Right", "look-right", entry["file"], small=True), _button("Wrong", "look-wrong", entry["file"], small=True)], className="buttons"),
+            ]),
+        ]))
+    return ui.card(
+        "What a model saw on the review frames",
+        ui.note(describe(summary(layout, rid))),
+        ask,
+        html.Div(shots, className="thumbs"),
+        desc=desc + " Right when the model was right about the frame: the problem it names is there, or a frame it passed is fine. Wrong otherwise.",
     )
 
 
@@ -522,6 +557,7 @@ def body(config_path: Path, rid: str | None):
         _identity(config, recording),
         _offsets(config, layout, rid),
         _people_on_camera(layout, results, rid),
+        _model_look(config, layout, rid),
         _voices(config, layout, recording),
         _speech_acts(config, layout, recording),
         _coding(layout, rid),
@@ -590,6 +626,10 @@ def action_command(
         return command("accept-voices", extra=["--rename", ",".join(f"{label}={who}" for label, who in sorted(voices.items())), *by_flag])
     if action == "render":
         return command("qc", extra=["--render"])
+    if action == "look":
+        return command("qc", extra=["--look"])
+    if action in ("look-right", "look-wrong"):
+        return command("check-look", extra=["--frame", target, "--verdict", action.removeprefix("look-"), *by_flag])
     if action == "transcript-reset":
         return ["macaw", "transcript", "reset", "-c", str(config_path), "-r", rid]
     raise ValueError(f"unknown action {action}")

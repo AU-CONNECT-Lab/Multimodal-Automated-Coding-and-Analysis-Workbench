@@ -39,8 +39,9 @@ class LLMBackend(Backend):
     # printed in the run plan; None for a server on the user's own machine
     reporting: str | None = None
 
-    def __init__(self, cfg: LLMSection):
+    def __init__(self, cfg: LLMSection, *, settings: str = "coding.llm"):
         self.cfg = cfg
+        self.settings = settings  # where the user set this up, for the messages
         self.base_url = (cfg.base_url or self.default_base_url).rstrip("/")
         self._seen_model: str | None = None
 
@@ -51,12 +52,12 @@ class LLMBackend(Backend):
     def check_available(self) -> None:
         if not self.cfg.model:
             raise BackendNotAvailableError(
-                f"coding.llm.model is not set. Name the model as {self.name} knows it "
+                f"{self.settings}.model is not set. Name the model as {self.name} knows it "
                 "(for example the tag `ollama list` shows)."
             )
         if self.cfg.think is not None and not self._think_fields(self.cfg.think):
             raise BackendNotAvailableError(
-                f"coding.llm.think is for a model served on your own machine (ollama, vllm, llamacpp); leave it null for {self.name}."
+                f"{self.settings}.think is for a model served on your own machine (ollama, vllm, llamacpp); leave it null for {self.name}."
             )
 
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
@@ -121,7 +122,7 @@ class OpenAICompatibleBackend(LLMBackend):
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as error:
             raise BackendNotAvailableError(
                 f"No {self.name} server answering at {self.base_url} ({error}). Start it first, "
-                "or set coding.llm.base_url to where it listens."
+                f"or set {self.settings}.base_url to where it listens."
             ) from None
 
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
@@ -281,8 +282,8 @@ class AnthropicBackend(LLMBackend):
         )
 
 
-def resolve_llm_backend(cfg: LLMSection) -> LLMBackend:
-    return get_backend(BACKEND_GROUP, cfg.provider)(cfg)
+def resolve_llm_backend(cfg: LLMSection, *, settings: str = "coding.llm") -> LLMBackend:
+    return get_backend(BACKEND_GROUP, cfg.provider)(cfg, settings=settings)
 
 
 def _base64(image: bytes) -> str:

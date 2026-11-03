@@ -152,6 +152,7 @@ class Layout:
             self.scale_path(recording_id),
             self.imported_codes_path(recording_id),
             self.reviewed_codes_path(recording_id),
+            self.look_checks_path(recording_id),
         ]
 
     def artifacts_dir(self, recording_id: str, extractor: str) -> Path:
@@ -164,6 +165,13 @@ class Layout:
 
     def qc_dir(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "qc"
+
+    # what a model that reads pictures said about the review frames, and what people said about the model
+    def look_path(self, recording_id: str) -> Path:
+        return self.qc_dir(recording_id) / "look.json"
+
+    def look_checks_path(self, recording_id: str) -> Path:
+        return self.qc_dir(recording_id) / "look_checks.json"
 
     # rendered frames are something to look at, not a result, so they stay out of output_dir
     def renders_dir(self, recording_id: str) -> Path:
