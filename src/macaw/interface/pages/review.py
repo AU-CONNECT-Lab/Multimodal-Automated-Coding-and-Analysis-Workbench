@@ -171,7 +171,8 @@ def _model_look(config, layout, rid):
     checks = read_checks(layout, rid)
     renders = layout.renders_dir(rid)
     shots = []
-    for entry in to_check(look):
+    # what it flagged first, as in the report
+    for entry in sorted(to_check(look), key=lambda item: not item["problems"]):
         said = "; ".join(item["says"] for item in entry["problems"]) or "nothing wrong, says the model; drawn at random to check"
         decided = verdict(entry, checks)
         shots.append(html.Figure([
