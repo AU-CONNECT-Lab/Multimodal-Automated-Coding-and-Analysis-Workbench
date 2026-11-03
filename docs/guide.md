@@ -73,16 +73,19 @@ macaw gui
 
 The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window.
 
-The workbench has five pages, a sixth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
+The workbench has six pages, a seventh for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
 Overview
-: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording.
+: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
 
 Run
 : Selecting recordings and steps, starting a run and following its progress.
 
 Review
 : Decisions that await the researcher. The number on the tab gives their count.
+
+Agreement
+: Agreement between coders, people and machine, on one tier across the recordings ({ref}`own-coding`).
 
 Segments
 : Naming parts of a recording, such as a free-play and a clean-up phase, within which every measure is computed again ({ref}`segments`), and setting the part of a recording that is analysed.

@@ -153,6 +153,8 @@ Within one phase of the recordings
 
 The report gives Krippendorff's alpha across all coders, Cohen's kappa for each pair, and the agreement on each code for each pair, so that with two human coders and a language model, the model's agreement with each person stands beside the agreement between the people. `--out agreement` additionally writes a folder with a table of every unit, each coder's code and the words spoken, which shows which codes are confused with which and helps when revising a codebook.
 
+The Agreement page of the workbench runs the same comparison. Choose the tier, how units are formed (*One coder's units*, *A time grid* or *Shared intervals*) and, if needed, a segment, then press **Compare**. The page shows the report's tables and writes the folder named under *Save to folder*. The *Your coding* card on the Review page opens it with that tier and coder selected.
+
 :::{note}
 A coder who coded only part of a recording leaves the rest uncoded, which counts as disagreement. Mark the part all coders coded as a segment and compare within it with `--segment`.
 :::
@@ -183,8 +185,10 @@ Times are in seconds from the start of the recording's main video (with several 
 ### How a segment is summarised
 
 :::{important}
-A segment is summarised as if the recording had been cut at its edges. An utterance, turn, code, look or blink that crosses an edge counts only with its part inside, a word belongs to the segment in which its middle falls, and turns, pauses and floor transfers are formed again from what remains, so a pause across an edge belongs to neither segment. Rates are per minute of the segment. Values scaled to a participant's level over the whole recording, such as relative pitch, keep that reference. A short segment rests on few turns and events, and the checks of the quality report concern the whole recording, so measures from short segments call for caution.
+A segment is summarised as if the recording had been cut at its edges. An utterance, turn, code, look or blink that crosses an edge counts only with its part inside, a word belongs to the segment in which its middle falls, and turns, pauses and floor transfers are formed again from what remains, so a pause across an edge belongs to neither segment. Rates are per minute of the segment. Values scaled to a participant's level over the whole recording, such as relative pitch, keep that reference. A short segment rests on few turns and events, so measures from short segments call for caution.
 :::
+
+The quality report's checks on turns are made again within each segment, with the same thresholds as for the whole recording: too few turns, floor transfers, or turn pairs for the entropies; a participant who never takes a turn or never takes the floor; one participant holding most of it; and heavy overlap. Their warnings are listed under the segment. The other checks concern the whole recording.
 
 ### Segments and the analysed part
 
@@ -192,7 +196,7 @@ The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse 
 
 ### Results
 
-`macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, `macaw methods` describes how the segments were summarised, and `macaw agreement --segment` compares coders within a segment.
+`macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments, the warnings within each and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, `macaw methods` describes how the segments were summarised, and `macaw agreement --segment` compares coders within a segment.
 
 ## Gaze: who looks at whom
 
