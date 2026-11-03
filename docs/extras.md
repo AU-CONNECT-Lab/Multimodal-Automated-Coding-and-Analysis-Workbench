@@ -429,6 +429,53 @@ Run as usual. Each participant must carry the same name on every camera (see *Wh
 
 On the Results page, *In 3D* shows every participant's skeleton and the cameras; drag to rotate the view and move the slider to step through the recording. The quality-control report states, for each participant, how often they were placed in three dimensions and how well the cameras agree on them, and warns when a bone keeps changing length, which indicates misplaced keypoints.
 
+(model-look)=
+## A model checks the review frames
+
+The frames drawn for review ({ref}`step 6 <results>`) can also be shown to a model that reads pictures, which reports where the people drawn on a frame disagree with what it sees. A person then checks the model, both on the frames it flagged and on a few frames it passed, drawn at random.
+
+### Setting up
+
+The model runs on a server like the one used for language-model coding, preferably on the lab's own computer (see *A model on the lab's own computer* in {ref}`coding`), with a model that reads pictures and answers directly, such as `qwen3-vl:8b-instruct`. Name it in the settings under *A model looks at the review frames*:
+
+```yaml
+qc:
+  look:
+    model: qwen3-vl:8b-instruct
+    people: {parent: an adult, child: a young child}
+```
+
+`people` states, for each role, what that participant looks like. It is optional. Only the participants described there are checked for carrying the right name, because a name such as `p1` gives the model nothing to go on. Any visible description serves, for example `the mother, in a red top`.
+
+### Running
+
+On the Review page, under *What a model saw on the review frames*, press **Ask the model about the review frames**, or run
+
+```bash
+macaw qc --look
+```
+
+This draws the review frames and asks the model, for each frame, how many people are in view and, for each person drawn, shown on their own with only their skeleton, whether it is a real person and, for the participants described, which of them it is. A frame is flagged when
+
+- someone in view has no skeleton,
+- someone is drawn twice,
+- a skeleton lies on something that is not a person, such as a toy or a picture on the wall,
+- the name of a described participant is on someone else.
+
+A frame already answered is asked again only when the frame, the people drawn on it, the model or the descriptions change.
+
+### Checking the model
+
+The card lists each flagged frame with what the model said, followed by frames it passed, drawn at random (*Passed frames checked at random*, five per recording by default). For each, press **Right** when the model was right about the frame, that is, the problem it names is there or a frame it passed is in order, and **Wrong** otherwise. From the command line: `macaw check-look -r dyad01 --frame <file> --verdict right`. The quality-control report lists the model's findings beside these verdicts, and the Methods text states what the model was asked and how often a person agreed with it. The frames drawn at random are what estimate how many errors the model passes over.
+
+:::{note}
+Whether a skeleton follows the arms and legs of the person it is on is not asked, since models of this size do not judge it reliably. Limbs that stretch from frame to frame are flagged by the automatic checks instead.
+:::
+
+:::{important}
+With a cloud provider such as `openai` or `anthropic`, the review frames, which show the participants, are sent to that provider; the command says so before it starts. Whether this is permitted is for the ethics approval to decide.
+:::
+
 ## Large projects on a computing cluster
 
 MACAW can run on a computing cluster that uses Slurm, with one job per recording. Describe the cluster in a file `hpc.yaml` next to `project.yaml`, starting from the template included in the package (`macaw/config/hpc.yaml`): the partitions, the graphics card to request, the commands that load modules and activate the Python environment, and a shared folder for model weights. Then, on a login node:

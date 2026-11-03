@@ -72,7 +72,7 @@ Requirements, installation, and the seven steps from the recordings to the finis
 :::{grid-item-card} Optional features
 :link: extras
 :link-type: doc
-Language-model coding, human coding and agreement, gaze, custom body measures, gestures, centimetres, three dimensions, clusters.
+Language-model coding, human coding and agreement, gaze, custom body measures, gestures, centimetres, three dimensions, a model checking the review frames, clusters.
 :::
 
 :::{grid-item-card} Questions

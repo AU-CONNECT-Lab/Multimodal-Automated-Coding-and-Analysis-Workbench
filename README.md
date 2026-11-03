@@ -14,7 +14,7 @@ MACAW derives time-resolved measures of voice, language, turn-taking, body movem
 - Rule-based coding of pauses, interruptions and backchannels, and speech-act coding by a language model from a codebook, with human review of uncertain units.
 - Every recording-level measure also within named segments of a recording, such as the phases of a task, marked on the video in the workbench.
 - Import of human coding from ELAN or tables, inter-rater agreement (Krippendorff's alpha, Cohen's kappa), and export to ELAN.
-- A quality-control report, a Methods section generated from the steps that were run, and a graphical workbench.
+- A quality-control report whose review frames a model that reads pictures can check first, with a person checking the model, a Methods section generated from the steps that were run, and a graphical workbench.
 
 MACAW describes each recording; statistical inference and group comparisons remain with the researcher.
 

@@ -207,8 +207,9 @@ The units the language model was uncertain about, together with a random sample 
 
 Once an item is resolved, press **Run** again; the recording continues from where it paused. Every decision is stored with who made it and when, and is listed in the quality-control report.
 
-How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*Pixels to centimetres*, *Where people look*, *Your coding*) belong to optional features.
+How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*What a model saw on the review frames*, *Pixels to centimetres*, *Where people look*, *Your coding*) belong to optional features.
 
+(results)=
 ## 6. Inspect the results
 
 {bdg-primary}`MACAW does this` {bdg-warning}`You do this`
@@ -216,7 +217,7 @@ How often each check asks is set under *Checks by a person*; the labels above ar
 The Results page has two parts.
 
 Quality review
-: Press **Write the QC page**, then open it. The report lists what the automatic checks flagged (for example a transcript that does not seem to match its audio, a mouth that does not move while its owner is said to be speaking, participants the tracker repeatedly lost, or a pitch track that jumps by an octave), every decision made by the software or by a person, an overview of each participant's speech, movement, distance and codes on a common time axis, the meaning and unit of every measure, and a set of frames to inspect. These frames include the moments the checks pointed to and a random selection, so that ordinary moments are inspected as well. The review is thus based on a sample rather than on every frame.
+: Press **Write the QC page**, then open it. The report lists what the automatic checks flagged (for example a transcript that does not seem to match its audio, a mouth that does not move while its owner is said to be speaking, participants the tracker repeatedly lost, or a pitch track that jumps by an octave), every decision made by the software or by a person, an overview of each participant's speech, movement, distance and codes on a common time axis, the meaning and unit of every measure, and a set of frames to inspect. These frames include the moments the checks pointed to and a random selection, so that ordinary moments are inspected as well. The review is thus based on a sample rather than on every frame. A model that reads pictures can check these frames first ({ref}`model-look`).
 
 Measures
 : Select a step and a measure to plot it for each participant across the recording. A measure that is one number per recording is listed per participant, beside its value within each segment ({ref}`segments`).
