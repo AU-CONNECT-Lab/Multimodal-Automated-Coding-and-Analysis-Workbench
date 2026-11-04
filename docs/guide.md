@@ -102,7 +102,7 @@ Results
 : The quality-control report and every measure plotted over time.
 
 Settings (gear icon)
-: All settings of the project.
+: All settings of the project. Under *Only for you*, the workbench's style (Lab, Playroom or Blueprint) and light or dark mode are chosen for the current browser only.
 
 Processing steps appear under short names, for example `text.asr` for transcription and `pose.kinematics` for movement measures.
 
