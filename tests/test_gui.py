@@ -154,6 +154,27 @@ def test_the_agreement_page_compares_coders_across_the_recordings(project, tmp_p
     assert "failed" in broken
 
 
+def test_the_agreement_page_asks_the_model_for_a_clearer_codebook(project, monkeypatch):
+    from macaw.coding.codebook import Codebook, CodeDefinition, write_codebook
+
+    app = create_app(project)
+    refine = callback(app, "agreement-refine-result.children")
+    assert "Set the codebook" in text_of(refine(1, "x.yaml", None, None))
+    write_codebook(Codebook("speech", "utterance", [CodeDefinition("question", "Asks.")]), project.parent / "codebooks" / "speech.yaml")
+    project.write_text(project.read_text(encoding="utf-8") + "\ncoding:\n  codebook: codebooks/speech.yaml\n", encoding="utf-8")
+    assert agreement.refined_name(project) == "codebooks/speech_refined.yaml"
+    assert "agreement-refine-out" in text_of(create_app(project).layout())
+    monkeypatch.setattr(agreement, "coded_tiers", lambda config: {"speech": ["ann", "llm:ollama/qwen", "bob"]})
+    assert callback(app, "agreement-refine-coder.options")("/agreement") == ["ann", "bob"]
+    ran = []
+    monkeypatch.setattr(cli_bridge, "run_now", lambda argv, **kwargs: ran.append(argv) or (0, "question: revised"))
+    shown = text_of(refine(1, " codebooks/speech_refined.yaml ", "bob", ["003"]))
+    argv = ran[0]
+    assert argv[1:3] == ["codebook", "refine"] and argv[argv.index("--coder") + 1] == "bob" and argv[argv.index("-r") + 1] == "003"
+    assert "codebooks/speech_refined.yaml" in argv and "question: revised" in shown
+    assert "Give a file name" in text_of(refine(1, " ", None, None))
+
+
 def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_names_it(project):
     from macaw.exceptions import ExternalToolError
     from macaw.media.ffmpeg import run_ffmpeg

@@ -154,8 +154,47 @@ def layout(config_path: Path):
             ),
             html.Div(id="agreement-message"),
             dcc.Loading(ui.card("Result", html.Div(html.P("Nothing compared yet.", className="none"), id="agreement-result"))),
+            ui.card(
+                "A clearer codebook",
+                html.Div(
+                    [
+                        ui.field("Go by the codes of", dcc.Dropdown(id="agreement-refine-coder", placeholder="the one person who coded it", className="picker")),
+                        ui.field("Save as", dcc.Input(id="agreement-refine-out", value=refined_name(config_path), debounce=True)),
+                    ],
+                    className="field-grid",
+                ),
+                html.Div(ui.button("Suggest a clearer codebook", "agreement-refine", icon_name="play"), className="buttons"),
+                dcc.Loading(html.Div(id="agreement-refine-result")),
+                desc="The model rewrites the codes coders disagree on; the codebook in use stays.",
+            ),
         ]
     )
+
+
+def refined_name(config_path: Path) -> str:
+    """Beside the codebook in use, as the project file names it."""
+    try:
+        codebook = resolve_config(config_path).coding.codebook
+    except (MacawError, ValueError):
+        return ""
+    if codebook is None:
+        return ""
+    path = Path(codebook)
+    try:
+        path = path.resolve().relative_to(config_path.parent.resolve())
+    except ValueError:
+        pass
+    return path.with_name(f"{path.stem}_refined.yaml").as_posix()
+
+
+def people_on(config, tier: str) -> list[str]:
+    """Who coded a tier, leaving out the language model's codings."""
+    return [coder for coder in coded_tiers(config).get(tier, []) if not coder.startswith("llm:") and coder not in config.coding.judges]
+
+
+def refine_command(config_path: Path, out: str, coder: str | None, recordings: list[str] | None) -> list[str]:
+    flags = [out, *(["--coder", coder] if coder else [])]
+    return cli_bridge.build_command(["codebook", "refine"], config_path=config_path, recordings=recordings or None, extra_flags=flags)
 
 
 def register(app, config_path: Path) -> None:
@@ -218,3 +257,32 @@ def register(app, config_path: Path) -> None:
             return ui.note(problem, "warn")
         argv = agreement_command(config_path, tier, mode, coder, grid_s, segment, recordings, bool(samples), folder)
         return compare(config_path, argv, folder)
+
+    @app.callback(Output("agreement-refine-coder", "options"), Input("url", "pathname"))
+    def refine_coders(pathname):
+        if (pathname or "/").rstrip("/") != PATH:
+            return no_update
+        config = resolve_config(config_path)
+        if config.coding.codebook is None:
+            return []
+        from macaw.coding.codebook import read_codebook
+
+        try:
+            return people_on(config, read_codebook(config.coding.codebook).name)
+        except MacawError:
+            return []
+
+    @app.callback(
+        Output("agreement-refine-result", "children"),
+        Input("agreement-refine", "n_clicks"),
+        State("agreement-refine-out", "value"), State("agreement-refine-coder", "value"), State("agreement-recordings", "value"),
+        prevent_initial_call=True,
+    )
+    def run_refine(_, out, coder, recordings):
+        if resolve_config(config_path).coding.codebook is None:
+            return ui.note("Set the codebook under Coding in the settings first.", "warn")
+        if not (out or "").strip():
+            return ui.note("Give a file name for the new codebook.", "warn")
+        argv = refine_command(config_path, out.strip(), coder, recordings)
+        # a model that reasons first takes a while for each code
+        return [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent, timeout_s=3600))]
