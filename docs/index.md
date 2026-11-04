@@ -23,11 +23,11 @@ The same marking is used throughout this guide: {bdg-primary}`MACAW does this` {
 :gutter: 2
 
 :::{grid-item-card} Voice
-Fundamental frequency, intensity and voice quality for every turn, and the standard acoustic feature sets eGeMAPS and ComParE.
+Fundamental frequency, intensity and voice quality for every turn, set beside the previous speaker's turn at each change of speaker, and the standard acoustic feature sets eGeMAPS and ComParE.
 :::
 
 :::{grid-item-card} Language
-A transcript with speaker and timing, word counts, lexical diversity, syntactic complexity, and which participant introduces the words the pair come to share.
+A transcript with speaker and timing, word counts, lexical diversity, syntactic complexity, which participant introduces the words the pair come to share, and how much of the previous speaker's wording each turn takes up.
 :::
 
 :::{grid-item-card} Turn-taking
@@ -35,11 +35,11 @@ Floor holding, gaps and overlaps between speakers, interruptions, backchannels, 
 :::
 
 :::{grid-item-card} Body
-Pose, movement speed, interpersonal distance, and motion energy within a marked region of the picture; in three dimensions with several calibrated cameras.
+Pose, movement speed, interpersonal distance, time spent below a distance the study sets, and motion energy within a marked region of the picture; in three dimensions with several calibrated cameras, also body orientation toward the other participant.
 :::
 
 :::{grid-item-card} Face and gaze
-Facial action units, head orientation, mouth movement and blinks; whom each participant looks at, which named objects, and mutual gaze.
+Facial action units, head orientation, mouth movement and blinks; whom each participant looks at, which named objects, mutual gaze, and joint attention to a named object.
 :::
 
 :::{grid-item-card} Codes

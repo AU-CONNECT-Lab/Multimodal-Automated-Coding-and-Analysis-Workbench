@@ -177,7 +177,6 @@ A coder who coded only part of a recording leaves the rest uncoded, which counts
 
 `macaw describe-codes` lists for each recording, coder and participant how many units and how much time each code took, in how many runs of the same code, and how many of those runs last a single unit. Many single-unit runs indicate that the coding alternates from unit to unit, which deserves a closer look before analysis. `--out codes.csv` saves the table.
 
-(gaze)=
 (segments)=
 ## Several parts of one recording
 
@@ -212,6 +211,7 @@ The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse 
 
 `macaw export` adds a `segment` column, which is empty for values of the whole recording and holds the segment's name for values within a segment. With `macaw export --scale recording`, each participant has one row for the whole recording and one for each segment. The quality report lists the segments, the warnings within each and their measures in a section of its own, the Results page shows a measure's value within each segment beside the whole recording, `macaw methods` describes how the segments were summarised, and `macaw agreement --segment` compares coders within a segment.
 
+(gaze)=
 ## Gaze: who looks at whom
 
 For each participant in each frame, MACAW estimates the point in the picture they look at, and from it whom they look at, which named object, somewhere else in the picture, or something outside it. The estimate is made from the participant's head and the whole scene, so it also works when a face is partly turned away. The first run downloads a model of about 1.3 GB.
@@ -223,6 +223,8 @@ Whom a participant looks at can be determined only when the person looked at is 
 Objects to be distinguished are named in plain English under *Things people look at* in the *Tools* group, for example `bottle, book, toy car`. The quality-control report warns when a name is rarely found; another word for the same object often works better. When objects are detected that are not there, raise the detection threshold (`gaze.object_score`, 0.35 by default); when objects that are there are missed, lower it.
 
 For each pair of participants the results give, at every moment, whether one looks at the other and whether the two look at each other (mutual gaze), and for the whole recording the proportion of time spent looking at the other, the number of looks and the proportion of mutual gaze. A glance of a frame or two toward something else is merged into the preceding look, so that it does not count as a new look. Every look is also stored as a code, so that it can be exported to ELAN, compared with human gaze coding ({ref}`own-coding`) and summarised with `macaw describe-codes`.
+
+When objects are named, or placed in the room (see *Positions in the room instead of the picture* below), the results also give joint attention: the moments in which two participants look at the same named object. For each pair they give the proportion of time spent in joint attention, the number of stretches of it, and how many of these stretches each participant led, that is, looked at the object first. For each stretch, `joint_attention_lag_s` gives how long after the first participant the second one joined, so that a study can apply its own window for following another's attention. A look that began before the participant's gaze could first be read counts from that moment. Each stretch is stored as a code on a tier of its own for each pair, labelled with the object. Two participants looking at the same third person is not counted as joint attention; it can be read from whom each looks at. The limitation above applies: two objects close together in the picture are not told apart.
 
 ### Checking the estimate on the study's own video
 
@@ -272,6 +274,77 @@ motion:
 ```
 
 When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
+
+(synchrony)=
+## Synchrony, convergence and response rates
+
+MACAW leaves indices of synchrony and convergence to dedicated tools, since each involves choices (window, lag, normalisation) that belong to the study. It provides the series and the paired values these tools take.
+
+### Movement synchrony with rMEA or SUSY
+
+Motion energy ({ref}`motion`) is measured in every video frame, and therefore at a constant rate. Export the frames with `macaw export --scale frame`, then give each recording's two series to the R package rMEA:
+
+```r
+library(dplyr)
+library(tidyr)
+library(rMEA)
+
+frames <- readr::read_csv("exports/features.csv", show_col_types = FALSE)
+dir.create("mea", showWarnings = FALSE)
+frames |>
+  filter(!is.na(motion_energy)) |>
+  select(recording_id, subject_id, t_start, motion_energy) |>
+  pivot_wider(names_from = subject_id, values_from = motion_energy) |>
+  arrange(recording_id, t_start) |>
+  group_by(recording_id) |>
+  group_walk(~ write.table(select(.x, parent, child), file.path("mea", paste0(.y$recording_id, ".txt")),
+                           row.names = FALSE, col.names = FALSE))
+
+mea <- readMEA("mea", s1Col = 1, s2Col = 2, sampRate = 25, s1Name = "parent", s2Name = "child", idOrder = NA)
+mea <- MEAccf(mea, lagSec = 5, winSec = 60, incSec = 30)
+summary(mea)
+```
+
+`sampRate` is the frame rate of the video, which is the inverse of the step between consecutive values of `t_start`; `parent` and `child` are the participants' identifiers. The R package SUSY takes one recording's two columns directly, with the segment length and the largest lag in seconds:
+
+```r
+library(SUSY)
+one <- frames |>
+  filter(recording_id == "001", !is.na(motion_energy)) |>
+  select(subject_id, t_start, motion_energy) |>
+  pivot_wider(names_from = subject_id, values_from = motion_energy) |>
+  arrange(t_start)
+susy(as.data.frame(select(one, parent, child)), segment = 30, Hz = 25, maxlag = 5)
+```
+
+Other series at the frame rate, such as wrist speed or head angles, can be passed to these tools in the same way.
+
+### Prosodic convergence
+
+At each change of speaker, the results set the voice measures of the turn just handed over beside those of the turn that took the floor: `prior_<measure>` for the previous speaker's turn and `next_<measure>` for the new one, on one row per change, where `subject_id` is the new speaker and `subject_id_b` the previous one. The measures are those computed for every turn: pitch (mean, median, spread, range and slope), the voiced fraction, mean intensity, jitter, shimmer, harmonics-to-noise ratio, cepstral peak prominence, and speech rate in words per second. Indices of entrainment, such as the difference between adjacent turns or its change over the session, are computed from these pairs. Intensity and the amplitude measures depend on the microphone and its distance from the speaker, so they are usually standardised within each speaker before being compared.
+
+### Lexical overlap
+
+For each turn taken directly after another participant's, `lexical_overlap` gives the proportion of the distinct words in the turn that the previous speaker used in the turn just before it, and `mean_lexical_overlap` gives its mean for each pair of speakers, in each direction. Words are compared as written, after lower-casing, so that *play* and *played* count as different words. Function words, fillers and backchannels are left out by default, as they are when MACAW counts who introduces the words a pair come to share. `text.exclude_words` sets this list for both measures: `english_stopwords` (the default), `none`, or the path of a word list with one word per line.
+
+### Responses within a time window
+
+The proportion of one participant's turns that the other answers within a few seconds, as in the conversational turn counts of LENA, depends on the window, which varies between studies (2, 3 or 5 s). MACAW therefore gives, for every change of speaker, the floor transfer offset `fto_s` (the gap before the new turn, negative when it overlaps the previous one), and the rate is computed from it. For a 5 s window:
+
+```r
+features <- readr::read_csv("exports/features.csv", show_col_types = FALSE)
+turns <- features |>
+  filter(!is.na(turn_duration_s)) |>
+  count(recording_id, subject_id, name = "turns")
+answered <- features |>
+  filter(!is.na(fto_s), fto_s <= 5) |>
+  count(recording_id, subject_id = subject_id_b, name = "answered_within_5s")
+turns |>
+  left_join(answered, by = c("recording_id", "subject_id")) |>
+  mutate(answered_within_5s = coalesce(answered_within_5s, 0L), response_rate = answered_within_5s / turns)
+```
+
+The counts differ from those of LENA itself, which segments the audio in its own way.
 
 (suggest-names)=
 ## Suggesting who is who on a camera
@@ -357,6 +430,21 @@ def wrist_height_gap(person, other):
 ```
 
 When the file changes, the next run recomputes the measure. See {ref}`extending` before placing files in the `scripts` folder.
+
+### Time below a threshold
+
+A measure can also report how much of the time it stays below a value, for example how long two participants are within reach of each other. Add `below` to it:
+
+```yaml
+    - name: shoulders_apart
+      person: parent
+      joints: [shoulder_center]
+      to_person: child
+      to_joints: [shoulder_center]
+      below: 250
+```
+
+The results then give the proportion of the frames in which the measure was below the value, out of the frames in which it could be measured, and the number of unbroken stretches below it. Each stretch is also stored as a code, so that it can be inspected in ELAN or compared with human coding. `below` is in the unit of the measure: pixels for a distance in the picture, and shoulder widths with `per_body_size`. There is no default, because the appropriate value depends on the camera and on the study. A threshold given in centimetres in the literature, such as 76 cm (30 inches), can be converted to pixels with the scale of the recording ({ref}`scale`), which holds only while the participants stay at the distance from the camera at which the scale was measured. With several calibrated cameras ({ref}`three-d`), `below_3d` sets the threshold for the measure in three dimensions in the project's unit of length, which needs no such condition.
 
 (gestures)=
 ## Gesture kinematics
@@ -476,7 +564,7 @@ The calibration gives where the cameras stand relative to each other and the ang
 
 ### 5. Run and inspect
 
-Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in three dimensions, with `_3d` appended to their names. They are stored in metres; the Results page shows them in the project's unit, and exports give them in that unit as well ({ref}`scale`): wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
+Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in three dimensions, with `_3d` appended to their names. They are stored in metres; the Results page shows them in the project's unit, and exports give them in that unit as well ({ref}`scale`): wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), the angle between the direction the chest faces and the direction to the other participant (`body_toward_deg_3d`: 0 when facing them, 180 with the back to them; it requires the hips to be placed, and is not given in the picture alone, where the depth of the shoulders is unknown), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
 
 On the Results page, *In 3D* shows every participant's skeleton and the cameras; drag to rotate the view and move the slider to step through the recording. The quality-control report states, for each participant, how often they were placed in three dimensions and how well the cameras agree on them, and warns when a bone keeps changing length, which indicates misplaced keypoints.
 
