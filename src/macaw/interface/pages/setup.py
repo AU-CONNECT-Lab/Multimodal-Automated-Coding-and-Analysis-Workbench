@@ -15,6 +15,7 @@ from macaw.config.schema import DEVICE_NAME, MacawConfig, SetupSection
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
+from macaw.interface.pages import naming
 from macaw.project.recording import build_recording
 from macaw.project.setup import setup_path, write_setup
 
@@ -51,6 +52,7 @@ def layout(config_path: Path):
             ),
             html.Div(id="setup-message"),
             html.Div(id="setup-form"),
+            naming.card(config),
             ui.card(
                 "What each recording holds",
                 dcc.Loading(html.Div(holdings(config_path), id="setup-files")),
@@ -181,6 +183,8 @@ def holdings(config_path: Path):
 
 
 def register(app, config_path: Path) -> None:
+    naming.register(app, config_path)
+
     @app.callback(
         Output("setup-form", "children"),
         Input("setup-pick", "value"),

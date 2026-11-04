@@ -683,3 +683,48 @@ def test_the_setup_pages_buttons_add_remove_and_save_rows(project, monkeypatch):
     assert "room: a.mp4" in text_of(files)
     refused, _, _ = keep(1, "main", ["room", "room"], name_ids, uses, use_ids)
     assert "two devices are called room" in text_of(refused)
+
+
+def test_the_naming_card_takes_its_recording_and_camera_from_the_review_pages_link(project):
+    app = create_app(project)
+    assert callback(app, "names-recording.value")("/setup", "?recording=003&camera=room") == "003"
+    assert callback(app, "names-recording.value")("/review", "?recording=003") is no_update
+    cameras = callback(app, "..names-camera.options...names-camera.value..")
+    assert cameras("003", "?recording=003&camera=room", None) == (["room"], "room")
+    assert cameras("003", "", "gone") == (["room"], "room")
+    people = callback(app, "..names-person.options...names-person.value...names-saved.children..")
+    found, first, listed = people("room", None, "003")
+    assert found == ["parent", "child"] and first == "parent" and "Nobody is named on room yet" in text_of(listed)
+
+
+def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project, monkeypatch):
+    from macaw.cli.main import app as cli
+    from macaw.interface.pages import naming
+    from macaw.media.ffmpeg import run_ffmpeg
+    from typer.testing import CliRunner
+
+    # a camcorder's wide picture stored in narrower pixels: the frame is shown as wide as it is seen
+    video = project.parent / "raw" / "003" / "room" / "a.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "color=gray:s=480x360:r=10:d=3", "-vf", "setsar=4/3", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    shown, problem = naming.frame_of(project, "003", "room", 1.0)
+    assert problem is None and (shown["width"], shown["height"]) == (640, 360) and shown["uri"].startswith("data:image/jpeg")
+    assert "No frame at 9 s" in naming.frame_of(project, "003", "room", 9.0)[1]
+
+    marks = naming.marked({}, "parent", {"points": [{"x": 160, "y": 180}]}, shown)
+    assert marks == {"parent": [0.25, 0.5]} and naming.next_person(["parent", "child"], marks, "parent") == "child"
+    marks = naming.marked(marks, "child", {"points": [{"x": 700, "y": 90}]}, shown)
+    assert marks["child"] == [1.0, 0.25] and naming.next_person(["parent", "child"], marks, "child") == "child"
+    assert len(naming.marks_figure(shown, marks).data) == 2
+
+    argv = naming.name_command(project, shown, marks)
+    assert argv[argv.index("--at") + 1] == "1" and "parent=0.25,0.5" in argv and "child=1,0.25" in argv
+    monkeypatch.setattr(naming.cli_bridge, "run_now", lambda argv, cwd=None: (0, CliRunner().invoke(cli, argv[1:]).output))
+    app = create_app(project)
+    keep = callback(app, "names-result.children")
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-save"))
+    assert "on room, child at 1 s, parent at 1 s" in text_of(keep(1, None, shown, marks, "003", "room"))
+    listed = text_of(naming.saved(project, "003", "room"))
+    assert "25% across, 50% down" in listed and "100% across, 25% down" in listed
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-clear"))
+    assert "no clicks on room now" in text_of(keep(None, 1, shown, marks, "003", "room"))
+    assert "Nobody is named on room yet" in text_of(naming.saved(project, "003", "room"))
