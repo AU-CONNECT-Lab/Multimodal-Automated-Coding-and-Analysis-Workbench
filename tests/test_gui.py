@@ -729,12 +729,18 @@ def test_the_editor_holds_every_person_device_and_thing_placed_or_not(project):
     walled = room.moved(model, room.WALLS, "room", {"width": 400, "length": 350})
     assert room.room_of(walled)["size"] == [400, 350]
     listed = text_of(room.item_list(model, {"kind": "cameras", "name": "room"}))
-    assert "not placed" in listed and "room-item chosen" in listed
+    assert "not placed" in listed and "room-item chosen" in listed and "Set the room's size first" in listed and "room-alert" not in listed
+    assert "Set the room's size first" not in text_of(room.item_list(walled, None))
     panel = text_of(room.panel(model, {"kind": "cameras", "name": "room"}))
     assert "Whom it records" in panel and "Lens angle" in panel and "Remove this camera" in panel and "Take out of the room" in panel
-    assert "Nothing chosen" in text_of(room.panel(model, None))
-    said = " ".join(text_of(note) for note in room.note_list(model))
-    assert "parent's face is seen" in said and "One pixel spans" in said
+    assert "What it sees" in panel and "A pixel spans 1.03" in panel and "Nothing chosen" in text_of(room.panel(model, None))
+    seen = room.sight(*room.loose_setup(model), "room")
+    assert [row["person"] for row in seen["rows"]] == ["child", "parent"] and seen["spread"][:2] == ("child", "parent")
+    assert round(seen["rows"][1]["distance"]) == 206 and round(seen["rows"][1]["angle"]) == 76 and seen["rows"][1]["inside"]
+    # turned away, the camera sees nobody, and the list marks it
+    model["cameras"]["room"]["facing"] = 180
+    assert room.troubles(room.sight(*room.loose_setup(model), "room")) == ["child is outside the picture", "parent is outside the picture"]
+    assert "room-alert" in text_of(room.item_list(model, None))
 
 
 def test_editing_changes_the_model_and_says_why_not(project):
@@ -762,8 +768,9 @@ def test_editing_changes_the_model_and_says_why_not(project):
     assert picked[0] is no_update and picked[1] == {"kind": "things", "name": "table"}
     assert room.changed_by(project, model, {"type": room.PICK, "kind": "things", "name": "table"}, None) == (no_update, no_update, no_update)
     toy, chosen, _ = room.changed_by(project, model, "room-add", 1, None, "things", "toy")
-    # what is added goes straight into the room, apart from what is there
-    assert chosen == {"kind": "things", "name": "toy"} and toy["things"]["toy"]["x"] is not None
+    # what is added is chosen and waits to be pinned where a click puts it
+    assert chosen == {"kind": "things", "name": "toy"} and toy["things"]["toy"]["x"] is None
+    assert "Click in the plan" in text_of(room.panel(toy, chosen))
     for kind, name, reason in (("things", "table", "already in this setup"), ("cameras", "parent", "already in this setup"),
                                ("things", "two words", "letters, digits"), ("things", "camera", "names something else")):
         with pytest.raises(MacawError, match=reason):

@@ -47,6 +47,8 @@ _SPREAD_CM = 40.0
 
 def card(config):
     units = config.project.units
+    room = config.setup.room
+    started = any(place.at is not None for kind in KINDS for place in getattr(room, kind).values())
     return ui.card(
         "The setup",
         html.Div(id="room-message"),
@@ -58,8 +60,8 @@ def card(config):
                         html.Div(
                             [
                                 dcc.RadioItems(
-                                    [{"label": "Free view", "value": "free"}, {"label": "From a camera", "value": "camera"}],
-                                    "free", id="room-view-mode", inline=True, className="segmented",
+                                    [{"label": "Plan", "value": "plan"}, {"label": "3D", "value": "free"}, {"label": "From a camera", "value": "camera"}],
+                                    "free" if started else "plan", id="room-view-mode", inline=True, className="segmented",
                                 ),
                                 html.Div(
                                     [
@@ -73,6 +75,7 @@ def card(config):
                             className="room-view-bar",
                         ),
                         html.Div(id="room-main", className="room-canvas room-main"),
+                        html.Div(id="room-plan", className="room-canvas room-main"),
                         html.Div(id="room-view-note", className="hint"),
                     ],
                     className="room-centre",
@@ -99,7 +102,6 @@ def card(config):
             ],
             className="room-flats",
         ),
-        html.Div(id="room-notes"),
         dcc.Store(id="room-model", data=None),
         dcc.Store(id="room-saved", data=None),
         dcc.Store(id="room-selected", data=None),
@@ -246,38 +248,34 @@ def loose_setup(model: dict) -> tuple[SetupSection, RoomSection] | None:
     return SetupSection.model_construct(cameras=cameras, microphones=microphones, room=room), room
 
 
-def notes(setup: SetupSection, room: RoomSection, units: str) -> list[str]:
-    """What each placed camera sees of the people it is read for: whether they are in its picture, how far away they
-    are, and from how far round their face it looks; the numbers a person needs to judge a scale or a face reading."""
-    found = []
-    for name, device in setup.cameras.items():
-        camera = room.cameras.get(name)
-        if camera is None or geometry.view_of(camera) is None:
+def sight(setup: SetupSection, room: RoomSection, name: str) -> dict | None:
+    """What a placed camera sees of each person it is read for: how far away they are, from how far round their face
+    it looks (for face and gaze), whether they are in its picture; and, for two bodies or more, how much more one pixel
+    spans at the farther one, by which a single scale misstates them. None until the camera is placed."""
+    device, camera = setup.cameras.get(name), room.cameras.get(name)
+    if device is None or camera is None or geometry.view_of(camera) is None:
+        return None
+    rows = []
+    for person in device.people():
+        place = room.people.get(person)
+        if place is None or place.at is None or place.eyes is None:
             continue
-        distances = {}
-        for person in device.people():
-            place = room.people.get(person)
-            if place is None or place.at is None or place.eyes is None:
-                continue
-            distance = geometry.distance(camera, place)
-            distances[person] = distance
-            seen = geometry.in_picture(camera, [*place.at, place.eyes])
-            if seen is False:
-                found.append(f"{name}: {person} is outside its picture as laid out; check the facing and the lens angle.")
-            angle = geometry.angle_to(camera, place)
-            if angle is not None and (person in device.face or person in device.gaze):
-                side = "from behind, so the face is not seen" if angle > 90 else "from in front" if angle < 10 else "from the side"
-                found.append(f"{name}: {person}'s face is seen {angle:.0f}° {side}.")
-        body = [person for person in device.body if person in distances]
-        if len(body) > 1:
-            near, far = min(body, key=distances.get), max(body, key=distances.get)
-            ratio = distances[far] / distances[near]
-            listed = ", ".join(f"{person} {distances[person]:.{geometry.DECIMALS[units]}f} {units}" for person in body)
-            found.append(
-                f"{name}: {listed} away. One pixel spans {ratio:.2f} times as much at {far}'s place as at {near}'s, so a scale "
-                "measured at one of them misstates the other by that much."
-                if ratio > 1.005 else f"{name}: {listed} away, at the same distance."
-            )
+        rows.append({
+            "person": person, "distance": geometry.distance(camera, place),
+            "angle": geometry.angle_to(camera, place) if person in device.face or person in device.gaze else None,
+            "inside": geometry.in_picture(camera, [*place.at, place.eyes]),
+        })
+    body = sorted((row for row in rows if row["person"] in device.body), key=lambda row: row["distance"])
+    spread = (body[-1]["person"], body[0]["person"], body[-1]["distance"] / body[0]["distance"]) if len(body) > 1 else None
+    return {"rows": rows, "spread": spread}
+
+
+def troubles(seen: dict | None) -> list[str]:
+    """What a camera's view as laid out gets wrong: someone outside its picture, a face read from behind."""
+    if not seen:
+        return []
+    found = [f"{row['person']} is outside the picture" for row in seen["rows"] if row["inside"] is False]
+    found += [f"{row['person']}'s face is seen from behind" for row in seen["rows"] if row["angle"] is not None and row["angle"] > 90]
     return found
 
 
@@ -413,29 +411,48 @@ def _is_placed(entry: dict) -> bool:
     return entry.get("x") is not None and entry.get("y") is not None
 
 
+def room_size(model: dict):
+    walls = model[WALLS]
+    blank = walls.get("width") is None or walls.get("length") is None
+    size = lambda field: dcc.Input(
+        id={"type": FIELD, "kind": WALLS, "name": "room", "field": field}, type="number", value=walls.get(field), placeholder=field,
+        debounce=True, min=0, step="any",
+    )
+    return html.Div(
+        [
+            html.Div("Room", className="room-group-title"),
+            html.Div([size("width"), html.Span("×"), size("length"), html.Span(model["units"], className="hint")], className="room-size-inputs"),
+            *([html.Div("Set the room's size first.", className="room-size-hint")] if blank else []),
+        ],
+        className="room-size blank" if blank else "room-size",
+    )
+
+
 def item_list(model: dict | None, selected: dict | None):
     if model is None:
         return html.P("No setup.", className="none")
-    groups = []
+    read = loose_setup(model)
+    groups = [room_size(model)]
     for kind in KINDS:
         entries = []
         for name, entry in model[kind].items():
             chosen = bool(selected) and selected.get("kind") == kind and selected.get("name") == name
             colour = own_colour(model, kind, name)
+            wrong = troubles(sight(*read, name)) if read is not None and kind == "cameras" else []
             entries.append(html.Button(
                 [
                     html.Span(className=f"room-swatch {kind}", style={"background": colour} if colour else None),
                     html.Span(name, className="room-item-name"),
+                    *([html.Span("!", className="room-alert", title="; ".join(wrong))] if wrong else []),
                     *([] if _is_placed(entry) else [html.Span("not placed", className="room-tag")]),
                 ],
                 id={"type": PICK, "kind": kind, "name": name}, className="room-item chosen" if chosen else "room-item", n_clicks=0,
+                draggable="true", **{"data-kind": kind, "data-name": name},
             ))
         groups.append(html.Div(
             [html.Div(TITLES[kind], className="room-group-title"), *(entries or [html.Div(f"No {NOUN[kind]} yet.", className="room-empty")])],
             className="room-group",
         ))
-    room_chosen = bool(selected) and selected.get("kind") == WALLS
-    groups.append(html.Button("The room's walls", id={"type": PICK, "kind": WALLS, "name": "room"}, className="room-item chosen" if room_chosen else "room-item", n_clicks=0))
     return groups
 
 
@@ -455,7 +472,7 @@ def panel(model: dict | None, selected: dict | None):
         return None
     units = model["units"]
     kind, name = (selected or {}).get("kind"), (selected or {}).get("name")
-    if kind not in (WALLS, *KINDS) or (kind in KINDS and name not in model[kind]):
+    if kind not in KINDS or name not in model[kind]:
         return html.Div(
             [
                 html.H3("Nothing chosen"),
@@ -465,12 +482,6 @@ def panel(model: dict | None, selected: dict | None):
                 ], className="room-help"),
             ]
         )
-    if kind == WALLS:
-        return html.Div([
-            html.H3("The room's walls"),
-            html.P("Blank draws no walls.", className="hint"),
-            *[_field(WALLS, "room", field, model[WALLS].get(field), units) for field in FIELDS[WALLS]],
-        ])
     entry = model[kind][name]
     head = [
         html.H3([name, " ", ui.pill(NOUN[kind]), *([" ", ui.pill("not placed", "warn")] if not _is_placed(entry) else [])]),
@@ -500,25 +511,41 @@ def panel(model: dict | None, selected: dict | None):
             html.Div("Whom it records" if kind == "cameras" else "Whose voices it carries", className="room-group-title"),
             ui.table(["", *[USE_LABELS[use] for use in USES[kind]]], rows),
         ]
+    if not _is_placed(entry):
+        head.append(html.P("Click in the plan or a view to put it there.", className="room-size-hint"))
     act = lambda what: {"type": ACT, "kind": kind, "name": name, "act": what}
     buttons = [
-        ui.button("Take out of the room", act("unplace"), small=True) if _is_placed(entry) else ui.button("Put in the room", act("place"), small=True),
+        ui.button("Take out of the room", act("unplace"), small=True) if _is_placed(entry) else ui.button("Put in the middle", act("place"), small=True),
         *([ui.button(f"Remove this {NOUN[kind]}", act("remove"), small=True)] if kind != "people" else []),
     ]
-    return html.Div([*head, *uses, html.Div(numbers, className="room-numbers"), html.Div(buttons, className="buttons")])
+    seen = seen_table(model, name) if kind == "cameras" else []
+    return html.Div([*head, *uses, *seen, html.Div(numbers, className="room-numbers"), html.Div(buttons, className="buttons")])
 
 
-def note_list(model: dict | None):
-    if model is None:
-        return None
+def seen_table(model: dict, name: str) -> list:
     read = loose_setup(model)
-    if read is None:
-        return None
-    try:
-        listed = notes(*read, model["units"])
-    except Exception:   # notes are a help; a room that cannot be read for them still draws
-        listed = []
-    return [ui.note(text, "warn" if "outside" in text or "behind" in text else "info") for text in listed]
+    seen = sight(*read, name) if read is not None else None
+    if not seen or not seen["rows"]:
+        return []
+    places = geometry.DECIMALS[model["units"]]
+    flag = lambda text, bad: html.Span(text, className="room-bad") if bad else text
+    rows = [
+        [
+            row["person"],
+            f"{row['distance']:.{places}f}",
+            "" if row["angle"] is None else flag(f"{row['angle']:.0f}°" + (" behind" if row["angle"] > 90 else ""), row["angle"] > 90),
+            "" if row["inside"] is None else flag("yes" if row["inside"] else "no", not row["inside"]),
+        ]
+        for row in seen["rows"]
+    ]
+    parts = [
+        html.Div("What it sees", className="room-group-title"),
+        ui.table(["", f"Away ({model['units']})", "Face", "In picture"], rows, numeric={f"Away ({model['units']})"}),
+    ]
+    if seen["spread"] and seen["spread"][2] > 1.005:
+        far, near, ratio = seen["spread"]
+        parts.append(html.P(f"A pixel spans {ratio:.2f}× as much at {far} as at {near}.", className="room-bad" if ratio > 1.1 else "hint"))
+    return parts
 
 
 def draw_figure(config_path: Path, name: str):
@@ -546,7 +573,6 @@ def changed_by(config_path: Path, model: dict, trigger, value, moved_by=None, ad
         if not value:
             return no_update, no_update, no_update
         after, new = added(model, add_kind, add_name)
-        after = placed(after, add_kind, new)
         said = None
         if add_kind == "people":
             add_role(config_path, new)
@@ -607,14 +633,14 @@ def register(app, config_path: Path) -> None:
             return no_update, no_update, ui.note(str(error), "bad")
 
     @app.callback(
-        Output("room-list", "children"), Output("room-panel", "children"), Output("room-notes", "children"), Output("room-dirty", "children"),
+        Output("room-list", "children"), Output("room-panel", "children"), Output("room-dirty", "children"),
         Output("room-view-camera", "options"),
         Input("room-model", "data"), Input("room-selected", "data"), Input("room-saved", "data"),
     )
     def render(model, selected, saved):
         dirty = ui.pill("unsaved changes", "warn") if model is not None and comparable(model) != saved else None
         cameras = list(model["cameras"]) if model else []
-        return item_list(model, selected), panel(model, selected), note_list(model), dirty, cameras
+        return item_list(model, selected), panel(model, selected), dirty, cameras
 
     @app.callback(
         Output("room-message", "children", allow_duplicate=True), Output("room-saved", "data", allow_duplicate=True),

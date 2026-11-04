@@ -315,6 +315,7 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .room-paper .knob { fill: #f08c00; stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
 .room-paper .knob.unset { opacity: 0.6; }
 .room-paper [data-part="body"] { cursor: grab; }
+.room-paper .ghost { fill: none; stroke: #f08c00; stroke-width: 2; stroke-dasharray: 5 4; }
 .room-paper .scale { fill: none; stroke: var(--ink); stroke-width: 1.4; }
 .room-paper .scale-text { fill: var(--ink); font-size: 11px; text-anchor: middle; }
 .room-flats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 0.6rem; }
@@ -331,6 +332,18 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .room-scale { position: absolute; bottom: 0.55rem; left: 0.8rem; font-size: 0.74rem; color: var(--muted); pointer-events: none; display: flex; align-items: center; gap: 0.45rem; }
 .room-scale-bar { display: inline-block; height: 0.4rem; border: 1.5px solid var(--muted); border-top: none; }
 .room-fit { position: absolute; top: 0.45rem; right: 0.45rem; }
+.room-hint { position: absolute; left: 50%; bottom: 1rem; transform: translateX(-50%); padding: 0.35rem 0.9rem; border-radius: 999px;
+             background: var(--warn-soft); color: var(--warn); font-size: 0.86rem; pointer-events: none; white-space: nowrap; }
+.room-size { margin: 0 0 0.9rem; padding: 0.55rem 0.6rem 0.6rem; border-radius: 10px; }
+.room-size.blank { background: var(--warn-soft); }
+.room-size .room-group-title { margin-left: 0; }
+.room-size-inputs { display: flex; align-items: center; gap: 0.35rem; }
+.room-size-inputs input { width: 4.6rem; font: inherit; font-size: 0.9rem; padding: 0.3rem 0.55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.room-size-hint { color: var(--warn); font-size: 0.82rem; margin: 0.35rem 0 0; }
+.room-alert { display: inline-flex; align-items: center; justify-content: center; width: 1.05rem; height: 1.05rem; border-radius: 50%;
+              background: var(--warn-soft); color: var(--warn); font-size: 0.72rem; font-weight: 700; flex: none; }
+.room-bad { color: var(--warn); font-weight: 600; }
+.room-item[draggable="true"] { cursor: grab; }
 .room-view-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; min-height: 2.4rem; }
 .room-view-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .room-view-tools .field { min-width: 0; }

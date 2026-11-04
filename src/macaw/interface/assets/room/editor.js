@@ -16,7 +16,10 @@ const COLOURS = { cameras: 0x4a72d4, lens: 0x26324d, stand: 0x868e96, microphone
 // sizes of the flat drawings' marks, in centimetres, as in the drawing for a paper
 const PAPER_CM = { person: 23, head: 11, device: 9, arrow: 16, body: 8 };
 const SVGNS = 'http://www.w3.org/2000/svg';
+// what an entry of the list carries when dragged into a view
+const DROP = 'application/x-macaw-room';
 const FLATS = {
+  plan: { title: 'Plan', across: 'across →', up: 'along ↑' },
   top: { title: 'From above', across: 'across →', up: 'along ↑' },
   front: { title: 'From the front, along = 0', across: 'across →', up: 'up ↑' },
   side: { title: 'From the right', across: 'along →', up: 'up ↑' },
@@ -447,13 +450,18 @@ function makeView(name, el) {
   const title = document.createElement('div');
   title.className = 'room-view-title';
   title.textContent = name === 'main' ? '' : FLATS[name].title;
+  const hint = document.createElement('div');
+  hint.className = 'room-hint';
+  hint.textContent = "Set the room's size in the list first.";
+  el.appendChild(hint);
   el.appendChild(title);
   const fit = document.createElement('button');
   fit.className = 'button small room-fit';
   fit.type = 'button';
   fit.textContent = 'Fit';
   el.appendChild(fit);
-  const view = { name, el, renderer, labels, title, fit, backdrop, tags: new Map(), width: 0, height: 0 };
+  const kind = name === 'plan' ? 'top' : name;
+  const view = { name, kind, el, renderer, labels, title, fit, backdrop, hint, tags: new Map(), width: 0, height: 0 };
   if (name === 'main') {
     view.camera = new THREE.PerspectiveCamera(42, 1, 1, FAR);
     view.camera.up.set(0, 0, 1);
@@ -464,7 +472,7 @@ function makeView(name, el) {
     view.controls.zoomToCursor = true;
   } else {
     view.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, FAR);
-    if (name === 'top') {
+    if (kind === 'top') {
       view.camera.up.set(0, 1, 0);
       view.camera.layers.enable(TURN_LAYER);
     } else {
@@ -490,6 +498,7 @@ function makeView(name, el) {
   view.controls.addEventListener('change', invalidate);
   fit.addEventListener('click', () => {
     if (name === 'main') fitMain(view);
+    else if (name === 'plan') fitPlan(view);
     else fitFlats(true);
     invalidate();
   });
@@ -499,6 +508,26 @@ function makeView(name, el) {
   surface.addEventListener('pointermove', (event) => pointerMove(view, event));
   surface.addEventListener('pointerup', (event) => pointerUp(view, event));
   surface.addEventListener('pointercancel', (event) => pointerUp(view, event));
+  surface.addEventListener('pointerleave', () => {
+    if (S.ghost && S.ghost.view === name) {
+      S.ghost = null;
+      invalidate();
+    }
+  });
+  // an entry of the list dropped here is put where it lands, like a pin
+  el.addEventListener('dragover', (event) => {
+    if (event.dataTransfer && event.dataTransfer.types.includes(DROP)) event.preventDefault();
+  });
+  el.addEventListener('drop', (event) => {
+    const carried = event.dataTransfer && event.dataTransfer.getData(DROP);
+    if (!carried || !S.model) return;
+    event.preventDefault();
+    const { kind: what, name: which } = JSON.parse(carried);
+    const point = floorAt(view, event);
+    if (!point || !S.model[what] || !S.model[what][which]) return;
+    if (!S.selected || S.selected.kind !== what || S.selected.name !== which) choose({ kind: what, name: which });
+    putAt(what, which, point);
+  });
   if (name === 'main') surface.addEventListener('wheel', (event) => wheel(view, event), { passive: false, capture: true });
   view.observer = new ResizeObserver(() => resize(view));
   view.observer.observe(el);
@@ -516,6 +545,9 @@ function resize(view) {
     view.camera.aspect = width / height;
     view.camera.updateProjectionMatrix();
     if (first && S.model) fitMain(view);
+  } else if (view.name === 'plan') {
+    if (view.scale) keepScale(view);
+    else if (S.model) fitPlan(view);
   } else if (S.flatScale && !first) {
     keepScale(view);
   } else if (S.model) {
@@ -572,8 +604,25 @@ function fitFlats(force) {
   if (force) invalidate();
 }
 
+function fitPlan(view) {
+  if (!S.model || !view || !view.width) return;
+  const box = extent();
+  const frame = flatFrame('top', box);
+  const [x, y, z] = frame.middle;
+  const distance = Math.max(box.x1 - box.x0, box.y1 - box.y0, box.top) * 20;
+  view.scale = Math.min(view.width / frame.across, view.height / frame.up) * 0.9;
+  view.camera.position.set(x, y, distance);
+  view.controls.target.set(x, y, z);
+  view.camera.near = distance / 100;
+  view.camera.far = distance * 3;
+  view.camera.zoom = 1;
+  view.camera.lookAt(x, y, z);
+  keepScale(view);
+  view.controls.update();
+}
+
 function keepScale(view) {
-  const scale = S.flatScale || 1;
+  const scale = view.scale || S.flatScale || 1;
   Object.assign(view.camera, { left: -view.width / (2 * scale), right: view.width / (2 * scale), top: view.height / (2 * scale), bottom: -view.height / (2 * scale) });
   view.camera.updateProjectionMatrix();
 }
@@ -609,8 +658,11 @@ function lookFrom(view) {
 }
 
 function applyMode() {
+  const planning = S.mode === 'plan';
+  if (S.views.plan) S.views.plan.el.style.display = planning ? '' : 'none';
   const view = S.views.main;
   if (!view) return;
+  view.el.style.display = planning ? 'none' : '';
   const looking = lookFrom(view);
   view.looking = looking;
   view.controls.enabled = !looking;
@@ -631,10 +683,18 @@ function invalidate() {
   });
 }
 
+function drawn(view) {
+  return !!view.svg && (view.name === 'plan' || S.style === 'paper');
+}
+
 function draw(view) {
   if (!view.width || !view.height || !view.el.isConnected) return;
+  if (view.hint) {
+    const walls = (S.model && S.model.walls) || {};
+    view.hint.style.display = S.model && (walls.width == null || walls.length == null) && !view.looking && view.kind !== 'front' && view.kind !== 'side' ? '' : 'none';
+  }
   if (view.svg) {
-    const paper = S.style === 'paper';
+    const paper = drawn(view);
     view.svg.style.display = paper ? 'block' : 'none';
     view.renderer.domElement.style.display = paper ? 'none' : 'block';
     view.labels.style.display = paper ? 'none' : '';
@@ -663,10 +723,27 @@ function draw(view) {
   if (S.floor) S.floor.visible = !looking;
   const own = looking ? S.objects.get(keyOf('cameras', looking.name)) : null;
   if (own) own.group.visible = false;
+  const ghost = S.ghost && S.ghost.view === view.name ? ghostMark() : null;
+  if (ghost) {
+    ghost.position.set(S.ghost.point.x, S.ghost.point.y, u(0.5));
+    ghost.visible = true;
+  }
   view.renderer.render(S.scene, camera);
+  if (ghost) ghost.visible = false;
   if (own) own.group.visible = true;
   placeLabels(view, camera, looking);
   if (view.bar) showScale(view);
+}
+
+function ghostMark() {
+  // where the chosen entry would go, under the pointer
+  if (!S.ghostMesh) {
+    S.ghostMesh = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48), handleMaterial(0.85));
+    S.ghostMesh.visible = false;
+    S.scene.add(S.ghostMesh);
+  }
+  S.ghostMesh.scale.setScalar(u(20));
+  return S.ghostMesh;
 }
 
 function placeLabels(view, camera, looking) {
@@ -751,13 +828,13 @@ function drawPaper(view) {
   const reads = {};
   for (const [name, entry] of Object.entries(model.cameras)) reads[name] = [...new Set([...(entry.body || []), ...(entry.face || []), ...(entry.gaze || [])])];
 
-  if (view.name === 'top') {
+  if (view.kind === 'top') {
     if (hasWalls) {
       const corners = [[0, 0], [walls.width, 0], [walls.width, walls.length], [0, walls.length]].map(([x, y]) => project(x, y).slice(0, 2).join(','));
       // what a camera sees ends at the walls
-      const clip = node('clipPath', { id: 'room-walls-clip' }, node('defs', {}, svg));
+      const clip = node('clipPath', { id: `room-walls-${view.name}` }, node('defs', {}, svg));
       node('polygon', { points: corners.join(' ') }, clip);
-      layer.back.setAttribute('clip-path', 'url(#room-walls-clip)');
+      layer.back.setAttribute('clip-path', `url(#room-walls-${view.name})`);
       node('polygon', { points: corners.join(' '), class: 'wall' }, layer.things);
     }
     const fallback = 0.45 * Math.hypot(box.x1 - box.x0, box.y1 - box.y0);
@@ -816,7 +893,7 @@ function drawPaper(view) {
       node('text', { x: x + dot + 4, y, class: 'name beside' }, layer.words, name);
     }
   } else {
-    const front = view.name === 'front';
+    const front = view.kind === 'front';
     const along = (entry) => (front ? entry.x : entry.y);
     const at = (a, z) => (front ? project(a, box.y0, z) : project(box.x1, a, z));
     const [low, high] = front ? [box.x0, box.x1] : [box.y0, box.y1];
@@ -879,6 +956,10 @@ function drawPaper(view) {
       node('text', { x: x + dot + 4, y, class: 'name beside' }, layer.words, name);
     }
   }
+  if (S.ghost && S.ghost.view === view.name) {
+    const [x, y] = project(S.ghost.point.x, S.ghost.point.y);
+    node('circle', { cx: x, cy: y, r: size(PAPER_CM.person, 9), class: 'ghost' }, svg);
+  }
   const lengths = SCALE_BARS[units()];
   const length = lengths.filter((value) => value * per <= 120).pop() || lengths[0];
   const left = 16, bottom = view.height - 16, across = length * per;
@@ -893,7 +974,7 @@ function paperHit(view, event) {
   const entry = S.model[kind] && S.model[kind][name];
   if (!entry) return null;
   aimAt(view, event, view.camera);
-  const normal = view.name === 'top' ? new THREE.Vector3(0, 0, 1) : view.name === 'front' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  const normal = view.kind === 'top' ? new THREE.Vector3(0, 0, 1) : view.kind === 'front' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
   const point = onPlane(normal, new THREE.Vector3(entry.x, entry.y, 0));
   return point ? { object: { userData: { kind, name, part } }, point } : null;
 }
@@ -911,7 +992,7 @@ function aimAt(view, event, camera) {
 }
 
 function hitAt(view, event) {
-  if (view.svg && S.style === 'paper') return paperHit(view, event);
+  if (drawn(view)) return paperHit(view, event);
   const camera = view.looking ? view.looking.camera : view.camera;
   aimAt(view, event, camera);
   const handles = ray.intersectObjects(S.handles.children, true).filter((hit) => hit.object.userData.part);
@@ -927,11 +1008,45 @@ function onPlane(normal, point) {
   return ray.ray.intersectPlane(plane, found) ? found : null;
 }
 
+function placing() {
+  const now = chosen();
+  return now && !placed(now.entry) ? now : null;
+}
+
+function floorAt(view, event) {
+  // the floor under the pointer, in a view that shows the floor
+  if (view.kind === 'front' || view.kind === 'side') return null;
+  aimAt(view, event, view.looking ? view.looking.camera : view.camera);
+  return onPlane(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0));
+}
+
+function putAt(kind, name, point) {
+  const fields = { x: round(point.x), y: round(point.y) };
+  Object.assign(S.model[kind][name], fields);
+  S.ghost = null;
+  buildItem(kind, name);
+  showSelection();
+  invalidate();
+  tell('room-moved', { kind, name, fields, at: Date.now() });
+}
+
 function pointerDown(view, event) {
   S.active = true;
   if (event.button !== 0 || !S.model) return;
-  const hit = hitAt(view, event);
   const start = { x: event.clientX, y: event.clientY };
+  const pending = placing();
+  if (pending) {
+    const point = floorAt(view, event);
+    if (point) {
+      // a click on the floor pins the chosen entry there
+      putAt(pending.kind, pending.name, point);
+      view.controls.enabled = false;
+      S.drag = { view, part: 'none', start, moved: true };
+      event.preventDefault();
+      return;
+    }
+  }
+  const hit = hitAt(view, event);
   if (!hit) {
     if (view.looking) {
       const entry = S.model.cameras[view.looking.name];
@@ -968,7 +1083,19 @@ function upright(x, y) {
 function pointerMove(view, event) {
   const drag = S.drag;
   if (!drag || drag.view !== view) {
-    if (!drag && S.model && !(view.svg && S.style === 'paper')) {
+    if (drag || !S.model) return;
+    if (placing()) {
+      const point = floorAt(view, event);
+      view.surface.style.cursor = point ? 'crosshair' : 'not-allowed';
+      S.ghost = point ? { view: view.name, point } : null;
+      invalidate();
+      return;
+    }
+    if (S.ghost) {
+      S.ghost = null;
+      invalidate();
+    }
+    if (!drawn(view)) {
       const hit = hitAt(view, event);
       const part = hit && hit.object.userData.part;
       view.surface.style.cursor = !hit ? (view.looking ? 'move' : '') : part === 'body' ? 'grab' : 'pointer';
@@ -991,11 +1118,11 @@ function pointerMove(view, event) {
     fields.facing = Number(fields.facing.toFixed(1));
     fields.tilt = Number(fields.tilt.toFixed(1));
   } else if (drag.part === 'body') {
-    if (view.name === 'front' || view.name === 'side') {
-      const normal = view.name === 'front' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    if (view.kind === 'front' || view.kind === 'side') {
+      const normal = view.kind === 'front' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
       const found = onPlane(normal, drag.point);
       if (!found) return;
-      const axis = view.name === 'front' ? 'x' : 'y';
+      const axis = view.kind === 'front' ? 'x' : 'y';
       fields[axis] = round(before[axis] + found[axis] - drag.point[axis]);
       fields[level] = round(Math.max(0, levelOf(drag.kind, before) + found.z - drag.point.z));
     } else {
@@ -1067,9 +1194,14 @@ function wheel(view, event) {
 }
 
 function keyDown(event) {
-  if (!S.active || !S.selected || !S.model) return;
   const target = event.target;
   if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+  if (event.key === 'Escape' && placing()) {
+    S.ghost = null;
+    choose(null);
+    return;
+  }
+  if (!S.active || !S.selected || !S.model) return;
   const now = chosen();
   if (!now) return;
   if (event.key === 'Escape') {
@@ -1089,6 +1221,12 @@ function keyDown(event) {
 }
 
 document.addEventListener('keydown', keyDown);
+document.addEventListener('dragstart', (event) => {
+  const item = event.target instanceof Element ? event.target.closest('.room-item[data-kind]') : null;
+  if (!item || !event.dataTransfer) return;
+  event.dataTransfer.setData(DROP, JSON.stringify({ kind: item.dataset.kind, name: item.dataset.name }));
+  event.dataTransfer.effectAllowed = 'move';
+});
 document.addEventListener('pointerdown', (event) => {
   if (!(event.target instanceof Element) || !event.target.closest('.room-canvas')) S.active = false;
 }, { capture: true });
@@ -1104,7 +1242,7 @@ function watchTheme() {
 }
 
 function mount() {
-  for (const name of ['main', 'top', 'front', 'side']) {
+  for (const name of ['main', 'plan', 'top', 'front', 'side']) {
     const el = document.getElementById(`room-${name}`);
     const view = S.views[name];
     if (!el || (view && view.el === el && el.isConnected)) continue;
@@ -1137,6 +1275,7 @@ function update(state) {
     if (fitKey !== S.fitKey) {
       S.fitKey = fitKey;
       if (S.views.main && S.views.main.width) fitMain(S.views.main);
+      if (S.views.plan) fitPlan(S.views.plan);
       fitFlats(false);
     }
   } else {
