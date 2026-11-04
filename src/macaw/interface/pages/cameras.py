@@ -155,10 +155,7 @@ def setup_view(config_path: Path, name: str | None):
 
     config = resolve_config(config_path)
     if name is None:
-        return ui.note(
-            f"No calibration yet. Make a folder in {config.project.calibration_dir} with a folder per camera holding its board clip, filmed before "
-            "the session with the cameras where they stay, then press Refresh."
-        )
+        return ui.note(f"No calibration yet: make a folder in {config.project.calibration_dir} holding a folder per camera with its board clip, then Refresh.")
     source = Path(config.project.calibration_dir) / name
     parts = [ui.pill("used by this project", "ok")] if config.pose3d.calibration == name else []
     clips = _clips(source) if source.is_dir() else {}

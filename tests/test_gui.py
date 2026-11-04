@@ -91,7 +91,7 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
 def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     shown = text_of(review.body(project, "003"))
     assert "Pixels to centimetres" in shown and "set-scale" in shown and "No scale yet" in shown
-    assert "right only at the distance from the camera" in shown
+    assert "holds only at the object's distance from the camera" in shown
     measured = {"video": "room", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
     argv = review.action_command(project, "003", "set-scale", "", "ann", {}, measured)
     assert argv[1] == "set-scale" and argv[argv.index("-r") + 1] == "003" and argv[argv.index("--points") + 1] == "0,0,30,40"

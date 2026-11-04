@@ -106,8 +106,5 @@ def register(app, config_path: Path) -> None:
         if not re.fullmatch(DEVICE_NAME, name):
             return no_update, no_update, ui.note("A setup's name takes letters, digits, - and _ only.", "bad")
         config = resolve_config(config_path)
-        note = ui.note(
-            f"Recordings filmed with setup {name} name it in their own file, recordings/<id>.yaml, as setup: {{name: {name}}}; "
-            f"setup.name in project.yaml chooses the one every other recording uses."
-        )
+        note = ui.note(f"Recordings made with {name} say setup: {{name: {name}}} in recordings/<id>.yaml.")
         return sorted({*setup_names(config), name}), name, note

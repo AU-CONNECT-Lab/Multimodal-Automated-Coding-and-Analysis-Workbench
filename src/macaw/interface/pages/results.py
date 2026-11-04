@@ -41,7 +41,7 @@ def layout(config_path: Path):
                 "Quality review",
                 html.Div(id="results-report"),
                 html.Div(id="results-report-message"),
-                desc="The QC page lists what the checks flagged, the decisions the software made and where to look.",
+                desc="What the checks flagged, what was decided, and where to look.",
                 actions=ui.button("Write the QC page", "results-write-report", icon_name="refresh"),
             ),
             ui.card(
@@ -54,16 +54,13 @@ def layout(config_path: Path):
                     className="toolbar",
                 ),
                 dcc.Loading(html.Div(id="results-view")),
-                desc="A measure over time per person, or its value per person when it is one number for the recording, then also within each named segment.",
+                desc="Each measure per person, over time or as one number.",
             ),
             ui.card(
                 "In 3D",
                 html.Div(dcc.Slider(id="results-3d-time", min=0, max=1, value=0, step=None, marks=None, tooltip={"placement": "bottom"}), id="results-3d-slider"),
                 dcc.Loading(html.Div(id="results-3d")),
-                desc=(
-                    "Each person's skeleton from the cameras together, and where the cameras stand; drag to turn it, move the "
-                    "slider to go through the recording. Bones that stretch or people in the wrong place mean a point was misplaced."
-                ),
+                desc="Drag to turn it; stretching bones mean misplaced points.",
             ),
         ]
     )

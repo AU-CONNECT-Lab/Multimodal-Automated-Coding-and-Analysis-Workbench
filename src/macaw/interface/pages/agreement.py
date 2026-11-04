@@ -24,9 +24,8 @@ MODES = [
     {"label": "Shared intervals", "value": "exact"},
 ]
 MODE_HINT = {
-    "units": "Each interval of the coder chosen below is a unit, and every other coder gives it the code that covers most of it. "
-             "Suits comparing people with the machine, whose intervals rarely match.",
-    "grid": "The recordings are cut into steps of the length below, and each coder gives a step the code that covers most of it.",
+    "units": "Each interval of the coder below is a unit; suits people against the machine.",
+    "grid": "Each step of the grid takes the code that covers most of it.",
     "exact": "Only intervals the coders marked with the same start and end are compared.",
 }
 
@@ -122,8 +121,7 @@ def layout(config_path: Path):
         [
             ui.page_head(
                 "Agreement",
-                "How far coders agree on one tier across the recordings: people with each other, and with the machine. "
-                "Bring people's coding in on the Review page first.",
+                "How far people and the machine agree on one tier.",
                 [ui.button("Compare", "agreement-run", icon_name="play", primary=True)],
             ),
             ui.card(

@@ -28,7 +28,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "project.name", "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern",
         "project.n_subjects", "project.roles", "project.units", "segment.task_start_s", "segment.task_end_s",
     )),
-    ("Video", "How the videos are brought to one frame rate and format before anything is measured on them.", (
+    ("Video", "How videos are brought to one frame rate and format.", (
         "video.normalise", "video.fps", "video.quality", "video.encoder",
     )),
     ("Steps", "What a run without a choice of steps runs, and how many recordings run at once.", (
@@ -47,7 +47,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "coding.llm.n_samples", "coding.llm.review_threshold", "coding.llm.review_random", "coding.llm.coded_roles", "coding.llm.show",
         "coding.llm.notes", "coding.llm.examples", "coding.llm.reasons", "coding.llm.think",
     )),
-    ("A model looks at the review frames", "A model that reads pictures checks the people drawn on the review frames; a person then checks the model on the Review page.", (
+    ("A model looks at the review frames", "A model checks the people drawn on the review frames.", (
         "qc.look.provider", "qc.look.model", "qc.look.base_url", "qc.look.people", "qc.look.random_check",
     )),
 )

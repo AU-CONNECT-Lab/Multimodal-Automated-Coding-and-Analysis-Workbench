@@ -117,7 +117,7 @@ def layout(config_path: Path):
                     className="more",
                 ),
                 html.Div(html.Div(id="run-command"), className="card-body"),
-                desc="In the order they run. What a chosen step needs runs too, and what is up to date is not run again.",
+                desc="In the order they run; what a step needs runs too.",
                 flush=True,
             ),
             ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state")),

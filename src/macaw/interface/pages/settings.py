@@ -135,7 +135,7 @@ def layout(config_path: Path):
                                 "project.yaml",
                                 dcc.Textarea(id="settings-yaml", value=config_path.read_text(encoding="utf-8"), className="yaml", spellCheck=False),
                                 html.Div(ui.button("Save and check", "settings-yaml-save", icon_name="check", primary=True), className="buttons"),
-                                desc="Every setting, as the file has it. A key left out takes the package default; macaw config show lists them all.",
+                                desc="Every setting, as the file has it.",
                             ),
                         ]
                     ),

@@ -47,7 +47,7 @@ def layout(config_path: Path):
         [
             ui.page_head(
                 "Review",
-                "What the software decided, for a person to check, one recording at a time. Every button runs the macaw command shown under it.",
+                "What the software decided, for a person to check.",
                 [
                     ui.button("Refresh", "review-refresh", icon_name="refresh"),
                     dcc.Upload(ui.button("Import a corrected transcript (.eaf)", icon_name="upload"), id="review-upload", accept=".eaf"),
@@ -134,8 +134,7 @@ def _people_on_camera(layout, results, rid):
         *blocks,
         html.Div(_button("Draw review frames", "render"), className="buttons"),
         html.Div(thumbs, className="thumbs"),
-        desc="Each box in the review frames carries the name it was given and its track id. A wrong name is put right by clicking "
-             "the people again, at a moment where they are clear, on the Setup page.",
+        desc="A wrong name is put right on the Setup page.",
     )
 
 
@@ -144,10 +143,7 @@ def _model_look(config, layout, rid):
     if not look and not config.qc.look.model:
         return None
     ask = html.Div(_button("Ask the model about the review frames", "look"), className="buttons")
-    desc = (
-        "A model that reads pictures counts the people on each review frame and says, for each person drawn, whether it is a person, "
-        "and who it is for the people described in qc.look.people."
-    )
+    desc = "A model checks the people drawn on each frame; you check the model."
     if not look:
         return ui.card("What a model saw on the review frames", ask, desc=desc)
     checks = read_checks(layout, rid)
@@ -170,7 +166,7 @@ def _model_look(config, layout, rid):
         ui.note(describe(summary(layout, rid))),
         ask,
         html.Div(shots, className="thumbs"),
-        desc=desc + " Right when the model was right about the frame: the problem it names is there, or a frame it passed is fine. Wrong otherwise.",
+        desc=desc,
     )
 
 
@@ -218,10 +214,7 @@ def _voices(config, layout, recording):
         ui.table(["Voice", "Speech", "Pitch", "What it says", "Clips", "Suggested", "Person"], rows, numeric={"Pitch"}),
         status,
         html.Div(_button("Save these names", "accept-voices", primary=True), className="buttons"),
-        desc=(
-            "Read what each voice says and listen to the clips, then pick whose voice each is; none leaves a voice out"
-            + (", and its words count as one further speaker, other, in turn-taking." if others_take_turns(config) else ".")
-        ),
+        desc="Pick whose voice each is" + ("; none counts as other in turn-taking." if others_take_turns(config) else "; none leaves it out."),
     )
 
 
@@ -260,8 +253,7 @@ def _scale(config, layout, recording):
     return ui.card(
         f"Pixels to {UNIT_NAMES[units]}",
         ui.note(
-            "A scale is right only at the distance from the camera where the object was. Put the object where a person sits, "
-            "and when people sit at different distances, measure at each person's place and say whose place it was.",
+            "A scale holds only at the object's distance from the camera, so measure where each person sits.",
             "warn",
         ),
         ui.table(
@@ -290,11 +282,7 @@ def _scale(config, layout, recording):
             className="toolbar",
         ),
         html.Div([_button("Save this measurement", "set-scale", primary=True), *remove], className="buttons"),
-        desc=(
-            "Show a frame of this recording or of a calibration clip filmed before it with the camera unmoved (clips go in "
-            "the calibration folder next to project.yaml), click the two ends of something whose length you know, type its "
-            f"length and save. Measure two or three times to see how much the clicks vary. Results stay in pixels; exports add {UNIT_NAMES[units]}."
-        ),
+        desc=f"Click the two ends of something of known length; exports add {UNIT_NAMES[units]}.",
     )
 
 
@@ -336,11 +324,7 @@ def _gaze(config, layout, recording):
             className="toolbar",
         ),
         html.Div([_button("Save what they look at", "label-gaze", primary=True)], className="buttons"),
-        desc=(
-            "Show a frame, say whom or what each person looks at, and save. Take frames at random rather than the clear "
-            "ones, so the check is fair; the frame shows each person's head as MACAW places it, not what gaze.target found. "
-            "The quality page then says how often gaze.target agrees, and the angles backend learns where things are from these."
-        ),
+        desc="Say whom or what each person looks at, on frames taken at random.",
     )
 
 
@@ -450,7 +434,7 @@ def _transcript(layout, rid):
             ],
             className="buttons",
         ),
-        desc="Correct words, boundaries or who said what in ELAN, then import the file with the button at the top. Utterances that were left out sit on tiers of their own and go back in when moved to a transcript tier.",
+        desc="Correct it in ELAN, then import it with the button at the top.",
     )
 
 
@@ -472,7 +456,7 @@ def _speech_acts(config, layout, recording):
     if not (layout.annotations_path(rid) / f"{LAYER}.parquet").is_file():
         return None
     queue = _waiting_acts(config, rid)
-    desc = "Units the model was unsure about. Pick the right code for each and save; your choice is kept beside the model's, which agreement then compares."
+    desc = "Pick the right code for each unit; the model's is kept beside yours."
     if queue.empty:
         return ui.card("Speech acts", ui.note("No coded unit is waiting for a person.", "ok"), desc=desc)
     try:
@@ -568,7 +552,7 @@ def _coding(layout, rid: str):
         ui.note(["To compare it with the machine's codes or another coder's on the same tier, open ",
                  dcc.Link("the Agreement page", href=compare), ", or in a terminal:"]),
         ui.command(["macaw", "agreement", "--tier", str(first.tier), "--units", str(first.annotator)]),
-        desc="Brought in with Import your coding. Importing again under the same name replaces that coder's tiers.",
+        desc="Importing again under a name replaces that coder's tiers.",
     )
 
 

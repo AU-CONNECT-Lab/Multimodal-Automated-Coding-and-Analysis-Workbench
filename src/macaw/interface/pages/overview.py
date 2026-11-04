@@ -195,10 +195,7 @@ def layout(config_path: Path):
                     html.Div(id="overview-tiles", className="tiles"),
                     ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
                     ui.card("Where each recording stands", html.Div(id="overview-grid"),
-                            desc=(
-                                "A row per recording and a column per step, in the order they run. Point at a square for its state; "
-                                "click it for what the step produced, the checks it waits on, or to run it."
-                            ),
+                            desc="Point at a square for its state, click it to go there.",
                             flush=True),
                 ],
                 delay_show=300,

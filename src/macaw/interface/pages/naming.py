@@ -43,7 +43,7 @@ def card(config):
         dcc.Store(id="names-frame", data=None),
         html.Div([ui.button("Save the names", "names-save", primary=True), ui.button("Clear this camera's names", "names-clear")], className="buttons"),
         html.Div(id="names-result"),
-        desc="On a frame where everyone is in view, click each person. The run follows them from there.",
+        desc="Click each person on a frame where all are in view.",
     )
 
 

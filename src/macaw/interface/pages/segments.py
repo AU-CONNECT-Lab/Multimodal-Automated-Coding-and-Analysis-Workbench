@@ -28,8 +28,7 @@ def layout(config_path: Path):
         [
             ui.page_head(
                 "Segments",
-                "Name parts of a recording, such as a free-play and a clean-up phase, to have every measure worked out again "
-                "within each. Play the recording, mark where a part starts and ends, and save it under a name.",
+                "Name parts of a recording, such as free play, to have every measure within each.",
             ),
             html.Div(
                 ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="segments-recording", clearable=False, className="picker")),
@@ -75,20 +74,17 @@ def body(config_path: Path, rid: str | None):
                 ],
                 className="toolbar",
             ),
-            ui.note(
-                "A segment only adds summaries, so saving one runs nothing else again. The analysed part is what every step "
-                "reads: changing it runs this recording again from the start."
-            ),
+            ui.note("Saving a segment runs nothing again; changing the analysed part runs the recording again."),
         ]
     )
     return [
-        ui.card("Play", player, desc=f"{source.name}, on the recording's clock: the times you mark are the ones the segments table and the analysed part use."),
+        ui.card("Play", player, desc=f"{source.name}, on the recording's clock."),
         ui.card(
             "Mark a part", marking,
             actions=[ui.button("Save as a segment", {"type": ACT, "action": "save"}, primary=True),
                      ui.button("Analyse only this part", {"type": ACT, "action": "window"})],
         ),
-        ui.card("This recording's segments", _listed(config, own, rid), desc=f"Kept in {segments_path(config).name} next to project.yaml, which can also be edited by hand."),
+        ui.card("This recording's segments", _listed(config, own, rid), desc=f"Kept in {segments_path(config).name}, which can be edited by hand."),
     ]
 
 
