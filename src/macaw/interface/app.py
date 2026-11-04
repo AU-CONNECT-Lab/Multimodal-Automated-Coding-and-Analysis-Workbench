@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import mimetypes
 import os
 import subprocess
 import sys
@@ -20,6 +22,8 @@ from macaw.interface.pages import agreement, overview, results, review, run, seg
 PAGES = (overview, setup, run, review, agreement, segments, results, settings)
 # the tabs along the top; settings is reached by the gear
 TABS = (overview, setup, run, review, agreement, segments, results)
+# module scripts load only when served as JavaScript, which some Windows registries do not say of .js
+mimetypes.add_type("text/javascript", ".js")
 
 
 def create_app(config_path: Path, *, local: bool = True) -> Dash:
@@ -29,8 +33,11 @@ def create_app(config_path: Path, *, local: bool = True) -> Dash:
         __name__,
         title="macaw",
         assets_folder=str(Path(__file__).parent / "assets"),
+        # the room editor is a set of modules it loads itself, not scripts for every page
+        assets_path_ignore=["^room$"],
         suppress_callback_exceptions=True,
     )
+    app.index_string = with_room_editor(app.index_string, app.get_asset_url)
     # a function, so reloading the page reads the project afresh
     app.layout = lambda: build_layout(config_path, local=local)
     for page in PAGES:
@@ -45,6 +52,16 @@ def create_app(config_path: Path, *, local: bool = True) -> Dash:
         return send_file(path)
 
     return app
+
+
+def with_room_editor(index: str, asset_url) -> str:
+    """The page with the room editor's module and the import map its three.js files resolve 'three' through."""
+    imports = json.dumps({"imports": {"three": asset_url("room/three/three.module.min.js")}})
+    # stamped with the file's time, so a browser does not keep an older editor
+    stamp = int((Path(__file__).parent / "assets" / "room" / "editor.js").stat().st_mtime)
+    editor = f'<script type="module" src="{asset_url("room/editor.js")}?m={stamp}"></script>'
+    head = f'{{%css%}}\n<script type="importmap">{imports}</script>'
+    return index.replace("{%css%}", head, 1).replace("{%renderer%}", "{%renderer%}\n" + editor, 1)
 
 
 def open_folder(path: Path) -> None:

@@ -43,12 +43,7 @@ def card(config):
         dcc.Store(id="names-frame", data=None),
         html.Div([ui.button("Save the names", "names-save", primary=True), ui.button("Clear this camera's names", "names-clear")], className="buttons"),
         html.Div(id="names-result"),
-        desc=(
-            "On a camera that films more than one person, or where someone else comes into view, show a frame of the "
-            "camera's own file where the people it is read for are in view and apart, choose each person and click on them, "
-            "then save. The next run names whoever is there and follows them through the recording; where it loses "
-            "someone, click them again at a later moment. A camera that only ever shows its one person needs no click."
-        ),
+        desc="On a frame where everyone is in view, click each person. The run follows them from there.",
     )
 
 

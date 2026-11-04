@@ -84,22 +84,14 @@ def section(config_path: Path):
                     className="toolbar",
                 ),
                 html.Div(id="cameras-board-result"),
-                desc=(
-                    "Two or more cameras that film the same people are calibrated with a printed board, for measures in 3D. "
-                    "Draw the board, print it at 100%, glue it flat on something stiff and measure one square with a ruler. "
-                    "Its length sets the scale of everything in 3D."
-                ),
+                desc="Print at 100%, mount flat, measure one square.",
                 actions=[ui.button("Save the square", "cameras-save-square"), ui.button("Draw the board", "cameras-draw", icon_name="download")],
             ),
             html.Div(ui.field("Calibration", dcc.Dropdown(names, chosen, id="cameras-setup", clearable=False, className="picker")), className="toolbar"),
             ui.card(
                 "Calibration",
                 dcc.Loading(html.Div(id="cameras-view")),
-                desc=(
-                    "A folder in the calibration folder holding a folder per camera, named as in the recordings, with its "
-                    "board clip, or a calibration file from another tool. Recordings filmed with another calibration name it "
-                    "in their own file, recordings/<id>.yaml."
-                ),
+                desc="A folder per camera with its board clip, or a calibration file from another tool.",
                 actions=[ui.button("Find the cameras", "cameras-find", icon_name="play"), ui.button("Use for this project", "cameras-use", primary=True)],
             ),
             ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state")),

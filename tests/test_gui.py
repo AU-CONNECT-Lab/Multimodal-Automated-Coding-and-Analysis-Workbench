@@ -639,83 +639,12 @@ def test_a_segment_is_set_only_on_a_recording_the_project_has(project):
         set_segment_command(config=project, recording="003", name="a", start=1.0, end=None, clear=False)
 
 
-def test_the_setup_page_shows_the_saved_devices_and_what_each_recording_holds(project):
-    from macaw.interface.pages import setup
-
-    config = resolve_config(project)
-    rows = setup.rows_of(config, "main")
-    assert [row["name"] for row in rows["cameras"]] == ["room"] and rows["cameras"][0]["face"] == ["parent", "child"]
-    assert [row["name"] for row in rows["microphones"]] == ["parent_mic", "child_mic"]
-    shown = text_of(setup.form(config, "main", rows))
-    assert "Saved as setups/main.yaml" in shown and "Add a camera" in shown and "Voices" in shown
-    assert "not saved yet" in text_of(setup.form(config, "home", setup.rows_of(config, "home")))
-    (project.parent / "raw" / "003" / "stray.wav").write_bytes(b"")
-    held = text_of(setup.holdings(project))
-    assert "room: a.mp4" in held and "parent_mic: a.wav" in held and "stray.wav lies outside the device folders" in held
-
-
-def test_the_setup_page_saves_what_the_form_says_or_says_why_not(project):
-    from macaw.interface.pages import setup
-
-    rows = {"cameras": [{"name": "front", "body": ["child"], "face": ["child"], "gaze": [], "hears": []}],
-            "microphones": [{"name": "room_mic", "hears": ["parent", "child"]}]}
-    path = setup.save(project, "home", rows)
-    assert path == project.parent / "setups" / "home.yaml"
-    assert setup.rows_of(resolve_config(project), "home") == rows
-    for broken, reason in (
-        ({**rows, "cameras": [{**rows["cameras"][0], "name": ""}]}, "needs the name of its folder"),
-        ({**rows, "microphones": [{"name": "front", "hears": ["parent"]}]}, "two devices are called front"),
-        ({**rows, "microphones": [{"name": "mic", "hears": ["teacher"]}]}, "names teacher"),
-    ):
-        with pytest.raises(MacawError, match=reason):
-            setup.save(project, "home", broken)
-    with pytest.raises(MacawError, match="letters, digits"):
-        setup.save(project, "home visits", rows)
-    named = setup.rows_from(["front"], [{"kind": "cameras", "index": 0}], [["child"], []], [
-        {"kind": "cameras", "index": 0, "use": "body"}, {"kind": "cameras", "index": 0, "use": "hears"}])
-    assert named == {"cameras": [{"name": "front", "body": ["child"], "face": [], "gaze": [], "hears": []}], "microphones": []}
-
-
 def test_the_overview_asks_for_the_setup_first_until_it_is_saved(project):
     assert "Describe the setup" not in text_of(overview.next_up(overview.standing(project)))
     (project.parent / "setups" / "main.yaml").unlink()
     first = text_of(overview.next_up(overview.standing(project))[0])
     assert "Describe the setup" in first and '"/setup"' in first
     assert "not saved yet" in text_of(run.layout(project))
-
-
-def test_the_setup_pages_buttons_add_remove_and_save_rows(project, monkeypatch):
-    from macaw.interface.pages import setup
-
-    app = create_app(project)
-    edit = callback(app, "setup-form.children")
-    keep = callback(app, next(key for key in app.callback_map if "setup-files.children" in key))
-
-    def pressed(identity, value=1):
-        monkeypatch.setattr(setup, "ctx", SimpleNamespace(triggered_id=identity, triggered=[{"value": value}]))
-
-    names, name_ids = ["room", "parent_mic"], [{"type": setup.NAME, "kind": "cameras", "index": 0}, {"type": setup.NAME, "kind": "microphones", "index": 0}]
-    uses = [["parent", "child"], ["child"], [], [], ["parent"]]
-    use_ids = [{"type": setup.USE, "kind": "cameras", "index": 0, "use": use} for use in ("body", "face", "gaze", "hears")]
-    use_ids.append({"type": setup.USE, "kind": "microphones", "index": 0, "use": "hears"})
-    state = (names, name_ids, uses, use_ids)
-
-    pressed("setup-pick")
-    assert text_of(edit("main", [None, None], [None], *state)).count("folder name") == 3
-    pressed({"type": setup.ADD, "kind": "cameras"})
-    assert text_of(edit("main", [1, None], [None], *state)).count("folder name") == 3
-    pressed({"type": setup.REMOVE, "kind": "microphones", "index": 0})
-    removed = text_of(edit("main", [None, None], [None, 1], *state))
-    assert "No microphone yet" in removed and '"value": "room"' in removed
-    pressed({"type": setup.REMOVE, "kind": "cameras", "index": 0}, value=None)
-    assert edit("main", [None, None], [None, None], *state) is no_update
-
-    message, files, _ = keep(1, "main", *state)
-    assert "Saved main.yaml" in text_of(message)
-    assert setup.rows_of(resolve_config(project), "main")["microphones"] == [{"name": "parent_mic", "hears": ["parent"]}]
-    assert "room: a.mp4" in text_of(files)
-    refused, _, _ = keep(1, "main", ["room", "room"], name_ids, uses, use_ids)
-    assert "two devices are called room" in text_of(refused)
 
 
 def test_the_naming_card_takes_its_recording_and_camera_from_the_review_pages_link(project):
@@ -777,91 +706,137 @@ def placed_project(project):
     return path
 
 
-def test_the_room_card_lists_everyone_and_every_device_and_draws_what_is_placed(project):
+def test_the_setup_page_shows_the_editor_and_what_each_recording_holds(project):
+    from macaw.interface.pages import setup
+
+    shown = text_of(setup.layout(project))
+    assert "The setup" in shown and "room-main" in shown and "room-top" in shown and "Save the setup" in shown
+    (project.parent / "raw" / "003" / "stray.wav").write_bytes(b"")
+    held = text_of(setup.holdings(project))
+    assert "room: a.mp4" in held and "parent_mic: a.wav" in held and "stray.wav lies outside the device folders" in held
+
+
+def test_the_editor_holds_every_person_device_and_thing_placed_or_not(project):
     from macaw.interface.pages import room
 
     placed_project(project)
-    config = resolve_config(project)
-    rows = room.rows_of(config, "main")
-    assert list(rows["people"]) == ["parent", "child"] and list(rows["cameras"]) == ["room"]
-    assert list(rows["microphones"]) == ["parent_mic", "child_mic"] and rows["microphones"]["parent_mic"]["x"] is None
-    assert rows["things"]["table"] == {"x": 150, "y": 200, "height": 72, "width": 60, "depth": 50}
-    assert room.room_of(rows)["microphones"] == {"parent_mic": {}, "child_mic": {}} and "size" not in room.room_of(rows)
-    rows["walls"]["room"].update(width=400, length=350)
-    assert room.room_of(rows)["size"] == [400, 350] and "Walls" in text_of(room.panel(rows, "cm"))
-    front, side, top, preview, shapes, said = room.drawn(config, rows)
-    # things lie under people and devices, so the table is the first shape of each view
-    assert shapes["top"] == [["things", "table"], ["cameras", "room"], ["people", "parent"], ["people", "child"]]
-    assert len(front.layout.shapes) == 4 and len(preview.data) > 0
-    assert front.layout.width == top.layout.width and front.layout.height == side.layout.height
-    shown = " ".join(text_of(note) for note in said)
-    assert "parent's face is seen" in shown and "One pixel spans" in shown and "times as much at" in shown
+    model = room.model_of(resolve_config(project), "main")
+    assert list(model["people"]) == ["parent", "child"] and list(model["cameras"]) == ["room"]
+    assert model["cameras"]["room"]["face"] == ["parent", "child"] and model["cameras"]["room"]["x"] == 150
+    assert model["microphones"]["parent_mic"] == {"x": None, "y": None, "height": None, "hears": ["parent"]}
+    assert model["things"]["table"] == {"x": 150, "y": 200, "height": 72, "width": 60, "depth": 50}
+    assert room.room_of(model)["microphones"] == {"parent_mic": {}, "child_mic": {}} and "size" not in room.room_of(model)
+    walled = room.moved(model, room.WALLS, "room", {"width": 400, "length": 350})
+    assert room.room_of(walled)["size"] == [400, 350]
+    listed = text_of(room.item_list(model, {"kind": "cameras", "name": "room"}))
+    assert "not placed" in listed and "room-item chosen" in listed
+    panel = text_of(room.panel(model, {"kind": "cameras", "name": "room"}))
+    assert "Whom it records" in panel and "Lens angle" in panel and "Remove this camera" in panel and "Take out of the room" in panel
+    assert "Nothing chosen" in text_of(room.panel(model, None))
+    said = " ".join(text_of(note) for note in room.note_list(model))
+    assert "parent's face is seen" in said and "One pixel spans" in said
 
 
-def test_dragging_a_shape_moves_the_item_behind_it(project):
+def test_editing_changes_the_model_and_says_why_not(project):
     from macaw.interface.pages import room
 
     placed_project(project)
-    config = resolve_config(project)
-    rows = room.rows_of(config, "main")
-    shapes = room.drawn(config, rows)[4]
-    moved = room.dragged(rows, shapes, "top", {"shapes[2].x0": 60, "shapes[2].x1": 104, "shapes[2].y0": 228, "shapes[2].y1": 272}, "cm")
+    model = room.model_of(resolve_config(project), "main")
+    moved = room.changed_by(project, model, "room-moved", None, {"kind": "people", "name": "parent", "fields": {"x": 82, "y": 250}})[0]
     assert (moved["people"]["parent"]["x"], moved["people"]["parent"]["y"]) == (82, 250)
-    raised = room.dragged(rows, shapes, "front", {"shapes[1].x0": 140, "shapes[1].x1": 156, "shapes[1].y0": 142, "shapes[1].y1": 158}, "cm")
-    assert (raised["cameras"]["room"]["x"], raised["cameras"]["room"]["height"]) == (148, 150)
-    taller = room.dragged(rows, shapes, "side", {"shapes[0].x0": 160, "shapes[0].x1": 210, "shapes[0].y0": 10, "shapes[0].y1": 90}, "cm")
-    assert (taller["things"]["table"]["y"], taller["things"]["table"]["height"]) == (185, 90)
-    assert room.dragged(rows, shapes, "top", {"autosize": True}, "cm") is None
-    # in metres a drop keeps millimetres, not tenths of a metre
-    metres = room.dragged(rows, shapes, "top", {"shapes[2].x0": 0.6, "shapes[2].x1": 1.044, "shapes[2].y0": 2.28, "shapes[2].y1": 2.72}, "m")
-    assert (metres["people"]["parent"]["x"], metres["people"]["parent"]["y"]) == (0.822, 2.5)
+    turned = room.changed_by(project, model, {"type": room.FIELD, "kind": "people", "name": "parent", "field": "facing"}, 370)[0]
+    assert turned["people"]["parent"]["facing"] == 10
+    off = room.changed_by(project, model, {"type": room.USE, "kind": "cameras", "name": "room", "use": "body", "role": "parent"}, [])[0]
+    assert off["cameras"]["room"]["body"] == ["child"] and room.own_colour(off, "cameras", "room") is None
+    # a device the setup gives to one person alone is drawn in their colour
+    alone = room.used(room.used(off, "cameras", "room", "face", "parent", False), "cameras", "room", "gaze", "parent", False)
+    assert room.own_colour(alone, "cameras", "room") == alone["colours"]["child"]
+    assert room.own_colour(model, "microphones", "parent_mic") == model["colours"]["parent"]
+    gone = room.changed_by(project, model, "room-moved", None, {"op": "unplace", "kind": "people", "name": "child"})[0]
+    assert gone["people"]["child"]["x"] is None and gone["people"]["child"]["eyes"] is None
+    back = room.changed_by(project, gone, {"type": room.ACT, "kind": "people", "name": "child", "act": "place"}, 1)[0]
+    assert back["people"]["child"]["x"] is not None
+    renamed, chosen, _ = room.changed_by(project, model, {"type": room.RENAME, "kind": "cameras", "name": "room"}, "wide")
+    assert "wide" in renamed["cameras"] and "room" not in renamed["cameras"] and chosen == {"kind": "cameras", "name": "wide"}
+    picked = room.changed_by(project, model, {"type": room.PICK, "kind": "things", "name": "table"}, 1)
+    assert picked[0] is no_update and picked[1] == {"kind": "things", "name": "table"}
+    assert room.changed_by(project, model, {"type": room.PICK, "kind": "things", "name": "table"}, None) == (no_update, no_update, no_update)
+    toy, chosen, _ = room.changed_by(project, model, "room-add", 1, None, "things", "toy")
+    # what is added goes straight into the room, apart from what is there
+    assert chosen == {"kind": "things", "name": "toy"} and toy["things"]["toy"]["x"] is not None
+    for kind, name, reason in (("things", "table", "already in this setup"), ("cameras", "parent", "already in this setup"),
+                               ("things", "two words", "letters, digits"), ("things", "camera", "names something else")):
+        with pytest.raises(MacawError, match=reason):
+            room.changed_by(project, model, "room-add", 1, None, kind, name)
+    with pytest.raises(MacawError, match="under Settings"):
+        room.changed_by(project, model, {"type": room.ACT, "kind": "people", "name": "child", "act": "remove"}, 1)
+    removed = room.changed_by(project, model, {"type": room.ACT, "kind": "things", "name": "table", "act": "remove"}, 1)
+    assert "table" not in removed[0]["things"] and removed[1] is None
 
 
-def test_the_room_is_saved_beside_the_devices_and_kept_when_the_devices_are_saved(project):
-    from macaw.interface.pages import room, setup
+def test_adding_a_person_adds_a_role_to_the_project(project):
+    from macaw.interface.pages import room
+
+    model = room.model_of(resolve_config(project), "main")
+    after, chosen, said = room.changed_by(project, model, "room-add", 1, None, "people", "sibling")
+    config = resolve_config(project)
+    assert config.project.roles == ["parent", "child", "sibling"] and config.project.n_subjects == 3
+    assert after["roles"][-1] == "sibling" and "sibling" in after["colours"] and "every recording" in text_of(said)
+    with pytest.raises(MacawError, match="names something else"):
+        room.changed_by(project, after, "room-add", 1, None, "people", "other")
+
+
+def test_the_setup_is_saved_whole_or_refused_with_a_reason(project):
+    from macaw.interface.pages import room
 
     placed_project(project)
-    config = resolve_config(project)
-    rows = room.rows_of(config, "main")
-    rows["people"]["child"]["eyes"] = 80.5
-    rows = room.added(rows, "toy", ["parent", "child"])
-    rows["things"]["toy"].update(x=150, y=190, height=75)
-    path = room.save_room(project, "main", rows)
+    model = room.model_of(resolve_config(project), "main")
+    model["people"]["child"]["eyes"] = 80.5
+    model, _ = room.added(model, "things", "toy")
+    model["things"]["toy"].update(x=150, y=190, height=75)
+    path = room.save(project, "main", model)
     saved = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert saved["room"]["people"]["child"]["eyes"] == 80.5 and saved["room"]["things"]["toy"] == {"at": [150, 190], "height": 75}
-    assert "parent_mic" in saved["microphones"]
-    with pytest.raises(MacawError, match="already in the room"):
-        room.added(rows, "parent", ["parent", "child"])
-    devices = setup.rows_of(resolve_config(project), "main")
-    devices["microphones"] = devices["microphones"][:1]
-    setup.save(project, "main", devices)
-    kept = resolve_config(project).setup.room
-    assert kept.things["toy"].height == 75 and kept.people["child"].eyes == 80.5
-    with pytest.raises(MacawError, match="not saved yet"):
-        room.save_room(project, "home", rows)
+    assert saved["microphones"]["parent_mic"] == {"hears": ["parent"]} and saved["cameras"]["room"]["face"] == ["parent", "child"]
+    assert room.comparable(room.model_of(resolve_config(project), "main")) == room.comparable(model)
+    assert room.save(project, "home", model) == project.parent / "setups" / "home.yaml"
+    for change, reason in (
+        (lambda m: m["microphones"]["parent_mic"].update(hears=[]), "carries nobody's voice"),
+        (lambda m: m["microphones"]["child_mic"].update(hears=["parent"]), "both carry parent's voice alone"),
+        (lambda m: [m["cameras"]["room"].update({use: []}) for use in ("body", "face", "gaze")], "read for nobody"),
+    ):
+        broken = room.model_of(resolve_config(project), "main")
+        change(broken)
+        with pytest.raises(MacawError, match=reason):
+            room.save(project, "main", broken)
+    with pytest.raises(MacawError, match="letters, digits"):
+        room.save(project, "home visits", model)
 
 
-def test_the_camera_sketch_draws_the_room_from_where_the_sliders_put_the_camera(project, monkeypatch):
-    from macaw.config.schema import RoomSection
-    from macaw.interface.pages import room, sketch
+def test_the_editors_buttons_reach_the_saved_file(project):
+    from macaw.interface.pages import room
 
     placed_project(project)
-    config = resolve_config(project)
-    laid = RoomSection.model_validate(room.room_of(room.rows_of(config, "main")))
-    frame = {"uri": "data:image/jpeg;base64,", "width": 640, "height": 360, "rid": "003", "camera": "room", "at": 0.0}
-    camera = sketch.placed_with(laid, "room", {"height": 150, "tilt": None, "facing": 0, "lens": 70})
-    assert camera.height == 150 and camera.tilt == 0 and camera.at == (150, 0)
-    figure = sketch.sketch_figure(frame, laid, camera, ["parent", "child"], "cm")
-    drawn = [trace for trace in figure.data if trace.type == "scatter" and trace.mode == "lines"]
-    assert len(drawn) > 6 and any(trace.line.color == "#1d4e89" for trace in drawn)
-    # the parent, a metre to the camera's left and two metres ahead, lands left of the middle at a 70 degree lens
-    ring = next(trace for trace in drawn if trace.line.color == "#1d4e89" and len(trace.x) > 2)
-    assert 0 < np.nanmean(ring.x) < 320
-    assert sketch.placed_with(laid, "side", {}) is None
     app = create_app(project)
-    use = callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == "sketch-use" for item in value["inputs"])))
-    ids = [{"type": room.NUM, "kind": "cameras", "name": "room", "field": field} for field in ("height", "tilt", "x")]
-    assert use(1, 150, 0, 20, 80, [120, 0, 150], ids, "room") == [150, 20, 150]
+    pressed = lambda button: callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == button for item in value["inputs"])))
+    keep, draw = pressed("room-save"), pressed("room-draw")
+    frame = callback(app, next(key for key in app.callback_map if "room-frame.data" in key))
+    model = room.model_of(resolve_config(project), "main")
+    model["people"]["parent"]["x"] = 90
+    message, saved, files = keep(1, model, "main")
+    assert "Saved setups/main.yaml" in text_of(message) and saved == room.comparable(model) and "room: a.mp4" in text_of(files)
+    assert resolve_config(project).setup.room.people["parent"].at == (90, 200)
+    model["people"]["parent"]["x"] = 95
+    assert "save it first" in text_of(draw(1, model, saved, "main"))
+    # looking through a camera chooses it, so its numbers are beside the view
+    assert frame("camera", "room", None, 0)[2] == {"kind": "cameras", "name": "room"}
+    assert frame("free", "room", "003", 0) == (None, None, no_update)
+
+
+def test_the_page_loads_the_room_editor_through_an_import_map(project):
+    index = create_app(project).index_string
+    assert '<script type="importmap">' in index and "room/three/three.module.min.js" in index
+    assert 'type="module" src="/assets/room/editor.js?m=' in index and index.index("importmap") < index.index("editor.js")
 
 
 def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypatch):

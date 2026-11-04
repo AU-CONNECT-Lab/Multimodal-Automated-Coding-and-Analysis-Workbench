@@ -1,26 +1,25 @@
-"""The Setup page's room: where the people, cameras, microphones and things are, typed as numbers or dragged in three
-views drawn as in a technical drawing (front above top, side beside front), with a turnable 3D preview and notes on
-what each camera sees. Saved in the setup file; anything may be left blank."""
+"""The Setup page's editor: the people, cameras, microphones and things of a setup in one list, the room drawn in 3D
+and in three views where each is dragged, and the chosen one's settings beside them. Saved as setups/<name>.yaml;
+positions may be left blank."""
 
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 
-import numpy as np
-import plotly.graph_objects as go
 import yaml
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from pydantic import ValidationError
 
 from macaw.config.loader import resolve_config
-from macaw.config.schema import DEVICE_NAME, MacawConfig, RoomSection, SetupSection
+from macaw.config.schema import DEVICE_NAME, CameraDevice, MacawConfig, MicrophoneDevice, RoomSection, SetupSection
 from macaw.exceptions import MacawError
-from macaw.interface import ui
+from macaw.interface import project_file, ui
 from macaw.project import room as geometry
 from macaw.project.setup import write_setup
 
-NUM, ADD, REMOVE = "room-num", "room-add", "room-remove"
+PICK, FIELD, USE, RENAME, ACT = "room-pick", "room-field", "room-use", "room-rename", "room-act"
 KINDS = ("people", "cameras", "microphones", "things")
 WALLS = "walls"
 FIELDS = {
@@ -30,377 +29,221 @@ FIELDS = {
     "microphones": ("x", "y", "height"),
     "things": ("x", "y", "height", "width", "depth"),
 }
+USES = {"cameras": ("body", "face", "gaze", "hears"), "microphones": ("hears",)}
+USE_LABELS = {"body": "Body", "face": "Face", "gaze": "Gaze", "hears": "Voice"}
 HEADS = {
     "x": "Across", "y": "Along", "eyes": "Eye height", "height": "Height", "facing": "Facing (°)", "tilt": "Tilt down (°)",
     "lens": "Lens angle (°)", "width": "Width", "depth": "Depth", "length": "Length",
 }
 ANGLES = {"facing", "tilt", "lens"}
-NOUN = {WALLS: "Walls", "people": "Person", "cameras": "Camera", "microphones": "Microphone", "things": "Thing"}
-# sizes drawn, in centimetres, turned into the project's unit
-_BODY_CM, _HEAD_CM, _DEVICE_CM, _THING_CM = 22.0, 11.0, 8.0, 20.0
-_ROOM_CM = (400.0, 300.0, 250.0)
-_COLOURS = {"people": ("#1d4e89", "#e8590c", "#2b8a3e", "#862e9c", "#0b7285", "#c92a2a"), "cameras": "#7048e8", "microphones": "#2b8a3e", "things": "#868e96"}
-# the card's drawing area, in pixels across; the views are sized so a centimetre is as long in each
-_WIDTH_PX, _MARGIN = 1180, {"l": 46, "r": 10, "t": 28, "b": 36}
+NOUN = {"people": "person", "cameras": "camera", "microphones": "microphone", "things": "thing"}
+TITLES = {"people": "People", "cameras": "Cameras", "microphones": "Microphones", "things": "Things"}
+# muted and apart, none read as standing for a sex
+PEOPLE_COLOURS = ("#5f7f8f", "#c49a5a", "#7f9a6b", "#9a7b9a", "#8a877a", "#b07a63")
+RESERVED = ("camera", "elsewhere", "off_screen", "unsure", "none", "other", "room")
+# where a newly placed item goes, from the middle of the room, in centimetres apart
+_SPREAD_CM = 40.0
 
 
 def card(config):
     units = config.project.units
     return ui.card(
-        "The room",
-        views(*(go.Figure() for _ in range(4))),
-        html.Div(id="room-notes"),
-        html.Div(id="room-panel"),
+        "The setup",
+        html.Div(id="room-message"),
         html.Div(
             [
-                ui.field("New thing", dcc.Input(id="room-thing-name", placeholder="table")),
-                ui.button("Add a thing", ADD, small=True),
+                html.Div([html.Div(id="room-list"), add_box()], className="room-side room-left"),
+                html.Div(
+                    [
+                        html.Div(
+                            [
+                                dcc.RadioItems(
+                                    [{"label": "Free view", "value": "free"}, {"label": "From a camera", "value": "camera"}],
+                                    "free", id="room-view-mode", inline=True, className="segmented",
+                                ),
+                                html.Div(
+                                    [
+                                        dcc.Dropdown([], None, id="room-view-camera", clearable=False, placeholder="camera", className="picker"),
+                                        dcc.Dropdown([], None, id="room-view-recording", clearable=False, placeholder="recording", className="picker"),
+                                        ui.field("At (s)", dcc.Input(id="room-view-at", type="number", min=0, step="any", value=0, debounce=True)),
+                                    ],
+                                    id="room-view-camera-tools", className="room-view-tools", style={"display": "none"},
+                                ),
+                            ],
+                            className="room-view-bar",
+                        ),
+                        html.Div(id="room-main", className="room-canvas room-main"),
+                        html.Div(id="room-view-note", className="hint"),
+                    ],
+                    className="room-centre",
+                ),
+                html.Div(id="room-panel", className="room-side room-right"),
             ],
-            className="toolbar",
+            className="room-editor",
         ),
-        html.Div([ui.button("Save the room", "room-save", primary=True), ui.button("Draw the room for a paper", "room-draw", icon_name="download")], className="buttons"),
-        html.Div(id="room-message"),
-        dcc.Store(id="room-shapes", data={}),
-        desc=(
-            f"Where the people, cameras, microphones and things are, in {geometry.UNIT_NAMES[units]}: across and along the "
-            "room seen from above, from any corner chosen as zero, and heights from the floor. Type the numbers or drag "
-            "a person, device or thing in any of the three views. Facing is in degrees clockwise from straight along the "
-            "room as seen from above, tilt in degrees below level, and the lens angle is the width of the camera's picture "
-            "as an angle. Anything may be left blank; whom people look at is read from the room once the camera reading "
-            "their gaze and the people are placed."
+        html.Div(
+            [
+                html.Span("Flat views drawn as", className="hint"),
+                dcc.RadioItems(
+                    [{"label": "Drawing", "value": "paper"}, {"label": "Model", "value": "model"}], "paper", id="room-flat-style",
+                    inline=True, className="segmented", persistence=True,
+                ),
+            ],
+            className="room-view-bar room-flat-bar",
         ),
+        html.Div(
+            [
+                html.Div(id="room-top", className="room-canvas room-flat"),
+                html.Div(id="room-front", className="room-canvas room-flat"),
+                html.Div(id="room-side", className="room-canvas room-flat"),
+            ],
+            className="room-flats",
+        ),
+        html.Div(id="room-notes"),
+        dcc.Store(id="room-model", data=None),
+        dcc.Store(id="room-saved", data=None),
+        dcc.Store(id="room-selected", data=None),
+        dcc.Store(id="room-moved", data=None),
+        dcc.Store(id="room-frame", data=None),
+        dcc.Store(id="room-sync", data=None),
+        desc=f"Click someone or something to edit it, drag to move it. Lengths in {geometry.UNIT_NAMES[units]}.",
+        actions=[
+            html.Span(id="room-dirty"),
+            ui.button("Draw for a paper", "room-draw", icon_name="download", small=True),
+            ui.button("Save the setup", "room-save", primary=True, small=True),
+        ],
     )
 
 
-def _blank(kind: str) -> dict:
-    return dict.fromkeys(FIELDS[kind])
+def add_box():
+    return html.Div(
+        [
+            dcc.Dropdown(
+                [{"label": NOUN[kind].capitalize(), "value": kind} for kind in KINDS], "cameras", id="room-add-kind",
+                clearable=False, className="picker",
+            ),
+            dcc.Input(id="room-add-name", placeholder="name", debounce=False),
+            ui.button("Add", "room-add", small=True),
+        ],
+        className="room-add",
+    )
 
 
-def rows_of(config, name: str) -> dict[str, dict[str, dict]]:
-    """kind -> name -> field -> number or None: everyone and every device of the setup, placed or not, and the things."""
+def _colours(roles: list[str]) -> dict[str, str]:
+    return {role: PEOPLE_COLOURS[index % len(PEOPLE_COLOURS)] for index, role in enumerate(roles)}
+
+
+def _read(config, name: str) -> dict:
     path = Path(config.project.setups_dir) / f"{name}.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
-    data = data if isinstance(data, dict) else {}
+    return data if isinstance(data, dict) else {}
+
+
+def model_of(config, name: str) -> dict:
+    """The saved setup as the editor holds it, read as written so a file that no longer checks can be put right here:
+    kind -> name -> settings, with blank numbers as None."""
+    data = _read(config, name)
     room = data.get("room") if isinstance(data.get("room"), dict) else {}
+    roles = list(config.project.roles)
+    size = room.get("size") or [None, None]
+    model = {
+        "setup": name, "units": config.project.units, "roles": roles, "colours": _colours(roles),
+        WALLS: {"width": size[0], "length": size[1]},
+    }
     names = {
-        "people": list(config.project.roles),
+        "people": roles,
         "cameras": list(data.get("cameras") or {}),
         "microphones": list(data.get("microphones") or {}),
-        "things": list((room.get("things") or {})),
+        "things": list(room.get("things") or {}),
     }
-    size = room.get("size") or [None, None]
-    rows: dict[str, dict[str, dict]] = {WALLS: {"room": {"width": size[0], "length": size[1]}}}
     for kind in KINDS:
-        rows[kind] = {}
+        model[kind] = {}
         for item in names[kind]:
             placed = (room.get(kind) or {}).get(item) or {}
-            row = _blank(kind)
             at = placed.get("at") or [None, None]
-            row.update(x=at[0], y=at[1])
+            entry = dict.fromkeys(FIELDS[kind])
+            entry.update(x=at[0], y=at[1])
             for key in ("eyes", "height", "facing", "tilt", "lens"):
-                if key in row:
-                    row[key] = placed.get(key)
+                if key in entry:
+                    entry[key] = placed.get(key)
             if kind == "things":
                 size = placed.get("size") or [None, None]
-                row.update(width=size[0], depth=size[1])
-            rows[kind][str(item)] = row
-    return rows
+                entry.update(width=size[0], depth=size[1])
+            for use in USES.get(kind, ()):
+                entry[use] = list(((data.get(kind) or {}).get(item) or {}).get(use) or [])
+            model[kind][str(item)] = entry
+    return model
 
 
-def room_of(rows: dict[str, dict[str, dict]]) -> dict:
-    """The room section the rows describe, leaving out what is blank."""
+def room_of(model: dict) -> dict:
+    """The room section the model describes, leaving out what is blank."""
     room: dict = {}
-    walls = rows.get(WALLS, {}).get("room", {})
+    walls = model.get(WALLS) or {}
     if walls.get("width") is not None and walls.get("length") is not None:
         room["size"] = [float(walls["width"]), float(walls["length"])]
-    for kind, items in rows.items():
-        if kind == WALLS:
-            continue
+    for kind in KINDS:
         placed = {}
-        for name, row in items.items():
-            entry = {}
-            if row.get("x") is not None and row.get("y") is not None:
-                entry["at"] = [float(row["x"]), float(row["y"])]
+        for name, entry in model.get(kind, {}).items():
+            spot = {}
+            if entry.get("x") is not None and entry.get("y") is not None:
+                spot["at"] = [float(entry["x"]), float(entry["y"])]
             for key in ("eyes", "height", "facing", "tilt", "lens"):
-                if row.get(key) is not None:
-                    entry[key] = float(row[key])
-            if kind == "things" and row.get("width") is not None and row.get("depth") is not None:
-                entry["size"] = [float(row["width"]), float(row["depth"])]
-            placed[name] = entry
+                if key in FIELDS[kind] and entry.get(key) is not None:
+                    spot[key] = float(entry[key])
+            if kind == "things" and entry.get("width") is not None and entry.get("depth") is not None:
+                spot["size"] = [float(entry["width"]), float(entry["depth"])]
+            placed[name] = spot
         room[kind] = placed
     return room
 
 
-def rows_from(values: list, ids: list[dict]) -> dict[str, dict[str, dict]]:
-    rows: dict[str, dict[str, dict]] = {kind: {} for kind in (WALLS, *KINDS)}
-    for value, identity in zip(values, ids):
-        row = rows[identity["kind"]].setdefault(identity["name"], _blank(identity["kind"]))
-        row[identity["field"]] = None if value in (None, "") else float(value)
-    return rows
+def setup_data(model: dict, name: str) -> dict:
+    return {
+        "name": name,
+        "cameras": {device: {use: list(entry.get(use) or []) for use in USES["cameras"]} for device, entry in model["cameras"].items()},
+        "microphones": {device: {"hears": list(entry.get("hears") or [])} for device, entry in model["microphones"].items()},
+        "room": room_of(model),
+    }
 
 
-def panel(rows: dict[str, dict[str, dict]], units: str):
-    cards = []
-    for kind in (WALLS, *KINDS):
-        if not rows.get(kind):
-            continue
-        heads = [NOUN[kind], *[f"{HEADS[field]}{'' if field in ANGLES else f' ({units})'}" for field in FIELDS[kind]]]
-        body = [
-            [
-                name,
-                *[
-                    dcc.Input(id={"type": NUM, "kind": kind, "name": name, "field": field}, type="number", value=row.get(field),
-                              step="any", debounce=True, className="number")
-                    for field in FIELDS[kind]
-                ],
-                *([ui.button("Remove", {"type": REMOVE, "name": name}, small=True)] if kind == "things" else []),
-            ]
-            for name, row in rows[kind].items()
-        ]
-        cards.append(ui.table([*heads, *([""] if kind == "things" else [])], body))
-    return html.Div(cards, className="room-numbers")
+def _plain_errors(error: ValidationError) -> str:
+    return "; ".join(item["msg"].removeprefix("Value error, ") for item in error.errors())
 
 
-def _extent(room: RoomSection, units: str) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
-    """Ranges across, along and up that hold everything placed, with a margin, or an empty room."""
-    xs, ys, zs = [0.0], [0.0], [0.0]
-    if room.size is not None:
-        xs.append(room.size[0])
-        ys.append(room.size[1])
-    for kind in KINDS:
-        for place in getattr(room, kind).values():
-            if place.at is not None:
-                xs.append(place.at[0])
-                ys.append(place.at[1])
-            for key in ("eyes", "height"):
-                if getattr(place, key, None) is not None:
-                    zs.append(getattr(place, key))
-    room_size = [geometry.to_unit(value, units) for value in _ROOM_CM]
-    margin = geometry.to_unit(40.0, units)
-    ranges = []
-    for values, size in zip((xs, ys, zs), room_size):
-        low, high = min(values), max(values)
-        if high - low < size:
-            high = low + size
-        ranges.append((low - margin, high + margin))
-    ranges[2] = (min(ranges[2][0], 0.0 - margin / 2), ranges[2][1])
-    return tuple(ranges)
+def checked(config, name: str, model: dict) -> SetupSection:
+    """The setup the editor describes, refused with a reason a person can act on."""
+    if not re.fullmatch(DEVICE_NAME, name or ""):
+        raise MacawError(f"{name!r}: a setup's name takes letters, digits, - and _ only")
+    quiet = sorted(device for device, entry in model["microphones"].items() if not entry.get("hears"))
+    if quiet:
+        raise MacawError(f"microphone {', '.join(quiet)} carries nobody's voice: tick whose voices it carries, or remove it")
+    try:
+        return MacawConfig.model_validate({**config.model_dump(), "setup": setup_data(model, name)}).setup
+    except ValidationError as error:
+        raise MacawError(_plain_errors(error)) from None
 
 
-def _circle(x, y, radius, colour, name, width=2, fill=None):
-    return dict(type="circle", x0=x - radius, x1=x + radius, y0=y - radius, y1=y + radius, line={"color": colour, "width": width},
-                fillcolor=fill or colour, opacity=0.85, editable=True, name=name)
+def save(config_path: Path, name: str, model: dict) -> Path:
+    config = resolve_config(config_path)
+    return write_setup(Path(config.project.setups_dir) / f"{name}.yaml", checked(config, name, model))
 
 
-def _square(x, y, half, colour, name):
-    return dict(type="rect", x0=x - half, x1=x + half, y0=y - half, y1=y + half, line={"color": colour, "width": 2},
-                fillcolor=colour, opacity=0.9, editable=True, name=name)
-
-
-def _colour(kind: str, name: str, roles: list[str]) -> str:
-    if kind == "people":
-        palette = _COLOURS["people"]
-        return palette[roles.index(name) % len(palette)] if name in roles else palette[0]
-    return _COLOURS[kind]
-
-
-def _view_figure(axes: tuple[str, str], ranges, size: tuple[int, int], title: str, units: str) -> go.Figure:
-    figure = go.Figure()
-    grid = "rgba(128,128,128,0.22)"
-    figure.update_layout(
-        width=size[0], height=size[1], autosize=False, margin=_MARGIN, showlegend=False, dragmode=False,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90", "size": 11},
-        title={"text": title, "x": 0.01, "y": 0.99, "font": {"size": 12}},
-        xaxis={"range": list(ranges[0]), "title": {"text": f"{axes[0]} ({units})", "standoff": 2}, "gridcolor": grid, "zeroline": False},
-        yaxis={"range": list(ranges[1]), "title": {"text": f"{axes[1]} ({units})", "standoff": 2}, "gridcolor": grid, "zeroline": False},
-    )
-    return figure
-
-
-def figures(room: RoomSection, roles: list[str], units: str) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure, dict]:
-    """(front, side, top, 3D, shapes): shapes says which item and which numbers each draggable shape of a view carries."""
-    across, along, up = _extent(room, units)
-    span_x, span_y, span_z = (high - low for low, high in (across, along, up))
-    inner = _WIDTH_PX - 2 * (_MARGIN["l"] + _MARGIN["r"])
-    per = inner / (span_x + span_y)
-    left_w, right_w = int(span_x * per) + _MARGIN["l"] + _MARGIN["r"], int(span_y * per) + _MARGIN["l"] + _MARGIN["r"]
-    top_h, low_h = int(span_z * per) + _MARGIN["t"] + _MARGIN["b"], int(span_y * per) + _MARGIN["t"] + _MARGIN["b"]
-    front = _view_figure(("across", "up"), (across, up), (left_w, top_h), "Front, seen from along = 0", units)
-    side = _view_figure(("along", "up"), (along, up), (right_w, top_h), "Side, seen from the right", units)
-    top = _view_figure(("across", "along"), (across, along), (left_w, low_h), "Top, seen from above", units)
-    body, head, device, thing = (geometry.to_unit(value, units) for value in (_BODY_CM, _HEAD_CM, _DEVICE_CM, _THING_CM))
-    reach = max(span_x, span_y)
-    shapes: dict[str, list] = {"front": [], "side": [], "top": []}
-    labels: dict[str, list] = {"front": [], "side": [], "top": []}
-    lines: dict[str, list] = {"front": [], "side": [], "top": []}
-
-    def add(view: str, shape: dict, item: tuple[str, str], label_at, text: str):
-        {"front": front, "side": side, "top": top}[view].add_shape(**shape)
-        shapes[view].append(list(item))
-        labels[view].append((label_at, text))
-
-    # things first, so a person or device standing at a table is drawn over it and dragged rather than the table
-    for kind in reversed(KINDS):
-        for name, place in getattr(room, kind).items():
-            if place.at is None:
-                continue
-            x, y = place.at
-            colour = _colour(kind, name, roles)
-            item = (kind, name)
-            if kind == "people":
-                add("top", _circle(x, y, body, colour, name), item, (x, y + body), name)
-                if place.facing is not None:
-                    tip = np.array([x, y]) + 1.8 * body * geometry.heading(place.facing)[:2]
-                    lines["top"].append(((x, tip[0]), (y, tip[1]), colour))
-                if place.eyes is not None:
-                    add("front", _circle(x, place.eyes, head, colour, name), item, (x, place.eyes + head), name)
-                    add("side", _circle(y, place.eyes, head, colour, name), item, (y, place.eyes + head), name)
-                    lines["front"].append(((x, x), (0, place.eyes - head), colour))
-                    lines["side"].append(((y, y), (0, place.eyes - head), colour))
-            elif kind == "cameras":
-                add("top", _square(x, y, device, colour, name), item, (x, y + device), name)
-                if place.facing is not None:
-                    half = (place.lens or 0.0) / 2
-                    for angle in ((place.facing - half, place.facing + half) if half else (place.facing,)):
-                        tip = np.array([x, y]) + reach * geometry.heading(angle)[:2]
-                        lines["top"].append(((x, tip[0]), (y, tip[1]), colour))
-                if place.height is not None:
-                    add("front", _square(x, place.height, device, colour, name), item, (x, place.height + device), name)
-                    add("side", _square(y, place.height, device, colour, name), item, (y, place.height + device), name)
-                    view = geometry.view_of(place)
-                    if view is not None:
-                        tip = view.origin + reach * view.ahead
-                        lines["front"].append(((x, tip[0]), (place.height, tip[2]), colour))
-                        lines["side"].append(((y, tip[1]), (place.height, tip[2]), colour))
-            elif kind == "microphones":
-                add("top", _circle(x, y, device / 1.5, colour, name), item, (x, y + device), name)
-                if place.height is not None:
-                    add("front", _circle(x, place.height, device / 1.5, colour, name), item, (x, place.height + device), name)
-                    add("side", _circle(y, place.height, device / 1.5, colour, name), item, (y, place.height + device), name)
-            else:
-                width, depth = place.size or (thing, thing)
-                add("top", dict(type="rect", x0=x - width / 2, x1=x + width / 2, y0=y - depth / 2, y1=y + depth / 2, line={"color": colour, "width": 2},
-                                fillcolor=colour, opacity=0.35, editable=True, name=name), item, (x, y + depth / 2), name)
-                if place.height is not None:
-                    add("front", dict(type="rect", x0=x - width / 2, x1=x + width / 2, y0=0, y1=place.height, line={"color": colour, "width": 2},
-                                      fillcolor=colour, opacity=0.35, editable=True, name=name), item, (x, place.height), name)
-                    add("side", dict(type="rect", x0=y - depth / 2, x1=y + depth / 2, y0=0, y1=place.height, line={"color": colour, "width": 2},
-                                     fillcolor=colour, opacity=0.35, editable=True, name=name), item, (y, place.height), name)
-    if room.size is not None:
-        # lines, not shapes, so the walls cannot be dragged
-        width, length = room.size
-        lines["top"].append(((0, width, width, 0, 0), (0, 0, length, length, 0), "#8b8b90"))
-        lines["front"] += [((at, at), (0, up[1]), "#8b8b90") for at in (0, width)]
-        lines["side"] += [((at, at), (0, up[1]), "#8b8b90") for at in (0, length)]
-    for view, figure in (("front", front), ("side", side), ("top", top)):
-        for (xs, ys, colour) in lines[view]:
-            wall = colour == "#8b8b90"
-            figure.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines", line={"color": colour, "width": 2 if wall else 1.5, "dash": None if wall else "dot"}, hoverinfo="skip"))
-        if labels[view]:
-            figure.add_trace(go.Scatter(
-                x=[at[0] for at, _ in labels[view]], y=[at[1] for at, _ in labels[view]], text=[text for _, text in labels[view]],
-                mode="text", textposition="top center", hoverinfo="skip", textfont={"size": 11},
-            ))
-    preview = preview_figure(room, roles, units, (right_w, low_h), (across, along, up))
-    return front, side, top, preview, shapes
-
-
-def preview_figure(room: RoomSection, roles: list[str], units: str, size: tuple[int, int], ranges) -> go.Figure:
-    """The room in 3D, to turn by dragging: people as a line up to their eyes, cameras with what they see, things as boxes."""
-    figure = go.Figure()
-    reach = geometry.to_unit(80.0, units)
-    for name, place in room.people.items():
-        if place.at is None or place.eyes is None:
-            continue
-        colour = _colour("people", name, roles)
-        x, y = place.at
-        figure.add_trace(go.Scatter3d(x=[x, x], y=[y, y], z=[0, place.eyes], mode="lines", line={"color": colour, "width": 8}, hoverinfo="skip"))
-        figure.add_trace(go.Scatter3d(x=[x], y=[y], z=[place.eyes], mode="markers+text", text=[name], textposition="top center",
-                                      marker={"size": 7, "color": colour}, hoverinfo="skip"))
-    for name, place in room.cameras.items():
-        view = geometry.view_of(place)
-        if view is None:
-            continue
-        corners = _frustum(view, place.lens or 60.0, reach)
-        xs, ys, zs = [], [], []
-        for corner in corners:
-            xs += [view.origin[0], corner[0], None]
-            ys += [view.origin[1], corner[1], None]
-            zs += [view.origin[2], corner[2], None]
-        loop = corners + corners[:1]
-        xs += [point[0] for point in loop]
-        ys += [point[1] for point in loop]
-        zs += [point[2] for point in loop]
-        figure.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", line={"color": _COLOURS["cameras"], "width": 3}, hoverinfo="skip"))
-        figure.add_trace(go.Scatter3d(x=[view.origin[0]], y=[view.origin[1]], z=[view.origin[2]], mode="markers+text", text=[name],
-                                      textposition="top center", marker={"size": 4, "color": _COLOURS["cameras"], "symbol": "diamond"}, hoverinfo="skip"))
-    for name, place in room.microphones.items():
-        if place.at is None or place.height is None:
-            continue
-        figure.add_trace(go.Scatter3d(x=[place.at[0]], y=[place.at[1]], z=[place.height], mode="markers+text", text=[name],
-                                      textposition="top center", marker={"size": 4, "color": _COLOURS["microphones"]}, hoverinfo="skip"))
-    thing = geometry.to_unit(_THING_CM, units)
-    for name, place in room.things.items():
-        if place.at is None or place.height is None:
-            continue
-        width, depth = place.size or (thing, thing)
-        x, y = place.at
-        bx = [x - width / 2, x + width / 2]
-        by = [y - depth / 2, y + depth / 2]
-        figure.add_trace(go.Mesh3d(
-            x=[bx[i] for i in (0, 1, 1, 0, 0, 1, 1, 0)], y=[by[i] for i in (0, 0, 1, 1, 0, 0, 1, 1)], z=[0.0] * 4 + [place.height] * 4,
-            i=[0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 3, 3], j=[1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 0, 4], k=[2, 3, 6, 7, 5, 4, 6, 5, 7, 6, 4, 7],
-            color=_COLOURS["things"], opacity=0.35, hoverinfo="skip", name=name,
-        ))
-        figure.add_trace(go.Scatter3d(x=[x], y=[y], z=[place.height], mode="text", text=[name], textposition="top center", hoverinfo="skip"))
-    axis = {"gridcolor": "rgba(128,128,128,0.25)", "zerolinecolor": "rgba(128,128,128,0.4)", "backgroundcolor": "rgba(0,0,0,0)"}
-    figure.update_layout(
-        width=size[0], height=size[1], autosize=False, margin={"l": 0, "r": 0, "t": 24, "b": 0}, showlegend=False,
-        paper_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90", "size": 10}, title={"text": "In 3D: drag to turn", "x": 0.01, "y": 0.99, "font": {"size": 12}},
-        scene={
-            "aspectmode": "data", "camera": {"eye": {"x": -1.3, "y": -1.6, "z": 1.0}},
-            "xaxis": {"title": f"across ({units})", "range": list(ranges[0]), **axis},
-            "yaxis": {"title": f"along ({units})", "range": list(ranges[1]), **axis},
-            "zaxis": {"title": f"up ({units})", "range": [0, ranges[2][1]], **axis},
-        },
-        uirevision="room",
-    )
-    return figure
-
-
-def _frustum(view: geometry.View, lens: float, reach: float, aspect: float = 9 / 16) -> list[np.ndarray]:
-    half_w = np.tan(np.radians(lens) / 2) * reach
-    half_h = half_w * aspect
-    centre = view.origin + reach * view.ahead
-    return [centre + sx * half_w * view.right + sy * half_h * view.up for sx, sy in ((-1, 1), (1, 1), (1, -1), (-1, -1))]
-
-
-def dragged(rows: dict, shapes: dict, view: str, change: dict, units: str) -> dict | None:
-    """The rows with the item behind a dragged shape moved to where it was dropped; None when nothing was dragged."""
-    places = geometry.DECIMALS[units] + 1
-    moved = {}
-    for key, value in change.items():
-        found = re.fullmatch(r"shapes\[(\d+)\]\.([xy][01])", key)
-        if found:
-            moved.setdefault(int(found.group(1)), {})[found.group(2)] = float(value)
-    if not moved:
+def comparable(model: dict | None) -> dict | None:
+    """The model without what the editor adds for drawing, to tell whether it differs from the saved one."""
+    if model is None:
         return None
-    rows = {kind: {name: dict(row) for name, row in items.items()} for kind, items in rows.items()}
-    for index, ends in moved.items():
-        if index >= len(shapes.get(view, [])) or not {"x0", "x1", "y0", "y1"} <= set(ends):
-            continue
-        kind, name = shapes[view][index]
-        row = rows[kind][name]
-        middle_x = round((ends["x0"] + ends["x1"]) / 2, places)
-        middle_y = round((ends["y0"] + ends["y1"]) / 2, places)
-        if view == "top":
-            row["x"], row["y"] = middle_x, middle_y
-            continue
-        row["x" if view == "front" else "y"] = middle_x
-        level = "eyes" if kind == "people" else "height"
-        # a thing stands on the floor, so where its top was dropped is its height
-        row[level] = round(max(ends["y0"], ends["y1"]), places) if kind == "things" else max(middle_y, 0.0)
-    return rows
+    return copy.deepcopy({key: value for key, value in model.items() if key not in ("setup", "units", "roles", "colours")})
+
+
+def loose_setup(model: dict) -> tuple[SetupSection, RoomSection] | None:
+    """The setup and room as far as they read, unchecked across devices, for notes on a setup not yet valid."""
+    try:
+        room = RoomSection.model_validate(room_of(model))
+        cameras = {device: CameraDevice(**{use: entry.get(use) or [] for use in USES["cameras"]}) for device, entry in model["cameras"].items()}
+        microphones = {device: MicrophoneDevice.model_construct(hears=entry.get("hears") or []) for device, entry in model["microphones"].items()}
+    except ValidationError:
+        return None
+    return SetupSection.model_construct(cameras=cameras, microphones=microphones, room=room), room
 
 
 def notes(setup: SetupSection, room: RoomSection, units: str) -> list[str]:
@@ -438,143 +281,244 @@ def notes(setup: SetupSection, room: RoomSection, units: str) -> list[str]:
     return found
 
 
-def save_room(config_path: Path, name: str, rows: dict) -> Path:
-    """Writes the room into the setup file, beside its devices, once it reads as a valid setup."""
-    config = resolve_config(config_path)
-    path = Path(config.project.setups_dir) / f"{name}.yaml"
-    if not path.is_file():
-        raise MacawError(f"setup {name} is not saved yet: describe and save its cameras and microphones first")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    data = {**data, "name": name, "room": room_of(rows)}
-    try:
-        setup = MacawConfig.model_validate({**config.model_dump(), "setup": data}).setup
-    except ValidationError as error:
-        raise MacawError("; ".join(item["msg"].removeprefix("Value error, ") for item in error.errors())) from None
-    return write_setup(path, setup)
+def _copy(model: dict) -> dict:
+    return {key: ({name: dict(entry) for name, entry in value.items()} if key in KINDS else value) for key, value in model.items()}
 
 
-def added(rows: dict, name: str, roles: list[str]) -> dict:
+def _number(value, field: str):
+    if value in (None, ""):
+        return None
+    value = float(value)
+    return value % 360 if field == "facing" else value
+
+
+def moved(model: dict, kind: str, name: str, fields: dict) -> dict:
+    """The model with the numbers a drag or a typed field gave one item."""
+    if kind == WALLS:
+        return {**_copy(model), WALLS: {**model[WALLS], **{field: _number(value, field) for field, value in fields.items() if field in FIELDS[WALLS]}}}
+    if name not in model.get(kind, {}):
+        return model
+    model = _copy(model)
+    model[kind][name].update({field: _number(value, field) for field, value in fields.items() if field in FIELDS[kind]})
+    return model
+
+
+def used(model: dict, kind: str, name: str, use: str, role: str, on: bool) -> dict:
+    """The model with a device read, or not, for one person's body, face, gaze or voice."""
+    if name not in model.get(kind, {}) or use not in USES.get(kind, ()):
+        return model
+    model = _copy(model)
+    now = set(model[kind][name].get(use) or [])
+    now = now | {role} if on else now - {role}
+    model[kind][name][use] = [person for person in model["roles"] if person in now]
+    return model
+
+
+def _taken(model: dict) -> set[str]:
+    return {item for kind in KINDS for item in model.get(kind, {})} | set(model["roles"])
+
+
+def _valid_name(model: dict, kind: str, name: str) -> str:
     name = (name or "").strip()
     if not re.fullmatch(DEVICE_NAME, name):
-        raise MacawError("a thing's name takes letters, digits, - and _ only")
-    taken = {item for items in rows.values() for item in items} | set(roles)
-    if name in taken:
-        raise MacawError(f"{name} is already in the room")
-    return {**rows, "things": {**rows["things"], name: _blank("things")}}
+        raise MacawError(f"a {NOUN[kind]}'s name takes letters, digits, - and _ only")
+    if name in RESERVED:
+        raise MacawError(f"{name} names something else in macaw; choose another name")
+    if name in _taken(model):
+        raise MacawError(f"{name} is already in this setup")
+    return name
 
 
-def drawn(config, rows: dict):
-    """The four views and the notes for these rows, or why they cannot be drawn."""
-    units = config.project.units
+def added(model: dict, kind: str, name: str) -> tuple[dict, str]:
+    """The model with a new item, unplaced; a person is a new role, which the caller writes into the project."""
+    name = _valid_name(model, kind, name)
+    model = _copy(model)
+    entry = dict.fromkeys(FIELDS[kind])
+    entry.update({use: [] for use in USES.get(kind, ())})
+    if kind == "people":
+        model["roles"] = [*model["roles"], name]
+        model["colours"] = _colours(model["roles"])
+    model[kind] = {**model[kind], name: entry}
+    return model, name
+
+
+def renamed(model: dict, kind: str, name: str, new: str) -> tuple[dict, str]:
+    if kind == "people":
+        raise MacawError("a person's role is renamed under Settings, since every step uses it")
+    new = (new or "").strip()
+    if new == name:
+        return model, name
+    new = _valid_name(model, kind, new)
+    model = _copy(model)
+    model[kind] = {new if key == name else key: entry for key, entry in model[kind].items()}
+    return model, new
+
+
+def removed(model: dict, kind: str, name: str) -> dict:
+    if kind == "people":
+        raise MacawError("a person is taken out of the project under Settings, since every step uses them; here they can be taken out of the room")
+    model = _copy(model)
+    model[kind] = {key: entry for key, entry in model[kind].items() if key != name}
+    return model
+
+
+def unplaced(model: dict, kind: str, name: str) -> dict:
+    """The model with the item taken out of the room: its numbers blank, what it records kept."""
+    return moved(model, kind, name, dict.fromkeys(FIELDS[kind]))
+
+
+def placed(model: dict, kind: str, name: str) -> dict:
+    """The model with the item put in the room: in the middle of the walls, or of what is placed, a little apart from
+    what is there already. Heights and directions stay blank until given or dragged."""
+    units = model["units"]
+    walls = model[WALLS]
+    spots = [(entry["x"], entry["y"]) for key in KINDS for entry in model[key].values() if entry.get("x") is not None and entry.get("y") is not None]
+    if walls.get("width") is not None and walls.get("length") is not None:
+        middle = (walls["width"] / 2, walls["length"] / 2)
+    elif spots:
+        middle = (sum(x for x, _ in spots) / len(spots), sum(y for _, y in spots) / len(spots))
+    else:
+        middle = (geometry.to_unit(200.0, units), geometry.to_unit(150.0, units))
+    step = geometry.to_unit(_SPREAD_CM, units)
+    places = geometry.DECIMALS[units]
+    for index in range(50):
+        spot = (round(middle[0] + step * (index % 5 - 2) * (index > 0), places), round(middle[1] + step * (index // 5), places))
+        if all(abs(spot[0] - x) > step / 2 or abs(spot[1] - y) > step / 2 for x, y in spots):
+            break
+    return moved(model, kind, name, {"x": spot[0], "y": spot[1]})
+
+
+def add_role(config_path: Path, role: str) -> None:
+    """Writes one more person into project.yaml, among the roles every recording has."""
+    config = resolve_config(config_path)
+    roles = [*config.project.roles, role]
+    text = project_file.with_values(config_path.read_text(encoding="utf-8"), {"project.roles": roles, "project.n_subjects": len(roles)})
     try:
-        room = RoomSection.model_validate(room_of(rows))
-    except ValidationError as error:
-        problem = "; ".join(item["msg"].removeprefix("Value error, ") for item in error.errors())
-        return None, None, None, None, {}, [ui.note(problem, "bad")]
-    front, side, top, preview, shapes = figures(room, list(config.project.roles), units)
-    setup = config.setup
+        project_file.check(config_path, text)
+    except Exception as error:
+        raise MacawError(f"{role} cannot be added: {error}") from None
+    project_file.save(config_path, text)
+
+
+def own_colour(model: dict, kind: str, name: str) -> str | None:
+    """A person's colour, or that of the one person a device records alone; None for a shared device or a thing."""
+    if kind == "people":
+        return model["colours"].get(name)
+    entry = model[kind].get(name, {})
+    people = {person for use in USES.get(kind, ()) if use != "hears" or kind == "microphones" for person in entry.get(use) or []}
+    return model["colours"].get(next(iter(people))) if len(people) == 1 else None
+
+
+def _is_placed(entry: dict) -> bool:
+    return entry.get("x") is not None and entry.get("y") is not None
+
+
+def item_list(model: dict | None, selected: dict | None):
+    if model is None:
+        return html.P("No setup.", className="none")
+    groups = []
+    for kind in KINDS:
+        entries = []
+        for name, entry in model[kind].items():
+            chosen = bool(selected) and selected.get("kind") == kind and selected.get("name") == name
+            colour = own_colour(model, kind, name)
+            entries.append(html.Button(
+                [
+                    html.Span(className=f"room-swatch {kind}", style={"background": colour} if colour else None),
+                    html.Span(name, className="room-item-name"),
+                    *([] if _is_placed(entry) else [html.Span("not placed", className="room-tag")]),
+                ],
+                id={"type": PICK, "kind": kind, "name": name}, className="room-item chosen" if chosen else "room-item", n_clicks=0,
+            ))
+        groups.append(html.Div(
+            [html.Div(TITLES[kind], className="room-group-title"), *(entries or [html.Div(f"No {NOUN[kind]} yet.", className="room-empty")])],
+            className="room-group",
+        ))
+    room_chosen = bool(selected) and selected.get("kind") == WALLS
+    groups.append(html.Button("The room's walls", id={"type": PICK, "kind": WALLS, "name": "room"}, className="room-item chosen" if room_chosen else "room-item", n_clicks=0))
+    return groups
+
+
+def _field(kind: str, name: str, field: str, value, units: str):
+    unit = "°" if field in ANGLES else units
+    label = HEADS[field].replace(" (°)", "")
+    bounds = {"facing": (0, 360), "tilt": (-90, 90), "lens": (1, 179)}.get(field, (None, None))
+    return ui.field(
+        f"{label} ({unit})",
+        dcc.Input(id={"type": FIELD, "kind": kind, "name": name, "field": field}, type="number", value=value, step="any", debounce=True,
+                  min=bounds[0], max=bounds[1]),
+    )
+
+
+def panel(model: dict | None, selected: dict | None):
+    if model is None:
+        return None
+    units = model["units"]
+    kind, name = (selected or {}).get("kind"), (selected or {}).get("name")
+    if kind not in (WALLS, *KINDS) or (kind in KINDS and name not in model[kind]):
+        return html.Div(
+            [
+                html.H3("Nothing chosen"),
+                html.Ul([
+                    html.Li("Ring: turn. Knob: tilt. Arrow: height."),
+                    html.Li("R: turn 15°. Delete: out of the room."),
+                ], className="room-help"),
+            ]
+        )
+    if kind == WALLS:
+        return html.Div([
+            html.H3("The room's walls"),
+            html.P("Blank draws no walls.", className="hint"),
+            *[_field(WALLS, "room", field, model[WALLS].get(field), units) for field in FIELDS[WALLS]],
+        ])
+    entry = model[kind][name]
+    head = [
+        html.H3([name, " ", ui.pill(NOUN[kind]), *([" ", ui.pill("not placed", "warn")] if not _is_placed(entry) else [])]),
+    ]
+    if kind != "people":
+        head.append(ui.field(
+            "Name" + (" (its folder in each recording)" if kind in USES else ""),
+            dcc.Input(id={"type": RENAME, "kind": kind, "name": name}, value=name, debounce=True),
+        ))
+    numbers = [_field(kind, name, field, entry.get(field), units) for field in FIELDS[kind]]
+    uses = []
+    if kind in USES:
+        rows = [
+            [
+                html.Span([html.Span(className="room-swatch", style={"background": model["colours"].get(role)}), role], className="room-who"),
+                *[
+                    dcc.Checklist(
+                        [{"label": "", "value": role}], [role] if role in (entry.get(use) or []) else [],
+                        id={"type": USE, "kind": kind, "name": name, "use": use, "role": role}, className="room-tick",
+                    )
+                    for use in USES[kind]
+                ],
+            ]
+            for role in model["roles"]
+        ]
+        uses = [
+            html.Div("Whom it records" if kind == "cameras" else "Whose voices it carries", className="room-group-title"),
+            ui.table(["", *[USE_LABELS[use] for use in USES[kind]]], rows),
+        ]
+    act = lambda what: {"type": ACT, "kind": kind, "name": name, "act": what}
+    buttons = [
+        ui.button("Take out of the room", act("unplace"), small=True) if _is_placed(entry) else ui.button("Put in the room", act("place"), small=True),
+        *([ui.button(f"Remove this {NOUN[kind]}", act("remove"), small=True)] if kind != "people" else []),
+    ]
+    return html.Div([*head, *uses, html.Div(numbers, className="room-numbers"), html.Div(buttons, className="buttons")])
+
+
+def note_list(model: dict | None):
+    if model is None:
+        return None
+    read = loose_setup(model)
+    if read is None:
+        return None
     try:
-        listed = notes(setup, room, units)
+        listed = notes(*read, model["units"])
     except Exception:   # notes are a help; a room that cannot be read for them still draws
         listed = []
-    return front, side, top, preview, shapes, [ui.note(text, "warn" if "outside" in text or "behind" in text else "info") for text in listed]
-
-
-def views(front, side, top, preview):
-    edit = {"displayModeBar": False, "edits": {"shapePosition": True}}
-    return html.Div(
-        [
-            dcc.Graph(id="room-front", figure=front, config=edit),
-            dcc.Graph(id="room-side", figure=side, config=edit),
-            dcc.Graph(id="room-top", figure=top, config=edit),
-            dcc.Graph(id="room-3d", figure=preview, config={"displaylogo": False}),
-        ],
-        className="room-views",
-    )
-
-
-def register(app, config_path: Path) -> None:
-    def setup_config(name: str):
-        """The project's settings with this setup's file read as the setup, so the notes speak of its devices."""
-        config = resolve_config(config_path)
-        path = Path(config.project.setups_dir) / f"{name}.yaml"
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
-        if isinstance(data, dict):
-            try:
-                config = MacawConfig.model_validate({**config.model_dump(), "setup": {**data, "name": name}})
-            except ValidationError:
-                pass
-        return config
-
-    @app.callback(
-        Output("room-panel", "children"), Output("room-message", "children", allow_duplicate=True),
-        Input("setup-pick", "value"), Input(ADD, "n_clicks"), Input({"type": REMOVE, "name": ALL}, "n_clicks"),
-        Input("setup-files", "children"),
-        State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "value"), State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "id"),
-        State("room-thing-name", "value"),
-        prevent_initial_call="initial_duplicate",
-    )
-    def listed(name, _add, _remove, _saved, values, ids, thing):
-        config = resolve_config(config_path)
-        trigger = ctx.triggered_id
-        if trigger == ADD and ctx.triggered[0]["value"]:
-            rows = rows_from(values, ids)
-            try:
-                rows = added(rows, thing, list(config.project.roles))
-            except MacawError as error:
-                return no_update, ui.note(str(error), "bad")
-            return panel(rows, config.project.units), None
-        if isinstance(trigger, dict) and trigger.get("type") == REMOVE:
-            if not ctx.triggered[0]["value"]:
-                return no_update, no_update
-            rows = rows_from(values, ids)
-            rows["things"].pop(trigger["name"], None)
-            return panel(rows, config.project.units), None
-        return panel(rows_of(config, name), config.project.units), None
-
-    @app.callback(
-        Output("room-front", "figure"), Output("room-side", "figure"), Output("room-top", "figure"), Output("room-3d", "figure"),
-        Output("room-notes", "children"), Output("room-shapes", "data"),
-        Input({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "value"),
-        State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "id"), State("setup-pick", "value"),
-    )
-    def draw(values, ids, name):
-        config = setup_config(name)
-        front, side, top, preview, shapes, said = drawn(config, rows_from(values, ids))
-        if front is None:
-            return no_update, no_update, no_update, no_update, said, no_update
-        return front, side, top, preview, said, shapes
-
-    @app.callback(
-        Output({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "value"),
-        Input("room-front", "relayoutData"), Input("room-side", "relayoutData"), Input("room-top", "relayoutData"),
-        State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "value"), State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "id"),
-        State("room-shapes", "data"),
-        prevent_initial_call=True,
-    )
-    def drag(front, side, top, values, ids, shapes):
-        view = {"room-front": "front", "room-side": "side", "room-top": "top"}.get(ctx.triggered_id)
-        change = {"front": front, "side": side, "top": top}.get(view) or {}
-        rows = dragged(rows_from(values, ids), shapes or {}, view, change, resolve_config(config_path).project.units)
-        if rows is None:
-            return [no_update] * len(ids)
-        return [rows[identity["kind"]][identity["name"]][identity["field"]] for identity in ids]
-
-    @app.callback(
-        Output("room-message", "children"),
-        Input("room-save", "n_clicks"), Input("room-draw", "n_clicks"),
-        State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "value"), State({"type": NUM, "kind": ALL, "name": ALL, "field": ALL}, "id"),
-        State("setup-pick", "value"),
-        prevent_initial_call=True,
-    )
-    def keep(_save, _draw, values, ids, name):
-        if ctx.triggered_id == "room-save":
-            try:
-                path = save_room(config_path, name, rows_from(values, ids))
-            except MacawError as error:
-                return ui.note(str(error), "bad")
-            return ui.note(f"Saved the room in {path.name}.", "ok")
-        return draw_figure(config_path, name)
+    return [ui.note(text, "warn" if "outside" in text or "behind" in text else "info") for text in listed]
 
 
 def draw_figure(config_path: Path, name: str):
@@ -587,3 +531,159 @@ def draw_figure(config_path: Path, name: str):
     path = Path(config.project.setups_dir) / f"{name}.png"
     link = [html.A(f"Open {path.name}", href=file_url(path), target="_blank")] if code == 0 and path.is_file() else []
     return [ui.command(argv), ui.output(code, text), *link]
+
+
+def changed_by(config_path: Path, model: dict, trigger, value, moved_by=None, add_kind=None, add_name=None):
+    """(model, selection, message) after one change in the editor; no_update where nothing changes."""
+    unchanged = lambda after: after if after != model else no_update
+    if trigger == "room-moved":
+        if not moved_by:
+            return no_update, no_update, no_update
+        if moved_by.get("op") == "unplace":
+            return unchanged(unplaced(model, moved_by["kind"], moved_by["name"])), no_update, None
+        return unchanged(moved(model, moved_by["kind"], moved_by["name"], moved_by.get("fields") or {})), no_update, None
+    if trigger == "room-add":
+        if not value:
+            return no_update, no_update, no_update
+        after, new = added(model, add_kind, add_name)
+        after = placed(after, add_kind, new)
+        said = None
+        if add_kind == "people":
+            add_role(config_path, new)
+            said = ui.note(f"{new} is now one of the project's people, in every recording; say which devices record them and save the setup.", "ok")
+        return after, {"kind": add_kind, "name": new}, said
+    kind, name = trigger.get("kind"), trigger.get("name")
+    if trigger["type"] == FIELD:
+        return unchanged(moved(model, kind, name, {trigger["field"]: value})), no_update, None
+    if trigger["type"] == USE:
+        return unchanged(used(model, kind, name, trigger["use"], trigger["role"], bool(value))), no_update, None
+    if trigger["type"] == RENAME:
+        if value is None or value == name:
+            return no_update, no_update, no_update
+        after, new = renamed(model, kind, name, value)
+        return after, {"kind": kind, "name": new}, None
+    # buttons drawn afresh report themselves without a click
+    if not value:
+        return no_update, no_update, no_update
+    if trigger["type"] == PICK:
+        return no_update, {"kind": kind, "name": name}, None
+    act = trigger["act"]
+    if act == "place":
+        return placed(model, kind, name), no_update, None
+    if act == "unplace":
+        return unplaced(model, kind, name), no_update, None
+    return removed(model, kind, name), None, None
+
+
+def register(app, config_path: Path) -> None:
+    @app.callback(
+        Output("room-model", "data"), Output("room-saved", "data"), Output("room-selected", "data", allow_duplicate=True),
+        Input("setup-pick", "value"),
+        prevent_initial_call="initial_duplicate",
+    )
+    def load(name):
+        model = model_of(resolve_config(config_path), name)
+        return model, comparable(model), None
+
+    @app.callback(
+        Output("room-model", "data", allow_duplicate=True), Output("room-selected", "data", allow_duplicate=True),
+        Output("room-message", "children", allow_duplicate=True),
+        Input("room-moved", "data"),
+        Input({"type": FIELD, "kind": ALL, "name": ALL, "field": ALL}, "value"),
+        Input({"type": USE, "kind": ALL, "name": ALL, "use": ALL, "role": ALL}, "value"),
+        Input({"type": RENAME, "kind": ALL, "name": ALL}, "value"),
+        Input({"type": PICK, "kind": ALL, "name": ALL}, "n_clicks"),
+        Input({"type": ACT, "kind": ALL, "name": ALL, "act": ALL}, "n_clicks"),
+        Input("room-add", "n_clicks"),
+        State("room-model", "data"), State("room-add-kind", "value"), State("room-add-name", "value"),
+        prevent_initial_call=True,
+    )
+    def edit(moved_by, _values, _uses, _names, _picks, _acts, _add, model, add_kind, add_name):
+        if model is None or ctx.triggered_id is None:
+            return no_update, no_update, no_update
+        try:
+            return changed_by(config_path, model, ctx.triggered_id, ctx.triggered[0]["value"], moved_by, add_kind, add_name)
+        except MacawError as error:
+            return no_update, no_update, ui.note(str(error), "bad")
+
+    @app.callback(
+        Output("room-list", "children"), Output("room-panel", "children"), Output("room-notes", "children"), Output("room-dirty", "children"),
+        Output("room-view-camera", "options"),
+        Input("room-model", "data"), Input("room-selected", "data"), Input("room-saved", "data"),
+    )
+    def render(model, selected, saved):
+        dirty = ui.pill("unsaved changes", "warn") if model is not None and comparable(model) != saved else None
+        cameras = list(model["cameras"]) if model else []
+        return item_list(model, selected), panel(model, selected), note_list(model), dirty, cameras
+
+    @app.callback(
+        Output("room-message", "children", allow_duplicate=True), Output("room-saved", "data", allow_duplicate=True),
+        Output("setup-files", "children", allow_duplicate=True),
+        Input("room-save", "n_clicks"), State("room-model", "data"), State("setup-pick", "value"),
+        prevent_initial_call=True,
+    )
+    def keep(clicks, model, name):
+        from macaw.interface.pages.setup import holdings
+
+        if not clicks or model is None:
+            return no_update, no_update, no_update
+        try:
+            path = save(config_path, name, model)
+        except MacawError as error:
+            return ui.note(str(error), "bad"), no_update, no_update
+        return ui.note(f"Saved {path.parent.name}/{path.name}.", "ok"), comparable(model), holdings(config_path)
+
+    @app.callback(
+        Output("room-message", "children", allow_duplicate=True),
+        Input("room-draw", "n_clicks"), State("room-model", "data"), State("room-saved", "data"), State("setup-pick", "value"),
+        prevent_initial_call=True,
+    )
+    def draw(clicks, model, saved, name):
+        if not clicks:
+            return no_update
+        if comparable(model) != saved:
+            return ui.note("The drawing is made from the saved setup: save it first.", "warn")
+        return draw_figure(config_path, name)
+
+    @app.callback(
+        Output("room-view-camera-tools", "style"), Output("room-view-camera", "value"), Output("room-view-recording", "options"),
+        Output("room-view-recording", "value"),
+        Input("room-view-mode", "value"), State("room-view-camera", "value"), State("room-view-camera", "options"), State("room-view-recording", "value"),
+    )
+    def view_tools(mode, camera, cameras, rid):
+        from macaw.execution.runner import resolve_recordings
+
+        if mode != "camera":
+            return {"display": "none"}, no_update, no_update, no_update
+        rids = resolve_recordings(resolve_config(config_path), None)
+        names = [item if isinstance(item, str) else item.get("value") for item in (cameras or [])]
+        return {}, camera if camera in names else (names[0] if names else None), rids, rid if rid in rids else (rids[0] if rids else None)
+
+    @app.callback(
+        Output("room-frame", "data"), Output("room-view-note", "children"), Output("room-selected", "data", allow_duplicate=True),
+        Input("room-view-mode", "value"), Input("room-view-camera", "value"), Input("room-view-recording", "value"), Input("room-view-at", "value"),
+        prevent_initial_call=True,
+    )
+    def frame(mode, camera, rid, at):
+        from macaw.interface.pages.naming import frame_of
+
+        if mode != "camera" or not camera:
+            return None, None, no_update
+        chosen = {"kind": "cameras", "name": camera}
+        if not rid:
+            return {"camera": camera}, "No recording to take a frame from.", chosen
+        shown, problem = frame_of(config_path, rid, camera, float(at or 0.0))
+        if problem:
+            return {"camera": camera}, problem, chosen
+        return shown, "Drag to aim, scroll for the lens angle, until the drawing lies on the picture.", chosen
+
+    app.clientside_callback(
+        """function (model, selected, frame, mode, style) {
+            const state = {model: model, selected: selected, frame: frame, mode: mode, style: style};
+            if (window.macawRoom) { window.macawRoom.update(state); } else { window.macawRoomPending = state; }
+            return window.dash_clientside.no_update;
+        }""",
+        Output("room-sync", "data"),
+        Input("room-model", "data"), Input("room-selected", "data"), Input("room-frame", "data"), Input("room-view-mode", "value"),
+        Input("room-flat-style", "value"),
+    )
