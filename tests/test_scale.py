@@ -243,9 +243,8 @@ class TestCommand:
         assert result.exit_code != 0 and reason in said(result)
 
 
-def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
-    config = resolve_config(project)
-    layout = layout_for(config)
+def _pixel_measures(project):
+    layout = layout_for(resolve_config(project))
     directory = layout.long_table_path("003")
     directory.mkdir(parents=True)
     concat_long_tables([
@@ -259,6 +258,9 @@ def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
     write_manifest(manifest, layout.manifest_path)
     settings(project, "scale:\n  per_px_by_role: {parent: 0.2, child: 0.3}\n")
 
+
+def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
+    _pixel_measures(project)
     out = tmp_path / "exports" / "features.csv"
     result = runner.invoke(app, ["export", "-c", str(project), "--long", "--out", str(out)])
     assert result.exit_code == 0, said(result)
@@ -270,6 +272,20 @@ def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
     used = pd.read_csv(out.parent / "scale.csv")
     assert dict(zip(used.person, used.cm_per_px)) == {"parent": 0.2, "child": 0.3}
     assert set(used.source) == {HAND} and used.holds.str.contains("as far from the camera").all()
+
+
+def test_a_parquet_export_holds_the_same_table_as_the_csv(project, tmp_path):
+    _pixel_measures(project)
+    tables = {}
+    for format_ in ("csv", "parquet"):
+        out = tmp_path / f"features.{format_}"
+        result = runner.invoke(app, ["export", "-c", str(project), "-f", format_, "--out", str(out)])
+        assert result.exit_code == 0, said(result)
+        tables[format_] = pd.read_csv(out) if format_ == "csv" else pd.read_parquet(out)
+    from_csv, from_parquet = tables["csv"], tables["parquet"]
+    assert list(from_parquet.columns) == list(from_csv.columns) and len(from_parquet) == len(from_csv)
+    for column in ("hand_distance", "hand_distance_cm", "f0_hz"):
+        assert from_parquet[column].tolist() == pytest.approx(from_csv[column].tolist(), nan_ok=True)
 
 
 def moving_parent(fps=5.0):

@@ -25,7 +25,7 @@ from macaw.store.sequence import (
     speaking_intervals,
     to_state_sequence,
 )
-from macaw.store.wide import export_csv, export_rmd_template, to_wide, with_segment
+from macaw.store.wide import export_csv, to_wide, with_segment
 
 app = typer.Typer()
 logger = get_logger("export")
@@ -48,7 +48,6 @@ def export(
         "or annotations.",
     ),
     out: Path = typer.Option(None, "--out"),
-    rmd: bool = typer.Option(False, "--rmd", help="Also write an .Rmd starter script."),
 ) -> None:
     """Export features for downstream analysis, annotations as .eaf, a nominal state sequence, or each person's body points."""
     if format_ not in FORMATS:
@@ -101,8 +100,6 @@ def export(
 
     logger.info("%d rows from %d recordings", len(table), len(frames))
     typer.echo(str(out))
-    if rmd:
-        typer.echo(str(export_rmd_template(out.parent, out.name, layout.manifest_path.name)))
 
 
 def _whole_and_segments(config, recording_id: str, rows: pd.DataFrame, scale: str | None) -> pd.DataFrame:

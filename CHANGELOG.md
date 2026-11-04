@@ -56,6 +56,9 @@
 - The Methods text says for how many recordings a transcript corrected by hand replaced the recognised one.
 - Joint attention to a named object with who led and how long the other took to follow, each turn's voice measures set beside the previous speaker's at a change of speaker, lexical overlap with the previous turn, time a measure spends below a value the study sets, body orientation toward the other person in 3D, and guide examples for rMEA, SUSY and response rates within a window.
 
+### Removed
+- `macaw export --rmd` and the R Markdown starter it wrote beside the export.
+
 ## [0.1.0-alpha] – 2026-08-13
 
 ### Added

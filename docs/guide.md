@@ -295,7 +295,10 @@ When a result looks wrong, adjust the relevant setting and run again. Only the s
 Run one of the following commands in the project folder. Each reports where it saved its files.
 
 `macaw export`
-: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. Measures in metres, and measures in pixels for recordings with a pixel scale, are also given in the project's unit of length ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`).
+: One table (CSV) containing every measure for every participant over time. Measures in metres, and measures in pixels for recordings with a pixel scale, are also given in the project's unit of length ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`).
+
+`macaw export -f parquet`
+: The same table as a Parquet file, which is smaller and faster to read than a CSV when measures are exported frame by frame; R reads it with the arrow package.
 
 `macaw export -f sequence`
 : For each participant, whether they are speaking at each second, for sequence analysis.
