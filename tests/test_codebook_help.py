@@ -171,6 +171,7 @@ class TestRefine:
         assert "question: revised, 2 unit(s) in doubt" in result.output and "greet: unchanged" in result.output
         assert read_codebook(out).get("question").description == "New question."
         assert (project.parent / "acts_refined.changes.md").is_file() and "coding.judges: {refined:" in result.output
+        assert "Judge it on other recordings" in result.output and "in r1. Judge it" in (project.parent / "acts_refined.changes.md").read_text(encoding="utf-8")
 
 
 def described(system, user):

@@ -26,6 +26,7 @@ EVIDENCE = ["recording_id", "subject_id", "t_start", "t_end", "speaker", "words"
 # per kind of unit shown for one code, so a prompt stays short enough for a small local model
 PER_KIND = 12
 NEW_EXAMPLES = 3
+FLATTERS = "Judge it on other recordings: agreement on the units it was made from flatters it."
 _LISTS = ("criteria", "boundary_cases")
 
 
@@ -283,7 +284,8 @@ def changes_text(source: Path, evidence: Evidence, revisions: list[Revision], mo
     against = f"the codes of {evidence.coder}" if evidence.coder else "the model's own answers (no person coded this tier)"
     lines = [
         f"# Changes to {source.name}", "",
-        f"Proposed by {model} from {against}, against the codes of {', '.join(evidence.models)}. "
+        f"Proposed by {model} from {against}, against the codes of {', '.join(evidence.models)}, in "
+        f"{', '.join(sorted(evidence.units['recording_id'].unique()))}. {FLATTERS} "
         "The examples are participants' own words from the transcripts; check them before sharing the codebook.", "",
     ]
     for revision in revisions:

@@ -40,7 +40,7 @@ def refine(
 ) -> None:
     """Propose clearer definitions, criteria, boundary cases and examples for the codebook in use, from the units where a
     person's codes and the model's differ, or, where nobody coded, the units the model was split on."""
-    from macaw.coding.llm.refine import changes_path, changes_text, gather_evidence, refine_codebook
+    from macaw.coding.llm.refine import FLATTERS, changes_path, changes_text, gather_evidence, refine_codebook
 
     resolved = resolve_config(config)
     if resolved.coding.codebook is None:
@@ -63,6 +63,7 @@ def refine(
         typer.echo(f"{revision.code}: {'revised' if revision.changed else 'unchanged'}, {shown} unit(s) in doubt")
     typer.echo(f"\n{out}\n{changes}\n{OWN_WORDS}")
     typer.echo(f"To code with it beside the codebook in use, add it as a version: coding.judges: {{refined: {{codebook: {out.as_posix()}}}}}")
+    typer.echo(FLATTERS)
 
 
 @app.command("draft")
