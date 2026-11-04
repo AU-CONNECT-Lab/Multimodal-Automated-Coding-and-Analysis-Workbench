@@ -38,20 +38,25 @@ Once MACAW is installed, the *This computer* panel on its settings page reports 
 
 {bdg-warning}`You do this`
 
-Create one folder per recording. Each file name ends with the role of the participant it belongs to, using the study's role names (`parent` and `child` unless changed in the settings). A file whose name ends in anything else, such as `room`, is treated as shared by all participants of that recording.
+Create one folder per recording. Inside it, create one folder per recording device (each camera and each microphone or sound recorder) and place that device's file in it. The device folders carry the same names in every recording; the names are chosen freely and are described once in {ref}`step 3 <setup>`. The names of the files themselves play no part, so files as a camera writes them, such as `00001.MTS`, need not be renamed.
 
 ```text
 recordings/
   dyad01/
-    dyad01_parent.wav     microphone of the parent
-    dyad01_child.wav      microphone of the child
-    dyad01_room.mp4       camera filming both
+    front/
+      00001.MTS           camera facing the child
+    side/
+      00001.MTS           camera filming both participants
+    parent_mic/
+      take1.wav           microphone worn by the parent
   dyad02/
     ...
 ```
 
+Each device folder holds exactly one file. A recording in which a device folder holds two files is not processed until one of them is removed; a recording that lacks a device, or holds a folder or file outside the device folders, is processed with a note in the quality-control report.
+
 Single camera
-: The sound is taken from the video and the voices are separated automatically. Set *Microphones* to `pyannote` (one shared microphone) in the settings. Each voice is then assigned to a participant in step 5.
+: The sound is taken from the camera and the voices are separated automatically. In the setup, the camera is said to carry the voices of all participants, and *Microphones* is set to `pyannote` (one shared microphone) in the settings. Each voice is then assigned to a participant in step 6.
 
 Several sessions per participant
 : Use one folder per family or participant with one subfolder per session, for example `sub-01/ses-1`, and describe this layout once under *Recording folder pattern* in the settings, here `sub-{group_id}/ses-{session_id}`.
@@ -73,10 +78,13 @@ macaw gui
 
 The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window.
 
-The workbench has six pages, a seventh for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
+The workbench has seven pages, an eighth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
 Overview
-: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
+: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
+
+Setup
+: The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, and whose voices each device carries ({ref}`step 3 <setup>`).
 
 Run
 : Selecting recordings and steps, starting a run and following its progress.
@@ -101,7 +109,32 @@ Settings (gear icon)
 
 Processing steps appear under short names, for example `text.asr` for transcription and `pose.kinematics` for movement measures.
 
-## 3. Configure the project
+(setup)=
+## 3. Describe the setup
+
+{bdg-warning}`You do this`
+
+Before anything can run, the recording devices are described on the Setup page. Nothing is inferred from the names of folders or files: the description entered here is the only record of which file belongs to whom.
+
+People
+: The roles of the participants, as set under *Project* in the settings.
+
+Cameras
+: One row per camera: the name of its folder, and for each participant whether the camera is used for their body (pose and movement), their face (facial action units, head orientation, blinks) and their gaze. A camera that films a single participant is that participant's own camera. *Voices* states whose voices the camera's own microphone carries; a camera whose sound is not to be used, for example because every participant wears a microphone, carries none.
+
+Microphones
+: One row per microphone or sound recorder: the name of its folder and whose voices it carries. A device that carries one participant's voice alone serves as that participant's own microphone; the voices on a device that carries several participants are separated automatically and assigned to participants by the researcher (step 6).
+
+**Save the setup** checks the description and writes it to the file `setups/main.yaml` in the project folder. The table *What each recording holds* then lists, for every recording, the file found in each device folder, together with any device that is missing and any folder or file that was not read. This table should be checked before the first run.
+
+When the devices differed between sessions, for example after a change of camera, a second setup is started under *New setup*, and each recording made with it names it in its own settings file in the `recordings` folder of the project (here for `dyad07`, in `recordings/dyad07.yaml`):
+
+```yaml
+setup:
+  name: home_visits
+```
+
+## 4. Configure the project
 
 {bdg-warning}`You do this`
 
@@ -120,7 +153,7 @@ Tools
 : The program used for each kind of measurement, the spoken language, and whether each participant has a microphone or the participants share one. **Body pose has no default**: select MediaPipe or YOLO explicitly (see {ref}`privacy`).
 
 Checks by a person
-: For each check described in {ref}`step 5 <review>`, whether MACAW always waits for the researcher, waits only when uncertain, or never waits.
+: For each check described in {ref}`step 6 <review>`, whether MACAW always waits for the researcher, waits only when uncertain, or never waits.
 
 Coding
 : The codebook and the language model, needed only for {ref}`language-model coding <coding>`.
@@ -144,7 +177,7 @@ coding:
 ```
 :::
 
-## 4. Run the analysis
+## 5. Run the analysis
 
 {bdg-primary}`MACAW does this`
 
@@ -157,23 +190,17 @@ The status of each step is shown as follows:
 | {bdg-success}`up to date` | Completed with the current settings. It is not run again. |
 | {bdg-info}`not run yet` | Runs the next time **Run** is pressed. |
 | {bdg-warning}`to run again` | A setting or an input file it depends on has changed since it ran. |
-| {bdg-warning}`waiting for a person` | Paused at a check. See {ref}`step 5 <review>`. |
+| {bdg-warning}`waiting for a person` | Paused at a check. See {ref}`step 6 <review>`. |
 | {bdg-danger}`failed last time` | The output at the bottom of the page gives the reason. |
 
 The window may be closed at any time. The next run resumes where the previous one stopped and does not repeat completed work.
 
 (review)=
-## 5. Review automatic decisions
+## 6. Review automatic decisions
 
 {bdg-warning}`You do this`
 
 Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items.
-
-### Which file is whose
-
-{bdg-secondary-line}`once per project`
-
-MACAW assigns each file to a participant on the basis of its name. Check the assignment and press **Confirm for the whole project**.
 
 ### Offsets between files
 
@@ -213,7 +240,7 @@ Once an item is resolved, press **Run** again; the recording continues from wher
 How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*What a model saw on the review frames*, *Pixels to centimetres*, *Where people look*, *Your coding*) belong to optional features.
 
 (results)=
-## 6. Inspect the results
+## 7. Inspect the results
 
 {bdg-primary}`MACAW does this` {bdg-warning}`You do this`
 
@@ -229,7 +256,7 @@ Measures
 When a result looks wrong, adjust the relevant setting and run again. Only the steps that depend on that setting are recomputed.
 :::
 
-## 7. Export the data
+## 8. Export the data
 
 {bdg-success}`What you get`
 

@@ -14,7 +14,8 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
-from macaw.interface.pages import results, review, run
+from macaw.interface.pages import results, review, run, setup
+from macaw.project.setup import setup_path
 
 LABEL = "Overview"
 PATH = "/overview"
@@ -34,6 +35,7 @@ class Standing:
     units_waiting: int = 0
     task_s: float = 0.0
     n_prepared: int = 0
+    setup_saved: bool = True
 
 
 def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
@@ -72,7 +74,7 @@ def standing(config_path: Path) -> Standing:
         except MacawError:
             continue
         prepared += 1
-    return Standing(recordings, steps, grid, gates, units, task_s, prepared)
+    return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file())
 
 
 def _duration(seconds: float) -> str:
@@ -117,6 +119,8 @@ def _item(kind: str, text: str, detail: str | None, href: str, where: str):
 def next_up(found: Standing) -> list:
     """What failed, what waits for a person, then what is left to run, each linked to the page that deals with it."""
     items = []
+    if not found.setup_saved:
+        items.append(_item("bad", "Describe the setup", "the cameras and microphones; nothing runs before it is saved", setup.PATH, setup.LABEL))
     for step in found.steps:
         failed = [rid for rid in found.recordings if found.grid[rid, step] == "failed"]
         if failed:

@@ -414,7 +414,7 @@ pose3d:
 
 ### 2. Film the board before the session
 
-With the cameras in their final positions, clap once in view of all cameras, then move the board slowly through the space where the participants will sit, tilting it toward and away from the cameras, for about a minute. Keep it in view of at least two cameras at a time and close enough to fill a good part of the picture. Place one clip per camera in a folder such as `calibration/lab`, each named like that camera in the recordings: `room.mp4` for the camera whose recordings are named `dyad03_room.mp4`.
+With the cameras in their final positions, clap once in view of all cameras, then move the board slowly through the space where the participants will sit, tilting it toward and away from the cameras, for about a minute. Keep it in view of at least two cameras at a time and close enough to fill a good part of the picture. Place each camera's clip in a folder named like that camera's device folder in the recordings, inside a folder for the setup such as `calibration/lab`: the clip of the camera whose recordings sit in `front` goes in `calibration/lab/front`.
 
 ### 3. Find the cameras
 
@@ -429,14 +429,14 @@ A lab that has calibrated its cameras with Anipose can place its `calibration.to
 
 ### 4. Run and inspect
 
-Run as usual. Each participant must carry the same name on every camera (see *Who is on camera* in {ref}`step 5 <review>`). The results gain measures in metres, with `_3d` appended to their names: wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
+Run as usual. Each participant must carry the same name on every camera (see *Who is on camera* in {ref}`step 6 <review>`). The results gain measures in metres, with `_3d` appended to their names: wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
 
 On the Results page, *In 3D* shows every participant's skeleton and the cameras; drag to rotate the view and move the slider to step through the recording. The quality-control report states, for each participant, how often they were placed in three dimensions and how well the cameras agree on them, and warns when a bone keeps changing length, which indicates misplaced keypoints.
 
 (model-look)=
 ## A model checks the review frames
 
-The frames drawn for review ({ref}`step 6 <results>`) can also be shown to a model that reads pictures, which reports where the people drawn on a frame disagree with what it sees. A person then checks the model, both on the frames it flagged and on a few frames it passed, drawn at random.
+The frames drawn for review ({ref}`step 7 <results>`) can also be shown to a model that reads pictures, which reports where the people drawn on a frame disagree with what it sees. A person then checks the model, both on the frames it flagged and on a few frames it passed, drawn at random.
 
 ### Setting up
 

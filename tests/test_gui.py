@@ -267,8 +267,8 @@ def test_every_step_is_listed_with_how_a_run_would_find_it(project):
 
 
 def test_pages_open_by_their_address():
-    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/agreement", "/", "/nowhere")] == [
-        "review", "settings", "cameras", "run", "agreement", "overview", "overview",
+    assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/agreement", "/setup", "/", "/nowhere")] == [
+        "review", "settings", "cameras", "run", "agreement", "setup", "overview", "overview",
     ]
 
 
@@ -603,3 +603,82 @@ def test_a_segment_is_set_only_on_a_recording_the_project_has(project):
         set_segment_command(config=project, recording="004", name="a", start=1.0, end=2.0, clear=False)
     with pytest.raises(MacawError, match="give --start and --end"):
         set_segment_command(config=project, recording="003", name="a", start=1.0, end=None, clear=False)
+
+
+def test_the_setup_page_shows_the_saved_devices_and_what_each_recording_holds(project):
+    from macaw.interface.pages import setup
+
+    config = resolve_config(project)
+    rows = setup.rows_of(config, "main")
+    assert [row["name"] for row in rows["cameras"]] == ["room"] and rows["cameras"][0]["face"] == ["parent", "child"]
+    assert [row["name"] for row in rows["microphones"]] == ["parent_mic", "child_mic"]
+    shown = text_of(setup.form(config, "main", rows))
+    assert "Saved as setups/main.yaml" in shown and "Add a camera" in shown and "Voices" in shown
+    assert "not saved yet" in text_of(setup.form(config, "home", setup.rows_of(config, "home")))
+    (project.parent / "raw" / "003" / "stray.wav").write_bytes(b"")
+    held = text_of(setup.holdings(project))
+    assert "room: a.mp4" in held and "parent_mic: a.wav" in held and "stray.wav lies outside the device folders" in held
+
+
+def test_the_setup_page_saves_what_the_form_says_or_says_why_not(project):
+    from macaw.interface.pages import setup
+
+    rows = {"cameras": [{"name": "front", "body": ["child"], "face": ["child"], "gaze": [], "hears": []}],
+            "microphones": [{"name": "room_mic", "hears": ["parent", "child"]}]}
+    path = setup.save(project, "home", rows)
+    assert path == project.parent / "setups" / "home.yaml"
+    assert setup.rows_of(resolve_config(project), "home") == rows
+    for broken, reason in (
+        ({**rows, "cameras": [{**rows["cameras"][0], "name": ""}]}, "needs the name of its folder"),
+        ({**rows, "microphones": [{"name": "front", "hears": ["parent"]}]}, "two devices are called front"),
+        ({**rows, "microphones": [{"name": "mic", "hears": ["teacher"]}]}, "names teacher"),
+    ):
+        with pytest.raises(MacawError, match=reason):
+            setup.save(project, "home", broken)
+    with pytest.raises(MacawError, match="letters, digits"):
+        setup.save(project, "home visits", rows)
+    named = setup.rows_from(["front"], [{"kind": "cameras", "index": 0}], [["child"], []], [
+        {"kind": "cameras", "index": 0, "use": "body"}, {"kind": "cameras", "index": 0, "use": "hears"}])
+    assert named == {"cameras": [{"name": "front", "body": ["child"], "face": [], "gaze": [], "hears": []}], "microphones": []}
+
+
+def test_the_overview_asks_for_the_setup_first_until_it_is_saved(project):
+    assert "Describe the setup" not in text_of(overview.next_up(overview.standing(project)))
+    (project.parent / "setups" / "main.yaml").unlink()
+    first = text_of(overview.next_up(overview.standing(project))[0])
+    assert "Describe the setup" in first and '"/setup"' in first
+    assert "not saved yet" in text_of(run.layout(project))
+
+
+def test_the_setup_pages_buttons_add_remove_and_save_rows(project, monkeypatch):
+    from macaw.interface.pages import setup
+
+    app = create_app(project)
+    edit = callback(app, "setup-form.children")
+    keep = callback(app, next(key for key in app.callback_map if "setup-files.children" in key))
+
+    def pressed(identity, value=1):
+        monkeypatch.setattr(setup, "ctx", SimpleNamespace(triggered_id=identity, triggered=[{"value": value}]))
+
+    names, name_ids = ["room", "parent_mic"], [{"type": setup.NAME, "kind": "cameras", "index": 0}, {"type": setup.NAME, "kind": "microphones", "index": 0}]
+    uses = [["parent", "child"], ["child"], [], [], ["parent"]]
+    use_ids = [{"type": setup.USE, "kind": "cameras", "index": 0, "use": use} for use in ("body", "face", "gaze", "hears")]
+    use_ids.append({"type": setup.USE, "kind": "microphones", "index": 0, "use": "hears"})
+    state = (names, name_ids, uses, use_ids)
+
+    pressed("setup-pick")
+    assert text_of(edit("main", [None, None], [None], *state)).count("folder name") == 3
+    pressed({"type": setup.ADD, "kind": "cameras"})
+    assert text_of(edit("main", [1, None], [None], *state)).count("folder name") == 3
+    pressed({"type": setup.REMOVE, "kind": "microphones", "index": 0})
+    removed = text_of(edit("main", [None, None], [None, 1], *state))
+    assert "No microphone yet" in removed and '"value": "room"' in removed
+    pressed({"type": setup.REMOVE, "kind": "cameras", "index": 0}, value=None)
+    assert edit("main", [None, None], [None, None], *state) is no_update
+
+    message, files, _ = keep(1, "main", *state)
+    assert "Saved main.yaml" in text_of(message)
+    assert setup.rows_of(resolve_config(project), "main")["microphones"] == [{"name": "parent_mic", "hears": ["parent"]}]
+    assert "room: a.mp4" in text_of(files)
+    refused, _, _ = keep(1, "main", ["room", "room"], name_ids, uses, use_ids)
+    assert "two devices are called room" in text_of(refused)

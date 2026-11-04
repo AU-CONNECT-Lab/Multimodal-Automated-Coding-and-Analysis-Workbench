@@ -86,6 +86,14 @@ def _step_label(name: str, counts: Counter, needs: list[str], n_recordings: int)
     )
 
 
+def _unsaved_setup(config_path: Path) -> list:
+    from macaw.project.setup import setup_path
+
+    if setup_path(resolve_config(config_path)).is_file():
+        return []
+    return [ui.note(dcc.Link("The setup is not saved yet, so nothing can run: describe the cameras and microphones on the Setup page.", href="/setup"), "warn")]
+
+
 def layout(config_path: Path):
     return html.Div(
         [
@@ -98,6 +106,7 @@ def layout(config_path: Path):
                     ui.button("Run", "run-start", icon_name="play", primary=True),
                 ],
             ),
+            *_unsaved_setup(config_path),
             html.Div(id="run-message"),
             ui.card("Recordings", dcc.Checklist([], None, id="run-recordings", className="chips", inline=True), desc="Which recordings to run."),
             ui.card(

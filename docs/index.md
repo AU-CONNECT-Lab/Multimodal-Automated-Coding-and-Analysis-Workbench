@@ -66,7 +66,7 @@ Not yet available: three-dimensional pose from a single camera.
 :::{grid-item-card} Using MACAW
 :link: guide
 :link-type: doc
-Requirements, installation, and the seven steps from the recordings to the finished table.
+Requirements, installation, and the eight steps from the recordings to the finished table.
 :::
 
 :::{grid-item-card} Optional features
