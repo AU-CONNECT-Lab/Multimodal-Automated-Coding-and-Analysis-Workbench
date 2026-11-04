@@ -270,7 +270,7 @@ def test_every_step_is_listed_with_how_a_run_would_find_it(project):
 
 def test_pages_open_by_their_address():
     assert [page_for(path) for path in ("/review", "/settings", "/cameras", "/run", "/agreement", "/setup", "/", "/nowhere")] == [
-        "review", "settings", "cameras", "run", "agreement", "setup", "overview", "overview",
+        "review", "settings", "overview", "run", "agreement", "setup", "overview", "overview",
     ]
 
 
@@ -367,20 +367,18 @@ def props_of(component, identity):
     return found[0]
 
 
-def nav_style(project, name):
-    return props_of(build_layout(project.resolve()), f"nav-{name}").get("style")
-
-
 def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
     """A file dropped on Import your coding does not move the focus, so a name waiting for it would be lost."""
     assert not props_of(review.layout(project), "review-by").get("debounce")
 
 
-def test_the_cameras_tab_shows_only_where_two_cameras_film(project):
-    assert nav_style(project, "cameras") == {"display": "none"}
+def test_the_setup_page_shows_cameras_for_3d_only_where_two_cameras_film(project):
+    from macaw.interface.pages import setup
+
+    assert "Cameras for three dimensions" not in text_of(setup.layout(project))
     put(project.parent / "raw", "003", "side", "a.mp4")
     write_devices(project, cameras={"room": setup_camera(), "side": setup_camera(uses=("body",))}, microphones=mics())
-    assert nav_style(project, "cameras") is None
+    assert "Cameras for three dimensions" in text_of(setup.layout(project))
 
 
 def calibrated(project, notes=(), together=40):
@@ -407,7 +405,7 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
     from macaw.interface.pages import cameras
 
     config = resolve_config(project)
-    assert cameras.setups(config) == [] and "No setup yet" in text_of(cameras.setup_view(project, None))
+    assert cameras.setups(config) == [] and "No calibration yet" in text_of(cameras.setup_view(project, None))
     for name in ("room", "side"):
         (config.project.calibration_dir / "lab" / name).mkdir(parents=True)
         (config.project.calibration_dir / "lab" / name / "clip.mp4").write_bytes(b"")

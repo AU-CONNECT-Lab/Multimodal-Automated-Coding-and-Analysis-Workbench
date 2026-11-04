@@ -1,5 +1,6 @@
-"""Cameras for 3D: print the board, find the cameras of each setup from its board clips, see how well they fit and
-where they stand, and choose the setup the project uses. Every button runs the macaw command shown with it."""
+"""The Setup page's section on cameras for 3D: print the board, find the cameras of each calibration from its board
+clips, see how well they fit and where they stand, and choose the calibration the project uses. Every button runs the
+macaw command shown with it."""
 
 from __future__ import annotations
 
@@ -20,8 +21,7 @@ from macaw.interface.pages.results import _shown, in_first_camera
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording, camera_clips
 
-LABEL = "Cameras"
-PATH = "/cameras"
+PATH = "/setup"
 PAPERS = ("A4", "A3", "A2", "A1")
 # one calibration at a time per project, like a run
 _CURRENT: dict[str, cli_bridge.LaunchedCommand] = {}
@@ -33,7 +33,7 @@ _SIGHT_M = 0.3
 
 
 def wanted(config) -> bool:
-    """Shown for projects that can use it: a setup named or present already, or a recording filmed by two cameras."""
+    """Whether a project can use it: a calibration named or present already, or a recording filmed by two cameras."""
     if config.pose3d.calibration or setups(config):
         return True
     for rid in resolve_recordings(config, None):
@@ -60,13 +60,16 @@ def _clips(folder: Path) -> dict[str, Path]:
         return {}
 
 
-def layout(config_path: Path):
+def section(config_path: Path):
+    """Shown for projects that can use it: a calibration named or present already, or a recording filmed by two cameras."""
     config = resolve_config(config_path)
+    if not wanted(config):
+        return None
     names = setups(config)
     chosen = config.pose3d.calibration if config.pose3d.calibration in names else (names[0] if names else None)
     return html.Div(
         [
-            ui.page_head("Cameras", "Two or more cameras that film the same people, calibrated with a printed board, for measures in 3D."),
+            html.H2("Cameras for three dimensions", className="section-title"),
             html.Div(id="cameras-message"),
             ui.card(
                 "Board",
@@ -80,19 +83,20 @@ def layout(config_path: Path):
                 ),
                 html.Div(id="cameras-board-result"),
                 desc=(
+                    "Two or more cameras that film the same people are calibrated with a printed board, for measures in 3D. "
                     "Draw the board, print it at 100%, glue it flat on something stiff and measure one square with a ruler. "
                     "Its length sets the scale of everything in 3D."
                 ),
                 actions=[ui.button("Save the square", "cameras-save-square"), ui.button("Draw the board", "cameras-draw", icon_name="download")],
             ),
-            html.Div(ui.field("Setup", dcc.Dropdown(names, chosen, id="cameras-setup", clearable=False, className="picker")), className="toolbar"),
+            html.Div(ui.field("Calibration", dcc.Dropdown(names, chosen, id="cameras-setup", clearable=False, className="picker")), className="toolbar"),
             ui.card(
-                "Setup",
+                "Calibration",
                 dcc.Loading(html.Div(id="cameras-view")),
                 desc=(
                     "A folder in the calibration folder holding a folder per camera, named as in the recordings, with its "
-                    "board clip, or a calibration file from another tool. Recordings filmed with another setup name it in "
-                    "their own file, recordings/<id>.yaml."
+                    "board clip, or a calibration file from another tool. Recordings filmed with another calibration name it "
+                    "in their own file, recordings/<id>.yaml."
                 ),
                 actions=[ui.button("Find the cameras", "cameras-find", icon_name="play"), ui.button("Use for this project", "cameras-use", primary=True)],
             ),
@@ -138,7 +142,7 @@ def setup_view(config_path: Path, name: str | None):
     config = resolve_config(config_path)
     if name is None:
         return ui.note(
-            f"No setup yet. Make a folder in {config.project.calibration_dir} with a folder per camera holding its board clip, filmed before "
+            f"No calibration yet. Make a folder in {config.project.calibration_dir} with a folder per camera holding its board clip, filmed before "
             "the session with the cameras where they stay, then press Refresh."
         )
     source = Path(config.project.calibration_dir) / name
@@ -152,7 +156,7 @@ def setup_view(config_path: Path, name: str | None):
         ]
     path = calibration_file(config, name)
     if not path.is_file():
-        return [*parts, ui.note("The cameras of this setup are not found yet: press Find the cameras.")]
+        return [*parts, ui.note("The cameras of this calibration are not found yet: press Find the cameras.")]
     try:
         setup = read_setup(path, config.pose3d.units)
     except ConfigError as error:
@@ -291,7 +295,7 @@ def register(app, config_path: Path) -> None:
             project_file.save(config_path, text)
             return ui.note(f"Saved pose3d.board.square_mm: {float(square):g} in project.yaml. Setups found before need finding again.", "ok"), board_view(config_path)
         if name is None:
-            return ui.note("Choose a setup first.", "warn"), no_update
+            return ui.note("Choose a calibration first.", "warn"), no_update
         if ctx.triggered_id == "cameras-use":
             if not calibration_file(config, name).is_file():
                 return ui.note(f"Find the cameras of {name} first.", "warn"), no_update
@@ -307,7 +311,7 @@ def register(app, config_path: Path) -> None:
             return ui.note(f"{source} holds {len(_clips(source))} camera folder(s) with a clip; put each camera's board clip in a folder named after it, two or more.", "warn"), no_update
         current = _CURRENT.get(str(config_path))
         if current is not None and cli_bridge.is_running(current):
-            return ui.note("The cameras of a setup are still being found; wait for it to finish.", "warn"), no_update
+            return ui.note("The cameras of a calibration are still being found; wait for it to finish.", "warn"), no_update
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         log = layout_for(config, create=False).work_dir / "gui" / f"cameras_{name}_{stamp}.log"
         _CURRENT[str(config_path)] = cli_bridge.launch(_find_command(config_path, name), log, cwd=config_path.parent)

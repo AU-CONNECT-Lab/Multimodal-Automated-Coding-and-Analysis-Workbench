@@ -15,7 +15,7 @@ from macaw.config.schema import DEVICE_NAME, MacawConfig, SetupSection
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
-from macaw.interface.pages import naming, room, sketch
+from macaw.interface.pages import cameras, naming, room, sketch
 from macaw.project.recording import build_recording
 from macaw.project.setup import setup_path, write_setup
 
@@ -38,9 +38,9 @@ def layout(config_path: Path):
         [
             ui.page_head(
                 "Setup",
-                "The cameras and microphones of the recordings. Each recording folder holds one folder per device, named "
-                "as here, with that device's file in it; nothing is read from the files' own names. Nothing runs before the "
-                "setup is saved.",
+                "The cameras and microphones of the recordings, where everyone and everything is in the room, and who is "
+                "who on each camera. Each recording folder holds one folder per device, named as here, with that device's "
+                "file in it; nothing is read from the files' own names. Nothing runs before the setup is saved.",
             ),
             html.Div(
                 [
@@ -52,15 +52,16 @@ def layout(config_path: Path):
             ),
             html.Div(id="setup-message"),
             html.Div(id="setup-form"),
-            room.card(config),
-            sketch.card(config),
-            naming.card(config),
             ui.card(
                 "What each recording holds",
                 dcc.Loading(html.Div(holdings(config_path), id="setup-files")),
                 desc="The file found in each device folder, by the setup each recording uses. A recording uses another "
                 "setup when its own file, recordings/<id>.yaml, says setup: {name: ...}.",
             ),
+            room.card(config),
+            sketch.card(config),
+            naming.card(config),
+            cameras.section(config_path),
         ]
     )
 
@@ -197,6 +198,7 @@ def register(app, config_path: Path) -> None:
     naming.register(app, config_path)
     room.register(app, config_path)
     sketch.register(app, config_path)
+    cameras.register(app, config_path)
 
     @app.callback(
         Output("setup-form", "children"),

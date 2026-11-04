@@ -15,11 +15,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import agreement, cameras, overview, results, review, run, segments, settings, setup
+from macaw.interface.pages import agreement, overview, results, review, run, segments, settings, setup
 
-PAGES = (overview, setup, run, review, agreement, segments, results, cameras, settings)
+PAGES = (overview, setup, run, review, agreement, segments, results, settings)
 # the tabs along the top; settings is reached by the gear
-TABS = (overview, setup, run, review, agreement, segments, results, cameras)
+TABS = (overview, setup, run, review, agreement, segments, results)
 
 
 def create_app(config_path: Path, *, local: bool = True) -> Dash:
@@ -54,7 +54,7 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
 
-def _header(title: str, subtitle: str, *, with_cameras: bool = False, folder: Path | None = None):
+def _header(title: str, subtitle: str, *, folder: Path | None = None):
     return html.Header(
         [
             html.Div(
@@ -75,9 +75,7 @@ def _header(title: str, subtitle: str, *, with_cameras: bool = False, folder: Pa
             html.Nav(
                 [
                     dcc.Link([page.LABEL, *([html.Span(id="review-badge", className="badge")] if page is review else [])],
-                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}",
-                             # a project with one camera never needs it, so the tab stays out of the way
-                             style={"display": "none"} if page is cameras and not with_cameras else None)
+                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}")
                     for page in TABS
                 ],
                 className="tabs",
@@ -103,7 +101,7 @@ def build_layout(config_path: Path, *, local: bool = True):
     return html.Div(
         [
             dcc.Location(id="url"),
-            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}", with_cameras=cameras.wanted(config),
+            _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}",
                     folder=config_path.parent if local else None),
             html.Main([html.Div(page.layout(config_path), id=f"page-{page.LABEL.lower()}", className="page") for page in PAGES]),
         ]
