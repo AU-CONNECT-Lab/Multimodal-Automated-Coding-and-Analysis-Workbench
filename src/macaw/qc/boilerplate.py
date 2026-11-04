@@ -803,8 +803,14 @@ def _gaze(config, spec, names) -> str:
     from macaw.extractors.video.gaze.heads import HEAD_SCALE
 
     settle = config.gaze.min_look_s
+    things = spec.params.get("things") or []
+    joint = (
+        f"joint attention when two people looked at the same named object ({', '.join(things)}) at the same moment, and "
+        "for each stretch of joint attention the person whose look at the object began first and the delay before the "
+        "other joined were recorded. "
+    ) if things else ""
     people = (
-        "mutual gaze was coded when two people looked at each other in the same frame. "
+        f"mutual gaze was coded when two people looked at each other at the same moment{', and ' if joint else '. '}{joint}"
         + (
             f"A run of frames with one target lasting less than {settle:g} s took the target of the run before it (the first "
             "run, that of the run after), and each remaining run was kept as one coded interval"

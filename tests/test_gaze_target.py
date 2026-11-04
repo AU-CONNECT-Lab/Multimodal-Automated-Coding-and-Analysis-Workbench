@@ -96,6 +96,36 @@ def test_mutual_gaze_needs_both_looking_at_each_other_in_the_same_frame():
     assert mutual["mutual"].tolist() == [True] * 3 + [False] * 7
 
 
+def test_people_read_from_cameras_with_different_offsets_are_paired_by_time():
+    # the child's camera started 0.3 s later, so its frame 0 is the parent's frame 3
+    parent = gaze("parent", 0, 0).assign(target=["child"] * 10)
+    child = gaze("child", 0, 0, frames=range(7)).assign(t=lambda f: f["frame"] / FPS + 0.3, target=["parent"] * 2 + [ELSEWHERE] * 5)
+    mutual = mutual_gaze(pd.concat([parent, child]), "child", "parent")
+    assert mutual["t"].tolist() == pytest.approx([0.3 + f / FPS for f in range(7)])
+    assert mutual["mutual"].tolist() == [True] * 2 + [False] * 5
+
+
+class TestJointAttention:
+    def points(self, **targets):
+        return pd.concat([gaze(who, 0, 0, frames=range(len(seen))).assign(target=seen) for who, seen in targets.items()])
+
+    def test_the_one_who_looked_first_leads_and_the_lag_is_how_much_later_the_other_came(self):
+        points = self.points(child=["toy"] * 10, parent=[ELSEWHERE] * 3 + ["toy"] * 5 + ["book"] * 2)
+        episodes = target_module.joint_episodes(target_module.joint_attention(points, "child", "parent", ["toy", "book"]), "child", "parent")
+        assert episodes[["thing", "first", "follower", "leader"]].values.tolist() == [["toy", "child", "parent", "child"]]
+        assert episodes["lag_s"].tolist() == pytest.approx([0.3])
+        assert episodes[["t_start", "t_end"]].values.tolist() == [pytest.approx([0.3, 0.8])]
+
+    def test_looks_that_began_together_have_no_leader(self):
+        points = self.points(child=[ELSEWHERE] + ["toy"] * 4, parent=[ELSEWHERE] + ["toy"] * 4)
+        episodes = target_module.joint_episodes(target_module.joint_attention(points, "child", "parent", ["toy"]), "child", "parent")
+        assert episodes["first"].tolist() == [None] and episodes["lag_s"].tolist() == [0.0]
+
+    def test_both_looking_at_a_third_person_is_not_joint_attention(self):
+        points = self.points(child=["sibling"] * 5, parent=["sibling"] * 5)
+        assert target_module.joint_attention(points, "child", "parent", ["toy"])["thing"].isna().all()
+
+
 class TestSettleLooks:
     def looks(self, targets, frames=None):
         frames = list(range(len(targets))) if frames is None else frames
@@ -144,7 +174,7 @@ class FakeGazeBackend:
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    def build(kp, points, files):
+    def build(kp, points, files, targets=()):
         stored = tmp_path / "pose.keypoints.parquet"
         write_keypoints(kp, stored)
         backend = FakeGazeBackend(points)
@@ -152,7 +182,7 @@ def run(tmp_path, monkeypatch):
         monkeypatch.setattr(target_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
         recording = recording_of(files, recording_id="r1", group_id="1", session_id=None)
-        return backend, GazeTargetExtractor(SimpleNamespace(gaze=GazeSection())).run(recording, tmp_path)
+        return backend, GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(targets=list(targets)))).run(recording, tmp_path)
 
     return build
 
@@ -176,6 +206,25 @@ class TestExtractor:
         child = result.annotations[(result.annotations.tier == "gaze_target") & (result.annotations.subject_id == "child")]
         assert child.label.tolist() == ["parent", ELSEWHERE]
         assert result.artifacts["gaze_points.parquet"].is_file()
+
+    def test_joint_attention_on_a_named_thing_gives_its_share_stretches_and_who_led(self, run, monkeypatch):
+        people = keypoints({"parent": (400, 100), "child": (100, 100)})
+        points = pd.concat([gaze("parent", 250, 300), gaze("child", 250, 300)], ignore_index=True)
+        things = pd.DataFrame([{"video": "room.mp4", "frame": f, "label": "toy", "x0": 200, "y0": 250, "x1": 300, "y1": 350, "score": 0.9} for f in range(10)])
+        monkeypatch.setattr(target_module, "load_objects", lambda config, rid: things)
+        _, result = run(people, points, [video("room.mp4")], targets=["toy"])
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        value = result.rows[result.rows.scale != "frame"].set_index(["feature", "subject_id", "subject_id_b"])["value"]
+        assert value[("joint_attention_share", "child", "parent")] == 1.0 and value[("joint_attention_n", "child", "parent")] == 1.0
+        assert value[("joint_attention_led_n", "child", "parent")] == 0.0 and value[("joint_attention_led_n", "parent", "child")] == 0.0
+        assert value[("joint_attention_lag_s", "child", "parent")] == 0.0
+        tier = result.annotations[result.annotations.tier == "joint_attention_with_parent"]
+        assert tier.label.tolist() == ["toy"] and tier.subject_id.tolist() == ["child"]
+
+    def test_without_named_things_there_is_no_joint_attention(self, run):
+        _, result = run(keypoints({"parent": (400, 100), "child": (100, 100)}), pd.concat([gaze("parent", 250, 300), gaze("child", 250, 300)]), [video("room.mp4")])
+        assert not any(name.startswith("joint_attention") for name in set(result.rows.feature))
 
     def test_someone_alone_on_their_own_camera_is_reported(self, run):
         kp = pd.concat([keypoints({"parent": (100, 100)}, video="parent.mp4"), keypoints({"child": (100, 100)}, video="child.mp4")])
@@ -262,8 +311,10 @@ class TestAngles:
         # half a metre nearer the camera than the people, between them: 63 degrees to each one's side
         room = {**self.ROOM, "things": {"toy": {"at": [0, 50], "height": 100}}}
         result = run_angles({"parent": [-63.4] * 10, "child": [63.4] * 10}, room=room)
-        named = result.annotations.groupby("subject_id")["label"].agg(list).to_dict()
-        assert named == {"child": ["toy"], "parent": ["toy"]}
+        looks = result.annotations[result.annotations.tier == "gaze_target"]
+        assert looks.groupby("subject_id")["label"].agg(list).to_dict() == {"child": ["toy"], "parent": ["toy"]}
+        joint = result.annotations[result.annotations.tier == "joint_attention_with_parent"]
+        assert joint.subject_id.tolist() == ["child"] and joint.label.tolist() == ["toy"]
 
     def test_a_camera_turned_and_tilted_puts_the_people_where_it_sees_them(self, run_angles):
         """The same people seen by a camera at the parent's right shoulder, looking down at the child."""

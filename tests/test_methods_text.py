@@ -293,6 +293,14 @@ def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats(
     assert "head pose" in text and "within 20°" in text and "measured in the room" in text and not used
     text, _ = render(describe(angled, config(setup={**setup, "room": {}}, gaze={"backend": "angles", "tolerance_deg": 20})), load_references())
     assert "measured in the room" not in text and "frames labelled by hand" in text
+    assert "joint attention" not in text
+
+
+def test_joint_attention_is_described_with_the_things_it_was_read_on():
+    point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="m", in_frame_cut=0.5, things=["bottle", "book"])
+    text, _ = render(describe(manifest(point), config(gaze={"targets": ["bottle", "book"]})), load_references())
+    assert "each other at the same moment, and joint attention when two people looked at the same named object (bottle, book)" in text
+    assert "began first and the delay before the other joined" in text
 
 
 def test_name_suggestions_are_described_only_when_set_and_the_picture_model_only_when_described():

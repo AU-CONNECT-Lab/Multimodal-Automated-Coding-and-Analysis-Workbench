@@ -32,6 +32,7 @@ from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_fra
 LAYER = "gaze"
 TARGET_TIER = "gaze_target"
 MUTUAL_TIER = "mutual_gaze"
+JOINT_TIER = "joint_attention"
 ELSEWHERE = "elsewhere"
 OFF_SCREEN = "off_screen"
 # the model's own cut between a target in the picture and one outside it
@@ -56,12 +57,21 @@ _DISTANCE_SPECS = {
     ),
 }
 _MUTUAL_SPEC = ("1 while subject_id and subject_id_b each look at the other, else 0.", None, "mean")
+_JOINT_SPEC = ("1 while subject_id and subject_id_b look at the same named thing, else 0.", None, "mean")
+_LAG_SPEC = (
+    "For each stretch of joint attention, how long after subject_id_b began looking at the thing (or was first read "
+    "looking at it) subject_id did; 0 when both began together, the pair then in name order.",
+    "s", "mean",
+)
 # compared with hand labels of where people look
 _CHECKED = ("looks_at", "looks_at_share")
 _SUMMARY_SPECS = {
     "looks_at_share": "Share of the frames subject_id's gaze was read in during which they looked at subject_id_b.",
     "looks_at_n": "Looks from subject_id to subject_id_b: runs of frames with looks_at 1.",
     "mutual_gaze_share": "Share of the frames both gazes were read in during which the two looked at each other.",
+    "joint_attention_share": "Share of the frames both gazes were read in during which the two looked at the same named thing.",
+    "joint_attention_n": "Stretches of joint attention: unbroken runs of frames with both looking at one named thing.",
+    "joint_attention_led_n": "Stretches of joint attention in which subject_id looked at the thing first and subject_id_b joined.",
 }
 
 
@@ -72,7 +82,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "segment", "video", "setup.cameras", "setup.room")
@@ -131,11 +141,12 @@ class GazeTargetExtractor(Extractor):
         directory.mkdir(parents=True, exist_ok=True)
         points.to_parquet(directory / POINTS_NAME, index=False)
         subjects = [subject.subject_id for subject in recording.subjects]
-        rows = self._rows(recording, points, subjects)
+        things = self._things(recording)
+        rows = self._rows(recording, points, subjects, things)
         return ExtractorResult(
             rows=rows,
-            specs=self._specs(set(rows["feature"]) if not rows.empty else set(), backend),
-            annotations=self._annotations(recording, points, subjects),
+            specs=self._specs(set(rows["feature"]) if not rows.empty else set(), backend, things),
+            annotations=self._annotations(recording, points, subjects, things),
             artifacts={POINTS_NAME: directory / POINTS_NAME},
             warnings=warnings,
         )
@@ -145,8 +156,17 @@ class GazeTargetExtractor(Extractor):
         if not path.is_file():
             return None
         points = clip_points(pd.read_parquet(path), start_s, end_s)
-        rows = self._rows(recording, points, [subject.subject_id for subject in recording.subjects])
+        rows = self._rows(recording, points, [subject.subject_id for subject in recording.subjects], self._things(recording))
         return rows[rows["scale"] == Scale.RECORDING.value].reset_index(drop=True)
+
+    def _things(self, recording: Recording) -> list[str]:
+        """The named things a look can land on, which joint attention is about."""
+        if finds_points(self.config):
+            return list(self.config.gaze.targets)
+        labels = labels_frame(read_labels(layout_for(self.config, create=False).gaze_labels_path(recording.recording_id)))
+        roles = {subject.subject_id for subject in recording.subjects}
+        named = set(labels["target"]) if not labels.empty else set()
+        return sorted((named | set(self.config.setup.room.things)) - roles - {ELSEWHERE})
 
     def _points(self, recording, backend, keypoints, views, by_name, span) -> tuple[pd.DataFrame, list[QCWarning]]:
         cfg = self.config.gaze
@@ -218,7 +238,7 @@ class GazeTargetExtractor(Extractor):
             return _no_points(), warnings
         return pd.concat(points, ignore_index=True), warnings
 
-    def _rows(self, recording: Recording, points: pd.DataFrame, subjects: list[str]) -> pd.DataFrame:
+    def _rows(self, recording: Recording, points: pd.DataFrame, subjects: list[str], things: list[str]) -> pd.DataFrame:
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         frames = []
         if "gaze_x" in points:
@@ -277,9 +297,43 @@ class GazeTargetExtractor(Extractor):
                     scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
                 )
             )
+            if things:
+                frames.extend(self._joint_rows(joint_attention(points, a, b, things), a, b, common))
         return concat_long_tables(frames)
 
-    def _annotations(self, recording: Recording, points: pd.DataFrame, subjects: list[str]) -> pd.DataFrame:
+    def _joint_rows(self, joint: pd.DataFrame, a: str, b: str, common: dict) -> list[pd.DataFrame]:
+        if joint.empty:
+            return []
+        on = joint["thing"].notna().astype(float)
+        episodes = joint_episodes(joint, a, b)
+        span = {"t_start": [float(joint["t"].min())], "t_end": [float(joint["t"].max())]}
+        frames = [
+            build_long_rows(
+                values=pd.DataFrame({"t_start": joint["t"].to_numpy(), "joint_attention": on.to_numpy()}),
+                scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common,
+            ),
+            build_long_rows(
+                values=pd.DataFrame({**span, "joint_attention_share": [float(on.mean())], "joint_attention_n": [float(len(episodes))]}),
+                scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
+            ),
+        ]
+        for first, then in ((a, b), (b, a)):
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame({**span, "joint_attention_led_n": [float((episodes["first"] == first).sum())]}),
+                    scale=Scale.RECORDING, subject_id=first, subject_id_b=then, **common,
+                )
+            )
+        for (follower, leader), mine in episodes.groupby(["follower", "leader"], sort=True):
+            frames.append(
+                build_long_rows(
+                    values=mine[["t_start", "t_end"]].assign(joint_attention_lag_s=mine["lag_s"].astype(float)).reset_index(drop=True),
+                    scale=Scale.EVENT, subject_id=str(follower), subject_id_b=str(leader), **common,
+                )
+            )
+        return frames
+
+    def _annotations(self, recording: Recording, points: pd.DataFrame, subjects: list[str], things: list[str]) -> pd.DataFrame:
         common = dict(recording_id=recording.recording_id, layer=LAYER, annotator=self.name, entities=recording.entities())
         frames = []
         for subject, mine in points.groupby("subject_id", sort=True):
@@ -294,11 +348,16 @@ class GazeTargetExtractor(Extractor):
             intervals = label_runs(mutual, "label").dropna(subset=["label"])
             if not intervals.empty:
                 frames.append(build_annotations(tier=MUTUAL_TIER, intervals=intervals.reset_index(drop=True), subject_id=a, **common))
+            # a tier per pair: with three or more people one person's stretches with two others can overlap
+            episodes = joint_episodes(joint_attention(points, a, b, things), a, b) if things else pd.DataFrame()
+            if not episodes.empty:
+                intervals = episodes[["t_start", "t_end"]].assign(label=episodes["thing"]).reset_index(drop=True)
+                frames.append(build_annotations(tier=f"{JOINT_TIER}_with_{b}", intervals=intervals, subject_id=a, **common))
         if not frames:
             return empty_frame(ANNOTATION_SCHEMA)
         return coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, "annotations")
 
-    def _specs(self, emitted: set[str], backend) -> list[FeatureSpec]:
+    def _specs(self, emitted: set[str], backend, things: list[str]) -> list[FeatureSpec]:
         cfg = self.config.gaze
         if backend.finds_points:
             rule = (
@@ -312,14 +371,17 @@ class GazeTargetExtractor(Extractor):
         if cfg.min_look_s > 0:
             rule += f" A look at anyone or anything lasting less than {cfg.min_look_s:g} s joins the look before it."
         params["min_look_s"] = cfg.min_look_s
+        params["things"] = things
         described = {
             **_LOOKER_SPECS, **_DISTANCE_SPECS, "looks_at": (rule, None, "mean"), "mutual_gaze": _MUTUAL_SPEC,
+            "joint_attention": _JOINT_SPEC, "joint_attention_lag_s": _LAG_SPEC,
             **{name: (text, None, "mean") for name, text in _SUMMARY_SPECS.items()},
         }
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit,
-                scale=Scale.RECORDING if name in _SUMMARY_SPECS else Scale.FRAME, group=self.group,
+                scale=Scale.RECORDING if name in _SUMMARY_SPECS else Scale.EVENT if name == "joint_attention_lag_s" else Scale.FRAME,
+                group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name, backend_version=backend.version,
                 params=params, interpolation="none", aggregation=aggregation, comparable_across_backends=False,
                 validation="against_reference" if backend.finds_points and name in _CHECKED else "none",
@@ -412,12 +474,64 @@ def _settled(labels: list, min_frames: float) -> list:
     return [label for label, length in kept for _ in range(length)]
 
 
+def paired_looks(points: pd.DataFrame, a: str, b: str) -> pd.DataFrame:
+    """a's frame and t with each one's target and when their look at it began, for the moments both gazes were read in;
+    matched by time, so people read from cameras of their own line up."""
+    mine, theirs = _with_starts(points[points["subject_id"] == a]), _with_starts(points[points["subject_id"] == b])
+    if mine.empty or theirs.empty:
+        return pd.DataFrame(columns=["frame", "t", "target_a", "began_a", "target_b", "began_b"])
+    half = 0.5 * max(_period(mine), _period(theirs))
+    both = pd.merge_asof(
+        mine[["frame", "t", "target", "began"]], theirs[["t", "target", "began"]].rename(columns={"t": "t_b"}),
+        left_on="t", right_on="t_b", direction="nearest", tolerance=half + 1e-9, suffixes=("_a", "_b"),
+    )
+    return both.dropna(subset=["t_b"]).drop(columns="t_b").sort_values("frame").reset_index(drop=True)
+
+
 def mutual_gaze(points: pd.DataFrame, a: str, b: str) -> pd.DataFrame:
-    """t and mutual for the frames both gazes were read in."""
-    mine = points[points["subject_id"] == a][["frame", "t", "target"]]
-    theirs = points[points["subject_id"] == b][["frame", "target"]]
-    both = mine.merge(theirs, on="frame", suffixes=("_a", "_b"))
+    """t and mutual for the moments both gazes were read in."""
+    both = paired_looks(points, a, b)
     return pd.DataFrame({"frame": both["frame"], "t": both["t"], "mutual": (both["target_a"] == b) & (both["target_b"] == a)})
+
+
+def joint_attention(points: pd.DataFrame, a: str, b: str, things: list[str]) -> pd.DataFrame:
+    """frame, t and thing, the named thing both look at or None, for the moments both gazes were read in."""
+    both = paired_looks(points, a, b)
+    shared = (both["target_a"] == both["target_b"]) & both["target_a"].isin(things)
+    return both.assign(thing=both["target_a"].where(shared, None))[["frame", "t", "thing", "began_a", "began_b"]]
+
+
+def joint_episodes(joint: pd.DataFrame, a: str, b: str) -> pd.DataFrame:
+    """One row per unbroken run of frames on one thing, with who looked at it first and how long before the other."""
+    columns = ["t_start", "t_end", "thing", "first", "follower", "leader", "lag_s"]
+    if joint.empty or joint["thing"].isna().all():
+        return pd.DataFrame(columns=columns)
+    joint = joint.reset_index(drop=True)
+    period = _period(joint)
+    broken = (joint["frame"].diff() != 1) | (joint["thing"] != joint["thing"].shift())
+    spans = joint.groupby(broken.cumsum()).agg(
+        t_start=("t", "first"), t_end=("t", "last"), thing=("thing", "first"), began_a=("began_a", "first"), began_b=("began_b", "first"),
+    )
+    spans = spans.dropna(subset=["thing"]).reset_index(drop=True)
+    spans["t_end"] = spans["t_end"] + period
+    ahead = spans["began_b"].astype(float) - spans["began_a"].astype(float)
+    # less than half a frame apart is the same moment
+    a_first, b_first = (ahead > period / 2).to_numpy(), (ahead < -period / 2).to_numpy()
+    spans["first"] = np.where(a_first, a, np.where(b_first, b, None))
+    spans["follower"] = np.where(a_first, b, a)
+    spans["leader"] = np.where(a_first, a, b)
+    spans["lag_s"] = np.where(a_first | b_first, ahead.abs(), 0.0)
+    return spans[columns]
+
+
+def _with_starts(mine: pd.DataFrame) -> pd.DataFrame:
+    mine = mine.sort_values("frame").assign(t=lambda f: f["t"].astype(float))
+    broken = (mine["frame"].diff() != 1) | (mine["target"] != mine["target"].shift())
+    return mine.assign(began=mine["t"].groupby(broken.cumsum()).transform("first")).sort_values("t")
+
+
+def _period(frame: pd.DataFrame) -> float:
+    return float(np.median(np.diff(np.sort(frame["t"].to_numpy(dtype=float))))) if len(frame) > 1 else 0.0
 
 
 def runs(frames: pd.Series, on: np.ndarray) -> list[tuple[int, int]]:
