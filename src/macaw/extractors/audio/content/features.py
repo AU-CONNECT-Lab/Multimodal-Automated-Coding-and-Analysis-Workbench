@@ -22,6 +22,7 @@ from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
 
 EMBEDDINGS_NAME = "embeddings.parquet"
+TURNS_STEP = "turns.structure"
 
 _WORD = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
 
@@ -36,6 +37,16 @@ _SPECS = {
         "who brings in the shared vocabulary.",
         None,
     ),
+}
+
+# a row per change of speaker and its mean per pair, subject_id taking the floor from subject_id_b
+_OVERLAP_SPECS = {
+    "lexical_overlap": (
+        "Share of the distinct words in subject_id's turn that subject_id_b used in the turn just before it, the words in "
+        "text.exclude_words left out; missing for a turn with no counted word.",
+        None, Scale.EVENT,
+    ),
+    "mean_lexical_overlap": ("Mean lexical_overlap over the turns subject_id took straight after subject_id_b's.", None, Scale.RECORDING),
 }
 
 # made only with text.embedding_model; a pair of speakers per row, subject_id following subject_id_b
@@ -58,19 +69,19 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
-        "text.embedding_model", "text.device", "text.first_use_min_speakers", "text.first_use_exclude",
+        "text.embedding_model", "text.device", "text.first_use_min_speakers", "text.exclude_words",
         "text.first_use_words", "segment",
     )
-    requires = (ASRExtractor.name,)
+    requires = (ASRExtractor.name, TURNS_STEP)
 
     def check_available(self) -> None:
         for path in self._word_lists():
             if not path.is_file():
-                raise InputNotFoundError(f"word list {path} in text.first_use_exclude or text.first_use_words does not exist")
+                raise InputNotFoundError(f"word list {path} in text.exclude_words or text.first_use_words does not exist")
         if self.config.text.embedding_model is None:
             return
         try:
@@ -90,18 +101,24 @@ class TextFeatureExtractor(Extractor):
             sentence_embeddings([], self.config.text.embedding_model, device=self.config.text.device)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        root = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, ASRExtractor.name)
-        return [root / TRANSCRIPT_NAME, *self._word_lists()]
+        from macaw.turns.segmentation import TURNS_NAME
+
+        layout = layout_for(self.config, create=False)
+        root = layout.artifacts_dir(recording.recording_id, ASRExtractor.name)
+        return [root / TRANSCRIPT_NAME, layout.artifacts_dir(recording.recording_id, TURNS_STEP) / TURNS_NAME, *self._word_lists()]
 
     def _word_lists(self) -> list[Path]:
         text = self.config.text
-        return [path for path in (text.first_use_exclude, text.first_use_words) if isinstance(path, Path)]
+        return [path for path in (text.exclude_words, text.first_use_words) if isinstance(path, Path)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         transcript = load_transcript(self.config, recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-        frames = [self._summary(recording, transcript, window)]
+        from macaw.turns.segmentation import load_turns
+
+        turns = load_turns(self.config, recording.recording_id, others=True)
+        frames = [self._summary(recording, transcript, window), self._overlap(recording, turns, window)]
         artifacts = {}
         model = self.config.text.embedding_model
         if model is not None:
@@ -117,8 +134,11 @@ class TextFeatureExtractor(Extractor):
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         if not transcript_saved(self.config, recording.recording_id):
             return None
-        every = transcript_between(self.config, recording.recording_id, start_s, end_s, others=True)
-        frames = [self._summary(recording, every[every["subject_id"] != OTHER], (start_s, end_s))]
+        from macaw.turns.segmentation import turns_between
+
+        every, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
+        overlap = self._overlap(recording, turns, (start_s, end_s))
+        frames = [self._summary(recording, every[every["subject_id"] != OTHER], (start_s, end_s)), overlap[overlap["scale"] == Scale.RECORDING.value]]
         path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / EMBEDDINGS_NAME
         if self.config.text.embedding_model is not None and path.is_file():
             saved = pd.read_parquet(path)
@@ -139,7 +159,7 @@ class TextFeatureExtractor(Extractor):
         first = first_use_share(
             transcript,
             min_speakers=text.first_use_min_speakers,
-            exclude=excluded_words(text.first_use_exclude),
+            exclude=excluded_words(text.exclude_words),
             only=None if text.first_use_words is None else read_word_list(text.first_use_words),
         )
         frames = []
@@ -165,6 +185,26 @@ class TextFeatureExtractor(Extractor):
             )
         return concat_long_tables(frames)
 
+    def _overlap(self, recording: Recording, turns: pd.DataFrame, window: tuple[float, float]) -> pd.DataFrame:
+        found = lexical_overlap(turns, excluded_words(self.config.text.exclude_words))
+        found = found[(found["taker"] != OTHER) & (found["giver"] != OTHER)]
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        frames = []
+        for (taker, giver), mine in found.groupby(["taker", "giver"], sort=True):
+            frames.append(
+                build_long_rows(
+                    values=mine[["t_start", "t_end"]].assign(lexical_overlap=mine["overlap"]).reset_index(drop=True),
+                    scale=Scale.EVENT, subject_id=taker, subject_id_b=giver, **common,
+                )
+            )
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame({"t_start": [window[0]], "t_end": [window[1]], "mean_lexical_overlap": [float(mine["overlap"].mean())]}),
+                    scale=Scale.RECORDING, subject_id=taker, subject_id_b=giver, **common,
+                )
+            )
+        return concat_long_tables(frames)
+
     def _following(
         self, recording: Recording, window: tuple[float, float], every: pd.DataFrame, vectors: dict[tuple[str, int], np.ndarray],
     ) -> pd.DataFrame:
@@ -186,12 +226,17 @@ class TextFeatureExtractor(Extractor):
         ])
 
     def _specs(self) -> list[FeatureSpec]:
+        described = {
+            **{name: (description, unit, Scale.RECORDING) for name, (description, unit) in _SPECS.items()},
+            **_OVERLAP_SPECS,
+            **{name: (description, unit, Scale.RECORDING) for name, (description, unit) in _EMBEDDING_SPECS.items() if self.config.text.embedding_model},
+        }
         return [
             FeatureSpec(
                 name=name,
                 description=description,
                 unit=unit,
-                scale=Scale.RECORDING,
+                scale=scale,
                 group=self.group,
                 extractor=self.name,
                 extractor_version=self.version,
@@ -199,12 +244,12 @@ class TextFeatureExtractor(Extractor):
                     "tokenizer": "english_words",
                     "embedding_model": self.config.text.embedding_model,
                     "first_use_min_speakers": self.config.text.first_use_min_speakers,
-                    "first_use_exclude": _list_name(self.config.text.first_use_exclude),
+                    "exclude_words": _list_name(self.config.text.exclude_words),
                     "first_use_words": _list_name(self.config.text.first_use_words),
                 },
                 validation="synthetic",
             )
-            for name, (description, unit) in {**_SPECS, **(_EMBEDDING_SPECS if self.config.text.embedding_model else {})}.items()
+            for name, (description, unit, scale) in described.items()
         ]
 
 
@@ -280,6 +325,22 @@ def first_use_share(
         return {subject: np.nan for subject in speakers}
     introduced = pd.Series([first[token] for token in shared]).value_counts()
     return {subject: float(introduced.get(subject, 0)) / len(shared) for subject in speakers}
+
+
+def lexical_overlap(turns: pd.DataFrame, exclude: frozenset[str]) -> pd.DataFrame:
+    """A row per turn taken straight after someone else's: taker, giver, the taker's t_start and t_end, and overlap,
+    the share of the taker's distinct counted words found in the giver's turn."""
+    columns = ["taker", "giver", "t_start", "t_end", "overlap"]
+    turns = turns.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    words = [set(tokenize(str(text))) - exclude for text in turns["text"].fillna("")]
+    speakers = turns["subject_id"].astype(str).tolist()
+    rows = [
+        (speakers[i], speakers[i - 1], float(turns.at[i, "t_start"]), float(turns.at[i, "t_end"]),
+         len(words[i] & words[i - 1]) / len(words[i]) if words[i] else np.nan)
+        for i in range(1, len(turns))
+        if speakers[i] != speakers[i - 1]
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def semantic_following(speakers: list[str], vectors: np.ndarray) -> dict[tuple[str, str], float]:

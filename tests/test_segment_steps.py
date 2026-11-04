@@ -233,14 +233,14 @@ def test_looks_are_summarised_over_the_frames_inside(project):
     points.to_parquet(folder / POINTS_NAME, index=False)
     step = GazeTargetExtractor(p.config)
 
-    same(values(step._rows(p.recording, points, ["parent", "child"])), values(step.summarise(p.recording, 0.0, 10.0)))
+    same(values(step._rows(p.recording, points, ["parent", "child"], [])), values(step.summarise(p.recording, 0.0, 10.0)))
     part = values(step.summarise(p.recording, 0.0, 5.0))
     assert part[("looks_at_share", "parent", "child")] == 1.0
     assert part[("mutual_gaze_share", "child", "parent")] == pytest.approx(0.5)
 
 
 def test_who_brings_a_word_in_is_decided_inside_the_segment(project):
-    p = project("text.first_use_exclude=none")
+    p = project("text.exclude_words=none")
     transcript = pd.DataFrame([
         {"recording_id": RID, "subject_id": who, "utterance_index": index, "t_start": start, "t_end": start + 1.0,
          "text": text, "n_words": len(text.split()), "confidence": 0.9, "avg_logprob": np.nan, "no_speech_prob": np.nan,
@@ -255,6 +255,8 @@ def test_who_brings_a_word_in_is_decided_inside_the_segment(project):
     part = values(step.summarise(p.recording, 4.0, 20.0))
     assert whole[("first_use_share", "parent", None)] == 1.0
     assert part[("first_use_share", "child", None)] == 1.0 and part[("n_tokens", "parent", None)] == 2
+    assert whole[("mean_lexical_overlap", "child", "parent")] == 0.5 and ("mean_lexical_overlap", "child", "parent") not in part
+    assert part[("mean_lexical_overlap", "parent", "child")] == 0.5
 
 
 def test_syntax_is_parsed_again_from_the_utterances_inside(project):

@@ -108,7 +108,7 @@ def test_embeddings_are_mentioned_only_when_made(embedding, expected):
     "params, expected",
     [
         ({}, "of the words used by at least two speakers"),
-        ({"first_use_exclude": "english_stopwords"}, "excluding English function words, fillers and backchannels, used"),
+        ({"exclude_words": "english_stopwords"}, "excluding English function words, fillers and backchannels, used"),
         ({"first_use_words": "topic.txt", "first_use_min_speakers": 3}, "researcher-supplied list used by at least three"),
     ],
 )

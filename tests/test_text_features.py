@@ -15,6 +15,7 @@ from macaw.extractors.audio.content.features import (
     TextFeatureExtractor,
     excluded_words,
     first_use_share,
+    lexical_overlap,
     semantic_following,
     tokenize,
     type_token_ratio,
@@ -71,7 +72,10 @@ class TestFirstUse:
 
 
 def run(monkeypatch, tmp_path, rows, **text):
+    from macaw.turns import segmentation
+
     monkeypatch.setattr(module, "load_transcript", lambda config, rid, others=False: transcript(rows))
+    monkeypatch.setattr(segmentation, "load_turns", lambda config, rid, others=False: transcript(rows))
     monkeypatch.setattr(module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=0.0, duration_s=60.0))
     recording = SimpleNamespace(recording_id="r1", entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None})
     extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(**text)))
@@ -93,7 +97,7 @@ def test_stopwords_are_dropped_by_default(monkeypatch, tmp_path):
     _, result = run(monkeypatch, tmp_path, [("a", 0.0, "the red"), ("b", 2.0, "box the"), ("a", 4.0, "red box")])
     values = result.rows.set_index(["subject_id", "feature"]).value
     assert values["b", "first_use_share"] == 1.0
-    assert result.specs[0].params["first_use_exclude"] == "english_stopwords"
+    assert result.specs[0].params["exclude_words"] == "english_stopwords"
 
 
 def test_a_word_list_file_is_read_and_goes_into_the_cache_key(monkeypatch, tmp_path):
@@ -107,7 +111,7 @@ def test_a_word_list_file_is_read_and_goes_into_the_cache_key(monkeypatch, tmp_p
 
 
 def test_a_missing_word_list_stops_before_the_run(tmp_path):
-    extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(first_use_exclude=tmp_path / "gone.txt")))
+    extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(exclude_words=tmp_path / "gone.txt")))
     with pytest.raises(InputNotFoundError, match="gone.txt"):
         extractor.check_available()
 
@@ -128,6 +132,30 @@ def test_embeddings_are_one_row_per_utterance(monkeypatch, tmp_path):
     table = pd.read_parquet(result.artifacts[EMBEDDINGS_NAME])
     assert list(table.columns) == ["subject_id", "utterance_index", "t_start", "t_end", "e0", "e1", "e2"]
     assert len(table) == 2
+
+
+class TestLexicalOverlap:
+    def turns(self, rows):
+        return transcript(rows)
+
+    def test_the_share_of_the_new_turn_s_distinct_words_the_last_speaker_used(self):
+        found = lexical_overlap(self.turns([("a", 0.0, "the red box"), ("b", 2.0, "a red red ball"), ("b", 4.0, "box")]), frozenset({"the", "a"}))
+        assert found[["taker", "giver", "t_start"]].values.tolist() == [["b", "a", 2.0]]
+        assert found["overlap"].tolist() == [pytest.approx(0.5)]
+
+    def test_a_turn_of_only_left_out_words_has_no_overlap_and_another_voice_is_followed_too(self):
+        found = lexical_overlap(self.turns([("a", 0.0, "red"), ("other", 1.0, "red"), ("b", 2.0, "the")]), frozenset({"the"}))
+        assert found[["taker", "giver"]].values.tolist() == [["other", "a"], ["b", "other"]]
+        assert found["overlap"].iloc[0] == 1.0 and np.isnan(found["overlap"].iloc[1])
+
+
+def test_lexical_overlap_is_a_row_per_switch_and_a_mean_per_pair(monkeypatch, tmp_path):
+    _, result = run(monkeypatch, tmp_path, [("a", 0.0, "red box"), ("b", 2.0, "red ball"), ("a", 4.0, "ball box"), ("b", 6.0, "green")])
+    overlap = result.rows[result.rows.feature == "lexical_overlap"].sort_values("t_start")
+    assert overlap[["subject_id", "subject_id_b"]].values.tolist() == [["b", "a"], ["a", "b"], ["b", "a"]]
+    assert overlap.value.tolist() == [0.5, 0.5, 0.0] and set(overlap.scale) == {"event"}
+    mean = result.rows[result.rows.feature == "mean_lexical_overlap"].set_index("subject_id").value
+    assert mean.to_dict() == {"a": 0.5, "b": 0.25}
 
 
 class TestSemanticFollowing:

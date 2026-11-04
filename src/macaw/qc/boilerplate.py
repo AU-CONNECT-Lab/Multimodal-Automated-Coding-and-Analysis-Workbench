@@ -419,15 +419,20 @@ def _text_features(config, spec, names) -> str:
     counted = "words"
     if params.get("first_use_words"):
         counted = "words from a researcher-supplied list"
-    exclude = params.get("first_use_exclude", "none")
+    exclude = params.get("exclude_words", "none")
+    left_out = ""
     if exclude == "english_stopwords":
-        counted += ", excluding English function words, fillers and backchannels,"
+        left_out = "English function words, fillers and backchannels"
     elif exclude != "none":
-        counted += ", excluding a researcher-supplied list of words,"
+        left_out = "a researcher-supplied list of words"
+    if left_out:
+        counted += f", excluding {left_out},"
     text = (
         "Lexical measures were computed for each speaker on lower-cased English word tokens: mean length of utterance "
         f"in words, type-token ratio, unigram entropy, and, of the {counted} used by at least "
-        f"{_count(params.get('first_use_min_speakers', 2))} speakers, the share the speaker said first."
+        f"{_count(params.get('first_use_min_speakers', 2))} speakers, the share the speaker said first. Each time the floor "
+        "passed from one speaker to another, lexical overlap was taken as the share of the distinct words in the new turn "
+        f"that the previous speaker had used in the turn just before{f', {left_out} left out' if left_out else ''}."
     )
     model = params.get("embedding_model")
     if model:
