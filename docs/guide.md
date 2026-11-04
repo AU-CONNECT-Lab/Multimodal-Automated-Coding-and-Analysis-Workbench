@@ -84,7 +84,7 @@ Overview
 : The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
 
 Setup
-: The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, and whose voices each device carries ({ref}`step 3 <setup>`).
+: The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, whose voices each device carries, and who is who on each camera ({ref}`step 3 <setup>`).
 
 Run
 : Selecting recordings and steps, starting a run and following its progress.
@@ -133,6 +133,15 @@ When the devices differed between sessions, for example after a change of camera
 setup:
   name: home_visits
 ```
+
+(naming)=
+### Who is who on each camera
+
+Which person in a picture is which participant is stated by the researcher, once per camera and recording, under *Who is who on each camera* on the Setup page. Choose the recording and the camera, enter a moment of the camera's file in seconds at which the participants it is used for are all in view and clearly apart, and press **Show frame**. Choose each participant in turn and click on them, then press **Save the names**. MACAW names whoever was detected under each click and follows them through the rest of the recording. The clicks saved for the camera are listed below the selection, and **Clear this camera's names** removes them.
+
+A camera used for one participant alone needs no click as long as no one else is ever in view on it at the same time. Every other camera needs one, and its recording waits at *Who is on camera* ({ref}`step 6 <review>`) until it has one. When the tracker loses a participant for a while, for example after they leave the picture, a further click at a moment after their return names them again. Suggestions in place of clicks are available as an option ({ref}`suggest-names`).
+
+From the command line, the same is done with `macaw name-people -r dyad01 --camera front --at 12.5 --person parent=0.3,0.5 --person child=0.7,0.6`, where each position is given as a share of the picture's width and height, measured from its top left corner.
 
 ## 4. Configure the project
 
@@ -212,13 +221,13 @@ Separate devices start recording at different moments, and MACAW aligns them by 
 
 {bdg-secondary-line}`only when uncertain`
 
-MACAW determines which person in the picture is which participant. Press **Draw review frames**, check the names on the boxes, and keep them or swap two that are mixed up.
+MACAW follows the participants named in {ref}`step 3 <naming>` through the recording. A camera waits for the researcher when nobody has been named on it, when a click fell on no one or on two overlapping people, when two names were clicked on one person, or when someone who was not named is in view nearly as long as the participants who were. The card states the reason and the times at which to look. Press **Draw review frames** to see each person's box with the name it carries. A wrong or missing name is corrected by clicking the participants again on the Setup page, at a moment where they are clearly apart (the card links there), and running again. **Keep as it stands** accepts the naming as it is, doubts included; the acceptance is recorded with who made it.
 
 ### Voices on the shared microphone
 
 {bdg-secondary-line}`always`
 
-MACAW separates the voices and proposes a participant for each. Listen to the clips and assign each voice to a participant. A voice that belongs to none of the participants, such as an experimenter's, is assigned *none*. The proposal can also draw on what each voice says and on how high it is ({ref}`voice-hints`).
+MACAW separates the voices. Read what each voice says, listen to its clips, and assign it to a participant. A voice that belongs to none of the participants, such as an experimenter's, is assigned *none*. By default no participant is proposed, and every shared microphone waits for this assignment. With *Voices on a shared microphone* set to wait only when uncertain, MACAW proposes a participant for each voice from the participants' own microphones, mouth movement and, where set, what each voice says and how high it is ({ref}`voice-hints`), and waits only when the proposal is uncertain.
 
 (transcript)=
 ### Transcript

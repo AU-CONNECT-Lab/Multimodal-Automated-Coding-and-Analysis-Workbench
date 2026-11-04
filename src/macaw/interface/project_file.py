@@ -40,7 +40,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "gaze.targets",
     )),
     ("Checks by a person", "Where the software waits for a person before going on: always, only when it is unsure, or never.", (
-        "align.review", "pose.review", "text.voice_review",
+        "align.review", "pose.review", "pose.suggest_names", "text.voice_review",
     )),
     ("Coding", "Coding layers, and the language model that codes speech acts in layer B.", (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
@@ -84,6 +84,7 @@ LABELS = {
     "gaze.targets": "Things people look at",
     "align.review": "Offsets between files",
     "pose.review": "Who is on camera",
+    "pose.suggest_names": "Suggest who is who where nobody clicked",
     "text.voice_review": "Voices on a shared microphone",
     "coding.layers": "Coding layers",
     "coding.codebook": "Codebook",

@@ -235,7 +235,7 @@ A look within `tolerance_deg` of the direction to a person counts as a look at t
 (voice-hints)=
 ## Assigning voices on a shared microphone
 
-When participants share a microphone, the proposed assignment of voices to participants can draw on what each voice says and on how high it is. MACAW assumes nothing about the participants; the rules are written by the researcher:
+When participants share a microphone and MACAW is set to propose whose voice is which (*Voices on a shared microphone* set to wait only when uncertain, see {ref}`step 6 <review>`), the proposal can draw on what each voice says and on how high it is. MACAW assumes nothing about the participants; the rules are written by the researcher:
 
 ```yaml
 identity:
@@ -252,7 +252,7 @@ identity:
 (motion)=
 ## Motion energy in a region of the picture
 
-Motion energy measures the amount of movement within a rectangle of the picture, for each participant separately. Give each participant a region as `[x, y, width, height]` in pixels of their own camera's picture, or of the shared camera when they have none, as read off a still frame in an image viewer:
+Motion energy measures the amount of movement within a rectangle of the picture, for each participant separately. Give each participant a region as `[x, y, width, height]` in pixels of the picture of the camera the setup uses for their body (their own camera when one is used for them alone, otherwise the first camera listed for their body), as read off a still frame in an image viewer:
 
 ```yaml
 motion:
@@ -262,6 +262,36 @@ motion:
 ```
 
 When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
+
+(suggest-names)=
+## Suggesting who is who on a camera
+
+Instead of clicking every camera ({ref}`step 3 <naming>`), the researcher can let MACAW suggest who is who on the cameras nobody clicked, with *Suggest who is who where nobody clicked* under *Checks by a person* in the settings:
+
+```yaml
+pose:
+  suggest_names: true
+```
+
+A suggestion is a decision made by software. A suggestion that is not clear waits for the researcher at *Who is on camera* ({ref}`step 6 <review>`), exactly as a camera nobody named, and the quality-control report and the Methods text state which participants were suggested and on what basis.
+
+On a camera used for one participant alone
+: When someone else comes into view, the person most in view and largest in the picture is taken as that participant. The camera waits when another person is in view at least half as long, or when the person chosen is in fewer than half of the frames in which anyone is in view.
+
+On a camera used for several participants
+: Each person's head motion is compared with each participant's head motion on another camera on which every participant was named; failing that, with the speech on each participant's own microphone. A match with another camera names the participant, and waits for the researcher when it is weak. A match with a microphone names the participant only when it is clear.
+
+From a description of each participant
+: Where neither another camera nor individual microphones are available, as with a single camera that films everyone, the suggestion is made by a model that reads pictures, the one set up for checking the review frames ({ref}`model-look`), from a written description of what each participant looks like:
+
+```yaml
+qc:
+  look:
+    model: qwen3-vl:8b-instruct
+    people: {parent: an adult, child: a young child}
+```
+
+Each person in view is cut out of up to five frames, spread over the time they are in view, and the model is asked which of the described participants it is. A participant is named only when the model gives the same participant on more than half of those frames and gives no other; a participant given for two people is given to neither, and every participant not named clearly waits to be clicked. The description should state what tells the participants apart, such as age or clothing; participants of similar appearance cannot be told apart in this way. The model's answers are kept, so that running again asks only about pictures it has not seen. With a cloud provider, the pictures of the participants are sent to that provider, which is stated before the run starts.
 
 (measures)=
 ## Custom body measures
@@ -429,7 +459,7 @@ A lab that has calibrated its cameras with Anipose can place its `calibration.to
 
 ### 4. Run and inspect
 
-Run as usual. Each participant must carry the same name on every camera (see *Who is on camera* in {ref}`step 6 <review>`). The results gain measures in metres, with `_3d` appended to their names: wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
+Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in metres, with `_3d` appended to their names: wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
 
 On the Results page, *In 3D* shows every participant's skeleton and the cameras; drag to rotate the view and move the slider to step through the recording. The quality-control report states, for each participant, how often they were placed in three dimensions and how well the cameras agree on them, and warns when a bone keeps changing length, which indicates misplaced keypoints.
 
