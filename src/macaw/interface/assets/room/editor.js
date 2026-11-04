@@ -562,7 +562,9 @@ function fitMain(view) {
   const middle = new THREE.Vector3((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, box.top * 0.22);
   const span = Math.max(box.x1 - box.x0, box.y1 - box.y0);
   view.controls.target.copy(middle);
-  view.camera.position.copy(middle).add(new THREE.Vector3(-0.42, -1.0, 0.78).normalize().multiplyScalar(span * 1.45));
+  // a view narrower than usual stands further back, so the room's width still fits
+  const back = span * 1.45 * Math.max(1, 1.5 / view.camera.aspect);
+  view.camera.position.copy(middle).add(new THREE.Vector3(-0.42, -1.0, 0.78).normalize().multiplyScalar(back));
   view.camera.near = span / 500;
   view.camera.far = span * 100;
   view.camera.updateProjectionMatrix();
