@@ -510,7 +510,45 @@ def test_the_board_says_which_paper_it_fits(project):
 
 def test_the_whole_workbench_lays_out(project):
     shown = text_of(build_layout(project.resolve()))
-    assert all(name in shown for name in ("overview-grid", "run-steps", "review-body", "results-view", "settings-yaml", "theme-choice"))
+    assert all(name in shown for name in ("overview-grid", "run-steps", "review-body", "results-view", "settings-yaml", "theme-choice", "style-choice"))
+
+
+def _css_blocks():
+    import re
+
+    text = (Path(ui.__file__).parent / "assets" / "macaw.css").read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    blocks = {}
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", text):
+        blocks.setdefault(" ".join(selector.split()), []).append(dict(re.findall(r"(--[\w-]+):\s*([^;]+);", body)))
+    return text, blocks
+
+
+def test_each_style_sets_only_tokens_and_the_dark_palette_covers_its_colours():
+    from macaw.interface.pages.settings import STYLES
+
+    _, blocks = _css_blocks()
+    default = blocks[":root"][0]
+    dark = [blocks[':root:not([data-theme="light"])'][0], blocks[':root[data-theme="dark"]'][0]]
+    assert dark[0] == dark[1]
+    assert STYLES[0]["value"] == "lab"
+    for style in [entry["value"] for entry in STYLES[1:]]:
+        tokens = blocks[f':root[data-style="{style}"]'][0]
+        assert set(tokens) <= set(default), style
+        coloured = {name for name, value in tokens.items() if "#" in value}
+        assert coloured and coloured <= set(dark[0]), (style, coloured - set(dark[0]))
+
+
+def test_every_font_ships_with_its_licence():
+    import re
+
+    text, _ = _css_blocks()
+    fonts = Path(ui.__file__).parent / "assets" / "fonts"
+    files = re.findall(r'url\("fonts/([^"]+)"\)', text)
+    assert len(files) == 6
+    for name in files:
+        family = re.sub(r"(-\d00)?\.woff2$", "", name)
+        assert (fonts / name).is_file() and "SIL Open Font License" in (fonts / f"{family}-LICENSE.txt").read_text(encoding="utf-8")
 
 
 def test_a_file_that_does_not_check_still_opens_the_settings(project):

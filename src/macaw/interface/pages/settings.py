@@ -29,6 +29,11 @@ ENVIRONMENT = (
     ("OPENAI_API_KEY", "for coding.llm.provider openai", None, True),
     ("ANTHROPIC_API_KEY", "for coding.llm.provider anthropic", None, True),
 )
+STYLES = [
+    {"label": "Lab", "value": "lab"},
+    {"label": "Playroom", "value": "playroom"},
+    {"label": "Blueprint", "value": "blueprint"},
+]
 THEMES = [
     {"label": "Light", "value": "light"},
     {"label": "Dark", "value": "dark"},
@@ -123,7 +128,11 @@ def layout(config_path: Path):
                         [
                             ui.card(
                                 "Only for you",
+                                html.Div("Style", className="choice-label"),
+                                dcc.RadioItems(STYLES, "lab", id="style-choice", className="segmented", inline=True, persistence=True, persistence_type="local"),
+                                html.Div("Light or dark", className="choice-label"),
                                 dcc.RadioItems(THEMES, "system", id="theme-choice", className="segmented", inline=True, persistence=True, persistence_type="local"),
+                                dcc.Store(id="style-applied"),
                                 dcc.Store(id="theme-applied"),
                                 desc="Kept in this browser; nothing in the project changes.",
                             ),
@@ -186,6 +195,15 @@ def register(app, config_path: Path) -> None:
         }""",
         Output("theme-applied", "data"),
         Input("theme-choice", "value"),
+    )
+    app.clientside_callback(
+        """function (style) {
+            const root = document.documentElement;
+            if (style === "playroom" || style === "blueprint") { root.dataset.style = style; } else { delete root.dataset.style; }
+            return style;
+        }""",
+        Output("style-applied", "data"),
+        Input("style-choice", "value"),
     )
 
     @app.callback(

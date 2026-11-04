@@ -11,7 +11,7 @@ const LEVEL = { people: 'eyes', cameras: 'height', microphones: 'height', things
 const STAND_IN_CM = { people: 120, cameras: 150, microphones: 100, things: 70 };
 const GRID_CM = { cm: 50, m: 50, in: 60.96 };
 const SCALE_BARS = { cm: [10, 20, 50, 100, 200, 500], m: [0.1, 0.2, 0.5, 1, 2, 5], in: [6, 12, 24, 36, 60, 120] };
-// the drawing for a paper's colours, so the 3D view and the flat drawings agree
+// the drawing for a paper's colours, so the 3D view and the flat drawings agree; things and stands follow the style
 const COLOURS = { cameras: 0x4a72d4, lens: 0x26324d, stand: 0x868e96, microphones: 0x2f9e44, things: 0xc9ced6, pick: 0xf08c00 };
 // sizes of the flat drawings' marks, in centimetres, as in the drawing for a paper
 const PAPER_CM = { person: 23, head: 11, device: 9, arrow: 16, body: 8 };
@@ -51,8 +51,11 @@ function readTheme() {
   const get = (name, fallback) => (css.getPropertyValue(name) || '').trim() || fallback;
   S.theme = {
     ink: get('--ink', '#1f1f21'), faint: get('--faint', '#8b8b90'), border: get('--border', '#d8d8da'),
-    floor: get('--panel', '#ffffff'), wall: get('--faint', '#8b8b90'),
+    floor: get('--room-floor', '#ffffff'), grid: get('--room-grid', '#d8d8da'), wall: get('--room-wall', '#8b8b90'),
+    wallAlpha: parseFloat(get('--room-wall-alpha', '0.16')), sky: get('--room-sky', '#ffffff'), ground: get('--room-ground', '#8a8a8a'),
   };
+  COLOURS.things = new THREE.Color(get('--room-thing', '#c9ced6')).getHex();
+  COLOURS.stand = new THREE.Color(get('--room-stand', '#868e96')).getHex();
 }
 
 // ---------- building the scene ----------
@@ -148,7 +151,7 @@ function buildFixtures() {
   for (let y = Math.ceil(fy0 / step) * step; y <= fy1 + 1e-9; y += step) lines.push(fx0, y, 0, fx1, y, 0);
   const grid = new THREE.BufferGeometry();
   grid.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
-  S.fixtures.add(new THREE.LineSegments(grid, new THREE.LineBasicMaterial({ color: S.theme.border, transparent: true, opacity: 0.9 })));
+  S.fixtures.add(new THREE.LineSegments(grid, new THREE.LineBasicMaterial({ color: S.theme.grid, transparent: true, opacity: 0.9 })));
 
   if (hasWalls) {
     const high = Math.max(u(250), box.top);
@@ -162,7 +165,7 @@ function buildFixtures() {
     for (const side of sides) {
       const group = new THREE.Group();
       const geometry = new THREE.BoxGeometry(side.size[0], side.size[1], high);
-      const wall = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: S.theme.wall, transparent: true, opacity: 0.16, depthWrite: false }));
+      const wall = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: S.theme.wall, transparent: true, opacity: S.theme.wallAlpha, depthWrite: false }));
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: S.theme.wall }));
       group.add(wall, edges);
       group.position.set(side.at[0], side.at[1], high / 2);
@@ -171,7 +174,7 @@ function buildFixtures() {
     }
   }
 
-  S.fixtures.add(new THREE.HemisphereLight(0xffffff, 0x8a8a8a, 1.9));
+  S.fixtures.add(new THREE.HemisphereLight(S.theme.sky, S.theme.ground, 1.9));
   const sun = new THREE.DirectionalLight(0xffffff, 1.5);
   const middle = new THREE.Vector3((fx0 + fx1) / 2, (fy0 + fy1) / 2, 0);
   const span = Math.max(fx1 - fx0, fy1 - fy0, box.top);
@@ -1239,7 +1242,7 @@ function watchTheme() {
     rebuild();
     invalidate();
   };
-  new MutationObserver(again).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  new MutationObserver(again).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-style'] });
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', again);
 }
 
