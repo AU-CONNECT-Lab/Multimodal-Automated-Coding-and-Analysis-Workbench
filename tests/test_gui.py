@@ -939,7 +939,12 @@ def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypat
     recordings = project.parent / "recordings"
     recordings.mkdir(exist_ok=True)
     (recordings / "003.yaml").write_text("scale:\n  per_px: 0.25  # measured by hand\n", encoding="utf-8")
-    project.write_text(project.read_text(encoding="utf-8") + "\nkinematics:\n  gestures:\n    still_speed_3d: 2.54\n", encoding="utf-8")
+    project.write_text(
+        project.read_text(encoding="utf-8") + "\nkinematics:\n  gestures:\n    still_speed_3d: 2.54\n  measures:\n"
+        "    - {name: near, person: parent, joints: [nose], to_person: child, to_joints: [nose], below_3d: 76.2}\n"
+        "    - {name: lean, person: parent, joints: [nose], to_person: child, to_joints: [nose], method: offset_toward, per_body_size: true, below_3d: 0.5}\n",
+        encoding="utf-8",
+    )
     app = create_app(project)
     save = callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == "settings-yaml-save" for item in value["inputs"])))
     monkeypatch.setattr(settings, "ctx", SimpleNamespace(triggered_id="settings-yaml-save"))
@@ -948,6 +953,7 @@ def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypat
     assert "converted from cm to in" in text_of(message)
     config = resolve_config(project)
     assert config.project.units == "in" and config.kinematics.gestures.still_speed_3d == 1
+    assert [measure.below_3d for measure in config.kinematics.measures] == [30, 0.5]
     assert config.setup.room.people["parent"].at == (pytest.approx(39.3701), pytest.approx(78.7402))
     assert config.setup.room.things["table"].size == (pytest.approx(23.622), pytest.approx(19.685))
     own = (recordings / "003.yaml").read_text(encoding="utf-8")

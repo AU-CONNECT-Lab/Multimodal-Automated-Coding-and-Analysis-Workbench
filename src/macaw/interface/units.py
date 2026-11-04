@@ -1,9 +1,10 @@
 """A change of the project's unit converts the lengths people already typed: the scale written by hand, the board's
-square, the 3D gesture thresholds, in project.yaml and in each recording's own file, and the room of every setup.
+square, the 3D gesture and measure thresholds, in project.yaml and in each recording's own file, and the room of every setup.
 Measurements of an object keep the unit they were typed in, so they need nothing."""
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import yaml
@@ -36,7 +37,36 @@ def settings_text(text: str, factor: float) -> str:
     data = yaml.safe_load(text) or {}
     found = {key: _number(value, factor) for key in LENGTHS if isinstance(value := _get(data, key), (int, float))}
     found.update({key: {role: _number(each, factor) for role, each in value.items()} for key in BY_ROLE if isinstance(value := _get(data, key), dict) and value})
-    return project_file.with_values(text, found) if found else text
+    text = project_file.with_values(text, found) if found else text
+    return _measure_thresholds(text, factor)
+
+
+def _measure_thresholds(text: str, factor: float) -> str:
+    """below_3d of each built-in measure of a length or speed, which is typed in the project's unit."""
+    from ruamel.yaml import YAML
+
+    from macaw.extractors.video.pose.kinematics import BUILTIN_MEASURES
+
+    def typed_in_units(item) -> bool:
+        return (
+            isinstance(item, dict) and isinstance(item.get("below_3d"), (int, float))
+            and item.get("method", "distance") in BUILTIN_MEASURES and not item.get("per_body_size")
+        )
+
+    measures = _get(yaml.safe_load(text) or {}, "kinematics.measures")
+    if not isinstance(measures, list) or not any(typed_in_units(item) for item in measures):
+        return text
+    loader = YAML()
+    loader.preserve_quotes = True
+    loader.width = 4096
+    loader.indent(mapping=2, sequence=4, offset=2)
+    data = loader.load(text)
+    for item in data["kinematics"]["measures"]:
+        if typed_in_units(item):
+            item["below_3d"] = _number(item["below_3d"], factor)
+    out = io.StringIO()
+    loader.dump(data, out)
+    return out.getvalue()
 
 
 def room_data(room: dict, factor: float) -> dict:

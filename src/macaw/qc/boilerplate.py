@@ -723,13 +723,25 @@ def _kinematics_3d(config, spec, names) -> str:
 
 
 def _measures_3d(config) -> str:
-    from macaw.extractors.video.pose.triangulate import measure_spec_3d, measures_3d
+    from macaw.extractors.video.pose.triangulate import below_3d_unit, measure_spec_3d, measures_3d
 
     measures = measures_3d(config)
     if not measures:
         return ""
     described = [f"{measure.name}_3d: {measure_spec_3d(measure)[0].rstrip('.')}" for measure in measures]
-    return " Measures defined for this study were also derived in 3D (" + "; ".join(described) + ")."
+    text = " Measures defined for this study were also derived in 3D (" + "; ".join(described) + ")."
+    return text + _below([(f"{measure.name}_3d", measure.below_3d, below_3d_unit(measure, config.project.units)) for measure in measures])
+
+
+def _below(thresholds) -> str:
+    """For each (feature, value, unit) with a value, that the time under it was counted."""
+    named = [f"{feature} below {value:g}{f' {unit}' if unit else ''}" for feature, value, unit in thresholds if value is not None]
+    if not named:
+        return ""
+    return (
+        f" The share of the measured frames with {_listed(named)} was computed, and each unbroken stretch of such frames "
+        "was kept as a coded interval."
+    )
 
 
 def _measures(measures) -> str:
@@ -738,7 +750,8 @@ def _measures(measures) -> str:
     if not measures:
         return ""
     described = [f"{measure.name}: {measure_spec(measure)[0].rstrip('.')}" for measure in measures]
-    return " Measures defined for this study were also derived (" + "; ".join(described) + ")."
+    thresholds = [(measure.name, measure.below, (measure_spec(measure)[1] or "").format(length="px")) for measure in measures]
+    return " Measures defined for this study were also derived (" + "; ".join(described) + ")." + _below(thresholds)
 
 
 def _mea(config, spec, names) -> str:

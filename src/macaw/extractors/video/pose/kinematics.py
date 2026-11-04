@@ -20,8 +20,9 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.project_scripts import script_function, script_path
 from macaw.store import keypoints as keypoints_store
+from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
-from macaw.store.schema import UNITS_METRE, Scale
+from macaw.store.schema import ANNOTATION_SCHEMA, UNITS_METRE, Scale, coerce_frame, empty_frame
 
 DEFAULT_SMOOTHING_S = 0.3
 
@@ -99,7 +100,7 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -165,16 +166,19 @@ class KinematicsExtractor(Extractor):
                     )
                 )
 
+        length_unit = _length_unit(keypoints)
+        coded = []
         for measure in self.config.kinematics.measures:
-            pieces, notes = self._measure_rows(measure, recording, by_subject, keypoints, common)
+            pieces, stretches, notes = self._measure_rows(measure, recording, by_subject, keypoints, common, length_unit)
             frames += pieces
+            coded += stretches
             warnings += notes
 
         rows = concat_long_tables(frames)
-        length_unit = _length_unit(keypoints)
         return ExtractorResult(
             rows=rows,
             specs=self._specs(set(rows["feature"]), length_unit, smoothing_s),
+            annotations=joined_annotations(coded),
             warnings=warnings,
         )
 
@@ -186,9 +190,15 @@ class KinematicsExtractor(Extractor):
             "body_size_quantile": BODY_SIZE_QUANTILE,
         }
         catalog = {name: (*spec, params) for name, spec in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        specs = []
         for measure in self.config.kinematics.measures:
             catalog[measure.name] = (*measure_spec(measure), {**params, **measure.model_dump()})
-        specs = []
+            if measure.below is not None:
+                unit = measure_spec(measure)[1]
+                specs += below_specs(
+                    measure.name, f"{measure.below:g}{f' {unit.format(length=length_unit)}' if unit else ''}", {**params, **measure.model_dump()},
+                    emitted, self,
+                )
         for name, (description, unit, comparable, spec_params) in catalog.items():
             if name not in emitted:
                 continue
@@ -211,12 +221,12 @@ class KinematicsExtractor(Extractor):
             )
         return specs
 
-    def _measure_rows(self, measure, recording: Recording, by_subject, keypoints, common):
+    def _measure_rows(self, measure, recording: Recording, by_subject, keypoints, common, length_unit: str):
         function = None
         if measure.method not in BUILTIN_MEASURES:
             function = script_function(self.config.project.scripts_dir, measure.method)
         seen = [subject for subject in recording.subjects if subject.subject_id in by_subject]
-        rows, notes = [], []
+        rows, stretches, notes = [], [], []
         for a in [subject.subject_id for subject in seen if subject.role == measure.person]:
             others = [a] if measure.to_person == SELF else [
                 subject.subject_id for subject in seen if subject.role == measure.to_person and subject.subject_id != a
@@ -242,7 +252,11 @@ class KinematicsExtractor(Extractor):
                 rows.append(build_long_rows(
                     values=table, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common
                 ))
-        return rows, notes
+                if measure.below is not None:
+                    summary, coded = below_outputs(measure.name, measure.below, a, b, table["t_start"], table[measure.name], common)
+                    rows += summary
+                    stretches.append(coded)
+        return rows, stretches, notes
 
     def _warning(self, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
         return QCWarning(
@@ -535,6 +549,66 @@ def _check_joints(where: str, measure) -> None:
         )
     if measure.method == "offset_toward" and (len(measure.joints) != 1 or len(measure.to_joints) != 1):
         raise ConfigError(f"{where}: offset_toward takes one joint and one to_joint")
+
+
+def time_below(times, values, below: float) -> tuple[float, pd.DataFrame]:
+    """(share of the measured frames under below, t_start and t_end of each unbroken run of them); a frame lasts
+    until the next, and a frame not measured breaks a run."""
+    times, values = np.asarray(times, dtype=float), np.asarray(values, dtype=float)
+    keep = np.isfinite(times) & np.isfinite(values)
+    order = np.argsort(times[keep], kind="stable")
+    t, under = times[keep][order], values[keep][order] < below
+    if not len(t):
+        return np.nan, pd.DataFrame(columns=["t_start", "t_end"])
+    period = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
+    broken = np.r_[True, (np.diff(t) > 1.5 * period) | (under[1:] != under[:-1])]
+    frame = pd.DataFrame({"t": t, "under": under, "run": np.cumsum(broken)})
+    spans = frame[frame["under"]].groupby("run").agg(t_start=("t", "first"), t_end=("t", "last")).reset_index(drop=True)
+    spans["t_end"] = spans["t_end"] + period
+    return float(under.mean()), spans
+
+
+def below_outputs(feature: str, below: float, a: str, b: str, times, values, common: dict) -> tuple[list[pd.DataFrame], pd.DataFrame]:
+    """The share and stretches of the time feature was under below, as rows, and the stretches as a coded tier."""
+    share, spans = time_below(times, values, below)
+    measured = np.asarray(times, dtype=float)[np.isfinite(np.asarray(values, dtype=float))]
+    if not len(measured):
+        return [], empty_frame(ANNOTATION_SCHEMA)
+    rows = build_long_rows(
+        values=pd.DataFrame(
+            {"t_start": [float(measured.min())], "t_end": [float(measured.max())], f"{feature}_below_share": [share], f"{feature}_below_n": [float(len(spans))]}
+        ),
+        scale=Scale.RECORDING, subject_id=a, subject_id_b=None if b == a else b, **common,
+    )
+    # a tier per other person: with several, one person's stretches near each can overlap
+    tier = f"{feature}_below" if b == a else f"{feature}_below_with_{b}"
+    coded = build_annotations(
+        recording_id=common["recording_id"], tier=tier, layer="pose", annotator=common["source"], entities=common["entities"],
+        intervals=spans.assign(label=feature), subject_id=a,
+    )
+    return [rows], coded
+
+
+def below_specs(feature: str, threshold: str, params: dict, emitted: set[str], step) -> list[FeatureSpec]:
+    described = {
+        f"{feature}_below_share": (f"Share of the frames {feature} was measured in during which it was below {threshold}.", None),
+        f"{feature}_below_n": (f"Unbroken stretches of frames with {feature} below {threshold}.", "count"),
+    }
+    return [
+        FeatureSpec(
+            name=name, description=description, unit=unit, scale=Scale.RECORDING, group=step.group, extractor=step.name,
+            extractor_version=step.version, params=params, aggregation="mean", comparable_across_backends=False, validation="synthetic",
+        )
+        for name, (description, unit) in described.items()
+        if name in emitted
+    ]
+
+
+def joined_annotations(coded: list[pd.DataFrame]) -> pd.DataFrame:
+    coded = [frame for frame in coded if not frame.empty]
+    if not coded:
+        return empty_frame(ANNOTATION_SCHEMA)
+    return coerce_frame(pd.concat(coded, ignore_index=True), ANNOTATION_SCHEMA, "annotations")
 
 
 def measure_ends(measure) -> tuple[str, str]:

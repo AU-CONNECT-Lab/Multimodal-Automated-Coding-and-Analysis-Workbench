@@ -243,8 +243,19 @@ def test_measures_defined_for_the_study_are_listed_only_when_there_are_some():
     ]})
     text, _ = render(describe(ran, defined), load_references())
     assert "hand_to_head: Distance from parent's left_wrist to child's nose" in text
+    assert "below" not in text
     text, _ = render(describe(ran, config()), load_references())
     assert "defined for this study" not in text
+
+
+def test_time_below_a_measure_is_described_with_its_threshold_and_unit():
+    ran = manifest(spec("pose.kinematics", "hand_distance"))
+    defined = config(kinematics={"measures": [
+        {"name": "near", "person": "parent", "joints": ["nose"], "to_person": "child", "to_joints": ["nose"], "below": 300},
+        {"name": "closing", "person": "parent", "joints": ["nose"], "to_person": "child", "to_joints": ["nose"], "method": "approach_speed", "below": -20},
+    ]})
+    text, _ = render(describe(ran, defined), load_references())
+    assert "share of the measured frames with near below 300 px and closing below -20 px/s was computed" in text
 
 
 def test_gesture_kinematics_name_the_tier_and_both_thresholds_with_their_sources():

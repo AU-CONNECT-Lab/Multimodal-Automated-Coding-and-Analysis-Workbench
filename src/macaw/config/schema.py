@@ -292,6 +292,9 @@ class MeasureSection(_Section):
     per_body_size: bool = False
     # with 3D, a script method runs on the points in the room too; built-in methods always do
     in_3d: bool = False
+    # time spent under a value: in the measure's own unit, and for 3D in project.units (shoulder widths with per_body_size)
+    below: float | None = None
+    below_3d: float | None = None
 
 
 class GestureSection(_Section):

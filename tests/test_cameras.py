@@ -428,6 +428,22 @@ def test_the_projects_own_measures_have_3d_versions(seated, project, tmp_path):
     assert "flat_3d" not in text
 
 
+def test_time_below_a_3d_value_is_typed_in_the_project_unit(seated, project, tmp_path):
+    lines = [
+        f"    - {{name: {name}, person: parent, joints: [left_wrist, right_wrist], to_person: child, to_joints: [nose], below_3d: {cm}}}"
+        for name, cm in (("far", 1000), ("near", 1))
+    ]
+    settings(project, "\n".join(["kinematics:", "  measures:", *lines, ""]))
+    config = resolve_config(project)
+    placed = TriangulationExtractor(config).run(build_recording("003", config), tmp_path).keypoints
+    write_keypoints(placed, points_file(config, "003").parent)
+    result = Kinematics3DExtractor(config).run(build_recording("003", config), tmp_path)
+    share = result.rows[result.rows.feature.str.endswith("_below_share")].set_index("feature").value
+    assert share.to_dict() == {"far_3d_below_share": 1.0, "near_3d_below_share": 0.0}
+    assert "below 1000 cm" in next(spec.description for spec in result.specs if spec.name == "far_3d_below_share")
+    assert set(result.annotations.tier) == {"far_3d_below_with_child"}
+
+
 def test_a_3d_version_may_not_take_a_name_in_use(seated, project):
     settings(project, "kinematics:\n  measures:\n    - {name: head_distance, person: parent, joints: [nose], to_person: child, to_joints: [nose]}\n")
     with pytest.raises(ConfigError, match="head_distance_3d"):

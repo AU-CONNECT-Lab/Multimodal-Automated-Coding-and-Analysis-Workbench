@@ -21,8 +21,11 @@ from macaw.extractors.video.pose.kinematics import (
     SELF,
     _keypoints_file,
     _smoothed_derivative,
+    below_outputs,
+    below_specs,
     call_script,
     check_measures,
+    joined_annotations,
     measure_ends,
 )
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
@@ -280,7 +283,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -321,16 +324,21 @@ class Kinematics3DExtractor(Extractor):
         for a, b in permutations(sorted(people), 2):
             values = pair_values_3d(people[a], people[b], symmetric=a < b)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common))
+        coded = []
         for measure in measures_3d(self.config):
-            frames += self._measure_rows(measure, recording, people, common)
+            pieces, stretches = self._measure_rows(measure, recording, people, common)
+            frames += pieces
+            coded += stretches
         rows = concat_long_tables(frames)
-        return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"]) if not rows.empty else set(), smoothing_s))
+        return ExtractorResult(
+            rows=rows, specs=self._specs(set(rows["feature"]) if not rows.empty else set(), smoothing_s), annotations=joined_annotations(coded),
+        )
 
-    def _measure_rows(self, measure, recording: Recording, people: dict[str, pd.DataFrame], common: dict) -> list[pd.DataFrame]:
+    def _measure_rows(self, measure, recording: Recording, people: dict[str, pd.DataFrame], common: dict) -> tuple[list, list]:
         function = None if measure.method in BUILTIN_MEASURES else script_function(self.config.project.scripts_dir, measure.method)
         # unlike in the picture, two people placed in the room can always be measured against each other
         placed = [subject for subject in recording.subjects if subject.subject_id in people]
-        rows = []
+        rows, stretches = [], []
         for a in [subject.subject_id for subject in placed if subject.role == measure.person]:
             others = [a] if measure.to_person == SELF else [
                 subject.subject_id for subject in placed if subject.role == measure.to_person and subject.subject_id != a
@@ -338,14 +346,24 @@ class Kinematics3DExtractor(Extractor):
             for b in others:
                 values = measure_values_3d(measure, people[a], people[b], smoothing_s=self.config.kinematics.smoothing_s, function=function)
                 rows.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common))
-        return rows
+                if measure.below_3d is not None:
+                    feature = f"{measure.name}_3d"
+                    below = measure.below_3d * below_3d_to_metres(measure, self.config.project.units)
+                    summary, coded = below_outputs(feature, below, a, b, values["t_start"], values[feature], common)
+                    rows += summary
+                    stretches.append(coded)
+        return rows, stretches
 
     def _specs(self, emitted: set[str], smoothing_s: float) -> list[FeatureSpec]:
         params = {"joint_set": JOINT_SET, "smoothing_s": smoothing_s, "polyorder": POLYORDER}
         catalog = {name: (description, unit, True, params) for name, (description, unit) in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        below = []
         for measure in measures_3d(self.config):
             catalog[f"{measure.name}_3d"] = (*measure_spec_3d(measure), {**params, **measure.model_dump()})
-        return [
+            if measure.below_3d is not None:
+                typed = below_3d_unit(measure, self.config.project.units)
+                below += below_specs(f"{measure.name}_3d", f"{measure.below_3d:g}{f' {typed}' if typed else ''}", {**params, **measure.model_dump()}, emitted, self)
+        return below + [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
@@ -467,6 +485,21 @@ def _skeleton_table_3d(found: dict[str, np.ndarray], frames: np.ndarray, times: 
         xyz = found.get(joint, np.full((len(frames), 3), np.nan))
         columns.update({f"{joint}_{axis}": xyz[:, index] for index, axis in enumerate("xyz")})
     return pd.DataFrame(columns, index=pd.Index(frames, name="frame"))
+
+
+def below_3d_to_metres(measure, units: str) -> float:
+    """below_3d is typed in the project's unit for a length or speed in the room, else in the measure's own unit."""
+    from macaw.project.room import CM_PER_UNIT
+
+    if measure.method not in BUILTIN_MEASURES or measure.per_body_size:
+        return 1.0
+    return CM_PER_UNIT[units] / 100.0
+
+
+def below_3d_unit(measure, units: str) -> str | None:
+    if measure.method not in BUILTIN_MEASURES or measure.per_body_size:
+        return measure_spec_3d(measure)[1]
+    return f"{units}/s" if measure.method == "approach_speed" else units
 
 
 def measure_spec_3d(measure) -> tuple[str, str | None, bool]:

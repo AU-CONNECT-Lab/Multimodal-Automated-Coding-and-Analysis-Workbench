@@ -548,3 +548,25 @@ class TestMeasuresInTheRun:
         assert rows.value.iloc[0] == pytest.approx(-300.0)
         extractor = KinematicsExtractor(measure_config([measure(name="nose_gap", method="lab.gap")], scripts_dir=tmp_path))
         assert tmp_path / "lab.py" in extractor.inputs_for(SimpleNamespace(recording_id="r1"))
+
+    def test_time_below_a_value_gives_its_share_stretches_and_a_tier_per_other_person(self, measured):
+        moves = {"nose": [(450.0, 160.0) if 5 <= frame < 10 else (1000.0, 160.0) for frame in range(20)]}
+        keypoints = pd.concat([person("p1", centre=PARENT), person("c1", centre=CHILD, moves=moves)]).assign(video="room.mp4")
+        result = measured([measure(name="near", joints=["nose"], to_joints=["nose"], below=400)], keypoints=keypoints)
+        values = result.rows[result.rows.scale == "recording"].set_index("feature").value
+        assert values["near_below_share"] == pytest.approx(0.25) and values["near_below_n"] == 1.0
+        spec = next(spec for spec in result.specs if spec.name == "near_below_share")
+        assert "below 400 px" in spec.description
+        tier = result.annotations[result.annotations.tier == "near_below_with_c1"]
+        assert tier.subject_id.tolist() == ["p1"] and tier.label.tolist() == ["near"]
+        assert tier[["t_start", "t_end"]].values.tolist() == [pytest.approx([5 / FPS, 10 / FPS])]
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+
+
+def test_a_frame_not_measured_breaks_a_stretch_and_is_left_out_of_the_share():
+    from macaw.extractors.video.pose.kinematics import time_below
+
+    share, spans = time_below([0.0, 0.1, 0.2, 0.3, 0.4], [1.0, 1.0, np.nan, 1.0, 5.0], 2.0)
+    assert share == pytest.approx(0.75)
+    assert spans.values.tolist() == [pytest.approx([0.0, 0.2]), pytest.approx([0.3, 0.4])]
+    assert np.isnan(time_below([0.0], [np.nan], 2.0)[0])
