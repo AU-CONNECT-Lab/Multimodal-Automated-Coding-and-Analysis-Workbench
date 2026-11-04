@@ -12,7 +12,6 @@ from macaw.execution.lock import run_lock
 from macaw.execution.runner import _write_stamp, completed_on_disk, task_states
 from macaw.extractors.base import Phase
 from macaw.project.layout import layout_for
-from macaw.store import cache as cache_store
 
 
 @pytest.fixture
@@ -44,13 +43,13 @@ def line(tmp_path, monkeypatch):
     scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
     config = resolve_config(project)
     layout = layout_for(config)
-    for name in registry:
+    monkeypatch.setattr(runner_module, "hash_extractor_config", lambda config, name: "c")
+    for name, cls in registry.items():
         output = layout.long_table_path("rec1") / f"{name}.parquet"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"rows")
-        key = cache_store.make_key(extractor=name, extractor_version="0.1.0", inputs=[source], config_hash="c")
+        key = runner_module._make_key(config, cls, cls(config), SimpleNamespace(recording_id="rec1"), "c")
         _write_stamp(layout.completion_path("rec1", name), key)
-    monkeypatch.setattr(runner_module, "hash_extractor_config", lambda config, name: "c")
 
     def current():
         return completed_on_disk(config, build_dag(config, ["second"]), ["rec1"])
@@ -140,3 +139,13 @@ def test_a_recording_file_may_not_need_a_step_the_project_plan_lacks(tmp_path):
     check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
     own.write_text("gaze:\n  targets: []\n", encoding="utf-8")
     check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
+
+
+def test_two_recordings_with_the_same_files_do_not_share_a_cache_entry(line):
+    """Rows carry their recording's id, and device folders let two recordings hold files of the same name and content."""
+    cls = line.registry["first"]
+    keys = {
+        runner_module._make_key(line.config, cls, cls(line.config), SimpleNamespace(recording_id=rid), "c").as_dirname()
+        for rid in ("rec1", "rec2")
+    }
+    assert len(keys) == 2

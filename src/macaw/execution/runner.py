@@ -259,7 +259,8 @@ def _make_key(config, cls, extractor, recording, config_hash):
         extractor=cls.name,
         extractor_version=cls.version,
         inputs=[*extractor.inputs_for(recording), *([script] if script else [])],
-        config_hash=hash_value([config_hash, extra]) if extra else config_hash,
+        # the rows carry the recording's id, so two recordings with the same files must not share an entry
+        config_hash=hash_value([config_hash, recording.recording_id, extra]),
     )
 
 
