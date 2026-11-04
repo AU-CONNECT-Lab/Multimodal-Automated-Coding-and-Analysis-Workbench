@@ -61,7 +61,7 @@ def view_of(camera: PlacedCamera) -> View | None:
         return None
     level = heading(camera.facing)
     right = np.array([level[1], -level[0], 0.0])
-    tilt = np.radians(camera.tilt)
+    tilt = np.radians(camera.tilt or 0.0)
     ahead = np.cos(tilt) * level - np.sin(tilt) * np.array([0.0, 0.0, 1.0])
     up = np.cross(right, ahead)
     return View(np.array([*camera.at, camera.height], dtype=float), right, ahead, up, camera.lens)

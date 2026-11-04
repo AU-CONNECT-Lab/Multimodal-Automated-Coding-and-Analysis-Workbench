@@ -4,6 +4,7 @@ macaw command shown with it."""
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from scipy.spatial.transform import Rotation
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
+from macaw.extractors.video.pose.triangulate import calibration_path
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
 from macaw.interface.pages.results import _shown, axes_3d, in_first_camera
@@ -94,6 +96,21 @@ def section(config_path: Path):
                 desc="A folder per camera with its board clip, or a calibration file from another tool.",
                 actions=[ui.button("Find the cameras", "cameras-find", icon_name="play"), ui.button("Use for this project", "cameras-use", primary=True)],
             ),
+            ui.card(
+                "Board lying flat",
+                html.Div(
+                    [
+                        html.Div(dcc.Slider(0, 60, 0.1, value=0, id="cameras-floor-at", marks=None, updatemode="mouseup",
+                                            tooltip={"placement": "bottom", "always_visible": True}), className="floor-slider"),
+                        ui.field("On", dcc.Dropdown(["floor"], "floor", id="cameras-floor-on", clearable=False, className="picker")),
+                    ],
+                    className="toolbar",
+                ),
+                dcc.Loading(html.Div(id="cameras-floor-view")),
+                html.Div(id="cameras-floor-result"),
+                desc="Drag to when the board lay flat; the room takes the floor from it.",
+                actions=[ui.button("Save the moment", "cameras-floor-save")],
+            ),
             ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state")),
         ]
     )
@@ -131,12 +148,6 @@ def _find_command(config_path: Path, name: str) -> list[str]:
     return cli_bridge.build_command(["calibrate-cameras", name], config_path=config_path)
 
 
-def calibration_file(config, name: str) -> Path:
-    """Where a setup's calibration is: the file macaw calibrate-cameras wrote for a folder, or the file itself."""
-    source = Path(config.project.calibration_dir) / name
-    return layout_for(config, create=False).camera_setup_path(name) if source.is_dir() else source
-
-
 def setup_view(config_path: Path, name: str | None):
     from macaw.exceptions import ConfigError
     from macaw.extractors.video.pose.board import describe_board
@@ -157,7 +168,7 @@ def setup_view(config_path: Path, name: str | None):
             html.Span("The same in a terminal", className="hint"),
             ui.command(_find_command(config_path, name)),
         ]
-    path = calibration_file(config, name)
+    path = calibration_path(config, name)
     if not path.is_file():
         return [*parts, ui.note("The cameras of this calibration are not found yet: press Find the cameras.")]
     try:
@@ -236,6 +247,99 @@ def cameras_figure(setup, name: str, units: str) -> go.Figure:
     return figure
 
 
+def _offsets(config, name: str) -> dict[str, float]:
+    """Seconds to add to each camera's clip to reach the first one's clock, as finding the cameras measured them."""
+    from macaw.exceptions import ConfigError
+    from macaw.extractors.video.pose.cameras import read_setup
+
+    path = calibration_path(config, name)
+    try:
+        found = read_setup(path, config.pose3d.units).metadata.get("offsets_s") if path.is_file() else None
+    except ConfigError:
+        found = None
+    return {camera: float(value) for camera, value in (found or {}).items()}
+
+
+def floor_things(config, setup_name: str | None) -> list[str]:
+    """The floor, and each thing of a setup's room with a height, which the board may have lain on."""
+    import yaml
+
+    path = Path(config.project.setups_dir) / f"{setup_name}.yaml" if setup_name else None
+    data = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path is not None and path.is_file() else {}
+    things = (data.get("room") or {}).get("things") or {}
+    return ["floor", *(name for name, thing in things.items() if (thing or {}).get("height") is not None)]
+
+
+def floor_tools(config_path: Path, name: str | None, setup_name: str | None) -> tuple[float, float, list[str], str, list]:
+    """The slider's length and place, what the board may lie on and what it lay on, and the moment saved so far."""
+    from macaw.extractors.video.pose.board import clip_seconds
+    from macaw.project.placing import floor_said
+
+    config = resolve_config(config_path)
+    things = floor_things(config, setup_name)
+    folder = Path(config.project.calibration_dir) / name if name else None
+    if folder is None or not folder.is_dir():
+        return 60.0, 0.0, things, "floor", []
+    offsets = _offsets(config, name)
+    length = max([clip_seconds(clip) + offsets.get(camera, 0.0) for camera, clip in _clips(folder).items()] or [60.0])
+    said = floor_said(folder)
+    if said is None:
+        return round(length, 1), 0.0, things, "floor", []
+    on = said["on"] if said["on"] in things else "floor"
+    return round(length, 1), said["at_s"], things, on, [ui.pill(f"saved: {said['at_s']:g} s, on {said['on']}", "ok")]
+
+
+def floor_view(config_path: Path, name: str | None, at) -> list:
+    """Each camera's frame at that moment of the board clips, with the board corners it finds marked."""
+    from macaw.extractors.video.pose.board import corners_on, frame_at, make_board, marked_jpeg, width_factor
+
+    config = resolve_config(config_path)
+    if name is None:
+        return []
+    folder = Path(config.project.calibration_dir) / name
+    if not folder.is_dir():
+        return [ui.note(f"{name} is a calibration file, with no board clips to show the board lying flat.")]
+    offsets = _offsets(config, name)
+    board = make_board(config.pose3d.board.in_mm(config.project.units))
+    figures = []
+    for camera, clip in _clips(folder).items():
+        frame = frame_at(clip, float(at or 0.0) - offsets.get(camera, 0.0), width_factor(clip, config.video.normalise))
+        if frame is None:
+            figures.append(html.Figure(html.Figcaption(f"{camera}: no frame at this moment")))
+            continue
+        sighting = corners_on(frame, board)
+        uri = "data:image/jpeg;base64," + base64.b64encode(marked_jpeg(frame, sighting)).decode()
+        caption = f"{camera}: board found, {len(sighting.ids)} corners" if sighting is not None else f"{camera}: board not found"
+        figures.append(html.Figure([html.Img(src=uri), html.Figcaption(caption)]))
+    return [html.Div(figures, className="thumbs")]
+
+
+def save_floor(config_path: Path, name: str | None, at, on: str):
+    from macaw.extractors.video.pose.board import make_board
+    from macaw.extractors.video.pose.cameras import read_setup
+    from macaw.project.placing import find_floor, write_floor
+
+    config = resolve_config(config_path)
+    if name is None:
+        return ui.note("Choose a calibration first.", "warn")
+    folder = Path(config.project.calibration_dir) / name
+    path = calibration_path(config, name)
+    if not folder.is_dir() or not path.is_file():
+        return ui.note(f"Find the cameras of {name} first.", "warn")
+    at = float(at or 0.0)
+    setup = read_setup(path, config.pose3d.units)
+    board = make_board(config.pose3d.board.in_mm(config.project.units))
+    if find_floor(setup, _clips(folder), board, at, on, normalise=config.video.normalise) is None:
+        return ui.note("No camera finds the board at this moment; choose one where it lies flat and still in view.", "warn")
+    write_floor(folder, at, on)
+    argv = cli_bridge.build_command(["calibration-floor", name, "--at", f"{at:g}", "--on", on], config_path=config_path)
+    surface = "the floor" if on == "floor" else on
+    return [
+        ui.note(f"Saved: the board lay on {surface} at {at:g} s. From the calibration on the setup now uses it.", "ok"),
+        html.Span("The same in a terminal", className="hint"), ui.command(argv),
+    ]
+
+
 def progress(config_path: Path):
     current = _CURRENT.get(str(config_path))
     if current is None:
@@ -301,7 +405,7 @@ def register(app, config_path: Path) -> None:
         if name is None:
             return ui.note("Choose a calibration first.", "warn"), no_update
         if ctx.triggered_id == "cameras-use":
-            if not calibration_file(config, name).is_file():
+            if not calibration_path(config, name).is_file():
                 return ui.note(f"Find the cameras of {name} first.", "warn"), no_update
             try:
                 use_setup(config_path, name)
@@ -320,6 +424,37 @@ def register(app, config_path: Path) -> None:
         log = layout_for(config, create=False).work_dir / "gui" / f"cameras_{name}_{stamp}.log"
         _CURRENT[str(config_path)] = cli_bridge.launch(_find_command(config_path, name), log, cwd=config_path.parent)
         return ui.note(f"Finding the cameras of {name}; this reads every clip and takes a few minutes. The output goes to {log}.", "ok"), no_update
+
+    @app.callback(
+        Output("cameras-floor-at", "max"), Output("cameras-floor-at", "value"), Output("cameras-floor-on", "options"),
+        Output("cameras-floor-on", "value"), Output("cameras-floor-result", "children"),
+        Input("cameras-setup", "value"), Input("setup-pick", "value"),
+    )
+    def floor_choices(name, setup_name):
+        try:
+            return floor_tools(config_path, name, setup_name)
+        except MacawError as error:
+            return no_update, no_update, no_update, no_update, ui.note(str(error), "bad")
+
+    @app.callback(Output("cameras-floor-view", "children"), Input("cameras-floor-at", "value"), State("cameras-setup", "value"))
+    def floor_frames(at, name):
+        try:
+            return floor_view(config_path, name, at)
+        except MacawError as error:
+            return ui.note(str(error), "bad")
+
+    @app.callback(
+        Output("cameras-floor-result", "children", allow_duplicate=True),
+        Input("cameras-floor-save", "n_clicks"), State("cameras-setup", "value"), State("cameras-floor-at", "value"), State("cameras-floor-on", "value"),
+        prevent_initial_call=True,
+    )
+    def floor_save(clicks, name, at, on):
+        if not clicks:
+            return no_update
+        try:
+            return save_floor(config_path, name, at, on)
+        except MacawError as error:
+            return ui.note(str(error), "bad")
 
     @app.callback(Output("cameras-progress", "children"), Output("cameras-state", "data"), Input("cameras-poll", "n_intervals"), State("cameras-state", "data"))
     def poll(_, known):

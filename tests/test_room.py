@@ -68,9 +68,12 @@ class TestTheSetupFile:
     def test_the_room_is_written_without_what_is_left_blank(self):
         setup = SetupSection(
             cameras={"front": {"body": ["parent"]}},
-            room={"people": {"parent": {"at": [1, 2]}, "child": {}}, "cameras": {"front": {"tilt": 0}}},
+            room={"people": {"parent": {"at": [1, 2]}, "child": {}}, "cameras": {"front": {}}},
         )
         assert setup_content(setup)["room"] == {"people": {"parent": {"at": [1, 2]}}}
+        # a tilt of 0 says the camera is level, which a blank tilt does not
+        level = SetupSection(cameras={"front": {"body": ["parent"]}}, room={"cameras": {"front": {"tilt": 0}}})
+        assert setup_content(level)["room"] == {"cameras": {"front": {"tilt": 0}}}
         walled = SetupSection(cameras={"front": {"body": ["parent"]}}, room={"size": [400.0, 350.5]})
         assert setup_content(walled)["room"] == {"size": [400, 350.5]}
         assert "room" not in setup_content(SetupSection(cameras={"front": {"body": ["parent"]}}))

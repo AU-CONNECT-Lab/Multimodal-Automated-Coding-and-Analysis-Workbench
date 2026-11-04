@@ -117,9 +117,11 @@ class PlacedCamera(_Section):
     at: Place | None = None
     height: float | None = Field(default=None, ge=0)
     facing: float | None = None
-    # degrees below level, and the picture's width as an angle
-    tilt: float = Field(default=0.0, ge=-90, le=90)
+    # degrees below level, drawn level while blank, and the picture's width as an angle
+    tilt: float | None = Field(default=None, ge=-90, le=90)
     lens: float | None = Field(default=None, gt=0, lt=180)
+    # the calibration its place and angles were taken from, until they are changed by hand
+    calibration: str | None = None
 
 
 class PlacedMicrophone(_Section):

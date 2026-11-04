@@ -167,6 +167,89 @@ def find_board(
     return clip
 
 
+def width_factor(path: Path, normalise: bool) -> float:
+    """How much wider a clip's pixels are than tall, when prep.video makes the recordings' pixels square."""
+    from macaw.media.probe import probe
+
+    if not normalise:
+        return 1.0
+    streams = probe(path).video_streams()
+    aspect = streams[0].pixel_aspect if streams else None
+    return float(aspect) if aspect else 1.0
+
+
+def frame_at(path: Path, at_s: float, width_factor: float = 1.0) -> np.ndarray | None:
+    """The clip's frame nearest at_s seconds of its own clock, stretched as find_board stretches it; None outside the clip."""
+    cv2 = _cv2()
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise MacawError(f"cannot open {path}")
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
+        count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        index = round(at_s * fps)
+        if index < 0 or (count and index >= count):
+            return None
+        capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ok, frame = capture.read()
+    finally:
+        capture.release()
+    if not ok:
+        return None
+    if width_factor != 1.0:
+        height, width = frame.shape[:2]
+        frame = cv2.resize(frame, (int(width * width_factor / 2) * 2, int(height / 2) * 2), interpolation=cv2.INTER_LINEAR)
+    return frame
+
+
+def corners_on(frame: np.ndarray, board) -> Sighting | None:
+    """The board's corners on one frame; None where too few are found to place it."""
+    cv2 = _cv2()
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+    corners, ids, _, _ = cv2.aruco.CharucoDetector(board).detectBoard(gray)
+    if ids is None or len(ids) < _MIN_CORNERS:
+        return None
+    return Sighting(0, ids.ravel().astype(int), corners.reshape(-1, 2).astype(float))
+
+
+def marked_jpeg(frame: np.ndarray, sighting: Sighting | None, width: int = 480) -> bytes:
+    """The frame with the board corners found on it marked, shrunk to this width, as a JPEG."""
+    cv2 = _cv2()
+    frame = frame.copy()
+    if sighting is not None:
+        for x, y in sighting.corners:
+            cv2.circle(frame, (int(round(x)), int(round(y))), max(3, frame.shape[1] // 160), (60, 190, 60), -1)
+    height = round(frame.shape[0] * width / frame.shape[1])
+    ok, encoded = cv2.imencode(".jpg", cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA))
+    return encoded.tobytes() if ok else b""
+
+
+def clip_seconds(path: Path) -> float:
+    cv2 = _cv2()
+    capture = cv2.VideoCapture(str(path))
+    try:
+        return float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / (capture.get(cv2.CAP_PROP_FPS) or 30.0)
+    finally:
+        capture.release()
+
+
+def board_in_frame(camera: Camera, sighting: Sighting, board, units: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """The direction the board's face points and its middle, in the calibration's frame and units, from one camera's view."""
+    cv2 = _cv2()
+    corners_3d = np.asarray(board.getChessboardCorners(), dtype=float)
+    ok, rvec, tvec = cv2.solvePnP(corners_3d[sighting.ids], sighting.corners, camera.matrix, camera.distortions)
+    if not ok:
+        return None
+    from macaw.extractors.video.pose.cameras import UNITS_TO_METRES
+
+    turn = Rotation.from_rotvec(rvec.ravel())
+    # the board is drawn in millimetres
+    per_mm = 0.001 / UNITS_TO_METRES[units]
+    middle = (turn.apply(corners_3d.mean(axis=0)) + tvec.ravel()) * per_mm
+    to_camera = Rotation.from_rotvec(camera.rotation)
+    return to_camera.inv().apply(turn.apply([0.0, 0.0, 1.0])), to_camera.inv().apply(middle - camera.translation)
+
+
 def calibrate(clips: list[CameraClip], board, *, units: str = "mm", fix_k3: bool = True) -> Fit:
     """Each camera's lens, then every camera's place with the first one at the origin."""
     cv2 = _cv2()

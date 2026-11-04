@@ -435,3 +435,4 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .section-title { font-size: 1.25rem; font-weight: var(--heading-weight); margin: 2rem 0.25rem 1rem; }
 .choice-label { font-size: 0.78rem; color: var(--muted); margin: 1rem 0 0.1rem; }
 .card-body > .choice-label:first-child { margin-top: 0; }
+.floor-slider { flex: 1; min-width: 18rem; padding-bottom: 1.6rem; }

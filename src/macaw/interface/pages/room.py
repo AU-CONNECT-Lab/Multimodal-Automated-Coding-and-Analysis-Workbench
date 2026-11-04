@@ -111,6 +111,7 @@ def card(config):
         desc=f"Click someone or something to edit it, drag to move it. Lengths in {geometry.UNIT_NAMES[units]}.",
         actions=[
             html.Span(id="room-dirty"),
+            ui.button("From the calibration", "room-calibrate", small=True),
             ui.button("Draw for a paper", "room-draw", icon_name="download", small=True),
             ui.button("Save the setup", "room-save", primary=True, small=True),
         ],
@@ -171,6 +172,8 @@ def model_of(config, name: str) -> dict:
             if kind == "things":
                 size = placed.get("size") or [None, None]
                 entry.update(width=size[0], depth=size[1])
+            if kind == "cameras":
+                entry["calibration"] = placed.get("calibration")
             for use in USES.get(kind, ()):
                 entry[use] = list(((data.get(kind) or {}).get(item) or {}).get(use) or [])
             model[kind][str(item)] = entry
@@ -194,6 +197,8 @@ def room_of(model: dict) -> dict:
                     spot[key] = float(entry[key])
             if kind == "things" and entry.get("width") is not None and entry.get("depth") is not None:
                 spot["size"] = [float(entry["width"]), float(entry["depth"])]
+            if kind == "cameras" and entry.get("calibration"):
+                spot["calibration"] = entry["calibration"]
             placed[name] = spot
         room[kind] = placed
     return room
@@ -297,8 +302,51 @@ def moved(model: dict, kind: str, name: str, fields: dict) -> dict:
     if name not in model.get(kind, {}):
         return model
     model = _copy(model)
-    model[kind][name].update({field: _number(value, field) for field, value in fields.items() if field in FIELDS[kind]})
+    entry = model[kind][name]
+    given = {field: _number(value, field) for field, value in fields.items() if field in FIELDS[kind]}
+    # numbers changed by hand are no longer the calibration's
+    if kind == "cameras" and any(entry.get(field) != value for field, value in given.items()):
+        entry["calibration"] = None
+    entry.update(given)
     return model
+
+
+def filled(model: dict, placing, calibration: str) -> dict:
+    """The model with each camera's numbers from the calibration: its lens angle always, the rest once the room is tied."""
+    model = _copy(model)
+    for name, values in placing.values.items():
+        entry = model["cameras"][name]
+        entry.update({field: values[field] for field in FIELDS["cameras"] if field in values})
+        if placing.tied:
+            entry["calibration"] = calibration
+    return model
+
+
+def from_calibration(config_path: Path, model: dict):
+    """(model, message) after taking the cameras' places from the project's calibration."""
+    from macaw.extractors.video.pose.cameras import read_setup
+    from macaw.extractors.video.pose.triangulate import calibration_path
+    from macaw.project.placing import check_rows, floor_of, place_cameras, remarks, summary
+
+    config = resolve_config(config_path)
+    calibration = config.pose3d.calibration
+    if not calibration:
+        return no_update, ui.note("Choose a calibration under Cameras for three dimensions first.", "warn")
+    source = calibration_path(config, calibration)
+    if not source.is_file():
+        return no_update, ui.note(f"The cameras of {calibration} are not found yet: press Find the cameras.", "warn")
+    loose = loose_setup(model)
+    if loose is None:
+        return no_update, ui.note("A number in the room does not read; fix it first.", "bad")
+    cameras = read_setup(source, config.pose3d.units)
+    floor, problem = floor_of(config, calibration, cameras)
+    placing = place_cameras(cameras, loose[1], model["units"], floor)
+    said = [ui.note(summary(placing, calibration), "ok" if placing.tied else "warn")]
+    said += [ui.note(text, "warn") for text in ([problem] if problem else []) + remarks(placing)]
+    rows = check_rows(placing, model["units"])
+    if rows:
+        said.append(ui.table(["Camera", "What", "Given", "Placed", "Off by", "Agrees"], rows, numeric={"Given", "Placed", "Off by"}))
+    return (filled(model, placing, calibration) if placing.values else no_update), html.Div(said)
 
 
 def used(model: dict, kind: str, name: str, use: str, role: str, on: bool) -> dict:
@@ -484,7 +532,10 @@ def panel(model: dict | None, selected: dict | None):
         )
     entry = model[kind][name]
     head = [
-        html.H3([name, " ", ui.pill(NOUN[kind]), *([" ", ui.pill("not placed", "warn")] if not _is_placed(entry) else [])]),
+        html.H3([
+            name, " ", ui.pill(NOUN[kind]), *([" ", ui.pill("not placed", "warn")] if not _is_placed(entry) else []),
+            *([" ", ui.pill(f"from the calibration {entry['calibration']}", "ok")] if entry.get("calibration") else []),
+        ]),
     ]
     if kind != "people":
         head.append(ui.field(
@@ -658,6 +709,19 @@ def register(app, config_path: Path) -> None:
         except MacawError as error:
             return ui.note(str(error), "bad"), no_update, no_update
         return ui.note(f"Saved {path.parent.name}/{path.name}.", "ok"), comparable(model), holdings(config_path)
+
+    @app.callback(
+        Output("room-model", "data", allow_duplicate=True), Output("room-message", "children", allow_duplicate=True),
+        Input("room-calibrate", "n_clicks"), State("room-model", "data"),
+        prevent_initial_call=True,
+    )
+    def calibrate(clicks, model):
+        if not clicks or model is None:
+            return no_update, no_update
+        try:
+            return from_calibration(config_path, model)
+        except MacawError as error:
+            return no_update, ui.note(str(error), "bad")
 
     @app.callback(
         Output("room-message", "children", allow_duplicate=True),

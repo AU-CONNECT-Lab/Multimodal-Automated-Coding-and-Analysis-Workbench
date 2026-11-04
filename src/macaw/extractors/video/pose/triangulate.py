@@ -50,10 +50,10 @@ _WRISTS = ("left_wrist", "right_wrist")
 _DERIVATIVES = (("speed", 1), ("acceleration", 2), ("jerk", 3))
 
 
-def calibration_path(config) -> Path:
-    """The file pose3d.calibration stands for: a .toml in project.calibration_dir, or the one
-    macaw calibrate-cameras made from a folder of board clips there."""
-    name = config.pose3d.calibration
+def calibration_path(config, name: str | None = None) -> Path:
+    """The file a calibration (pose3d.calibration unless named) stands for: a .toml in project.calibration_dir, or
+    the one macaw calibrate-cameras made from a folder of board clips there."""
+    name = name or config.pose3d.calibration
     source = Path(config.project.calibration_dir) / name
     return layout_for(config, create=False).camera_setup_path(name) if source.is_dir() else source
 
