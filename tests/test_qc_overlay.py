@@ -204,6 +204,23 @@ class TestRenderReview:
         assert not drawn[0].any()
         assert drawn[1].any()
 
+    def test_a_camera_is_known_by_its_device_not_its_file(self, tmp_path):
+        """Camcorders in two device folders often write files of the same name."""
+        from macaw.project.recording import MediaFile
+
+        files = [
+            MediaFile(path=write_video((tmp_path / folder).mkdir() or tmp_path / folder / "00001.avi"), kind="video", device=folder,
+                      uses={"body": ("parent", "child")}, fps=10.0)
+            for folder in ("left", "right")
+        ]
+        keypoints = pd.concat([body("parent", video="right"), body("child", video="left", centre=(220, 120))])
+        index = render_review(recording(files), keypoints, moments([(None, None, BASELINE, 0.5)]), tmp_path / "renders")
+        assert sorted(index.video) == ["left", "right"] and index.file.nunique() == 2
+        for row in index.itertuples():
+            # rows 100 to 160 hold the bodies' lower joints and no label
+            lit = cv2.imread(str(tmp_path / "renders" / row.file))[100:160] > 60
+            assert lit[:, 85:115].any() == (row.video == "right") and lit[:, 205:235].any() == (row.video == "left")
+
     def test_the_file_offset_is_undone(self, tmp_path):
         """t is on the recording clock; the frame number is on the file's own."""
         video = write_video(tmp_path / "room.avi")

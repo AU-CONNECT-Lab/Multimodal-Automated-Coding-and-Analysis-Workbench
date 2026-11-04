@@ -3,6 +3,7 @@ worth looking at. A misassigned skeleton is obvious in one frame and invisible i
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -148,6 +149,30 @@ def _targets(row, videos: list) -> list:
     return videos
 
 
+def read_frames(source: Path, wanted) -> Iterator[tuple[int, np.ndarray]]:
+    """(frame, picture) for each wanted frame number of a video that it has, in frame order."""
+    cv2 = cv2_module()
+    capture = cv2.VideoCapture(str(source))
+    # a transport stream is read forward, as a jump in it lands after the wanted frame
+    jumps, position = jumps_exactly(probe(source)), 0
+    try:
+        n_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        for frame in sorted(set(int(value) for value in wanted)):
+            if frame < 0 or (n_frames > 0 and frame >= n_frames):
+                continue
+            if jumps:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame)
+            else:
+                while position < frame and capture.grab():
+                    position += 1
+            ok, image = capture.read()
+            position = frame + 1
+            if ok:
+                yield frame, image
+    finally:
+        capture.release()
+
+
 def render_review(
     recording: Recording,
     keypoints: pd.DataFrame,
@@ -172,37 +197,21 @@ def render_review(
             jobs.append((item, frame, index, row))
 
     entries = []
-    by_video: dict[Path, list] = {}
+    by_video: dict[str, list] = {}
     for job in jobs:
-        by_video.setdefault(job[0].path, []).append(job)
-    for path, work in by_video.items():
-        source = work[0][0].frames_path
-        capture = cv2.VideoCapture(str(source))
-        # a transport stream is read forward, as a jump in it lands after the wanted frame
-        jumps, position = jumps_exactly(probe(source)), 0
-        try:
-            n_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-            for item, frame, index, row in sorted(work, key=lambda job: job[1]):
-                if frame < 0 or (n_frames > 0 and frame >= n_frames):
-                    continue
-                if jumps:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, frame)
-                else:
-                    if frame < position:
-                        capture.open(str(source))
-                        position = 0
-                    while position < frame and capture.grab():
-                        position += 1
-                ok, image = capture.read()
-                position = frame + 1
-                if not ok:
-                    continue
-                people = keypoints[(keypoints["frame"] == frame) & (keypoints["video"] == Path(path).name)]
+        by_video.setdefault(job[0].name, []).append(job)
+    for device, work in by_video.items():
+        at_frame: dict[int, list] = {}
+        for job in work:
+            at_frame.setdefault(job[1], []).append(job)
+        for frame, image in read_frames(work[0][0].frames_path, at_frame):
+            for item, frame, index, row in at_frame[frame]:
+                people = keypoints[(keypoints["frame"] == frame) & (keypoints["video"] == device)]
                 header = [
-                    f"{recording.recording_id}  t={row.t:.2f}s  frame {frame}  {Path(path).name}",
+                    f"{recording.recording_id}  t={row.t:.2f}s  frame {frame}  {device}",
                     row.reason if row.reason == BASELINE else f"{row.check}: {row.reason}",
                 ]
-                name = f"{index:03d}_{row.reason}_{row.t:09.3f}s_{Path(path).stem}.jpg"
+                name = f"{index:03d}_{row.reason}_{row.t:09.3f}s_{device}.jpg"
                 cv2.imwrite(str(out_dir / name), draw_overlay(image, people, subjects, header))
                 if plain_dir is not None:
                     cv2.imwrite(str(plain_dir / name), image)
@@ -215,12 +224,10 @@ def render_review(
                         "reason": row.reason,
                         "t": row.t,
                         "frame": frame,
-                        "video": Path(path).name,
+                        "video": device,
                         "score": row.score,
                     }
                 )
-        finally:
-            capture.release()
 
     index = pd.DataFrame(
         entries, columns=["file", "recording_id", "subject_id", "check", "reason", "t", "frame", "video", "score"]
