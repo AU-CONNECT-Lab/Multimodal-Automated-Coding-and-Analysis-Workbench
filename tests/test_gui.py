@@ -95,7 +95,7 @@ def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     measured = {"video": "room", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
     argv = review.action_command(project, "003", "set-scale", "", "ann", {}, measured)
     assert argv[1] == "set-scale" and argv[argv.index("-r") + 1] == "003" and argv[argv.index("--points") + 1] == "0,0,30,40"
-    assert argv[argv.index("--length-cm") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
+    assert argv[argv.index("--length") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
     assert argv[argv.index("--person") + 1] == "child"
     assert review.action_command(project, "003", "clear-scale", "", "ann", {})[-1] == "--clear"
     everyone = review.action_command(project, "003", "set-scale", "", "ann", {}, {**measured, "person": review.EVERYONE})
@@ -394,7 +394,7 @@ def calibrated(project, notes=(), together=40):
     target = [0.0, 0.0, 2000.0]
     cameras = [look_at("room", [0, 0, 0], target), look_at("side", [1500, 0, 500], target)]
     metadata = {
-        "made_by": "macaw calibrate-cameras", "made_at": "2026-10-31T10:00:00", "board": describe_board(config.pose3d.board),
+        "made_by": "macaw calibrate-cameras", "made_at": "2026-10-31T10:00:00", "board": describe_board(config.pose3d.board.in_mm(config.project.units)),
         "error_px": {"room": 0.4, "side": 2.6}, "lens_error_px": {"room": 0.3, "side": 0.5}, "views": {"room": 120, "side": 98},
         "together": {"room and side": together}, "notes": list(notes),
     }
@@ -419,7 +419,7 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
     assert "Found on 2026-10-31T10:00:00" in shown and "side.mp4 has no sound" in shown
     assert "up to 2.6 px" in shown and "8 (few: film more where both see it)" in shown
     assert "1.50, 0.50, 0.00" in shown and "used by this project" not in shown
-    project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square_mm: 74.5\n", encoding="utf-8")
+    project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square: 7.45\n", encoding="utf-8")
     assert "pose3d.board differs now" in text_of(cameras.setup_view(project, "lab"))
 
 
@@ -825,3 +825,25 @@ def test_the_camera_sketch_draws_the_room_from_where_the_sliders_put_the_camera(
     use = callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == "sketch-use" for item in value["inputs"])))
     ids = [{"type": room.NUM, "kind": "cameras", "name": "room", "field": field} for field in ("height", "tilt", "x")]
     assert use(1, 150, 0, 20, 80, [120, 0, 150], ids, "room") == [150, 20, 150]
+
+
+def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypatch):
+    from macaw.interface.pages import settings
+
+    placed_project(project)
+    recordings = project.parent / "recordings"
+    recordings.mkdir(exist_ok=True)
+    (recordings / "003.yaml").write_text("scale:\n  per_px: 0.25  # measured by hand\n", encoding="utf-8")
+    project.write_text(project.read_text(encoding="utf-8") + "\nkinematics:\n  gestures:\n    still_speed_3d: 2.54\n", encoding="utf-8")
+    app = create_app(project)
+    save = callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == "settings-yaml-save" for item in value["inputs"])))
+    monkeypatch.setattr(settings, "ctx", SimpleNamespace(triggered_id="settings-yaml-save"))
+    text = project.read_text(encoding="utf-8").replace("units: cm", "units: in")
+    _, _, message = save(None, None, 1, [], [], text)
+    assert "converted from cm to in" in text_of(message)
+    config = resolve_config(project)
+    assert config.project.units == "in" and config.kinematics.gestures.still_speed_3d == 1
+    assert config.setup.room.people["parent"].at == (pytest.approx(39.3701), pytest.approx(78.7402))
+    assert config.setup.room.things["table"].size == (pytest.approx(23.622), pytest.approx(19.685))
+    own = (recordings / "003.yaml").read_text(encoding="utf-8")
+    assert "per_px: 0.0984" in own and "# measured by hand" in own

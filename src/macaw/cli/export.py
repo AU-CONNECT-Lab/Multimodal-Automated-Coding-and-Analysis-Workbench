@@ -93,7 +93,7 @@ def export(
 
     out = out or (layout.output_dir / "exports" / f"features.{format_}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    table = _with_centimetres(config, layout, table, out.parent)
+    table = _in_project_units(config, resolved.project.units, layout, table, out.parent)
     if format_ == "csv":
         export_csv(table, out, wide=wide)
     else:
@@ -120,42 +120,49 @@ def _whole_and_segments(config, recording_id: str, rows: pd.DataFrame, scale: st
     return with_segment(pd.concat([with_segment(whole), parts], ignore_index=True))
 
 
-def _with_centimetres(config_path: Path, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
-    """Pixel features again in centimetres for each recording with a scale; scale.csv says which scale."""
+def _in_project_units(config_path: Path, units: str, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    """Features in metres again in the project's unit, and pixel features too for each recording with a scale;
+    scale.csv says which scale."""
     from macaw.project.manifest import read_manifest
-    from macaw.project.scale import CM_SUFFIX, DEPTH_NOTE, centimetre_rows, recording_scale, unusable
+    from macaw.project.room import CM_PER_UNIT
+    from macaw.project.scale import DEPTH_NOTE, recording_scale, suffix, unit_rows, unusable
     from macaw.qc.checks import RecordingResults
 
     if not layout.manifest_path.exists():
         return table
-    units = {name: spec.unit for name, spec in read_manifest(layout.manifest_path).specs.items()}
-    pieces, used = [table], []
+    features = {name: spec.unit for name, spec in read_manifest(layout.manifest_path).specs.items()}
+    pieces, used, converted = [table], [], 0
     for recording_id, rows in table.groupby("recording_id", observed=True):
         recording_id = str(recording_id)
         own = resolve_config(config_path, recording_id=recording_id)
         scale = recording_scale(own, layout, recording_id)
-        if scale is None:
-            continue
-        problem = unusable(scale, own, recording_id, RecordingResults(layout, recording_id).keypoints())
+        problem = unusable(scale, own, recording_id, RecordingResults(layout, recording_id).keypoints()) if scale is not None else None
         if problem:
             logger.warning("%s: %s; left in pixels", recording_id, problem)
-            continue
+        usable = scale is not None and problem is None
         roles = {subject.subject_id: subject.role or subject.subject_id for subject in build_recording(recording_id, own).subjects}
-        pieces.append(centimetre_rows(rows, units, lambda first, second: scale.factor(roles.get(first, first), roles.get(second, second))))
+        factor = (lambda first, second: scale.factor(roles.get(first, first), roles.get(second, second))) if usable else None
+        found = unit_rows(rows, features, units, factor)
+        converted += not found.empty
+        pieces.append(found)
+        if not usable:
+            continue
         objects = ", ".join(sorted({item.object for item in scale.measurements if item.object})) or None
         used += [
             {
-                "recording_id": recording_id, "person": role or "everyone", "cm_per_px": value, "spread": scale.spread.get(role),
+                "recording_id": recording_id, "person": role or "everyone", f"{units}_per_px": value / CM_PER_UNIT[units],
+                "spread": None if scale.spread.get(role) is None else scale.spread[role] / CM_PER_UNIT[units],
                 "source": scale.source, "measured_on": scale.video,
                 "measurements": sum(item.person == role for item in scale.measurements), "objects": objects, "holds": DEPTH_NOTE,
             }
             for role, value in scale.by_role.items()
         ]
-    if not used:
+    if used:
+        path = out_dir / "scale.csv"
+        pd.DataFrame(used).to_csv(path, index=False)
+        logger.info("features in pixels also given in %s, named *%s, where a recording has a scale; see %s", units, suffix(units), path)
+    if not converted:
         return table
-    path = out_dir / "scale.csv"
-    pd.DataFrame(used).to_csv(path, index=False)
-    logger.info("features in pixels also given in centimetres, named *%s, for %d recording(s); see %s", CM_SUFFIX, len(used), path)
     return with_segment(pd.concat(pieces, ignore_index=True))
 
 

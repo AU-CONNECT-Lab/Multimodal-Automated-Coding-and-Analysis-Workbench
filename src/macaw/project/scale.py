@@ -1,6 +1,6 @@
-"""How many centimetres one pixel spans: an object of known length a person measured on a frame of the
-recording or of a calibration clip, or a number written in the settings, for everyone or per role. Results
-stay in pixels; exports add centimetres. A scale holds only at the distance of the object it came from."""
+"""How long one pixel is: an object of known length a person measured on a frame of the recording or of a
+calibration clip, or a number written in the settings, for everyone or per role. Results stay in pixels; exports add
+the project's unit. A scale holds only at the distance of the object it came from."""
 
 from __future__ import annotations
 
@@ -14,14 +14,16 @@ import pandas as pd
 
 from macaw.exceptions import MacawError
 from macaw.project.recording import VIDEO_SUFFIXES
+from macaw.project.room import CM_PER_UNIT
 
 HAND = "settings"
 MEASURED = "recording video"
 CALIBRATION = "calibration clip"
-CM_SUFFIX = "_cm"
 DEPTH_NOTE = "right only for people as far from the camera as the object measured"
 _SIZE_MIN_FRAMES = 10
 _PIXEL_UNIT = re.compile(r"^px(?:\^(\d))?(/.*)?$")
+_METRE_UNIT = re.compile(r"^m(?:\^(\d))?(/.*)?$")
+CM_PER_METRE = 100.0
 
 
 @dataclass
@@ -29,7 +31,8 @@ class Measurement:
     video: str                     # the file it was measured on: one of the recording's videos, or a calibration clip
     t: float                       # time of the frame, on the recording's clock or the clip's own
     points: list[list[float]]      # the two ends, in pixels of the picture shown
-    length_cm: float
+    length: float
+    units: str = "cm"              # of the length, as it was typed
     person: str | None = None      # role at whose place the object stood; None for everyone
     object: str | None = None
     by: str | None = None
@@ -43,7 +46,7 @@ class Measurement:
 
     @property
     def cm_per_px(self) -> float:
-        return self.length_cm / self.length_px
+        return self.length * CM_PER_UNIT[self.units] / self.length_px
 
 
 @dataclass
@@ -53,6 +56,7 @@ class RecordingScale:
     source: str                                # HAND, MEASURED or CALIBRATION
     video: str | None                          # the recording's video or the clip it was measured on
     measurements: list[Measurement]
+    units: str = "cm"                          # the project's, in which the scale is said
 
     def for_role(self, role: str | None) -> float | None:
         return self.by_role.get(role, self.by_role.get(None))
@@ -65,8 +69,9 @@ class RecordingScale:
         return self.for_role(role) if role is not None else self.by_role.get(None)
 
     def values(self) -> str:
-        return "cm per pixel " + "; ".join(
-            f"{value:.4g}{f' ± {self.spread[role]:.2g}' if self.spread.get(role) is not None else ''} for {role or 'everyone'}"
+        per = CM_PER_UNIT[self.units]
+        return f"{self.units} per pixel " + "; ".join(
+            f"{value / per:.4g}{f' ± {self.spread[role] / per:.2g}' if self.spread.get(role) is not None else ''} for {role or 'everyone'}"
             for role, value in sorted(self.by_role.items(), key=lambda item: (item[0] is not None, item[0] or ""))
         )
 
@@ -94,27 +99,29 @@ def write_measurements(measurements: list[Measurement], path: Path) -> Path:
 def recording_scale(config, layout, recording_id: str) -> RecordingScale | None:
     """config is the one this recording runs, so its own file counts. Numbers in the settings come first,
     then measurements on the recording's video, then the calibration clip it names."""
-    cfg = config.scale
-    hand = {**({None: cfg.cm_per_px} if cfg.cm_per_px is not None else {}), **cfg.cm_per_px_by_role}
+    cfg, units = config.scale, config.project.units
+    # numbers in the settings are in the project's unit; the scale is kept in centimetres
+    hand = {**({None: cfg.per_px} if cfg.per_px is not None else {}), **cfg.per_px_by_role}
     if hand:
-        return RecordingScale(hand, {role: None for role in hand}, HAND, None, [])
+        hand = {role: value * CM_PER_UNIT[units] for role, value in hand.items()}
+        return RecordingScale(hand, {role: None for role in hand}, HAND, None, [], units)
     own = read_measurements(layout.scale_path(recording_id))
     if own:
-        return from_measurements(own, MEASURED, own[0].video)
+        return from_measurements(own, MEASURED, own[0].video, units)
     if cfg.calibration:
         clip = read_measurements(layout.calibration_scale_path(cfg.calibration))
         if clip:
-            return from_measurements(clip, CALIBRATION, cfg.calibration)
+            return from_measurements(clip, CALIBRATION, cfg.calibration, units)
     return None
 
 
-def from_measurements(measurements: list[Measurement], source: str, video: str) -> RecordingScale:
+def from_measurements(measurements: list[Measurement], source: str, video: str, units: str = "cm") -> RecordingScale:
     by_role, spread = {}, {}
     for role in dict.fromkeys(item.person for item in measurements):
         ratios = [item.cm_per_px for item in measurements if item.person == role]
         by_role[role] = float(np.mean(ratios))
         spread[role] = float(np.std(ratios, ddof=1)) if len(ratios) > 1 else None
-    return RecordingScale(by_role, spread, source, video, measurements)
+    return RecordingScale(by_role, spread, source, video, measurements, units)
 
 
 def calibration_clips(config) -> list[str]:
@@ -179,25 +186,47 @@ def pixel_power(unit: str | None) -> int | None:
     return int(match.group(1) or 1) if match else None
 
 
-def in_centimetres(unit: str) -> str:
-    return "cm" + unit[2:]
+def metre_power(unit: str | None) -> int | None:
+    """How many metre lengths a unit holds: 1 for m or m/s, 2 for m^2; None for any other unit."""
+    match = _METRE_UNIT.match(unit or "")
+    return int(match.group(1) or 1) if match else None
 
 
-def centimetre_rows(rows: pd.DataFrame, units: dict[str, str | None], factor_of) -> pd.DataFrame:
-    """A copy of every pixel-unit feature's rows in centimetres, each named <feature>_cm. factor_of gives the
-    cm per pixel for a (subject_id, subject_id_b) pair, or None to leave those rows in pixels."""
-    powers = {name: power for name, power in ((name, pixel_power(unit)) for name, unit in units.items()) if power}
-    picked = rows[rows["feature"].isin(list(powers))]
+def suffix(units: str) -> str:
+    """What a feature's name gains in an export where it is given in the project's unit."""
+    return f"_{units}"
+
+
+def in_unit(unit: str, units: str) -> str:
+    """A pixel or metre unit said in the project's unit: px/s as cm/s, m^2 as in^2."""
+    return units + unit[2 if unit.startswith("px") else 1:]
+
+
+def unit_rows(rows: pd.DataFrame, features: dict[str, str | None], units: str, factor_of=None) -> pd.DataFrame:
+    """A copy of every metre feature's rows, and of every pixel feature's rows where factor_of gives a scale, in the
+    project's unit, each named <feature>_<unit>. factor_of gives the cm per pixel for a (subject_id, subject_id_b)
+    pair, or None to leave those rows in pixels."""
+    per = CM_PER_UNIT[units]
+    metres = {name: power for name, power in ((name, metre_power(unit)) for name, unit in features.items()) if power}
+    pixels = {name: power for name, power in ((name, pixel_power(unit)) for name, unit in features.items()) if power} if factor_of else {}
     pieces = []
+    exact = rows[rows["feature"].isin(list(metres))].copy()
+    if not exact.empty:
+        exact["value"] = exact["value"].astype(float).to_numpy() * (CM_PER_METRE / per) ** exact["feature"].map(metres).astype(float).to_numpy()
+        pieces.append(exact)
+    picked = rows[rows["feature"].isin(list(pixels))]
     for (first, second), group in picked.groupby(["subject_id", "subject_id_b"], dropna=False, observed=True):
         factor = factor_of(None if pd.isna(first) else str(first), None if pd.isna(second) else str(second))
         if factor is None:
             continue
         group = group.copy()
-        group["value"] = group["value"].astype(float).to_numpy() * factor ** group["feature"].map(powers).astype(float).to_numpy()
-        group["feature"] = group["feature"] + CM_SUFFIX
+        group["value"] = group["value"].astype(float).to_numpy() * (factor / per) ** group["feature"].map(pixels).astype(float).to_numpy()
         pieces.append(group)
-    return pd.concat(pieces, ignore_index=True) if pieces else picked.iloc[0:0]
+    if not pieces:
+        return rows.iloc[0:0]
+    out = pd.concat(pieces, ignore_index=True)
+    out["feature"] = out["feature"].astype(str) + suffix(units)
+    return out
 
 
 def apparent_size(person: pd.DataFrame) -> pd.Series:

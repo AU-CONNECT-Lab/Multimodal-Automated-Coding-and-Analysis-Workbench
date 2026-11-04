@@ -26,7 +26,7 @@ from macaw.extractors.base import Gate
 FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Project", "Where the recordings are, who takes part, and the part of each recording to analyse.", (
         "project.name", "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern",
-        "project.n_subjects", "project.roles", "segment.task_start_s", "segment.task_end_s",
+        "project.n_subjects", "project.roles", "project.units", "segment.task_start_s", "segment.task_end_s",
     )),
     ("Video", "How the videos are brought to one frame rate and format before anything is measured on them.", (
         "video.normalise", "video.fps", "video.quality", "video.encoder",
@@ -60,6 +60,7 @@ LABELS = {
     "project.recording_pattern": "Recording folder pattern",
     "project.n_subjects": "People per recording",
     "project.roles": "Roles",
+    "project.units": "Length unit",
     "segment.task_start_s": "Task starts at (s)",
     "segment.task_end_s": "Task ends at (s)",
     "video.normalise": "Bring videos to one format",

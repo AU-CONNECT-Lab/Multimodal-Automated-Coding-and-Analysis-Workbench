@@ -27,9 +27,10 @@ _RING = np.linspace(0, 2 * np.pi, 25)
 def card(config):
     rids = resolve_recordings(config, None)
     units = config.project.units
-    top = round(geometry.to_unit(300.0, units))
+    # up to three metres, a centimetre at a time, in the project's unit
+    top, step = geometry.to_unit(300.0, units), geometry.to_unit(1.0, units)
     sliders = {
-        "height": (f"Height ({units})", 0, top, 1),
+        "height": (f"Height ({units})", 0, top, step),
         "facing": ("Facing (°)", 0, 360, 1),
         "tilt": ("Tilt down (°)", -30, 90, 1),
         "lens": ("Lens angle (°)", 20, 150, 1),

@@ -108,7 +108,7 @@ def board_page(board_cfg, paper: str) -> np.ndarray:
     page[top : top + image.shape[0], left : left + image.shape[1]] = image
     caption = (
         f"ChArUco {board_cfg.squares_x} x {board_cfg.squares_y}, squares {board_cfg.square_mm:g} mm, markers "
-        f"{board_cfg.marker_mm:g} mm, {board_cfg.dictionary}. Print at 100%, measure one square and set pose3d.board.square_mm."
+        f"{board_cfg.marker_mm:g} mm, {board_cfg.dictionary}. Print at 100%, measure one square and set pose3d.board.square."
     )
     baseline = top + image.shape[0] + round(_CAPTION_MM * 0.6 * per_mm)
     cv2.putText(page, caption, (left, baseline), cv2.FONT_HERSHEY_SIMPLEX, per_mm * 0.12, 0, max(1, round(per_mm * 0.15)), cv2.LINE_AA)

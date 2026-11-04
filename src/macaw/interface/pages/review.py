@@ -226,7 +226,9 @@ def _voices(config, layout, recording):
 
 
 def _scale(config, layout, recording):
-    rid = recording.recording_id
+    from macaw.project.room import CM_PER_UNIT, UNIT_NAMES
+
+    rid, units = recording.recording_id, config.project.units
     videos = sorted(item.name for item in recording.media if item.kind == "video")
     clips = calibration_clips(config)
     if not videos and not clips:
@@ -238,7 +240,7 @@ def _scale(config, layout, recording):
     rows = [
         [
             where, f"{item.t:.1f}", item.person or EVERYONE, item.object or "",
-            f"{item.length_cm:g}", f"{item.length_px:.1f}", f"{item.cm_per_px:.4g}", item.by or "",
+            f"{item.length:g} {item.units}", f"{item.length_px:.1f}", f"{item.cm_per_px / CM_PER_UNIT[units]:.4g}", item.by or "",
         ]
         for where, item in [*((item.video, item) for item in own), *((f"calibration clip {item.video}", item) for item in from_clip)]
     ]
@@ -256,15 +258,15 @@ def _scale(config, layout, recording):
     remove = [_button("Remove this recording's measurements", "clear-scale")] if own else []
     remove += [_button(f"Remove the measurements of {clip}", "clear-scale", CLIP + clip)] if from_clip else []
     return ui.card(
-        "Pixels to centimetres",
+        f"Pixels to {UNIT_NAMES[units]}",
         ui.note(
             "A scale is right only at the distance from the camera where the object was. Put the object where a person sits, "
             "and when people sit at different distances, measure at each person's place and say whose place it was.",
             "warn",
         ),
         ui.table(
-            ["Measured on", "At (s)", "Whose place", "What", "Length (cm)", "Pixels", "cm per pixel", "By"], rows,
-            numeric={"At (s)", "Length (cm)", "Pixels", "cm per pixel"},
+            ["Measured on", "At (s)", "Whose place", "What", "Length", "Pixels", f"{units} per pixel", "By"], rows,
+            numeric={"At (s)", "Length", "Pixels", f"{units} per pixel"},
         ) if rows else None,
         status,
         html.Div(
@@ -281,7 +283,7 @@ def _scale(config, layout, recording):
         dcc.Store(id={"type": SCALE_FRAME, **key}, data=None),
         html.Div(
             [
-                ui.field("Length (cm)", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
+                ui.field(f"Length ({units})", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
                 ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="ruler")),
                 ui.field("Whose place", dcc.Dropdown([EVERYONE, *config.project.roles], EVERYONE, id={"type": SCALE_PERSON, **key}, clearable=False, className="picker small")),
             ],
@@ -291,7 +293,7 @@ def _scale(config, layout, recording):
         desc=(
             "Show a frame of this recording or of a calibration clip filmed before it with the camera unmoved (clips go in "
             "the calibration folder next to project.yaml), click the two ends of something whose length you know, type its "
-            "length and save. Measure two or three times to see how much the clicks vary. Results stay in pixels; exports add centimetres."
+            f"length and save. Measure two or three times to see how much the clicks vary. Results stay in pixels; exports add {UNIT_NAMES[units]}."
         ),
     )
 
@@ -595,7 +597,7 @@ def action_command(
         named = ["--object", scale["object"]] if scale.get("object") else []
         person = ["--person", scale["person"]] if scale.get("person") not in (None, EVERYONE) else []
         return measure(
-            "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length-cm", f"{scale['length']:g}", "--at", f"{scale['at']:g}",
+            "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length", f"{scale['length']:g}", "--at", f"{scale['at']:g}",
             *person, *named, *by_flag,
         )
     if action == "accept-offset":

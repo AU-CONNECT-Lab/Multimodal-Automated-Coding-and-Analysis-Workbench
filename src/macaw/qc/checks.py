@@ -21,6 +21,7 @@ from macaw.extractors.video.motion.mea import PICTURE_NAME, WHOLE_PICTURE_CHANGE
 from macaw.extractors.video.pose.voice_motion import ENERGY_FRAME_S, frame_levels
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
 from macaw.project.recording import Recording
+from macaw.project.room import CM_PER_UNIT
 from macaw.store import _io
 from macaw.store import keypoints as keypoints_store
 from macaw.store import longtable as longtable_store
@@ -685,7 +686,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
         typical, change = measured
         warnings.append(warning(
             subject_id, "info",
-            f"nose to shoulders is about {typical * cm_per_px:.0f} cm at this scale ({typical:.0f} px); "
+            f"nose to shoulders is about {typical * cm_per_px / CM_PER_UNIT[config.project.units]:.0f} {config.project.units} at this scale ({typical:.0f} px); "
             "far from a real one means they sit nearer to or further from the camera than the object measured",
             size_px=typical, cm_per_px=cm_per_px,
         ))

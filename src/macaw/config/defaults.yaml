@@ -18,7 +18,7 @@ project:
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
   n_subjects: 2                      # people per recording; N-person is supported, 2 is tested
   roles: [parent, child]             # role labels; length must equal n_subjects
-  units: cm                          # cm | in; every length entered or shown: the room, the yardstick, the board, measures converted from pixels or in 3D
+  units: cm                          # cm | m | in; every length entered or shown: the room, the yardstick, the board, measures converted from pixels or in 3D
   excluded_recordings: []            # recording ids skipped by every command
 
 align:
@@ -104,13 +104,13 @@ kinematics:
     annotator: null                  # whose segments, when several people coded that tier
     still_speed: null                # px/s (m/s with depth); a hand slower than this is still. Needed with a tier
     peak_prominence: null            # px/s; how far a speed peak rises above its surroundings to count as a submovement. Needed with a tier
-    still_speed_3d: null             # m/s; the same in 3D, with pose3d. Gestures are measured in 3D only when both are set
-    peak_prominence_3d: null         # m/s
+    still_speed_3d: null             # project.units/s; the same in 3D, with pose3d. Gestures are measured in 3D only when both are set
+    peak_prominence_3d: null         # project.units/s
     holds: each_hand                # each_hand: a hold is one hand still | both_hands: both hands still at once, counted once per gesture
 
 scale:                               # right only for people as far from the camera as the object measured
-  cm_per_px: null                    # centimetres one pixel spans, for everyone; written by hand it wins over any measurement. Per recording in recordings/<id>.yaml
-  cm_per_px_by_role: {}              # role -> centimetres per pixel at that person's place, e.g. {child: 0.12}
+  per_px: null                       # project.units one pixel spans, for everyone; written by hand it wins over any measurement. Per recording in recordings/<id>.yaml
+  per_px_by_role: {}                 # role -> project.units per pixel at that person's place, e.g. {child: 0.12}
   calibration: null                  # clip in project.calibration_dir, filmed with the cameras as they stood, for recordings not measured on their own video
   max_size_change: 0.1               # share by which a person's apparent size may change over a recording before the report flags it
   size_window_s: 30                  # s; stretches compared for that change. 30 suits people who stay seated; about 5 when they walk about
@@ -121,8 +121,8 @@ pose3d:                              # 3D from two or more cameras that see the 
   board:                             # the ChArUco board printed with macaw calibration-board; these sizes fit A2, for A3 use 50 and 37
     squares_x: 7
     squares_y: 5
-    square_mm: 75                    # measure one printed square with a ruler and write it here
-    marker_mm: 56
+    square: null                     # project.units; measure one printed square with a ruler and write it here. Blank is the board as drawn, 7.5 cm squares
+    marker: null                     # project.units; blank keeps its share of the square
     dictionary: 5X5_100              # 4X4_50 | 4X4_100 | 5X5_50 | 5X5_100 | 6X6_50 | 6X6_250
   max_reprojection_px: 15            # px; a camera whose view of a point misses the others' by more is left out of that point, and two that miss each other by more place none
   board_every_s: 0.2                 # s; board clips are read at this interval

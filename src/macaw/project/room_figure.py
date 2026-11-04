@@ -14,7 +14,7 @@ WIDTH_IN = 7.0
 _INK, _BODY, _CAMERA, _FAN, _MICROPHONE = "#212529", "#495057", "#4a72d4", "#c9d6f2", "#2f9e44"
 _THING, _THING_EDGE, _WALL = "#e1e2e6", "#5c5f66", "#212529"
 _PERSON_CM, _HEAD_CM, _DEVICE_CM, _THING_CM, _MARGIN_CM, _ARROW_CM = 23.0, 11.0, 9.0, 20.0, 30.0, 16.0
-_SCALE = {"cm": (100.0, "100 cm"), "in": (36.0, "36 in")}
+_SCALE = {"cm": (100.0, "100 cm"), "m": (1.0, "1 m"), "in": (36.0, "36 in")}
 
 
 def _ranges(room: RoomSection, units: str):

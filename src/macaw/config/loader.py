@@ -47,6 +47,8 @@ project:
   recording_prefix: ""     # e.g. "dyad-" to only pick up dyad-001, dyad-002, ...
   n_subjects: $n_subjects
   roles: $roles
+  # cm, m or in, for every length typed or read; change it on the settings page, which converts what was typed
+  units: cm
 
 # Each recording folder holds one folder per camera or microphone. What each holds is
 # described on the workbench's Setup page, which writes setups/main.yaml next to this file.

@@ -9,8 +9,8 @@ import numpy as np
 
 from macaw.config.schema import PlacedCamera, RoomSection
 
-CM_PER_UNIT = {"cm": 1.0, "in": 2.54}
-UNIT_NAMES = {"cm": "centimetres", "in": "inches"}
+CM_PER_UNIT = {"cm": 1.0, "m": 100.0, "in": 2.54}
+UNIT_NAMES = {"cm": "centimetres", "m": "metres", "in": "inches"}
 
 
 def to_unit(value_cm, units: str):

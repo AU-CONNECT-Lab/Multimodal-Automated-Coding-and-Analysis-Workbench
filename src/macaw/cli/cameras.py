@@ -25,11 +25,11 @@ def calibration_board(
     resolved = resolve_config(config)
     if paper not in PAPERS_MM:
         raise MacawError(f"--paper is one of {', '.join(PAPERS_MM)}")
-    target = write_png(board_page(resolved.pose3d.board, paper), out or Path(resolved.project.calibration_dir) / f"board_{paper}.png")
+    target = write_png(board_page(resolved.pose3d.board.in_mm(resolved.project.units), paper), out or Path(resolved.project.calibration_dir) / f"board_{paper}.png")
     typer.echo(str(target))
     typer.echo(
         "Print it at 100% (actual size), glue it flat on a stiff board, measure one square with a ruler and write "
-        "that length as pose3d.board.square_mm in project.yaml."
+        "that length, in project.units, as pose3d.board.square in project.yaml."
     )
 
 
@@ -52,7 +52,7 @@ def calibrate_cameras(
     clips = list(by_camera.values())
     names = {clip: camera for camera, clip in by_camera.items()}
     offsets, notes = _offsets(clips, resolved)
-    board = make_board(resolved.pose3d.board)
+    board = make_board(resolved.pose3d.board.in_mm(resolved.project.units))
     found = []
     for clip in clips:
         typer.echo(f"reading {clip.name} as camera {names[clip]}")
@@ -63,7 +63,7 @@ def calibrate_cameras(
     fit = calibrate(found, board)
     fit.setup.metadata.update(
         made_by="macaw calibrate-cameras", made_at=datetime.now().isoformat(timespec="seconds"),
-        board=describe_board(resolved.pose3d.board),
+        board=describe_board(resolved.pose3d.board.in_mm(resolved.project.units)),
         error_px={name: round(value, 3) for name, value in fit.error_px.items()},
         lens_error_px={name: round(value, 3) for name, value in fit.lens_error_px.items()},
         views=dict(fit.views),

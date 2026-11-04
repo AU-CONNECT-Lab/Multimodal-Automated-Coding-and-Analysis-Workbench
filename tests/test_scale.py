@@ -18,8 +18,8 @@ from macaw.project.scale import (
     MEASURED,
     Measurement,
     apparent_size,
-    centimetre_rows,
-    in_centimetres,
+    in_unit,
+    unit_rows,
     pixel_power,
     read_measurements,
     recording_scale,
@@ -95,17 +95,28 @@ class TestUnits:
         assert pixel_power(unit) == power
 
     def test_centimetres_take_the_place_of_pixels(self):
-        assert [in_centimetres(unit) for unit in ("px", "px/s^2", "px^2")] == ["cm", "cm/s^2", "cm^2"]
+        assert [in_unit(unit, "cm") for unit in ("px", "px/s^2", "px^2")] == ["cm", "cm/s^2", "cm^2"]
 
     def test_lengths_scale_once_and_areas_twice(self):
         rows = rows_of({"hand_distance": [100.0, 40.0], "extent": [400.0, 0.0], "f0_hz": [200.0, 210.0]})
-        converted = centimetre_rows(rows, {"hand_distance": "px", "extent": "px^2", "f0_hz": "Hz"}, lambda first, second: 0.5)
+        converted = unit_rows(rows, {"hand_distance": "px", "extent": "px^2", "f0_hz": "Hz"}, "cm", lambda first, second: 0.5)
         values = converted.groupby("feature")["value"].apply(list).to_dict()
         assert values == {"hand_distance_cm": [50.0, 20.0], "extent_cm": [100.0, 0.0]}
 
+    def test_metres_are_given_in_the_projects_unit_without_any_scale(self):
+        rows = rows_of({"wrist_speed_3d": [1.0, 0.5], "extent_3d": [0.01, 0.0], "hand_distance": [100.0, 40.0]})
+        features = {"wrist_speed_3d": "m/s", "extent_3d": "m^2", "hand_distance": "px"}
+        inches = unit_rows(rows, features, "in").groupby("feature")["value"].apply(list).to_dict()
+        assert inches.keys() == {"wrist_speed_3d_in", "extent_3d_in"}
+        assert inches["wrist_speed_3d_in"] == pytest.approx([39.3701, 19.685], rel=1e-4)
+        assert inches["extent_3d_in"] == pytest.approx([15.5, 0.0], rel=1e-3)
+        scaled = unit_rows(rows, features, "m", lambda first, second: 0.5).groupby("feature")["value"].apply(list).to_dict()
+        assert scaled["hand_distance_m"] == pytest.approx([0.5, 0.2]) and scaled["wrist_speed_3d_m"] == pytest.approx([1.0, 0.5])
+        assert in_unit("m/s", "in") == "in/s" and in_unit("px^2", "m") == "m^2"
+
     def test_rows_without_a_factor_stay_in_pixels_only(self):
         rows = concat_long_tables([rows_of({"hand_distance": [100.0, 40.0]}), rows_of({"hand_distance": [10.0, 20.0]}, subject="child")])
-        converted = centimetre_rows(rows, {"hand_distance": "px"}, lambda first, second: 0.5 if first == "parent" else None)
+        converted = unit_rows(rows, {"hand_distance": "px"}, "cm", lambda first, second: 0.5 if first == "parent" else None)
         assert set(converted["subject_id"]) == {"parent"} and converted["value"].tolist() == [50.0, 20.0]
 
 
@@ -138,13 +149,13 @@ class TestScale:
     def test_numbers_written_by_hand_win_and_a_role_beats_everyone(self, project):
         layout = layout_for(resolve_config(project))
         write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
-        settings(project, "scale:\n  cm_per_px: 0.3\n  cm_per_px_by_role: {child: 0.4}\n", recording="003")
+        settings(project, "scale:\n  per_px: 0.3\n  per_px_by_role: {child: 0.4}\n", recording="003")
         assert recording_scale(resolve_config(project), layout, "003").source == MEASURED
         own = recording_scale(resolve_config(project, recording_id="003"), layout, "003")
         assert own.source == HAND and own.for_role("child") == 0.4 and own.for_role("parent") == 0.3
 
     def test_a_role_the_project_does_not_have_is_refused(self, project):
-        settings(project, "scale:\n  cm_per_px_by_role: {teacher: 0.4}\n")
+        settings(project, "scale:\n  per_px_by_role: {teacher: 0.4}\n")
         with pytest.raises(ConfigError, match="teacher"):
             resolve_config(project)
 
@@ -183,26 +194,26 @@ class TestScale:
 class TestCommand:
     def test_each_measurement_is_kept_with_whose_place_and_who_made_it(self, project):
         result = set_scale(
-            project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length-cm", "10", "--at", "4.5",
+            project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length", "10", "--at", "4.5",
             "--person", "child", "--object", "ruler", "--by", "ann",
         )
         assert result.exit_code == 0, said(result)
         assert "cm per pixel 0.2 for child" in result.output and "right only for people as far from the camera" in result.output
-        assert set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,0,100", "--length-cm", "21").exit_code == 0
+        assert set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,0,100", "--length", "21").exit_code == 0
         stored = read_measurements(layout_for(resolve_config(project)).scale_path("003"))
         assert [item.length_px for item in stored] == [50.0, 100.0] and [item.person for item in stored] == ["child", None]
         assert stored[0].object == "ruler" and stored[0].by == "ann" and stored[0].t == 4.5 and stored[0].at
 
     def test_one_recording_is_measured_on_one_video(self, project):
-        set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length-cm", "10")
-        result = set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length-cm", "10")
+        set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length", "10")
+        result = set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length", "10")
         assert result.exit_code != 0 and "--clear" in said(result)
         assert set_scale(project, "-r", "003", "--clear").exit_code == 0
-        assert set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length-cm", "10").exit_code == 0
+        assert set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length", "10").exit_code == 0
 
     def test_a_clip_is_measured_on_its_own_picture_and_named_in_the_settings(self, project):
         name = clip(project)
-        result = set_scale(project, "--calibration", name, "--points", "0,0,0,50", "--length-cm", "10", "--person", "parent")
+        result = set_scale(project, "--calibration", name, "--points", "0,0,0,50", "--length", "10", "--person", "parent")
         assert result.exit_code == 0, said(result)
         assert "scale: {calibration: lab.mp4}" in result.output
         stored = read_measurements(layout_for(resolve_config(project)).calibration_scale_path(name))
@@ -211,15 +222,15 @@ class TestCommand:
         assert read_measurements(layout_for(resolve_config(project)).calibration_scale_path(name)) == []
 
     @pytest.mark.parametrize("extra, reason", [
-        (["-r", "003", "--camera", "parent_mic", "--points", "0,0,1,1", "--length-cm", "1"], "not a video"),
-        (["-r", "003", "--points", "0,0,1,1", "--length-cm", "1"], "has 2 videos"),
-        (["-r", "003", "--camera", "room", "--points", "0,0,1", "--length-cm", "1"], "four numbers"),
-        (["-r", "003", "--camera", "room", "--points", "5,5,5,5", "--length-cm", "1"], "same point"),
-        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length-cm", "0"], "above 0"),
-        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length-cm", "1", "--person", "teacher"], "takes a role"),
+        (["-r", "003", "--camera", "parent_mic", "--points", "0,0,1,1", "--length", "1"], "not a video"),
+        (["-r", "003", "--points", "0,0,1,1", "--length", "1"], "has 2 videos"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1", "--length", "1"], "four numbers"),
+        (["-r", "003", "--camera", "room", "--points", "5,5,5,5", "--length", "1"], "same point"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length", "0"], "above 0"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length", "1", "--person", "teacher"], "takes a role"),
         (["-r", "003", "--camera", "room"], "--points"),
-        (["--points", "0,0,1,1", "--length-cm", "1"], "--calibration"),
-        (["--calibration", "missing.mp4", "--points", "0,0,1,1", "--length-cm", "1"], "no calibration clip"),
+        (["--points", "0,0,1,1", "--length", "1"], "--calibration"),
+        (["--calibration", "missing.mp4", "--points", "0,0,1,1", "--length", "1"], "no calibration clip"),
     ])
     def test_a_measurement_that_cannot_be_used_is_refused(self, project, extra, reason):
         result = set_scale(project, *extra)
@@ -240,7 +251,7 @@ def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
     for name, unit in (("hand_distance", "px"), ("f0_hz", "Hz"), ("shoulder_distance", "px")):
         manifest.add(FeatureSpec(name=name, description="", unit=unit, scale=Scale.FRAME, group="pose", extractor="pose.kinematics", extractor_version="0.4.0"))
     write_manifest(manifest, layout.manifest_path)
-    settings(project, "scale:\n  cm_per_px_by_role: {parent: 0.2, child: 0.3}\n")
+    settings(project, "scale:\n  per_px_by_role: {parent: 0.2, child: 0.3}\n")
 
     out = tmp_path / "exports" / "features.csv"
     result = runner.invoke(app, ["export", "-c", str(project), "--long", "--out", str(out)])
@@ -283,7 +294,7 @@ class TestCheck:
         assert size_change(size, 30.0)[1] == pytest.approx(0.0)
 
     def test_the_report_says_how_big_each_person_is_and_flags_one_who_moves(self, project):
-        config = resolve_config(project, cli_overrides=["scale.cm_per_px=0.5"])
+        config = resolve_config(project, cli_overrides=["scale.per_px=0.5"])
         outcome = check_scale(self.recording(), config, self.results(project, moving_parent()))
         messages = {warning.severity: warning.message for warning in outcome.warnings}
         assert "about 30 cm at this scale (60 px)" in messages["info"]
@@ -299,7 +310,7 @@ class TestCheck:
         keypoints = pd.concat([person("parent", n_frames=int(60 * fps), fps=fps), lean, after], ignore_index=True)
 
         def flagged(window_s):
-            config = resolve_config(project, cli_overrides=["scale.cm_per_px=0.5", f"scale.size_window_s={window_s}"])
+            config = resolve_config(project, cli_overrides=["scale.per_px=0.5", f"scale.size_window_s={window_s}"])
             outcome = check_scale(self.recording(), config, self.results(project, keypoints))
             return [warning.message for warning in outcome.warnings if warning.severity == "warn"]
 
@@ -307,7 +318,7 @@ class TestCheck:
         assert "across 5 s stretches" in flagged(5)[0]
 
     def test_a_person_without_a_scale_at_their_place_is_said(self, project):
-        settings(project, "scale:\n  cm_per_px_by_role: {child: 0.5}\n")
+        settings(project, "scale:\n  per_px_by_role: {child: 0.5}\n")
         both = pd.concat([person("parent", n_frames=60, fps=5.0), person("child", n_frames=60, fps=5.0)], ignore_index=True)
         outcome = check_scale(self.recording("parent", "child"), resolve_config(project), self.results(project, both))
         by_person = {warning.subject_id: warning.message for warning in outcome.warnings}

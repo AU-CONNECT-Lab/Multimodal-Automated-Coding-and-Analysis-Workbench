@@ -456,7 +456,7 @@ def test_the_methods_describe_the_cameras_and_the_measures(seated, tmp_path):
     manifest = FeatureManifest()
     manifest.add(FeatureSpec(name="interpersonal_distance_3d", description="", unit="m", scale=Scale.FRAME, group="pose", extractor="pose.kinematics3d", extractor_version="0.1.0"))
     text, used = render(describe(manifest, seated.config), load_references())
-    assert "from the 2 calibrated cameras" in text and "ChArUco board" in text and "75 mm squares" in text
+    assert "from the 2 calibrated cameras" in text and "ChArUco board" in text and "7.5 cm squares" in text
     assert {"hartley2003", "garrido2014", "zhang2000", "triggs2000"} <= set(used)
 
 
@@ -526,7 +526,7 @@ class TestGestures3D:
     def test_each_gesture_is_measured_in_the_room(self, gesturing, tmp_path):
         from macaw.extractors.video.pose.gestures import Gesture3DExtractor
 
-        settings(gesturing.project, "    still_speed_3d: 0.02\n    peak_prominence_3d: 0.05\n")
+        settings(gesturing.project, "    still_speed_3d: 2\n    peak_prominence_3d: 5\n")
         config = triangulated(gesturing.project, tmp_path)
         assert Gesture3DExtractor.wanted_by_default(config)
         result = Gesture3DExtractor(config).run(build_recording("003", config), tmp_path)
@@ -563,15 +563,15 @@ class TestGestures3D:
         frames = np.arange(3)
         assert np.allclose(frontal_plane(turned, frames).to_numpy(), frontal_plane(body, frames).to_numpy())
 
-    def test_the_methods_give_the_thresholds_in_metres(self, gesturing, tmp_path):
+    def test_the_methods_give_the_thresholds_in_the_projects_unit(self, gesturing, tmp_path):
         from macaw.extractors.video.pose.gestures import Gesture3DExtractor
         from macaw.project.manifest import FeatureManifest
         from macaw.qc.boilerplate import describe, load_references, render
 
-        settings(gesturing.project, "    still_speed_3d: 0.02\n    peak_prominence_3d: 0.05\n")
+        settings(gesturing.project, "    still_speed_3d: 2\n    peak_prominence_3d: 5\n")
         config = triangulated(gesturing.project, tmp_path)
         manifest = FeatureManifest()
         for spec in Gesture3DExtractor(config).run(build_recording("003", config), tmp_path).specs:
             manifest.add(spec)
         text, _ = render(describe(manifest, config), load_references())
-        assert "at least 0.05 m/s" in text and "slower than 0.02 m/s" in text and "frontal plane" in text
+        assert "at least 5 cm/s" in text and "slower than 2 cm/s" in text and "frontal plane" in text

@@ -28,6 +28,7 @@ from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joi
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.room import CM_PER_UNIT
 from macaw.store import keypoints as keypoints_store
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
@@ -147,11 +148,11 @@ class GestureExtractor(Extractor):
 @register_extractor
 class Gesture3DExtractor(Extractor):
     name = "pose.gestures3d"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras")
+    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras", "project.units")
     requires = (TriangulationExtractor.name,)
 
     @classmethod
@@ -169,11 +170,13 @@ class Gesture3DExtractor(Extractor):
         if cfg.still_speed_3d is None or cfg.peak_prominence_3d is None:
             return ExtractorResult(rows=empty_frame(LONG_TABLE_SCHEMA), warnings=[_warning(
                 self.name, recording, None,
-                "gestures are measured in 3D once kinematics.gestures.still_speed_3d and peak_prominence_3d are set, in metres "
-                "per second; the wrist speeds pose.kinematics3d writes help to choose them",
+                "gestures are measured in 3D once kinematics.gestures.still_speed_3d and peak_prominence_3d are set, in "
+                "project.units per second; the wrist speeds pose.kinematics3d writes help to choose them",
                 severity="info",
             )])
         segments, warnings = coded_gestures(self.config, recording, self.name)
+        # the thresholds are typed in the project's unit, the points are in metres
+        to_metres = CM_PER_UNIT[self.config.project.units] / 100.0
         points = keypoints_store.read_keypoints(points_file(self.config, recording.recording_id), recording_id=recording.recording_id)
         people = {str(subject_id): own for subject_id, own in points.groupby("subject_id", observed=True)}
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
@@ -184,7 +187,10 @@ class Gesture3DExtractor(Extractor):
                 warnings.append(_warning(self.name, recording, str(subject_id), f"{len(own)} gesture(s) coded but this person was never placed in 3D"))
                 continue
             times, sides, body = room_tracks(placed, self.config.kinematics.smoothing_s)
-            values = measure_gestures(times, sides, body, own, still_speed=cfg.still_speed_3d, peak_prominence=cfg.peak_prominence_3d, both_hands=cfg.holds == "both_hands")
+            values = measure_gestures(
+                times, sides, body, own, still_speed=cfg.still_speed_3d * to_metres, peak_prominence=cfg.peak_prominence_3d * to_metres,
+                both_hands=cfg.holds == "both_hands",
+            )
             warnings += _unseen(self.name, recording, str(subject_id), values, "was placed in 3D")
             values.columns = [column if column in ("t_start", "t_end") else f"{column}_3d" for column in values.columns]
             frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))

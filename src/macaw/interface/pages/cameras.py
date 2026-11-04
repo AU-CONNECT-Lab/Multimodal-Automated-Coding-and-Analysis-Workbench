@@ -77,7 +77,7 @@ def section(config_path: Path):
                 html.Div(
                     [
                         ui.field("Paper", dcc.Dropdown(list(PAPERS), "A2", id="cameras-paper", clearable=False, className="picker")),
-                        ui.field("Measured square (mm)", dcc.Input(id="cameras-square", type="number", value=config.pose3d.board.square_mm, min=1, step="any")),
+                        ui.field(f"Measured square ({config.project.units})", dcc.Input(id="cameras-square", type="number", value=measured_square(config), min=0, step="any")),
                     ],
                     className="toolbar",
                 ),
@@ -105,15 +105,24 @@ def section(config_path: Path):
     )
 
 
+def measured_square(config) -> float:
+    """The board's square in project.units, as written or as drawn."""
+    from macaw.project.room import CM_PER_UNIT
+
+    per_mm = 10.0 * CM_PER_UNIT[config.project.units]
+    return round(config.pose3d.board.in_mm(config.project.units).square_mm / per_mm, 3)
+
+
 def board_view(config_path: Path):
     from macaw.extractors.video.pose.board import fits_on
 
     config = resolve_config(config_path)
-    board = config.pose3d.board
+    board = config.pose3d.board.in_mm(config.project.units)
     fits = [paper for paper in PAPERS if fits_on(board, paper)]
     return [
         html.P(
-            f"{board.squares_x} x {board.squares_y} squares of {board.square_mm:g} mm, markers {board.marker_mm:g} mm, "
+            f"{board.squares_x} x {board.squares_y} squares of {measured_square(config):g} {config.project.units}, markers "
+            f"{round(measured_square(config) * board.marker_mm / board.square_mm, 3):g} {config.project.units}, "
             f"dictionary {board.dictionary}; " + (f"fits {', '.join(fits)}." if fits else "too big for A1: set smaller squares in pose3d.board."),
         ),
         ui.command(_board_command(config_path, "A2")),
@@ -167,7 +176,7 @@ def setup_view(config_path: Path, name: str | None):
     notes = [ui.note(status, "ok")]
     if made_here and clips and max(clip.stat().st_mtime for clip in clips.values()) > path.stat().st_mtime:
         notes.append(ui.note("A clip changed since the cameras were found: find them again.", "warn"))
-    if made_here and meta.get("board") not in (None, describe_board(config.pose3d.board)):
+    if made_here and meta.get("board") not in (None, describe_board(config.pose3d.board.in_mm(config.project.units))):
         notes.append(ui.note(f"The board was {meta['board']} then, and pose3d.board differs now: find the cameras again.", "warn"))
     notes += [ui.note(note, "warn") for note in meta.get("notes", [])]
     errors = meta.get("error_px", {})
@@ -286,14 +295,14 @@ def register(app, config_path: Path) -> None:
             return no_update, [ui.command(argv), ui.output(code, text), *link]
         if ctx.triggered_id == "cameras-save-square":
             if not square or float(square) <= 0:
-                return ui.note("Type the length of one printed square in millimetres.", "warn"), no_update
+                return ui.note(f"Type the length of one printed square in {config.project.units}.", "warn"), no_update
             try:
-                text = project_file.with_values(config_path.read_text(encoding="utf-8"), {"pose3d.board.square_mm": float(square)})
+                text = project_file.with_values(config_path.read_text(encoding="utf-8"), {"pose3d.board.square": float(square)})
                 project_file.check(config_path, text)
             except (MacawError, ValueError) as error:
                 return ui.note(str(error), "bad"), no_update
             project_file.save(config_path, text)
-            return ui.note(f"Saved pose3d.board.square_mm: {float(square):g} in project.yaml. Setups found before need finding again.", "ok"), board_view(config_path)
+            return ui.note(f"Saved pose3d.board.square: {float(square):g} in project.yaml. Calibrations found before need finding again.", "ok"), board_view(config_path)
         if name is None:
             return ui.note("Choose a calibration first.", "warn"), no_update
         if ctx.triggered_id == "cameras-use":

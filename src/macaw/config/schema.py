@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,7 +37,7 @@ class ProjectSection(_Section):
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
     # every length a person enters or reads; results keep pixels and metres and are converted where shown
-    units: Literal["cm", "in"] = "cm"
+    units: Literal["cm", "m", "in"] = "cm"
 
     @model_validator(mode="after")
     def _one_role_per_person(self) -> "ProjectSection":
@@ -296,7 +297,7 @@ class GestureSection(_Section):
     # in the keypoints' length unit per second, so each project sets them for its own videos
     still_speed: float | None = Field(default=None, gt=0)
     peak_prominence: float | None = Field(default=None, gt=0)
-    # metres per second, for pose.gestures3d; without them gestures are measured from the picture only
+    # project.units per second, for pose.gestures3d; without them gestures are measured from the picture only
     still_speed_3d: float | None = Field(default=None, gt=0)
     peak_prominence_3d: float | None = Field(default=None, gt=0)
     holds: Literal["each_hand", "both_hands"] = "each_hand"
@@ -326,9 +327,9 @@ class KinematicsSection(_Section):
 
 
 class ScaleSection(_Section):
-    # written by hand, these win over any measurement; a role's own number wins over the one for everyone
-    cm_per_px: float | None = Field(default=None, gt=0)
-    cm_per_px_by_role: dict[str, float] = Field(default_factory=dict)
+    # in project.units per pixel; written by hand, these win over any measurement, and a role's own wins over everyone's
+    per_px: float | None = Field(default=None, gt=0)
+    per_px_by_role: dict[str, float] = Field(default_factory=dict)
     # a clip in project.calibration_dir measured with macaw set-scale --calibration, for recordings not measured on their own video
     calibration: str | None = None
     # share by which a person's apparent size may change over a recording before the report flags it
@@ -338,25 +339,38 @@ class ScaleSection(_Section):
 
     @model_validator(mode="after")
     def _positive_by_role(self) -> "ScaleSection":
-        bad = sorted(role for role, value in self.cm_per_px_by_role.items() if value <= 0)
+        bad = sorted(role for role, value in self.per_px_by_role.items() if value <= 0)
         if bad:
-            raise ValueError(f"scale.cm_per_px_by_role must be above 0, not for {', '.join(bad)}")
+            raise ValueError(f"scale.per_px_by_role must be above 0, not for {', '.join(bad)}")
         return self
+
+
+BOARD_SQUARE_MM, BOARD_MARKER_MM = 75.0, 56.0
+
+
+@dataclass(frozen=True)
+class BoardSize:
+    squares_x: int
+    squares_y: int
+    square_mm: float
+    marker_mm: float
+    dictionary: str
 
 
 class BoardSection(_Section):
     squares_x: int = Field(default=7, ge=3)
     squares_y: int = Field(default=5, ge=3)
-    # as printed and measured with a ruler; it sets the scale of everything in 3D
-    square_mm: float = Field(default=75.0, gt=0)
-    marker_mm: float = Field(default=56.0, gt=0)
+    # in project.units, as printed and measured with a ruler; it sets the scale of everything in 3D. Blank is the
+    # board as drawn; a marker left blank keeps its share of the square
+    square: float | None = Field(default=None, gt=0)
+    marker: float | None = Field(default=None, gt=0)
     dictionary: Literal["4X4_50", "4X4_100", "5X5_50", "5X5_100", "6X6_50", "6X6_250"] = "5X5_100"
 
-    @model_validator(mode="after")
-    def _markers_inside_squares(self) -> "BoardSection":
-        if self.marker_mm >= self.square_mm:
-            raise ValueError("pose3d.board.marker_mm must be smaller than square_mm")
-        return self
+    def in_mm(self, units: str) -> BoardSize:
+        per_mm = {"cm": 10.0, "m": 1000.0, "in": 25.4}[units]
+        square = self.square * per_mm if self.square is not None else BOARD_SQUARE_MM
+        marker = self.marker * per_mm if self.marker is not None else square * BOARD_MARKER_MM / BOARD_SQUARE_MM
+        return BoardSize(self.squares_x, self.squares_y, square, marker, self.dictionary)
 
 
 class Pose3DSection(_Section):
@@ -610,10 +624,10 @@ class MacawConfig(_Section):
             raise ValueError(
                 f"identity names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
-        unknown = sorted(set(self.scale.cm_per_px_by_role) - set(self.project.roles))
+        unknown = sorted(set(self.scale.per_px_by_role) - set(self.project.roles))
         if unknown:
             raise ValueError(
-                f"scale.cm_per_px_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
+                f"scale.per_px_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
         unknown = sorted(set(self.setup.room.people) - set(self.project.roles))
         if unknown:
@@ -624,6 +638,9 @@ class MacawConfig(_Section):
         clash = sorted(set(self.gaze.targets) & set(self.project.roles))
         if clash:
             raise ValueError(f"gaze.targets names {', '.join(clash)}, which are roles; people are looked for anyway")
+        board = self.pose3d.board.in_mm(self.project.units)
+        if board.marker_mm >= board.square_mm:
+            raise ValueError("pose3d.board.marker must be smaller than its square")
         return self
 
 

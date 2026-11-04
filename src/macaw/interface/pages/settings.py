@@ -13,6 +13,7 @@ from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.interface import project_file, ui
+from macaw.interface.units import convert_entered
 
 LABEL = "Settings"
 PATH = "/settings"
@@ -227,7 +228,13 @@ def register(app, config_path: Path) -> None:
             after, message = _runs_again_note(config_path, text)
             if after is None:
                 return [no_update] * len(ids), no_update, message
+            before = resolve_config(config_path).project.units
             project_file.save(config_path, text)
-            message = html.Div([ui.note(f"Saved to {config_path.name}.", "ok"), message])
+            notes = [ui.note(f"Saved to {config_path.name}.", "ok")]
+            if after.project.units != before:
+                changed = convert_entered(after, config_path, before, after.project.units)
+                listed = ", ".join(path.name for path in changed) or "none held any"
+                notes.append(ui.note(f"Lengths already typed were converted from {before} to {after.project.units} ({listed}).", "ok"))
+            message = html.Div([*notes, message])
         current = project_file.file_values(config_path)
         return [project_file.to_form(item["key"], current[item["key"]]) for item in ids], config_path.read_text(encoding="utf-8"), message

@@ -82,7 +82,7 @@ def describe(
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
-        sections.setdefault("Body", []).append(_centimetres(*scaled))
+        sections.setdefault("Body", []).append(_converted(*scaled, config.project.units))
     found = read_segments(config)
     if found and sections:
         sections.setdefault("Segments", []).append(_segments(found))
@@ -124,10 +124,12 @@ def _segments(found: dict) -> str:
     )
 
 
-def _centimetres(with_scale: int, recordings: int) -> str:
+def _converted(with_scale: int, recordings: int, units: str) -> str:
+    from macaw.project.room import UNIT_NAMES
+
     which = "each recording" if with_scale == recordings else f"{with_scale} of the {recordings} recordings"
     return (
-        f"For {which}, lengths in pixels were also converted to centimetres. The scale was the length of an object of "
+        f"For {which}, lengths in pixels were also converted to {UNIT_NAMES[units]}. The scale was the length of an object of "
         "known size divided by the distance between its two ends as marked by a person on a frame of the recording, or "
         "of a calibration clip filmed with the camera unmoved (the mean where it was marked more than once), or a number "
         "set by hand; where the object was filmed at each participant's place, each participant had their own. A scale "
@@ -639,8 +641,8 @@ def _gestures_3d(config, spec, names) -> str:
     still = "both wrists and both elbows" if gestures.holds == "both_hands" else "wrist and elbow"
     return (
         f"The same measures of each coded gesture were also taken from the wrists placed in 3D, with speeds in m/s, "
-        f"submovements rising at least {gestures.peak_prominence_3d:g} m/s above their surroundings and holds where {still} "
-        f"moved slower than {gestures.still_speed_3d:g} m/s. The area, the levels and the gesture spaces were taken in each "
+        f"submovements rising at least {gestures.peak_prominence_3d:g} {config.project.units}/s above their surroundings and holds where {still} "
+        f"moved slower than {gestures.still_speed_3d:g} {config.project.units}/s. The area, the levels and the gesture spaces were taken in each "
         "person's own frontal plane, set by their hips and shoulders, so that they do not depend on where the cameras stood."
     )
 
@@ -655,9 +657,12 @@ def _kinematics_3d(config, spec, names) -> str:
         cameras, made_here = f"{len(setup.cameras)} ", setup.metadata.get("made_by") == "macaw calibrate-cameras"
     except Exception:   # the calibration file moved since the run; the text stays true without the count
         cameras, made_here = "", False
-    board = pose3d.board
+    from macaw.project.room import CM_PER_UNIT
+
+    units = config.project.units
+    square = pose3d.board.in_mm(units).square_mm / 10 / CM_PER_UNIT[units]
     calibrated = (
-        f"The cameras were calibrated from a ChArUco board [garrido2014] of {board.square_mm:g} mm squares filmed by all of "
+        f"The cameras were calibrated from a ChArUco board [garrido2014] of {square:.3g} {units} squares filmed by all of "
         "them: each lens first from its own views [zhang2000], then every camera's place and lens together by bundle "
         "adjustment [triggs2000]."
         if made_here else "The cameras' calibration was supplied as a file."
