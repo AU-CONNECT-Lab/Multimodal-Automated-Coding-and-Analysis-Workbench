@@ -64,8 +64,6 @@ def _cv2():
         import cv2
     except ImportError:
         raise BackendNotAvailableError("calibrating cameras needs OpenCV: pip install 'pymacaw[vision]'") from None
-    if not hasattr(cv2, "aruco") or not hasattr(cv2.aruco, "CharucoDetector"):
-        raise BackendNotAvailableError("calibrating cameras needs OpenCV 4.7 or later, with its aruco module")
     return cv2
 
 

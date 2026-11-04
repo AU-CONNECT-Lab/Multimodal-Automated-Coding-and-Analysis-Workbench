@@ -166,12 +166,7 @@ def export_eaf(
             "%d annotation(s) dropped from %s: ELAN has no zero-length annotation", skipped, out_path.name
         )
 
-    if hasattr(eaf, "to_file"):
-        eaf.to_file(str(out_path))
-    else:
-        from pympi.Elan import to_eaf
-
-        to_eaf(str(out_path), eaf)
+    eaf.to_file(str(out_path))
     return out_path
 
 

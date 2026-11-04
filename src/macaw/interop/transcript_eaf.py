@@ -49,12 +49,7 @@ def export_transcript_eaf(
                     )
                     eaf.add_annotation(tier, start, end, text)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    if hasattr(eaf, "to_file"):
-        eaf.to_file(str(out_path))
-    else:
-        from pympi.Elan import to_eaf
-
-        to_eaf(str(out_path), eaf)
+    eaf.to_file(str(out_path))
     return out_path
 
 
