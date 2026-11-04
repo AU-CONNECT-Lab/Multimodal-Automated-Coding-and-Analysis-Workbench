@@ -717,8 +717,9 @@ def _kinematics_3d(config, spec, names) -> str:
         f"missed each other by more, or where it fell behind a camera. {calibrated} In 3D, wrist speed, acceleration and jerk "
         f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964], together "
         "with the distance between the wrists, between two people's shoulder midpoints and between the midpoints of their "
-        "ears, and the angle between where a person's head points, from the midpoint of the ears to the nose, and the "
-        "direction to the other person's head."
+        "ears, the angle between where a person's head points, from the midpoint of the ears to the nose, and the "
+        "direction to the other person's head, and the angle between where their chest faces, square to the shoulder line "
+        "and to the spine from the hip midpoint, and the direction to the other person's shoulder midpoint."
     ) + _measures_3d(config)
 
 

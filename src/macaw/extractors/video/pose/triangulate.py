@@ -268,6 +268,12 @@ _PAIR_SPECS: dict[str, tuple[str, str]] = {
         "direction to the other person's head; 0 when it points straight at them. Not gaze.",
         "deg",
     ),
+    "body_toward_deg_3d": (
+        "Angle between where this person's chest faces (square to the shoulders and to the spine from the hip midpoint, on "
+        "the nose's side) and the direction to the other person's shoulder midpoint; 0 facing them, 180 with the back to "
+        "them. Missing while the hips or the nose are not placed.",
+        "deg",
+    ),
 }
 # compared with an independent 3D reconstruction of real recordings; the rest only with simulated cameras
 _AGAINST_REFERENCE = frozenset(
@@ -283,7 +289,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -431,11 +437,29 @@ def pair_values_3d(points_a: pd.DataFrame, points_b: pd.DataFrame, *, symmetric:
         if head_a is not None and head_b is not None:
             values["head_distance_3d"] = np.linalg.norm(head_a - head_b, axis=1)
     if head_a is not None and head_b is not None and "nose" in pick_a:
-        facing, toward = pick_a["nose"] - head_a, head_b - head_a
-        with np.errstate(invalid="ignore"):
-            cosine = np.sum(facing * toward, axis=1) / (np.linalg.norm(facing, axis=1) * np.linalg.norm(toward, axis=1))
-        values["head_toward_deg_3d"] = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+        values["head_toward_deg_3d"] = _angle(pick_a["nose"] - head_a, head_b - head_a)
+    chest, shoulders_a = chest_facing(pick_a), _part(pick_a, "left_shoulder", "right_shoulder")
+    shoulders_b = _part(pick_b, "left_shoulder", "right_shoulder")
+    if chest is not None and shoulders_b is not None:
+        values["body_toward_deg_3d"] = _angle(chest, shoulders_b - shoulders_a)
     return values
+
+
+def chest_facing(found: dict[str, np.ndarray]) -> np.ndarray | None:
+    """Square to the shoulder line and the spine; the nose picks the front, so swapped left and right do not turn it round."""
+    shoulders, hips = _part(found, "left_shoulder", "right_shoulder"), _part(found, "left_hip", "right_hip")
+    if shoulders is None or hips is None or "nose" not in found:
+        return None
+    normal = np.cross(found["left_shoulder"] - found["right_shoulder"], shoulders - hips)
+    with np.errstate(invalid="ignore"):
+        front = np.sign(np.sum(normal * (found["nose"] - shoulders), axis=1))
+    return normal * front[:, None]
+
+
+def _angle(one: np.ndarray, other: np.ndarray) -> np.ndarray:
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cosine = np.sum(one * other, axis=1) / (np.linalg.norm(one, axis=1) * np.linalg.norm(other, axis=1))
+    return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
 
 
 def measure_values_3d(measure, points_a: pd.DataFrame, points_b: pd.DataFrame, *, smoothing_s: float, function=None) -> pd.DataFrame:

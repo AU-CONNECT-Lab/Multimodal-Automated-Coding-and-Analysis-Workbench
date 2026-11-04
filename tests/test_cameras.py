@@ -444,6 +444,33 @@ def test_time_below_a_3d_value_is_typed_in_the_project_unit(seated, project, tmp
     assert set(result.annotations.tier) == {"far_3d_below_with_child"}
 
 
+def placed_points(joints, subject_id):
+    rows = [
+        pd.DataFrame({"subject_id": subject_id, "frame": np.arange(len(xyz)), "t": np.arange(len(xyz)) / 30.0, "joint": joint,
+                      "x": xyz[:, 0], "y": xyz[:, 1], "z": xyz[:, 2]})
+        for joint, xyz in joints.items()
+    ]
+    return pd.concat(rows, ignore_index=True)
+
+
+@pytest.mark.parametrize("facing, swapped, expected", [
+    ([1, 0, 0], False, np.degrees(np.arctan2(100, 1000))),
+    ([1, 0, 0], True, np.degrees(np.arctan2(100, 1000))),
+    ([-1, 0, 0], False, 180 - np.degrees(np.arctan2(100, 1000))),
+])
+def test_the_body_faces_the_other_person_whichever_shoulder_is_called_left(facing, swapped, expected):
+    from macaw.extractors.video.pose.triangulate import pair_values_3d
+
+    parent = person([0, 0, 2000], facing, 3, hips=True)
+    if swapped:
+        parent["left_shoulder"], parent["right_shoulder"] = parent["right_shoulder"], parent["left_shoulder"]
+    child = person([1000, 100, 2000], [-1, 0, 0], 3, hips=True)
+    values = pair_values_3d(placed_points(parent, "parent"), placed_points(child, "child"), symmetric=True)
+    assert np.allclose(values["body_toward_deg_3d"], expected, atol=1e-6)
+    without_hips = pair_values_3d(placed_points(person([0, 0, 2000], facing, 3), "parent"), placed_points(child, "child"), symmetric=True)
+    assert "body_toward_deg_3d" not in without_hips
+
+
 def test_a_3d_version_may_not_take_a_name_in_use(seated, project):
     settings(project, "kinematics:\n  measures:\n    - {name: head_distance, person: parent, joints: [nose], to_person: child, to_joints: [nose]}\n")
     with pytest.raises(ConfigError, match="head_distance_3d"):
