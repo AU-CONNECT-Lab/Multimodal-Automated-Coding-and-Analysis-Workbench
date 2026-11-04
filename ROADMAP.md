@@ -33,7 +33,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
 - Lengths in one unit for the project (centimetres, metres or inches) beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
-- 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and the cameras calibrated on the Setup page.
+- 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and the cameras calibrated on the Setup page and placed in its room from the calibration.
 - Body points exported per recording, in pixels and in 3D.
 - Who looks at whom and at which named things, from the picture or from where the room places people and things, mutual gaze, and labelled frames to check it.
 - Named segments of a recording, each with every recording-level measure and the turn checks worked out again as if the recording had been cut there, marked on the video in the workbench.

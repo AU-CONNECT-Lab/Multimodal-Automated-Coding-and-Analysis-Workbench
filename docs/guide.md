@@ -151,6 +151,8 @@ When a camera is chosen, *What it sees* lists each participant it is used for, w
 
 *From a camera*, above the three-dimensional view, shows the room from where a chosen camera stands, with its direction, tilt and picture angle, half transparent over a frame of that camera's file from a chosen recording and moment. Drag in the view to turn and tilt the camera, and scroll to change its picture angle, until the drawing lies on the picture; the camera's settings change accordingly.
 
+With several calibrated cameras, **From the calibration** fills in each camera's position, height, direction, tilt and picture angle from the calibration, tied to the room by the values already entered and by the board lying flat in the calibration clips ({ref}`three-d`).
+
 **Draw for a paper**, or `macaw draw-room`, writes a top view and a side view of the saved arrangement at 300 dpi as `setups/main.png`, with the participants, the cameras and what each sees, the microphones, the things and a scale bar, and no further annotation.
 
 (naming)=

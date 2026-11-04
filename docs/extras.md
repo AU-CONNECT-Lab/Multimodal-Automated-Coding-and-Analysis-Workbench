@@ -441,6 +441,8 @@ pose3d:
 
 With the cameras in their final positions, clap once in view of all cameras, then move the board slowly through the space where the participants will sit, tilting it toward and away from the cameras, for about a minute. Keep it in view of at least two cameras at a time and close enough to fill a good part of the picture. Place each camera's clip in a folder named like that camera's device folder in the recordings, inside a folder for the calibration such as `calibration/lab`: the clip of the camera whose recordings sit in `front` goes in `calibration/lab/front`.
 
+At the end of the clips, lay the board flat and still, face up, on the floor or on the table for about three seconds, in view of at least one camera. This shows which way is up and where the floor is, so that the cameras can later be placed in the room from the calibration (step 4).
+
 ### 3. Find the cameras
 
 Select the calibration in that section and press **Find the cameras** (or run `macaw calibrate-cameras lab`). This takes a few minutes and reports, for each camera, how far the board's corners fall from where the camera saw them (below 1 to 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, in the project's unit and drawn in three dimensions. The page also indicates when a clip or the board size has changed since, so that the cameras need to be found again. Then press **Use for this project**. When some sessions used another calibration, name it in those recordings' own files:
@@ -452,7 +454,13 @@ pose3d:
 
 A lab that has calibrated its cameras with Anipose can place its `calibration.toml` in the `calibration` folder and name it instead, as `calibration: lab.toml`.
 
-### 4. Run and inspect
+### 4. Place the cameras in the room
+
+This step is optional. The cameras' positions and directions in the room ({ref}`step 3 <setup>`) can be taken from the calibration instead of being measured. In *Board lying flat*, drag to a moment when the board lies flat, check that at least one camera finds it, choose what it lay on (the floor, or a thing in the room whose height is given) and press **Save the moment**, or run `macaw calibration-floor lab --at 63.5 --on table`. Then press **From the calibration** above the setup's editor, or run `macaw place-cameras`.
+
+The calibration gives where the cameras stand relative to each other and the angle each picture spans. What ties them to the room is taken from everything the room already gives: the board lying flat, and any camera positions, heights, directions and tilts entered. With the board lying flat, the positions of two cameras suffice; without it, the positions and heights of three cameras, or the position, height, direction and tilt of one camera. A tape measure is therefore enough, and no angle needs to be measured. When the given values do not suffice, only the picture angles are filled in and the page states what is missing. When they exceed what is needed, a table compares each given value with where the calibration places it and marks those more than 10 cm or 5° off. A single wrong value shifts the others as well, so without the board lying flat the wrong one may be any of those marked. A camera turned about its line of sight by more than 5° is reported, since the room draws every camera level. Cameras placed in this way are marked as taken from the calibration until one of their values is changed by hand.
+
+### 5. Run and inspect
 
 Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in three dimensions, with `_3d` appended to their names. They are stored in metres; the Results page shows them in the project's unit, and exports give them in that unit as well ({ref}`scale`): wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
 
