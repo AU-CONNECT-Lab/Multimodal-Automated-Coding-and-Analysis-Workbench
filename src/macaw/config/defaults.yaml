@@ -2,13 +2,8 @@
 # Every key carries its unit and what changing it affects.
 
 project:
-  # Logs, job records and cache. null puts them under output_dir; a cluster wants them on
-  # scratch. Nothing in here is a result, so it can be deleted to reclaim space.
-  work_dir: null
-  # How a path under raw_dir maps to BIDS entities. Anything the pattern omits stays null.
-  # Flat dataset:  "{group_id}"
-  # Longitudinal:  "sub-{group_id}/ses-{session_id}"
-  # Several tasks per visit: "sub-{group_id}/ses-{session_id}/task-{task}_run-{run}"
+  work_dir: null                     # logs, job records and cache, never results; null = under output_dir
+  # How folders under raw_dir name recordings, e.g. "sub-{group_id}/ses-{session_id}"
   recording_pattern: "{group_id}"
   recording_prefix: ""               # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
   recording_config_dir: recordings   # dir of <recording_id>.yaml files overriding this config
@@ -16,9 +11,9 @@ project:
   scripts_dir: scripts               # your own .py files: measure functions, extractors, backends
   calibration_dir: calibration       # clips filmed before recording: an object of known length, a board per camera setup
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
-  n_subjects: 2                      # people per recording; N-person is supported, 2 is tested
+  n_subjects: 2                      # people per recording; tested with 2
   roles: [parent, child]             # role labels; length must equal n_subjects
-  units: cm                          # cm | m | in; every length entered or shown: the room, the yardstick, the board, measures converted from pixels or in 3D
+  units: cm                          # cm | m | in, for every length entered or shown
   excluded_recordings: []            # recording ids skipped by every command
 
 align:
@@ -30,7 +25,7 @@ align:
   drift_segment_s: 60.0              # s; segment length for the cross-check and the drift regression
   max_drift_ppm: 200.0               # parts per million; the largest drift the segment search allows for
   apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
-  review: flagged                    # always: every offset waits for a person | flagged: only uncertain ones do | skip
+  review: flagged                    # always | flagged: only uncertain offsets | skip
 
 # Each recording folder holds one folder per device, named as here, with that device's file in it.
 # The cameras and microphones are written in setups/<name>.yaml, normally from the Setup page.
@@ -45,17 +40,17 @@ identity:
   pitch_order: []                    # shared microphone, with text.voice_review flagged or skip: roles from the lowest voice to the highest, e.g. [mother, child]
 
 segment:
-  task_start_s: null                 # s; trims the researcher's intro. null = keep from 0
-  task_end_s: null                   # s; null = keep to end of media
+  task_start_s: null                 # s; trims the start. null = from 0
+  task_end_s: null                   # s; null = to the end
 
 # Before any video step, each video is re-encoded once: a constant frame rate, upright, square
 # pixels, progressive, standard dynamic range, and frame 0 at the first sound of its file. The copies take about as much
 # disk as the originals again. Frame rate and picture size stay as recorded unless set here.
 video:
-  normalise: true                    # false reads the originals as they are and only warns about what would have been fixed
-  fps: null                          # fps; one rate for every video, e.g. 30 from 60. Must divide each file's rate by a whole number
-  quality: 17                        # 0-51; lower keeps more detail in bigger files. 17 is hard to tell from the source
-  encoder: libx264                   # libx264 (any machine, same frames everywhere) | h264_nvenc (NVIDIA GPU; about twice as fast, bigger files)
+  normalise: true                    # false reads the originals as they are, only warning
+  fps: null                          # one rate for every video; must divide each file's rate
+  quality: 17                        # 0-51; lower keeps more detail. 17 looks like the source
+  encoder: libx264                   # libx264 (any machine, same frames everywhere) | h264_nvenc (NVIDIA, faster)
 
 prosody:
   backend: parselmouth               # parselmouth | librosa | builtin
@@ -71,12 +66,12 @@ text:
   asr_backend: whisperx              # whisperx | faster_whisper
   asr_model: large-v3                # smaller models are much faster and much worse on children
   language: null                     # ISO code; null = autodetect per recording
-  device: auto                       # auto | cuda | cpu; auto picks cpu when no GPU is visible
+  device: auto                       # auto | cuda | cpu; auto uses a GPU when one is seen
   compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback
-  diarization: per_track             # per_track: one mic per person | pyannote: one shared mic (an audio file, else the shared camera's sound), voices found by diarization | none
+  diarization: per_track             # per_track: a mic per person | pyannote: one shared mic | none
   diarization_model: pyannote/speaker-diarization-community-1  # HuggingFace pipeline for pyannote; accept its terms first
-  extra_voices: 0                    # voices the shared mic may hold besides the people, e.g. 1 for a researcher in the room; name them none
-  voice_review: always               # always: a person names the voices, and no suggestion is made | flagged: a suggestion is made and kept where complete | skip: the suggestion is kept, undecided voices left out
+  extra_voices: 0                    # other voices on a shared mic, e.g. 1 for a researcher
+  voice_review: always               # always | flagged: only when the suggestion is unsure | skip
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
   word_timestamps: true              # needed for gesture-speech alignment and MLU
   embedding_model: null              # sentence-transformers name; null disables text embeddings
@@ -86,15 +81,15 @@ text:
   first_use_words: null              # path to a word list; only these words count, e.g. the task's topic words
 
 pose:
-  backend: null                      # mediapipe (reports usage to Google, no off switch) | yolo (offline; AGPL, not bundled)
+  backend: null                      # mediapipe (reports usage to Google) | yolo (offline; AGPL, not bundled)
   model: null                        # backend-specific checkpoint; null = backend default
   device: auto                       # auto | cpu | cuda
   min_confidence: 0.3                # 0-1; keypoints below this become NaN
   input_size: 1280                   # px; side frames are scaled to before detection (yolo); small people need more
-  review: flagged                    # always: every camera's people wait for a person | flagged: only cameras in doubt | skip
+  review: flagged                    # always | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
-  suggest_names: false               # true: on a camera nobody clicked, who is who is suggested: on a camera for one person, whoever is most in view and largest; on one for several, from head motion where they are named, else their own microphones, else qc.look's model from qc.look.people; a clear suggestion stands, a doubtful one waits for a person
+  suggest_names: false               # true: suggest who is who where nobody clicked; doubtful ones wait
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
@@ -128,8 +123,8 @@ pose3d:                              # 3D from two or more cameras that see the 
   board_every_s: 0.2                 # s; board clips are read at this interval
 
 face:
-  backend: pyfeat                    # pyfeat (action units; not bundled, most weights are for non-commercial research) | mediapipe (landmarks and head angles only) | openface
-  model: null                        # pyfeat: v1 (default) or v2 | mediapipe: path to face_landmarker.task, or set MACAW_FACE_MODEL
+  backend: pyfeat                    # pyfeat (most weights non-commercial) | mediapipe (no action units) | openface
+  model: null                        # pyfeat: v1 or v2 | mediapipe: path to face_landmarker.task
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the face model takes at once; 16 of 1080p takes about 8 GB of GPU memory, and a batch the GPU cannot hold may slow to a crawl instead of failing
   action_units: true                 # 20 action units per frame, 0 to 1
@@ -140,11 +135,11 @@ face:
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
 
 gaze:
-  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture, fetched through torch.hub on first use | angles: from face.au's head and eye angles against where the setup's room places people and things, or labelled frames, for people looked at outside the picture
-  model: null                        # gazelle: gazelle_dinov2_vitl14_inout_childplay (default; tuned on children playing with adults) | gazelle_dinov2_vitb14_inout_childplay (smaller and faster) | gazelle_dinov2_vitl14_inout | gazelle_dinov2_vitb14_inout
+  backend: gazelle                   # gazelle: from the picture | angles: head angles against the room
+  model: null                        # gazelle_dinov2_vit{l,b}14_inout[_childplay]; null = vitl14_inout_childplay
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the model takes at once
-  targets: []                        # things to tell apart as what people look at, in plain English words, e.g. [bottle, book]; people are looked for anyway
+  targets: []                        # things people may look at, in plain words, e.g. [bottle, book]
   object_backend: grounding_dino     # grounding_dino: finds things by name, five times a second (Apache-2.0)
   object_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
   object_score: 0.35                 # 0-1; lower finds more things and more that are not there
@@ -182,15 +177,15 @@ coding:
     seed: 0                          # sample i sends seed + i where the provider takes one
     allow_abstain: true              # the model may answer "cannot tell"
     review_threshold: 0.7            # 0-1; below this the unit enters the human review queue
-    review_random: 5                 # units the model was sure of, drawn at random per recording into the review queue, so people learn how often those are wrong; 0 draws none
+    review_random: 5                 # sure units drawn at random into the review queue; 0 = none
     batch_size: 20                   # units per request
     context_units: 5                 # earlier lines shown before each batch, not coded
-    coded_roles: []                  # roles whose units are coded, the others' lines being context; [] codes everyone
-    show: [timing]                   # what each line carries besides speaker and words: timing (start, length, pause or overlap before), pitch, loudness, rate (against that speaker's usual), frames (three video frames per unit, for a model that reads images; one unit per request); [] is the words only
-    notes: ""                        # your own words to the model, given as written, e.g. "A is the mother, on the left; B is the child"
-    examples: null                   # a table of units people coded, shown to the model as examples (macaw draw-examples writes one)
-    reasons: false                   # true: the model also says in a few words what each code rests on, kept in samples.parquet
-    think: null                      # null = the model's own default; false asks a model that reasons first to answer at once, true to reason (local servers only)
+    coded_roles: []                  # roles whose lines are coded, the rest is context; [] = all
+    show: [timing]                   # timing | pitch | loudness | rate | frames, besides the words; [] = words only
+    notes: ""                        # your own words to the model, e.g. "A is the mother"
+    examples: null                   # a table of coded units shown as examples (macaw draw-examples)
+    reasons: false                   # true: the model says what each code rests on
+    think: null                      # null = the model's default; false answers at once (local servers)
   judges: {}                         # more codings by the language model beside this one, to compare, e.g. {k0: {codebook: names_only.yaml}, words_only: {show: []}}; each takes codebook and any coding.llm key, the rest as above
   imports: {}                        # for macaw import-codes: each tier of your coding files, as the file names it, and whose it is, e.g. {"Child Gaze": {person: child, tier: gaze_target, labels: {Mom: parent, Away: elsewhere}}}; tier and labels are optional
 
@@ -213,11 +208,11 @@ qc:
   review_seed: 0                     # fixes the random baseline so a rerun shows the same frames
   look:                              # macaw qc --look: a model that reads pictures looks at the review frames
     provider: ollama                 # the server, as coding.llm.provider; a cloud one receives the frames
-    model: null                      # a model that reads pictures, e.g. qwen3-vl:8b-instruct; null = not asked
+    model: null                      # a model that reads pictures, e.g. qwen3-vl:8b-instruct; null = none
     base_url: null                   # null = the provider's usual address
     timeout_s: 300
-    people: {}                       # what each person looks like, by role, e.g. {parent: an adult, child: a young child}; only these names are checked, and with pose.suggest_names the model suggests who is who from them
-    random_check: 5                  # frames per recording the model passed, drawn at random for a person to check
+    people: {}                       # what each role looks like, e.g. {parent: an adult, child: a young child}
+    random_check: 5                  # passed frames per recording drawn for a person to check
 
 # Cluster resources are not configured here. They describe the machine rather than the
 # study, so they live in a separate hpc.yaml that never enters the config hash.

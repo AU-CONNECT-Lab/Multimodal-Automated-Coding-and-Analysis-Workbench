@@ -41,7 +41,14 @@ def card(config):
         dcc.Graph(id="names-graph", figure=marks_figure(None, {}), config={"displayModeBar": False}),
         dcc.Store(id="names-marks", data={}),
         dcc.Store(id="names-frame", data=None),
-        html.Div([ui.button("Save the names", "names-save", primary=True), ui.button("Clear this camera's names", "names-clear")], className="buttons"),
+        html.Div(
+            [
+                # kept in this browser, as on the Review page
+                ui.field("Your name", dcc.Input(id="names-by", value="", placeholder="needed to save", persistence=True, persistence_type="local")),
+                ui.button("Save the names", "names-save", primary=True), ui.button("Clear this camera's names", "names-clear"),
+            ],
+            className="toolbar",
+        ),
         html.Div(id="names-result"),
         desc="Click each person on a frame where all are in view.",
     )
@@ -73,7 +80,7 @@ def saved(config_path: Path, rid: str | None, camera: str | None):
         [click["person"], f"{float(click['at']):g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "")]
         for click in sorted(clicks, key=lambda click: (float(click["at"]), click["person"]))
     ]
-    return ui.table(["Person", "At (s)", "Where", "By"], rows, numeric={"At (s)"})
+    return ui.table(["Person", "At (s)", "Where", "By"], rows, numeric={"At (s)"}, fit=True)
 
 
 def frame_of(config_path: Path, rid: str, camera: str, at_s: float) -> tuple[dict | None, str | None]:
@@ -145,11 +152,11 @@ def next_person(people: list[str], marks: dict, current: str) -> str:
     return waiting[0] if waiting else current
 
 
-def name_command(config_path: Path, frame: dict, marks: dict) -> list[str]:
+def name_command(config_path: Path, frame: dict, marks: dict, by: str) -> list[str]:
     people = [flag for person in sorted(marks) for flag in ("--person", f"{person}={marks[person][0]:g},{marks[person][1]:g}")]
     return cli_bridge.build_command(
         ["name-people"], config_path=config_path, recordings=[frame["rid"]],
-        extra_flags=["--camera", frame["camera"], "--at", f"{frame['at']:g}", *people],
+        extra_flags=["--camera", frame["camera"], "--at", f"{frame['at']:g}", *people, "--by", by],
     )
 
 
@@ -212,13 +219,16 @@ def register(app, config_path: Path) -> None:
         Output("names-result", "children"),
         Input("names-save", "n_clicks"), Input("names-clear", "n_clicks"),
         State("names-frame", "data"), State("names-marks", "data"), State("names-recording", "value"), State("names-camera", "value"),
+        State("names-by", "value"),
         prevent_initial_call=True,
     )
-    def keep(_save, _clear, shown, marks, rid, camera):
+    def keep(_save, _clear, shown, marks, rid, camera, by):
         if ctx.triggered_id == "names-save":
             if not shown or not marks:
                 return ui.note("Show a frame and click on the people first.", "warn")
-            argv = name_command(config_path, shown, marks)
+            if not (by or "").strip():
+                return ui.note("Type your name first: the names are kept with who clicked them.", "warn")
+            argv = name_command(config_path, shown, marks, by.strip())
         else:
             if not rid or not camera:
                 return ui.note("Choose a recording and a camera first.", "warn")

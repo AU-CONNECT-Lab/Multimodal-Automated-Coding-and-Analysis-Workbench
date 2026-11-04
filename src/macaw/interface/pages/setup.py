@@ -29,30 +29,34 @@ def setup_names(config) -> list[str]:
 
 def layout(config_path: Path):
     config = resolve_config(config_path)
+    three_d = cameras.section(config_path)
+    sections = [("The setup", "setup-room"), ("What each recording holds", "setup-holds"), ("Who is who", "setup-names")]
     return html.Div(
         [
             ui.page_head(
                 "Setup",
                 "Who and what is recorded, and where. Nothing runs until the setup is saved.",
             ),
+            ui.jumps([*sections, *([("Cameras for three dimensions", "setup-3d")] if three_d is not None else [])]),
             html.Div(
                 [
                     ui.field("Setup", dcc.Dropdown(setup_names(config), config.setup.name, id="setup-pick", clearable=False, className="picker")),
                     ui.field("New setup", dcc.Input(id="setup-new-name", placeholder="home_visits")),
-                    ui.button("Start it", "setup-new", small=True),
+                    ui.button("Start it", "setup-new"),
                     html.Div(id="setup-status"),
                 ],
                 className="toolbar",
             ),
             html.Div(id="setup-message"),
-            room.card(config),
+            html.Div(room.card(config), id="setup-room"),
             ui.card(
                 "What each recording holds",
                 dcc.Loading(html.Div(holdings(config_path), id="setup-files")),
                 desc="The file found in each device's folder.",
+                id="setup-holds",
             ),
-            naming.card(config),
-            cameras.section(config_path),
+            html.Div(naming.card(config), id="setup-names"),
+            *([html.Div(three_d, id="setup-3d")] if three_d is not None else []),
         ]
     )
 

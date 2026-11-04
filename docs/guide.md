@@ -59,7 +59,7 @@ Single camera
 : The sound is taken from the camera and the voices are separated automatically. In the setup, the camera is said to carry the voices of all participants, and *Microphones* is set to `pyannote` (one shared microphone) in the settings. Each voice is then assigned to a participant in step 6.
 
 Several sessions per participant
-: Use one folder per family or participant with one subfolder per session, for example `sub-01/ses-1`, and describe this layout once under *Recording folder pattern* in the settings, here `sub-{group_id}/ses-{session_id}`.
+: Use one folder per family or participant with one subfolder per session, for example `sub-01/ses-1`, and describe this layout once under *Recording folder pattern* in the settings, here `sub-{group_id}/ses-{session_id}`. Several tasks per session are described in the same way, for example `sub-{group_id}/ses-{session_id}/task-{task}_run-{run}`.
 
 Excluding a recording
 : A recording can be excluded without moving any files, by adding `excluded_recordings: [dyad07]` under `project:` in the *project.yaml* box of the settings page.
@@ -158,7 +158,7 @@ With several calibrated cameras, **From the calibration** fills in each camera's
 (naming)=
 ### Who is who on each camera
 
-Which person in a picture is which participant is stated by the researcher, once per camera and recording, under *Who is who on each camera* on the Setup page. Choose the recording and the camera, enter a moment of the camera's file in seconds at which the participants it is used for are all in view and clearly apart, and press **Show frame**. Choose each participant in turn and click on them, then press **Save the names**. MACAW names whoever was detected under each click and follows them through the rest of the recording. The clicks saved for the camera are listed below the selection, and **Clear this camera's names** removes them.
+Which person in a picture is which participant is stated by the researcher, once per camera and recording, under *Who is who on each camera* on the Setup page. Choose the recording and the camera, enter a moment of the camera's file in seconds at which the participants it is used for are all in view and clearly apart, and press **Show frame**. Choose each participant in turn and click on them, then enter a name under *Your name* and press **Save the names**. MACAW names whoever was detected under each click and follows them through the rest of the recording. The clicks saved for the camera are listed below the selection, and **Clear this camera's names** removes them.
 
 A camera used for one participant alone needs no click as long as no one else is ever in view on it at the same time. Every other camera needs one, and its recording waits at *Who is on camera* ({ref}`step 6 <review>`) until it has one. When the tracker loses a participant for a while, for example after they leave the picture, a further click at a moment after their return names them again. Suggestions in place of clicks are available as an option ({ref}`suggest-names`).
 
@@ -230,7 +230,7 @@ The window may be closed at any time. The next run resumes where the previous on
 
 {bdg-warning}`You do this`
 
-Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items.
+Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items. Enter a name under *Your name* first: each decision is stored with it, and the browser keeps it for later sessions.
 
 ### Offsets between files
 
@@ -255,7 +255,7 @@ MACAW separates the voices. Read what each voice says, listen to its clips, and 
 
 {bdg-secondary-line}`optional`
 
-**Export to ELAN** writes the transcript as an ELAN file. Words, boundaries and speakers can be corrected in ELAN, and the corrected file is read back with **Import a corrected transcript (.eaf)**. Speech the recogniser omitted is placed on a tier of its own so that it can be restored. **Back to the recogniser's** returns to the automatic transcript at any time.
+**Export to ELAN** writes the transcript as an ELAN file. Words, boundaries and speakers can be corrected in ELAN, and the corrected file is read back with **Import a corrected transcript (.eaf)** on the same card. Speech the recogniser omitted is placed on a tier of its own so that it can be restored. **Back to the recogniser's** returns to the automatic transcript at any time.
 
 With a language model set under *Coding* ({ref}`coding`), **Ask the model for doubtful lines**, or `macaw transcript check -r dyad01`, has it read the transcript and list the lines that look misheard or invented, such as a phrase repeated many times or many words in a fraction of a second, each with a short reason. The transcript itself is not changed. The ELAN export places these lines on tiers of their own, so that they can be checked against the recording while correcting. The model reads the text only and does not hear the recording: it misses errors that read naturally and may mark lines that are correct, so the list directs attention but does not replace listening.
 

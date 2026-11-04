@@ -57,7 +57,8 @@ def field(label: str, control, hint=None, *, changed: bool = False):
     )
 
 
-def table(columns: list[str], rows: list[list], *, numeric: set[str] = frozenset()):
+def table(columns: list[str], rows: list[list], *, numeric: set[str] = frozenset(), fit: bool = False):
+    """fit keeps a table of a few short columns as wide as its content instead of the card."""
     head = html.Thead(html.Tr([html.Th(name, className="num" if name in numeric else None) for name in columns]))
     body = html.Tbody(
         [
@@ -65,7 +66,20 @@ def table(columns: list[str], rows: list[list], *, numeric: set[str] = frozenset
             for row in rows
         ]
     )
-    return html.Table([head, body], className="flat")
+    return html.Table([head, body], className="flat fit" if fit else "flat")
+
+
+def jumps(sections: list[tuple[str, str]]):
+    """A row of links to the sections of a long page, by (label, element id)."""
+    return html.Nav([html.A(label, href=f"#{anchor}") for label, anchor in sections], className="jumps")
+
+
+def with_code(text: str):
+    """A message with `backticked` parts shown as code."""
+    parts = text.split("`")
+    if len(parts) % 2 == 0:   # an unmatched backtick is just a character
+        return text
+    return [html.Code(part) if index % 2 else part for index, part in enumerate(parts) if part]
 
 
 def command(argv: list[str]):

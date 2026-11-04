@@ -4,7 +4,6 @@ Every button stands for a `macaw` command, shown next to it."""
 from __future__ import annotations
 
 import base64
-import getpass
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -29,12 +28,18 @@ LABEL = "Review"
 ACT = "review-act"
 NO_ONE = "none"
 PICK = "act-pick"
+ACTS_DECIDED = "acts-decided"
 SCALE_VIDEO, SCALE_AT, SCALE_SHOW, SCALE_GRAPH = "scale-video", "scale-at", "scale-show", "scale-graph"
 SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
 SCALE_LENGTH, SCALE_OBJECT, SCALE_PERSON = "scale-length", "scale-object", "scale-person"
 GAZE_VIDEO, GAZE_AT, GAZE_SHOW, GAZE_RANDOM, GAZE_GRAPH = "gaze-video", "gaze-at", "gaze-show", "gaze-random", "gaze-graph"
 GAZE_T, GAZE_NOTE, GAZE_PICK = "gaze-t", "gaze-note", "gaze-pick"
 CLIP = "clip:"
+UPLOAD = "review-upload"
+# what each upload carries, and the files it takes
+TRANSCRIPT_UPLOAD, CODING_UPLOAD = "transcript", "coding"
+# the actions that record who decided, so they wait for a name
+NAMED = {"accept-offset", "accept-owner", "accept-voices", "apply-review", "set-scale", "label-gaze", "look-right", "look-wrong"}
 EVERYONE = "everyone"
 _MARK = "#d9534f"
 # a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
@@ -45,22 +50,12 @@ def layout(config_path: Path):
     recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
-            ui.page_head(
-                "Review",
-                "What the software decided, for a person to check.",
-                [
-                    ui.button("Refresh", "review-refresh", icon_name="refresh"),
-                    dcc.Upload(ui.button("Import a corrected transcript (.eaf)", icon_name="upload"), id="review-upload", accept=".eaf"),
-                    dcc.Upload(
-                        ui.button("Import your coding (.eaf, .csv, .xlsx)", icon_name="upload"), id="review-coding-upload",
-                        accept=",".join(CODING_SUFFIXES),
-                    ),
-                ],
-            ),
+            ui.page_head("Review", "What the software decided, for a person to check."),
             html.Div(
                 [
                     ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="review-recording", clearable=False, className="picker")),
-                    ui.field("Your name", dcc.Input(id="review-by", value=getpass.getuser(), placeholder="your name")),
+                    # kept in this browser, so a person types it once
+                    ui.field("Your name", dcc.Input(id="review-by", value="", placeholder="needed to save", persistence=True, persistence_type="local")),
                 ],
                 className="toolbar",
             ),
@@ -72,6 +67,10 @@ def layout(config_path: Path):
 
 def _button(label: str, action: str, target: str = "", primary: bool = False, small: bool = False):
     return ui.button(label, {"type": ACT, "action": action, "target": target}, primary=primary, small=small)
+
+
+def _upload(label: str, kind: str, accept: str):
+    return dcc.Upload(ui.button(label, icon_name="upload"), id={"type": UPLOAD, "kind": kind}, accept=accept)
 
 
 def _offsets(config, layout, rid):
@@ -305,7 +304,7 @@ def _gaze(config, layout, recording):
     choices = {person: [role for role in roles if role != person] + list(config.gaze.targets) + ["elsewhere", UNSURE] for person in roles}
     return ui.card(
         "Where people look",
-        ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}) if rows else None,
+        ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}, fit=True) if rows else None,
         *[ui.note(f"{item.subject_id}: {item.message}", "warn" if item.severity == "warn" else "ok") for item in checked],
         html.Div(
             [
@@ -443,12 +442,13 @@ def _transcript(config, layout, rid, path):
         html.Div(
             [
                 _button("Export to ELAN", "transcript-export"),
+                _upload("Import a corrected transcript (.eaf)", TRANSCRIPT_UPLOAD, ".eaf"),
                 _button("Back to the recogniser's", "transcript-reset"),
                 *([_button("Ask the model for doubtful lines", "transcript-check")] if config.coding.llm.model else []),
             ],
             className="buttons",
         ),
-        desc="Correct it in ELAN, then import it with the button at the top.",
+        desc="Export it, correct it in ELAN, then import it here.",
     )
 
 
@@ -505,9 +505,14 @@ def _speech_acts(config, layout, recording):
         "Speech acts",
         ui.table(["At (s)", "Who", "Words", "Model's answers", "Why", "Code"], rows, numeric={"At (s)"}),
         *more,
-        html.Div(_button("Save decisions", "apply-review", primary=True), className="buttons"),
+        html.Div(_button("Save decisions", "apply-review", "foot", primary=True), className="buttons"),
         desc=desc,
+        actions=[html.Span(decided_text(0, len(rows)), id=ACTS_DECIDED, className="hint"), _button("Save decisions", "apply-review", "head", primary=True)],
     )
+
+
+def decided_text(decided: int, shown: int) -> str:
+    return f"{decided} of {shown} decided"
 
 
 def review_file(config_path: Path, rid: str, by: str, picks: dict[str, str]) -> Path:
@@ -534,7 +539,7 @@ def body(config_path: Path, rid: str | None):
     parts = [
         ui.card(
             "Waiting for a person",
-            html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(message, className="value")], className="what")]) for gate, message in waiting], className="status-list")
+            html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(ui.with_code(message), className="value")], className="what")]) for gate, message in waiting], className="status-list")
             if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
         ),
         _offsets(config, layout, rid),
@@ -553,8 +558,10 @@ def body(config_path: Path, rid: str | None):
 
 def _coding(layout, rid: str):
     path = layout.imported_codes_path(rid)
+    upload = html.Div(_upload("Import your coding (.eaf, .csv, .xlsx)", CODING_UPLOAD, ",".join(CODING_SUFFIXES)), className="buttons")
+    desc = "Kept under your name; importing again under it replaces your tiers."
     if not path.is_file():
-        return None
+        return ui.card("Your coding", html.P("No coding imported for this recording.", className="none"), upload, desc=desc)
     codes = read_annotations(path)
     counts = codes.groupby(["annotator", "subject_id", "tier"], dropna=False, sort=True).size().reset_index(name="n")
     rows = [[row.annotator, row.subject_id if isinstance(row.subject_id, str) else "everyone", row.tier, int(row.n)] for row in counts.itertuples()]
@@ -562,11 +569,12 @@ def _coding(layout, rid: str):
     compare = f"/agreement?{urlencode({'tier': str(first.tier), 'units': str(first.annotator)})}"
     return ui.card(
         "Your coding",
-        ui.table(["Coder", "Person", "Tier", "Codes"], rows, numeric={"Codes"}),
+        ui.table(["Coder", "Person", "Tier", "Codes"], rows, numeric={"Codes"}, fit=True),
         ui.note(["To compare it with the machine's codes or another coder's on the same tier, open ",
                  dcc.Link("the Agreement page", href=compare), ", or in a terminal:"]),
         ui.command(["macaw", "agreement", "--tier", str(first.tier), "--units", str(first.annotator)]),
-        desc="Importing again under a name replaces that coder's tiers.",
+        upload,
+        desc=desc,
     )
 
 
@@ -691,12 +699,9 @@ def register(app, config_path: Path) -> None:
         Output("review-body", "children"),
         Output("review-message", "children"),
         Input("review-recording", "value"),
-        Input("review-refresh", "n_clicks"),
         Input({"type": ACT, "action": ALL, "target": ALL}, "n_clicks"),
-        Input("review-upload", "contents"),
-        State("review-upload", "filename"),
-        Input("review-coding-upload", "contents"),
-        State("review-coding-upload", "filename"),
+        Input({"type": UPLOAD, "kind": ALL}, "contents"),
+        State({"type": UPLOAD, "kind": ALL}, "filename"),
         State("review-by", "value"),
         State({"type": "voice-pick", "label": ALL}, "value"),
         State({"type": "voice-pick", "label": ALL}, "id"),
@@ -712,14 +717,17 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
         State({"type": SCALE_PERSON, "key": ALL}, "value"),
     )
-    def update(rid, _refresh, clicks, upload, filename, coding, coding_name, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
+    def update(rid, clicks, uploads, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
         trigger = ctx.triggered_id
         message = None
+        by = (by or "").strip()
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
             # a button appearing fires this too, with no click behind it
             if not any(value for value in clicks or []) or not ctx.triggered[0]["value"]:
                 return no_update, no_update
             action, target = trigger["action"], trigger["target"]
+            if action in NAMED and not by:
+                return no_update, ui.note("Type your name first: each decision is kept with who made it.", "warn")
             measured = dict(zip(("video", "at", "points", "length", "object", "person"), (values[0] if values else None for values in scale)))
             if action == "set-scale" and (len(measured["points"] or []) != 2 or not measured["length"]):
                 return no_update, ui.note("Click both ends on the frame and type the length first.", "warn")
@@ -744,17 +752,25 @@ def register(app, config_path: Path) -> None:
             # a model asked about every frame or line takes longer than a click's command
             slow = {"timeout_s": 3600} if action in ("look", "transcript-check") else {}
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent, **slow))]
-        elif trigger == "review-upload" and upload:
-            path = _uploaded(config_path, upload, filename or f"{rid}.eaf")
-            argv = _transcript_command(config_path, rid, "transcript-import", path, by)
-            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-        elif trigger == "review-coding-upload" and coding:
+        elif isinstance(trigger, dict) and trigger.get("type") == UPLOAD:
+            contents = ctx.triggered[0]["value"]
+            if not contents:   # the card was drawn again, nothing was uploaded
+                return no_update, no_update
             if not by:
-                return no_update, ui.note("Type your name first: your coding is kept under it.", "warn")
-            path = _uploaded(config_path, coding, coding_name or f"{rid}.eaf")
-            argv = ["macaw", "import-codes", str(path), "-c", str(config_path), "-r", rid, "--coder", by]
+                return no_update, ui.note("Type your name first: what you import is kept with who made it.", "warn")
+            kinds = [item["id"]["kind"] for item in ctx.inputs_list[2]]
+            filename = filenames[kinds.index(trigger["kind"])] if trigger["kind"] in kinds else None
+            path = _uploaded(config_path, contents, filename or f"{rid}.eaf")
+            if trigger["kind"] == TRANSCRIPT_UPLOAD:
+                argv = _transcript_command(config_path, rid, "transcript-import", path, by)
+            else:
+                argv = ["macaw", "import-codes", str(path), "-c", str(config_path), "-r", rid, "--coder", by]
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         return body(config_path, rid), message
+
+    @app.callback(Output(ACTS_DECIDED, "children"), Input({"type": PICK, "key": ALL}, "value"), prevent_initial_call=True)
+    def decided(picks):
+        return decided_text(sum(1 for value in picks if value), len(picks))
 
 
 def _uploaded(config_path: Path, contents: str, filename: str) -> Path:

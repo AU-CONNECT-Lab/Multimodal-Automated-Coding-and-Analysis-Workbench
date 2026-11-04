@@ -128,7 +128,7 @@ Coding done by people, in ELAN or another program, can be imported beside the ma
 
 ### Importing
 
-On the Review page, enter a name under *Your name*, select the recording and press **Import your coding (.eaf, .csv, .xlsx)**. Many files can be imported at once from the command line, each file name starting with its recording (for example `dyad01_anna.eaf`):
+On the Review page, enter a name under *Your name*, select the recording and press **Import your coding (.eaf, .csv, .xlsx)** on the *Your coding* card. Many files can be imported at once from the command line, each file name starting with its recording (for example `dyad01_anna.eaf`):
 
 ```bash
 macaw import-codes coding/anna --coder anna

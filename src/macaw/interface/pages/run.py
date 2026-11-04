@@ -99,7 +99,7 @@ def layout(config_path: Path):
         [
             ui.page_head(
                 "Run",
-                html.Span(id="run-summary"),
+                [html.Span(id="run-summary"), html.Span(id="run-live", className="live")],
                 [
                     ui.button("Preview", "run-preview", icon_name="preview"),
                     ui.button("Stop", "run-stop", icon_name="stop"),
@@ -120,7 +120,7 @@ def layout(config_path: Path):
                 desc="In the order they run; what a step needs runs too.",
                 flush=True,
             ),
-            ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state")),
+            ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state"), id="run-progress-card"),
         ]
     )
 
@@ -140,6 +140,19 @@ def progress(config_path: Path):
     if current is not None:
         parts.append(html.Pre("\n".join(cli_bridge.tail_log(current.log_path, n_lines=60)) or "(no output yet)", className="log"))
     return parts
+
+
+def live(config_path: Path):
+    """One line beside the page's title while a run started here goes, so it shows without scrolling to Progress."""
+    current = _CURRENT.get(str(config_path))
+    if current is None:
+        return None
+    code = cli_bridge.exit_code(current)
+    if code is None:
+        _, counts = cli_bridge.poll_status(config_path)
+        done = ", ".join(f"{count} {name}" for name, count in counts.items() if count)
+        return [ui.pill("running", "warn"), f" {done}" if done else "", " ", html.A("Progress", href="#run-progress-card")]
+    return [ui.pill("finished" if code == 0 else f"stopped, exit {code}", "ok" if code == 0 else "bad"), " ", html.A("Progress", href="#run-progress-card")]
 
 
 def _run_state(config_path: Path) -> str | None:
@@ -236,7 +249,10 @@ def register(app, config_path: Path) -> None:
         _CURRENT[key] = cli_bridge.launch(argv, log, cwd=config_path.parent)
         return ui.note(f"Started{' ' + one['step'] if one else ''}; the full output goes to {log}.", "ok")
 
-    @app.callback(Output("run-progress", "children"), Output("run-state", "data"), Input("run-poll", "n_intervals"), State("run-state", "data"))
+    @app.callback(
+        Output("run-progress", "children"), Output("run-live", "children"), Output("run-state", "data"),
+        Input("run-poll", "n_intervals"), State("run-state", "data"),
+    )
     def poll(_, known):
         state = _run_state(config_path)
-        return progress(config_path), state if state != known else no_update
+        return progress(config_path), live(config_path), state if state != known else no_update

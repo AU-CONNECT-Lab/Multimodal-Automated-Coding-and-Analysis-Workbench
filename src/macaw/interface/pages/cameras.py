@@ -89,9 +89,9 @@ def section(config_path: Path):
                 desc="Print at 100%, mount flat, measure one square.",
                 actions=[ui.button("Save the square", "cameras-save-square"), ui.button("Draw the board", "cameras-draw", icon_name="download")],
             ),
-            html.Div(ui.field("Calibration", dcc.Dropdown(names, chosen, id="cameras-setup", clearable=False, className="picker")), className="toolbar"),
             ui.card(
                 "Calibration",
+                html.Div(ui.field("Calibration", dcc.Dropdown(names, chosen, id="cameras-setup", clearable=False, className="picker")), className="toolbar"),
                 dcc.Loading(html.Div(id="cameras-view")),
                 desc="A folder per camera with its board clip, or a calibration file from another tool.",
                 actions=[ui.button("Find the cameras", "cameras-find", icon_name="play"), ui.button("Use for this project", "cameras-use", primary=True)],
@@ -161,7 +161,7 @@ def setup_view(config_path: Path, name: str | None):
     clips = _clips(source) if source.is_dir() else {}
     if source.is_dir():
         parts += [
-            ui.table(["Camera", "Clip"], [[camera, clip.name] for camera, clip in clips.items()]),
+            ui.table(["Camera", "Clip"], [[camera, clip.name] for camera, clip in clips.items()], fit=True),
             html.Span("The same in a terminal", className="hint"),
             ui.command(_find_command(config_path, name)),
         ]
@@ -174,7 +174,8 @@ def setup_view(config_path: Path, name: str | None):
         return [*parts, ui.note(str(error), "bad")]
     meta = setup.metadata
     made_here = meta.get("made_by") == "macaw calibrate-cameras"
-    status = f"Found on {meta.get('made_at', '?')} from the clips above." if made_here else f"Read from {path.name}, made with another tool."
+    when = f" on {str(meta['made_at']).replace('T', ' ')[:16]}" if meta.get("made_at") else ""
+    status = f"Found{when} from the clips above." if made_here else f"Read from {path.name}, made with another tool."
     notes = [ui.note(status, "ok")]
     if made_here and clips and max(clip.stat().st_mtime for clip in clips.values()) > path.stat().st_mtime:
         notes.append(ui.note("A clip changed since the cameras were found: find them again.", "warn"))
@@ -196,6 +197,7 @@ def setup_view(config_path: Path, name: str | None):
         tables.append(ui.table(
             ["Cameras", "Saw the board together"],
             [[pair, f"{count}" + (" (few: film more where both see it)" if count < _FEW_TOGETHER else "")] for pair, count in shared.items()],
+            fit=True,
         ))
     return [*parts, *notes, *tables, dcc.Graph(figure=cameras_figure(setup, name, config.project.units), config={"displaylogo": False})]
 
@@ -231,13 +233,16 @@ def cameras_figure(setup, name: str, units: str) -> go.Figure:
         marker={"size": 5, "symbol": "diamond", "color": "#1d4e89"}, name="cameras",
     ))
     axis = {"gridcolor": "rgba(128,128,128,0.25)", "zerolinecolor": "rgba(128,128,128,0.4)", "backgroundcolor": "rgba(0,0,0,0)"}
+    scene = axes_3d(units, axis)
+    # the table above names the first camera; the long title would be cut at the figure's edge
+    scene["yaxis"]["title"] = f"ahead ({units})"
     figure.update_layout(
-        height=420, margin={"l": 0, "r": 0, "t": 10, "b": 0}, paper_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90"},
+        height=360, margin={"l": 0, "r": 0, "t": 10, "b": 0}, paper_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90"},
         showlegend=False,
         scene={
             # a little further out than the default, so cameras at the edge of the room stay in view
             "camera": {"eye": {"x": 1.7, "y": 1.7, "z": 1.1}},
-            **axes_3d(units, axis),
+            **scene,
         },
         uirevision=name,
     )

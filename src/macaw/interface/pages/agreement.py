@@ -79,23 +79,23 @@ def result_view(report: dict, folder: Path, printed: str):
         ui.table(
             ["Units", "Rated by two or more", "Coders", "Coded by every coder", "Krippendorff's alpha"],
             [[report["n_units"], report["n_pairable"], report["n_annotators"], _number(report["coverage"]), _number(report["alpha"])]],
-            numeric={"Units", "Rated by two or more", "Coders", "Coded by every coder", "Krippendorff's alpha"},
+            numeric={"Units", "Rated by two or more", "Coders", "Coded by every coder", "Krippendorff's alpha"}, fit=True,
         ),
     ]
     if report["pairwise_kappa"]:
         columns = ["Coder", "With", "Units", "Observed agreement", "Cohen's kappa"]
         rows = [[row["annotator_a"], row["annotator_b"], row["n_units"], _number(row["observed_agreement"]), _number(row["kappa"])]
                 for row in report["pairwise_kappa"]]
-        parts += [html.H3("Each pair of coders"), ui.table(columns, rows, numeric=set(columns[2:]))]
+        parts += [html.H3("Each pair of coders"), ui.table(columns, rows, numeric=set(columns[2:]), fit=True)]
     if report["per_code_pairs"]:
         columns = ["Code", "Coder", "With", "Units", "Times the first gave it", "Times the second gave it", "Cohen's kappa"]
         rows = [[row["code"], row["annotator_a"], row["annotator_b"], row["n_units"], row["n_a"], row["n_b"], _number(row["kappa"])]
                 for row in report["per_code_pairs"]]
-        parts += [html.H3("Each code, each pair of coders"), ui.table(columns, rows, numeric=set(columns[3:]))]
+        parts += [html.H3("Each code, each pair of coders"), ui.table(columns, rows, numeric=set(columns[3:]), fit=True)]
     if report["per_code"]:
         columns = ["Code", "Units", "Ratings", "Krippendorff's alpha"]
         rows = [[row["code"], row["n_units"], row["n_ratings"], _number(row["alpha"])] for row in report["per_code"]]
-        parts += [html.H3("Each code, every coder together"), ui.table(columns, rows, numeric=set(columns[1:]))]
+        parts += [html.H3("Each code, every coder together"), ui.table(columns, rows, numeric=set(columns[1:]), fit=True)]
     if report["abstention_rate"]:
         parts.append(ui.note("Left uncoded: " + ", ".join(f"{name} {rate:.0%}" for name, rate in report["abstention_rate"].items())))
     parts += [ui.note(warning, "warn") for warning in report["warnings"]]
@@ -128,8 +128,9 @@ def layout(config_path: Path):
                 "What to compare",
                 html.Div(
                     [
-                        ui.field("Tier", dcc.Dropdown(id="agreement-tier", clearable=False, className="picker"),
-                                 "The codes compared, and the coders who gave them."),
+                        # a tier's label names its coders, too long for one column
+                        html.Div(ui.field("Tier", dcc.Dropdown(id="agreement-tier", clearable=False, className="picker"),
+                                          "The codes compared, and the coders who gave them."), className="wide"),
                         ui.field("Segment", dcc.Dropdown(id="agreement-segment", placeholder="whole recordings", className="picker"),
                                  "Compare inside one named segment only; recordings without it are left out."),
                         ui.field("Recordings", dcc.Dropdown(id="agreement-recordings", multi=True, placeholder="every recording coded", className="picker")),
@@ -150,7 +151,7 @@ def layout(config_path: Path):
                     [{"label": "Count each answer of the language model as a coder, to set it against itself", "value": "samples"}],
                     [], id="agreement-samples", className="chips",
                 ),
-                html.Div(id="agreement-command"),
+                html.Div(id="agreement-command", className="spaced"),
             ),
             html.Div(id="agreement-message"),
             dcc.Loading(ui.card("Result", html.Div(html.P("Nothing compared yet.", className="none"), id="agreement-result"))),

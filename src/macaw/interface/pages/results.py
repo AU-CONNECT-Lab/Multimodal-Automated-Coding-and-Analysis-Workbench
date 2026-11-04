@@ -132,14 +132,14 @@ def per_person(config, rid: str, source: str, feature: str, rows):
     factor, unit = measure_unit(config, feature)
     if not named:
         head = _titled(feature, unit)
-        return ui.table(["Person", head], [[name, f"{value * factor:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={head})
+        return ui.table(["Person", head], [[name, f"{value * factor:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={head}, fit=True)
     within = {name: dict(zip(_who(own), own["value"] * factor)) for name, own in parts.groupby("segment", observed=True)}
     columns = ["Person", _titled("Whole recording", unit), *named]
     table = [
         [name, f"{value * factor:.4g}", *(_shown_value(within.get(segment, {}).get(name)) for segment in named)]
         for name, value in zip(rows["who"], rows["value"])
     ]
-    return ui.table(columns, table, numeric=set(columns[1:]))
+    return ui.table(columns, table, numeric=set(columns[1:]), fit=True)
 
 
 def _shown_value(value) -> str:

@@ -68,9 +68,9 @@ def body(config_path: Path, rid: str | None):
                 [
                     ui.field("Name", dcc.Input(id={"type": FIELD, "name": "name"}, placeholder="free_play")),
                     ui.field("Starts at (s)", dcc.Input(id={"type": FIELD, "name": "start"}, type="number", min=0, step="any")),
-                    ui.button("Start here", {"type": HERE, "name": "start"}, small=True),
+                    ui.button("Start here", {"type": HERE, "name": "start"}),
                     ui.field("Ends at (s)", dcc.Input(id={"type": FIELD, "name": "end"}, type="number", min=0, step="any")),
-                    ui.button("End here", {"type": HERE, "name": "end"}, small=True),
+                    ui.button("End here", {"type": HERE, "name": "end"}),
                 ],
                 className="toolbar",
             ),

@@ -121,11 +121,11 @@ def card(config):
 def add_box():
     return html.Div(
         [
-            dcc.Dropdown(
+            ui.field("Add a", dcc.Dropdown(
                 [{"label": NOUN[kind].capitalize(), "value": kind} for kind in KINDS], "cameras", id="room-add-kind",
                 clearable=False, className="picker",
-            ),
-            dcc.Input(id="room-add-name", placeholder="name", debounce=False),
+            )),
+            ui.field("Named", dcc.Input(id="room-add-name", placeholder="e.g. side", debounce=False)),
             ui.button("Add", "room-add", small=True),
         ],
         className="room-add",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -78,6 +79,19 @@ def _control(dotted: str, value):
     return dcc.Input(id=identity, type="text", value=shown, debounce=True)
 
 
+# paths and free text, given two columns so the end of a path stays in view
+WIDE = {
+    "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern", "text.asr_model", "pose.model",
+    "face.model", "gaze.model", "coding.codebook", "coding.llm.notes", "coding.llm.examples", "qc.look.people",
+}
+JUMP_LABELS = {"Checks by a person": "Checks", "A model looks at the review frames": "Model look"}
+YAML_CARD = "settings-file"
+
+
+def card_id(title: str) -> str:
+    return "settings-" + re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
 def _hint(dotted: str, hints: dict[str, str]):
     return [html.Code(dotted), " ", hints.get(dotted, "")]
 
@@ -95,13 +109,14 @@ def _form(config_path: Path):
                 [
                     html.Div(
                         ui.field(project_file.LABELS[dotted], _control(dotted, values[dotted]), _hint(dotted, hints)),
-                        id={"type": WRAP, "key": dotted},
+                        id={"type": WRAP, "key": dotted}, className="wide" if dotted in WIDE else None,
                     )
                     for dotted in keys
                 ],
                 className="field-grid",
             ),
             desc=desc,
+            id=card_id(title),
         )
         for title, desc, keys in project_file.FORM
     ]
@@ -123,19 +138,23 @@ def _environment():
 
 
 def layout(config_path: Path):
+    form = _form(config_path)
+    sections = [(JUMP_LABELS.get(title, title), card_id(title)) for title, _, _ in project_file.FORM] if form else []
     return html.Div(
         [
             ui.page_head("Settings", ["Saved in ", html.Code(str(config_path))]),
+            *([ui.jumps([*sections, ("project.yaml", YAML_CARD), ("Only for you", "settings-only-for-you")])] if form else []),
             html.Div(
                 [
                     html.Div(
                         [
-                            *_form(config_path),
+                            *form,
                             ui.card(
                                 "project.yaml",
                                 dcc.Textarea(id="settings-yaml", value=config_path.read_text(encoding="utf-8"), className="yaml", spellCheck=False),
                                 html.Div(ui.button("Save and check", "settings-yaml-save", icon_name="check", primary=True), className="buttons"),
                                 desc="Every setting, as the file has it.",
+                                id=YAML_CARD,
                             ),
                         ]
                     ),
@@ -150,6 +169,7 @@ def layout(config_path: Path):
                                 dcc.Store(id="style-applied"),
                                 dcc.Store(id="theme-applied"),
                                 desc="Kept in this browser; nothing in the project changes.",
+                                id="settings-only-for-you",
                             ),
                             ui.card("This computer", _environment(), desc="Set these in the environment the GUI is started from."),
                             html.Div(
@@ -222,7 +242,7 @@ def register(app, config_path: Path) -> None:
     )
     def preview(values, ids):
         found = project_file.changes(config_path, _form_values(values, ids))
-        marks = ["changed" if item["key"] in found else "" for item in ids]
+        marks = [" ".join(["wide"] * (item["key"] in WIDE) + ["changed"] * (item["key"] in found)) for item in ids]
         if not found:
             return html.P("No unsaved changes.", className="none"), marks
         items = html.Ul(

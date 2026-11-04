@@ -115,7 +115,8 @@ def test_the_review_page_labels_where_people_look_and_reports_agreement(project)
 
 
 def test_the_review_page_lists_coding_brought_in_and_how_to_compare_it(project, tmp_path):
-    assert "Your coding" not in text_of(review.body(project, "003"))
+    before = text_of(review.body(project, "003"))
+    assert "No coding imported for this recording" in before and '"kind": "coding"' in before
     table = tmp_path / "coding.csv"
     table.write_text("tier,start,end,code,person\nspeech,1.0,2.5,question,child\nspeech,3,4,answer,child\n", encoding="utf-8")
     code, text = cli_bridge.run_now(["macaw", "import-codes", str(table), "-c", str(project), "-r", "003", "--coder", "ann"], cwd=project.parent)
@@ -423,6 +424,64 @@ def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
     assert not props_of(review.layout(project), "review-by").get("debounce")
 
 
+def test_your_name_starts_blank_is_kept_in_the_browser_and_is_needed_for_a_decision(project, monkeypatch):
+    name = props_of(review.layout(project), "review-by")
+    assert name["value"] == "" and name["persistence"] is True and name["persistence_type"] == "local"
+    update = callback(create_app(project), "..review-body.children...review-message.children..")
+    scale = [[]] * 6
+    pressed = {"type": review.ACT, "action": "accept-offset", "target": "mic"}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
+    body, said = update("003", [1], [], [], "  ", [], [], [], [], [], [], [], *scale)
+    assert body is no_update and "Type your name first" in text_of(said)
+    dropped = {"type": review.UPLOAD, "kind": review.CODING_UPLOAD}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=dropped, triggered=[{"value": "data:,"}],
+                                                       inputs_list=[None, None, [{"id": dropped}]]))
+    body, said = update("003", [], ["data:,"], ["a.csv"], "", [], [], [], [], [], [], [], *scale)
+    assert body is no_update and "Type your name first" in text_of(said)
+
+
+def test_speech_acts_count_what_is_decided_and_save_from_the_top_too(project):
+    decided = callback(create_app(project), "acts-decided.children")
+    assert decided(["ask", None, "tell"]) == "2 of 3 decided" == review.decided_text(2, 3)
+
+
+def test_a_message_shows_its_backticked_command_as_code():
+    shown = text_of(ui.with_code("no offset table yet: run `macaw align -r 001`, or set align.method"))
+    assert '"Code"' in shown and "macaw align -r 001" in shown
+    assert ui.with_code("an odd ` stays") == "an odd ` stays"
+
+
+def test_short_tables_keep_to_their_content_and_long_pages_link_their_sections(project):
+    assert ui.table(["a"], [[1]], fit=True).className == "flat fit" and ui.table(["a"], [[1]]).className == "flat"
+    from macaw.interface.pages import settings, setup
+
+    page = text_of(settings.layout(project))
+    assert '"href": "#settings-project"' in page and '"href": "#settings-file"' in page and '"id": "settings-checks-by-a-person"' in page
+    assert props_of(settings.layout(project), {"type": settings.WRAP, "key": "project.raw_dir"})["className"] == "wide"
+    app = create_app(project)
+    preview = callback(app, next(key for key in app.callback_map if "settings-changes.children" in key))
+    ids = [{"type": settings.SETTING, "key": key} for key in ("project.raw_dir", "project.name")]
+    values = [project_file.to_form(key, project_file.file_values(project)[key]) for key in ("project.raw_dir", "project.name")]
+    assert preview(values[:1] + ["other"], ids)[1] == ["wide", "changed"]
+    assert '"href": "#setup-room"' in text_of(setup.layout(project))
+
+
+def test_the_settings_hints_stay_short():
+    hints = project_file.hints()
+    long = {key: hints[key] for _, _, keys in project_file.FORM for key in keys if len(hints.get(key, "")) > 90}
+    assert not long
+
+
+def test_the_run_page_says_beside_its_title_when_a_run_from_here_goes(project, monkeypatch):
+    assert run.live(project) is None
+    monkeypatch.setitem(run._CURRENT, str(project), SimpleNamespace())
+    monkeypatch.setattr(cli_bridge, "exit_code", lambda current: None)
+    monkeypatch.setattr(cli_bridge, "poll_status", lambda config_path: ("e", {"done": 3, "failed": 0}))
+    assert "running" in text_of(run.live(project)) and "3 done" in text_of(run.live(project))
+    monkeypatch.setattr(cli_bridge, "exit_code", lambda current: 1)
+    assert "stopped, exit 1" in text_of(run.live(project))
+
+
 def test_the_setup_page_shows_cameras_for_3d_only_where_two_cameras_film(project):
     from macaw.interface.pages import setup
 
@@ -467,7 +526,7 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
 
     calibrated(project, notes=["side.mp4 has no sound"], together=8)
     shown = text_of(cameras.setup_view(project, "lab"))
-    assert "Found on 2026-10-31T10:00:00" in shown and "side.mp4 has no sound" in shown
+    assert "Found on 2026-10-31 10:00 from" in shown and "side.mp4 has no sound" in shown
     assert "up to 2.6 px" in shown and "8 (few: film more where both see it)" in shown
     assert "Across, ahead, up of the first camera (cm)" in shown and "150, 50, 0" in shown and "used by this project" not in shown
     project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square: 7.45\n", encoding="utf-8")
@@ -737,17 +796,18 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     assert marks["child"] == [1.0, 0.25] and naming.next_person(["parent", "child"], marks, "child") == "child"
     assert len(naming.marks_figure(shown, marks).data) == 2
 
-    argv = naming.name_command(project, shown, marks)
-    assert argv[argv.index("--at") + 1] == "1" and "parent=0.25,0.5" in argv and "child=1,0.25" in argv
+    argv = naming.name_command(project, shown, marks, "ann")
+    assert argv[argv.index("--at") + 1] == "1" and "parent=0.25,0.5" in argv and "child=1,0.25" in argv and argv[argv.index("--by") + 1] == "ann"
     monkeypatch.setattr(naming.cli_bridge, "run_now", lambda argv, cwd=None: (0, CliRunner().invoke(cli, argv[1:]).output))
     app = create_app(project)
     keep = callback(app, "names-result.children")
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-save"))
-    assert "on room, child at 1 s, parent at 1 s" in text_of(keep(1, None, shown, marks, "003", "room"))
+    assert "Type your name first" in text_of(keep(1, None, shown, marks, "003", "room", " "))
+    assert "on room, child at 1 s, parent at 1 s" in text_of(keep(1, None, shown, marks, "003", "room", "ann"))
     listed = text_of(naming.saved(project, "003", "room"))
     assert "25% across, 50% down" in listed and "100% across, 25% down" in listed
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-clear"))
-    assert "no clicks on room now" in text_of(keep(None, 1, shown, marks, "003", "room"))
+    assert "no clicks on room now" in text_of(keep(None, 1, shown, marks, "003", "room", ""))
     assert "Nobody is named on room yet" in text_of(naming.saved(project, "003", "room"))
 
 
