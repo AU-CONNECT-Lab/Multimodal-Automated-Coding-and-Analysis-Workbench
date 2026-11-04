@@ -22,6 +22,7 @@ from macaw.extractors.video.pose.track_repair import (
 )
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from setup_helpers import camera, put, write_setup
 
 FPS = 10.0
 
@@ -158,11 +159,11 @@ class TestChoosingPeople:
 @pytest.fixture
 def project(tmp_path):
     raw = tmp_path / "raw"
-    (raw / "003").mkdir(parents=True)
-    for file in ("003_parent.mp4", "003_child.mp4", "003_room.mp4"):
-        (raw / "003" / file).write_bytes(b"")
+    for device in ("parent_cam", "child_cam", "room"):
+        put(raw, "003", device, "a.mp4")
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_setup(config, cameras={"parent_cam": camera(["parent"]), "child_cam": camera(["child"]), "room": camera()})
 
     def owners(entries):
         resolved = resolve_config(config)
@@ -191,16 +192,16 @@ class TestReviewGate:
         assert project.pending() is None
 
     def test_clear_when_nothing_is_in_doubt(self, project):
-        project.owners({"003_parent.mp4": owner([1])})
+        project.owners({"parent_cam": owner([1])})
         assert project.pending() is None
 
     def test_a_doubt_waits_and_says_what_to_run(self, project):
-        project.owners({"003_parent.mp4": owner([1], "track 2 is in view nearly as much")})
+        project.owners({"parent_cam": owner([1], "track 2 is in view nearly as much")})
         reason = project.pending()
-        assert "003_parent.mp4" in reason and "macaw accept-owner -r 003" in reason
+        assert "parent_cam" in reason and "macaw accept-owner -r 003" in reason
 
     def test_skip_lets_it_through_with_a_note(self, project):
-        project.owners({"003_parent.mp4": owner([1], "doubt")})
+        project.owners({"parent_cam": owner([1], "doubt")})
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data.setdefault("pose", {})["review"] = "skip"
         project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -210,12 +211,12 @@ class TestReviewGate:
         assert [note.check for note in notes] == ["camera_owner_unreviewed"]
 
     def test_always_holds_every_camera_until_a_person_keeps_it(self, project):
-        project.owners({"003_parent.mp4": owner([1]), "003_child.mp4": owner([3], subject="child")})
+        project.owners({"parent_cam": owner([1]), "child_cam": owner([3], subject="child")})
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
         data.setdefault("pose", {})["review"] = "always"
         project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
         reason = project.pending()
-        assert "003_parent.mp4" in reason and "003_child.mp4" in reason and "always" in reason
+        assert "parent_cam" in reason and "child_cam" in reason and "always" in reason
         outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--by", "ann")
         assert outcome.exit_code == 0, outcome.output
         assert project.pending() is None
@@ -223,27 +224,27 @@ class TestReviewGate:
 
 class TestAcceptOwner:
     def test_keeping_the_choice_clears_the_gate(self, project):
-        project.owners({"003_parent.mp4": owner([1, 4], "doubt")})
+        project.owners({"parent_cam": owner([1, 4], "doubt")})
         outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--by", "ann")
         assert outcome.exit_code == 0, outcome.output
-        assert "kept 003_parent.mp4 as parent tracks 1, 4" in outcome.output
+        assert "kept parent_cam as parent tracks 1, 4" in outcome.output
         assert project.pending() is None
 
     def test_an_acceptance_lapses_when_the_choice_changes(self, project):
-        project.owners({"003_parent.mp4": owner([1], "doubt")})
+        project.owners({"parent_cam": owner([1], "doubt")})
         invoke("accept-owner", "-c", str(project.config), "-r", "003")
-        project.owners({"003_parent.mp4": owner([2], "doubt")})
+        project.owners({"parent_cam": owner([2], "doubt")})
         assert project.pending() is not None
 
     def test_naming_tracks_records_them_for_pose_keypoints(self, project):
         outcome = invoke(
             "accept-owner", "-c", str(project.config), "-r", "003",
-            "--media", "003_parent.mp4", "--tracks", "2,7", "--by", "ann",
+            "--camera", "parent_cam", "--tracks", "2,7", "--by", "ann",
         )
         assert outcome.exit_code == 0, outcome.output
         assert "-e pose.kinematics`" in outcome.output
         path = layout_for(project.resolved()).camera_owners_path("003")
-        entry = json.loads(path.read_text(encoding="utf-8"))["003_parent.mp4"]
+        entry = json.loads(path.read_text(encoding="utf-8"))["parent_cam"]
         assert entry["people"] == {"parent": [2, 7]} and entry["by"].startswith("ann ")
 
     def test_tracks_need_exactly_one_camera(self, project):
@@ -251,43 +252,43 @@ class TestAcceptOwner:
         assert outcome.exit_code != 0
 
     def test_a_file_without_a_choice_is_an_error(self, project):
-        project.owners({"003_parent.mp4": owner([1], "doubt")})
-        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--media", "nope.mp4")
+        project.owners({"parent_cam": owner([1], "doubt")})
+        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--camera", "nope.mp4")
         assert outcome.exit_code != 0
 
 
 class TestCorrectingAChoice:
     def test_rename_gives_the_tracks_shown_under_one_name_to_the_right_person(self, project):
-        project.owners({"003_room.mp4": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
+        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
         outcome = invoke(
             "accept-owner", "-c", str(project.config), "-r", "003",
-            "--media", "003_room.mp4", "--rename", "parent=child,child=parent", "--by", "ann",
+            "--camera", "room", "--rename", "parent=child,child=parent", "--by", "ann",
         )
         assert outcome.exit_code == 0, outcome.output
         path = layout_for(project.resolved()).camera_owners_path("003")
-        entry = json.loads(path.read_text(encoding="utf-8"))["003_room.mp4"]
+        entry = json.loads(path.read_text(encoding="utf-8"))["room"]
         assert entry["people"] == {"child": [1, 3], "parent": [2]}
 
     def test_rename_to_someone_who_is_not_a_subject_is_refused(self, project):
-        project.owners({"003_room.mp4": owner({"parent": [1], "child": [2]}, "doubt")})
+        project.owners({"room": owner({"parent": [1], "child": [2]}, "doubt")})
         outcome = invoke(
-            "accept-owner", "-c", str(project.config), "-r", "003", "--media", "003_room.mp4", "--rename", "parent=uncle",
+            "accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room", "--rename", "parent=uncle",
         )
         assert outcome.exit_code != 0 and "uncle" in str(outcome.exception)
 
     def test_tracks_on_a_shared_camera_need_a_subject(self, project):
-        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--media", "003_room.mp4", "--tracks", "4")
+        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room", "--tracks", "4")
         assert outcome.exit_code != 0 and "--subject" in str(outcome.exception)
 
     def test_a_later_correction_replaces_an_earlier_claim_on_the_same_tracks(self, project):
-        args = ["accept-owner", "-c", str(project.config), "-r", "003", "--media", "003_room.mp4"]
+        args = ["accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room"]
         invoke(*args, "--tracks", "4", "--subject", "parent")
         invoke(*args, "--tracks", "4", "--subject", "child")
         path = layout_for(project.resolved()).camera_owners_path("003")
-        assert json.loads(path.read_text(encoding="utf-8"))["003_room.mp4"]["people"] == {"child": [4]}
+        assert json.loads(path.read_text(encoding="utf-8"))["room"]["people"] == {"child": [4]}
 
     def test_keeping_a_shared_choice_clears_the_gate(self, project):
-        project.owners({"003_room.mp4": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
+        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
         assert "--rename" in project.pending()
         invoke("accept-owner", "-c", str(project.config), "-r", "003")
         assert project.pending() is None
@@ -297,8 +298,8 @@ class TestReportPage:
     def test_the_page_shows_who_is_on_camera_and_what_is_in_doubt(self, project):
         from macaw.qc.report import write_recording_report
 
-        project.owners({"003_room.mp4": owner({"parent": [1, 3], "child": [2]}, "who is who is not yet checked")})
+        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "who is who is not yet checked")})
         page, summary = write_recording_report(project.resolved(), "003")
         text = page.read_text(encoding="utf-8")
-        assert "003_room.mp4" in text and "1, 3" in text and "who is who is not yet checked" in text
+        assert "room" in text and "1, 3" in text and "who is who is not yet checked" in text
         assert "pose.review" in summary["waiting"]

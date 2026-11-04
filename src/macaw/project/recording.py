@@ -7,8 +7,9 @@ from itertools import combinations
 from pathlib import Path
 from typing import Literal
 
-from macaw.config.schema import MacawConfig
+from macaw.config.schema import MacawConfig, SetupSection
 from macaw.exceptions import ConfigError, RecordingNotFoundError, UnreadableMediaError
+from macaw.project.setup import device_people
 
 MediaKind = Literal["audio", "video", "depth"]
 
@@ -26,6 +27,10 @@ class MediaFile:
     kind: MediaKind
     stream_index: int | None = None
     subject_id: str | None = None      # set when this is a per-person mic or camera
+    # the folder it was found in; names it everywhere, since files in two folders may share a name
+    device: str = ""
+    # whose voices its sound carries, as the setup says
+    hears: tuple[str, ...] = ()
     sample_rate: float | None = None
     fps: float | None = None
     duration_s: float | None = None
@@ -33,6 +38,10 @@ class MediaFile:
     drift_ppm: float | None = None
     offset_confidence: float | None = None
     prepared_video: Path | None = None  # prep.video's re-encoded copy
+
+    @property
+    def name(self) -> str:
+        return self.device or self.path.name
 
     @property
     def frames_path(self) -> Path:
@@ -80,10 +89,22 @@ class Recording:
         raise ValueError(f"{self.recording_id} has no subject '{subject_id}'. Known: {known}")
 
     def audio_for(self, subject_id: str) -> MediaFile | None:
+        """The device whose sound carries this person's voice alone."""
         for item in self.media:
-            if item.kind == "audio" and item.subject_id == subject_id:
+            if item.hears == (subject_id,):
                 return item
         return None
+
+    def shared_sound(self) -> list[MediaFile]:
+        """Devices whose sound carries several people's voices."""
+        return sorted((item for item in self.media if len(item.hears) > 1), key=lambda item: item.name)
+
+    def media_named(self, name: str) -> MediaFile:
+        for item in self.media:
+            if item.name == name:
+                return item
+        known = ", ".join(item.name for item in self.media) or "none"
+        raise ValueError(f"{self.recording_id} has no device {name}. Known: {known}")
 
     def reference_media(self, among: list[MediaFile] | None = None) -> MediaFile:
         """The clock everything else is aligned to, picked from among when given."""
@@ -195,30 +216,7 @@ def recording_override_path(recording_id: str, config: MacawConfig) -> Path | No
     return candidate if candidate.is_file() else None
 
 
-def _media_regex(pattern: str) -> re.Pattern[str]:
-    parts: list[str] = []
-    cursor = 0
-    for match in _PLACEHOLDER.finditer(pattern):
-        if match.group(1) != "subject_id":
-            raise ConfigError(f"media_pattern only understands {{subject_id}}, got {match.group(0)}")
-        parts.append(_glob_fragment(pattern[cursor : match.start()]))
-        parts.append(r"(?P<subject_id>[^.]+?)")
-        cursor = match.end()
-    parts.append(_glob_fragment(pattern[cursor:]))
-    return re.compile("^" + "".join(parts) + "$")
-
-
-def media_label(path: Path, media_pattern: str) -> str:
-    """The part of a file name media_pattern captures, a person or a camera such as room; else the whole stem."""
-    match = _media_regex(media_pattern).match(path.name)
-    return match.group("subject_id") if match else path.stem
-
-
-def _glob_fragment(text: str) -> str:
-    return "".join(".*" if character == "*" else re.escape(character) for character in text)
-
-
-def _kind_of(path: Path) -> MediaKind | None:
+def media_kind(path: Path) -> MediaKind | None:
     suffix = path.suffix.lower()
     if suffix in AUDIO_SUFFIXES:
         return "audio"
@@ -227,25 +225,67 @@ def _kind_of(path: Path) -> MediaKind | None:
     return None
 
 
-def scan_media(root: Path, media_pattern: str, subject_ids: list[str]) -> list[MediaFile]:
-    """Everything playable under root, with a subject attached when the file name names one.
-    A capture that is not a known subject id means the file is shared, not that it is broken."""
-    regex = _media_regex(media_pattern)
-    known = set(subject_ids)
+def playable_files(folder: Path) -> list[Path]:
+    return sorted(
+        path for path in folder.rglob("*")
+        if path.is_file() and not path.name.startswith(".") and media_kind(path) is not None
+    )
 
+
+def camera_clips(folder: Path) -> dict[str, Path]:
+    """camera -> its one clip, from a folder holding one folder per camera, as a recording does."""
+    loose = [path.name for path in folder.iterdir() if path.is_file() and media_kind(path) == "video"] if folder.is_dir() else []
+    if loose:
+        raise RecordingNotFoundError(f"{folder}: put each clip in a folder named after its camera ({', '.join(sorted(loose))})")
+    clips: dict[str, Path] = {}
+    for camera in sorted(path for path in folder.iterdir() if path.is_dir()) if folder.is_dir() else []:
+        videos = [path for path in playable_files(camera) if media_kind(path) == "video"]
+        if len(videos) > 1:
+            raise RecordingNotFoundError(f"{camera}: holds {len(videos)} videos; keep the one clip this camera filmed")
+        if videos:
+            clips[camera.name] = videos[0]
+    return clips
+
+
+def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list[str]]:
+    """The file in each device folder the setup names, and notes on what was missing or left unread.
+    Nothing is read from file names: the folder says which device a file is, the setup whom it records."""
     media: list[MediaFile] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name.startswith("."):
+    notes: list[str] = []
+    for device in sorted(setup.devices()):
+        folder = root / device
+        if not folder.is_dir():
+            notes.append(f"no {device} folder, so this recording has no {device}")
             continue
-        kind = _kind_of(path)
-        if kind is None:
+        files = playable_files(folder)
+        if not files:
+            notes.append(f"the {device} folder holds no audio or video file")
             continue
-        match = regex.match(path.name)
-        captured = match.group("subject_id") if match else None
+        if len(files) > 1:
+            listed = ", ".join(path.relative_to(folder).as_posix() for path in files)
+            raise RecordingNotFoundError(
+                f"{root.name}: the {device} folder holds {len(files)} files ({listed}); keep the one {device} recorded"
+            )
+        path = files[0]
+        # a microphone's file is read for its sound only, whatever else the file holds
+        kind = media_kind(path) if device in setup.cameras else "audio"
+        if kind != "video" and device in setup.cameras:
+            raise RecordingNotFoundError(f"{root.name}: {device} is a camera, but its folder holds {path.name}, which is not a video")
+        people, hears = device_people(setup, device)
         media.append(
-            MediaFile(path=path, kind=kind, subject_id=captured if captured in known else None)
+            MediaFile(
+                path=path, kind=kind, device=device, hears=tuple(hears),
+                subject_id=people[0] if len(people) == 1 else None,
+            )
         )
-    return media
+    for path in sorted(root.iterdir()):
+        if path.name.startswith(".") or path.name in setup.devices():
+            continue
+        if path.is_dir() and playable_files(path):
+            notes.append(f"the {path.name} folder is not a device of setup {setup.name}, so it was not read")
+        elif path.is_file() and media_kind(path) is not None:
+            notes.append(f"{path.name} lies outside the device folders, so it was not read")
+    return media, notes
 
 
 def build_recording(recording_id: str, config: MacawConfig) -> Recording:
@@ -270,13 +310,15 @@ def build_recording(recording_id: str, config: MacawConfig) -> Recording:
     subjects = [
         Subject(subject_id=role, role=role, roi=config.motion.rois.get(role)) for role in config.project.roles
     ]
+    media, notes = scan_devices(root, config.setup)
 
     return Recording(
         recording_id=recording_id,
         root=root,
         subjects=subjects,
-        media=scan_media(root, config.project.media_pattern, [s.subject_id for s in subjects]),
+        media=media,
         t_task_start=config.segment.task_start_s,
         t_task_end=config.segment.task_end_s,
+        metadata={"setup": config.setup.name, "setup_notes": notes},
         **entities,
     )

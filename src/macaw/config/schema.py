@@ -23,11 +23,10 @@ class ProjectSection(_Section):
     scratch_dir: Path | None = None
     # how a path under raw_dir maps to BIDS entities; "{group_id}" is the flat case
     recording_pattern: str = "{group_id}"
-    # which media file belongs to which person; a capture that is not a known subject id
-    # means the file is shared, e.g. a room camera
-    media_pattern: str = "*_{subject_id}.*"
     recording_prefix: str = ""
     recording_config_dir: Path = Path("recordings")
+    # one file per setup, saying what each device folder inside a recording folder holds
+    setups_dir: Path = Path("setups")
     scripts_dir: Path = Path("scripts")
     # clips and files filmed or made before recording: an object of known length, a board per camera setup
     calibration_dir: Path = Path("calibration")
@@ -76,10 +75,72 @@ class VoiceHintSection(_Section):
 
 
 class IdentitySection(_Section):
-    confirm: Literal["always", "skip"] = "always"
     voice_hints: list[VoiceHintSection] = Field(default_factory=list)
     # roles from the lowest voice to the highest
     pitch_order: list[str] = Field(default_factory=list)
+
+
+DEVICE_NAME = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
+
+
+class CameraDevice(_Section):
+    # the people this camera is read for, per kind of measure
+    body: list[str] = Field(default_factory=list)
+    face: list[str] = Field(default_factory=list)
+    gaze: list[str] = Field(default_factory=list)
+    # whose voices the camera's own sound carries; empty leaves its sound to alignment only
+    hears: list[str] = Field(default_factory=list)
+
+    def people(self) -> list[str]:
+        return sorted(set(self.body) | set(self.face) | set(self.gaze))
+
+
+class MicrophoneDevice(_Section):
+    hears: list[str] = Field(min_length=1)
+
+
+class SetupSection(_Section):
+    """What each device folder in a recording holds; read from setups/<name>.yaml."""
+
+    name: str = Field(default="main", pattern=DEVICE_NAME)
+    cameras: dict[str, CameraDevice] = Field(default_factory=dict)
+    microphones: dict[str, MicrophoneDevice] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _devices(self) -> "SetupSection":
+        names = list(self.cameras) + list(self.microphones)
+        bad = sorted(name for name in names if not re.fullmatch(DEVICE_NAME, name))
+        if bad:
+            raise ValueError(f"{', '.join(bad)}: a device's name is its folder's name, letters, digits, - and _ only")
+        both = sorted(set(self.cameras) & set(self.microphones))
+        if both:
+            raise ValueError(f"{', '.join(both)} is both a camera and a microphone; give each device its own name")
+        unused = sorted(name for name, camera in self.cameras.items() if not camera.people() and not camera.hears)
+        if unused:
+            raise ValueError(f"camera {', '.join(unused)} is read for nobody: say whom it films or hears, or remove it")
+        alone: dict[str, list[str]] = {}
+        for name, device in self.devices().items():
+            if len(set(device.hears)) == 1:
+                alone.setdefault(device.hears[0], []).append(name)
+        twice = {person: names for person, names in alone.items() if len(names) > 1}
+        if twice:
+            person, names = sorted(twice.items())[0]
+            raise ValueError(f"{' and '.join(sorted(names))} both carry {person}'s voice alone; say it of one of them")
+        shared = sorted(name for name, device in self.devices().items() if len(set(device.hears)) > 1)
+        if len(shared) > 1:
+            raise ValueError(f"{', '.join(shared)} all carry several people's voices; voices are separated on one, so say it of one of them")
+        return self
+
+    def devices(self) -> dict[str, CameraDevice | MicrophoneDevice]:
+        return {**self.cameras, **self.microphones}
+
+    def named_people(self) -> set[str]:
+        named: set[str] = set()
+        for camera in self.cameras.values():
+            named |= set(camera.people()) | set(camera.hears)
+        for microphone in self.microphones.values():
+            named |= set(microphone.hears)
+        return named
 
 
 class VideoSection(_Section):
@@ -445,6 +506,7 @@ class GUISection(_Section):
 
 class MacawConfig(_Section):
     project: ProjectSection
+    setup: SetupSection = Field(default_factory=SetupSection)
     align: AlignSection = Field(default_factory=AlignSection)
     identity: IdentitySection = Field(default_factory=IdentitySection)
     segment: SegmentSection = Field(default_factory=SegmentSection)
@@ -470,6 +532,11 @@ class MacawConfig(_Section):
 
     @model_validator(mode="after")
     def _identity_roles(self) -> "MacawConfig":
+        unknown = sorted(self.setup.named_people() - set(self.project.roles))
+        if unknown:
+            raise ValueError(
+                f"setup {self.setup.name} names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
+            )
         named = [hint.role for hint in self.identity.voice_hints] + list(self.identity.pitch_order)
         unknown = sorted(set(named) - set(self.project.roles))
         if unknown:
@@ -493,6 +560,7 @@ class MacawConfig(_Section):
 # Which sections a recordings/<id>.yaml file may touch. Everything else is a hard error:
 # a recording must never be able to redirect output_dir or change the scheduler.
 RECORDING_OVERRIDABLE: tuple[str, ...] = (
+    "setup",
     "segment",
     "prosody",
     "text",

@@ -28,7 +28,7 @@ from macaw.extractors.video.pose.kinematics import (
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
-from macaw.project.recording import Recording, media_label
+from macaw.project.recording import Recording
 from macaw.project.scale import picture_size
 from macaw.project_scripts import script_function, script_path
 from macaw.store import keypoints as keypoints_store
@@ -101,8 +101,8 @@ class TriangulationExtractor(Extractor):
         if len(views) < 2:
             raise MacawError(
                 f"{rid}: {len(views)} of the calibration's cameras ({', '.join(camera.name for camera in setup.cameras)}) "
-                "match a video people were measured on, and 3D needs two; a camera's name is the part of the file "
-                f"name project.media_pattern reads, such as room in {rid}_room.mp4"
+                "match a camera people were measured on, and 3D needs two; a calibrated camera is matched to the "
+                "recording's camera of the same name"
             )
         points, quality = triangulate_people(keypoints, views, max_error_px=cfg.max_reprojection_px)
         points[["x", "y", "z"]] *= UNITS_TO_METRES[setup.units]
@@ -122,12 +122,9 @@ class TriangulationExtractor(Extractor):
         )
 
     def _views(self, recording: Recording, cameras: list[Camera], keypoints: pd.DataFrame) -> tuple[list, list[QCWarning]]:
-        """(camera, video) for each calibrated camera that filmed people in this recording, matched by the
-        label the media pattern reads from the video's file name."""
+        """(camera, video) for each calibrated camera that filmed people in this recording, matched by name."""
         seen = set(keypoints["video"].astype(str))
-        by_label = {
-            media_label(item.path, self.config.project.media_pattern): item.path.name for item in recording.media if item.kind == "video"
-        }
+        by_label = {item.name: item.name for item in recording.media if item.kind == "video"}
         views, warnings = [], []
         for camera in cameras:
             video = by_label.get(camera.name)

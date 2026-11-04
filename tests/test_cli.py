@@ -16,6 +16,7 @@ from macaw.config.schema import MacawConfig
 from macaw.execution.job_db import JobDB, JobRecord
 from macaw.logging_setup import LOGGER_NAME, setup_logging
 from macaw.project.layout import make_layout
+from setup_helpers import camera, write_setup
 
 runner = CliRunner()
 
@@ -37,6 +38,7 @@ def project(tmp_path):
     output = tmp_path / "derivatives"
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=output)
+    write_setup(config, cameras={"room": camera()})
     return SimpleNamespace(root=tmp_path, config=config, raw=raw, output=output)
 
 

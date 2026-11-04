@@ -31,6 +31,7 @@ from macaw.qc.boilerplate import describe, load_references, render
 from macaw.qc.checks import check_scale
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
+from setup_helpers import camera, mics, put, write_setup
 
 from test_kinematics import person
 
@@ -39,12 +40,12 @@ runner = CliRunner()
 
 @pytest.fixture
 def project(tmp_path):
-    raw = tmp_path / "raw" / "003"
-    raw.mkdir(parents=True)
-    for name in ("003_parent.wav", "003_child.wav", "003_room.mp4", "003_side.mp4"):
-        (raw / name).write_bytes(b"")
+    raw = tmp_path / "raw"
+    for device, name in (("parent_mic", "a.wav"), ("child_mic", "a.wav"), ("room", "a.mp4"), ("side", "a.mp4")):
+        put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_setup(config, cameras={"room": camera(), "side": camera()}, microphones=mics())
     return config
 
 
@@ -114,14 +115,14 @@ class TestScale:
         layout = layout_for(config)
         write_measurements(
             [
-                Measurement("003_room.mp4", 5.0, [[0, 0], [30, 40]], 10.0, person="child"),
-                Measurement("003_room.mp4", 9.0, [[0, 0], [0, 100]], 21.0, person="child"),
-                Measurement("003_room.mp4", 9.0, [[0, 0], [0, 100]], 15.0),
+                Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0, person="child"),
+                Measurement("room", 9.0, [[0, 0], [0, 100]], 21.0, person="child"),
+                Measurement("room", 9.0, [[0, 0], [0, 100]], 15.0),
             ],
             layout.scale_path("003"),
         )
         scale = recording_scale(config, layout, "003")
-        assert scale.source == MEASURED and scale.video == "003_room.mp4"
+        assert scale.source == MEASURED and scale.video == "room"
         assert scale.by_role["child"] == pytest.approx(0.205) and scale.spread["child"] == pytest.approx(0.00707, abs=1e-4)
         assert scale.for_role("parent") == pytest.approx(0.15) and scale.spread[None] is None
         assert "0.205 ± 0.0071 for child" in scale.describe() and "0.15 for everyone" in scale.describe()
@@ -136,7 +137,7 @@ class TestScale:
 
     def test_numbers_written_by_hand_win_and_a_role_beats_everyone(self, project):
         layout = layout_for(resolve_config(project))
-        write_measurements([Measurement("003_room.mp4", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
+        write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
         settings(project, "scale:\n  cm_per_px: 0.3\n  cm_per_px_by_role: {child: 0.4}\n", recording="003")
         assert recording_scale(resolve_config(project), layout, "003").source == MEASURED
         own = recording_scale(resolve_config(project, recording_id="003"), layout, "003")
@@ -155,7 +156,7 @@ class TestScale:
         scale = recording_scale(resolve_config(project), layout, "003")
         assert scale.source == CALIBRATION and scale.for_role("child") == 0.2 and "calibration clip lab.mp4" in scale.describe()
         # the recording's own measurements come before a clip
-        write_measurements([Measurement("003_room.mp4", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
+        write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
         assert recording_scale(resolve_config(project), layout, "003").source == MEASURED
 
     def test_a_clip_carries_over_only_to_video_of_its_size(self, project, monkeypatch):
@@ -182,22 +183,22 @@ class TestScale:
 class TestCommand:
     def test_each_measurement_is_kept_with_whose_place_and_who_made_it(self, project):
         result = set_scale(
-            project, "-r", "003", "--media", "003_room.mp4", "--points", "0,0,30,40", "--length-cm", "10", "--at", "4.5",
+            project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length-cm", "10", "--at", "4.5",
             "--person", "child", "--object", "ruler", "--by", "ann",
         )
         assert result.exit_code == 0, said(result)
         assert "cm per pixel 0.2 for child" in result.output and "right only for people as far from the camera" in result.output
-        assert set_scale(project, "-r", "003", "--media", "003_room.mp4", "--points", "0,0,0,100", "--length-cm", "21").exit_code == 0
+        assert set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,0,100", "--length-cm", "21").exit_code == 0
         stored = read_measurements(layout_for(resolve_config(project)).scale_path("003"))
         assert [item.length_px for item in stored] == [50.0, 100.0] and [item.person for item in stored] == ["child", None]
         assert stored[0].object == "ruler" and stored[0].by == "ann" and stored[0].t == 4.5 and stored[0].at
 
     def test_one_recording_is_measured_on_one_video(self, project):
-        set_scale(project, "-r", "003", "--media", "003_room.mp4", "--points", "0,0,30,40", "--length-cm", "10")
-        result = set_scale(project, "-r", "003", "--media", "003_side.mp4", "--points", "0,0,30,40", "--length-cm", "10")
+        set_scale(project, "-r", "003", "--camera", "room", "--points", "0,0,30,40", "--length-cm", "10")
+        result = set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length-cm", "10")
         assert result.exit_code != 0 and "--clear" in said(result)
         assert set_scale(project, "-r", "003", "--clear").exit_code == 0
-        assert set_scale(project, "-r", "003", "--media", "003_side.mp4", "--points", "0,0,30,40", "--length-cm", "10").exit_code == 0
+        assert set_scale(project, "-r", "003", "--camera", "side", "--points", "0,0,30,40", "--length-cm", "10").exit_code == 0
 
     def test_a_clip_is_measured_on_its_own_picture_and_named_in_the_settings(self, project):
         name = clip(project)
@@ -210,13 +211,13 @@ class TestCommand:
         assert read_measurements(layout_for(resolve_config(project)).calibration_scale_path(name)) == []
 
     @pytest.mark.parametrize("extra, reason", [
-        (["-r", "003", "--media", "003_parent.wav", "--points", "0,0,1,1", "--length-cm", "1"], "not a video"),
+        (["-r", "003", "--camera", "parent_mic", "--points", "0,0,1,1", "--length-cm", "1"], "not a video"),
         (["-r", "003", "--points", "0,0,1,1", "--length-cm", "1"], "has 2 videos"),
-        (["-r", "003", "--media", "003_room.mp4", "--points", "0,0,1", "--length-cm", "1"], "four numbers"),
-        (["-r", "003", "--media", "003_room.mp4", "--points", "5,5,5,5", "--length-cm", "1"], "same point"),
-        (["-r", "003", "--media", "003_room.mp4", "--points", "0,0,1,1", "--length-cm", "0"], "above 0"),
-        (["-r", "003", "--media", "003_room.mp4", "--points", "0,0,1,1", "--length-cm", "1", "--person", "teacher"], "takes a role"),
-        (["-r", "003", "--media", "003_room.mp4"], "--points"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1", "--length-cm", "1"], "four numbers"),
+        (["-r", "003", "--camera", "room", "--points", "5,5,5,5", "--length-cm", "1"], "same point"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length-cm", "0"], "above 0"),
+        (["-r", "003", "--camera", "room", "--points", "0,0,1,1", "--length-cm", "1", "--person", "teacher"], "takes a role"),
+        (["-r", "003", "--camera", "room"], "--points"),
         (["--points", "0,0,1,1", "--length-cm", "1"], "--calibration"),
         (["--calibration", "missing.mp4", "--points", "0,0,1,1", "--length-cm", "1"], "no calibration clip"),
     ])
@@ -314,9 +315,9 @@ class TestCheck:
 
     def test_an_object_measured_on_another_camera_is_said(self, project):
         layout = layout_for(resolve_config(project))
-        write_measurements([Measurement("003_room.mp4", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
+        write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
         outcome = check_scale(self.recording(), resolve_config(project), self.results(project, person("parent", n_frames=60, fps=5.0)))
-        assert any("not only on 003_room.mp4" in warning.message for warning in outcome.warnings)
+        assert any("not only on room" in warning.message for warning in outcome.warnings)
 
     def test_a_clip_named_but_never_measured_is_said(self, project):
         settings(project, "scale:\n  calibration: lab.mp4\n")

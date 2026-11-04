@@ -15,7 +15,7 @@ from macaw.execution.dag import build_dag
 from macaw.execution.runner import check_gates, plan
 from macaw.extractors import get_extractor
 from macaw.extractors.base import Phase
-from macaw.extractors.prep import AlignReviewGate, IdentityConfirmGate
+from macaw.extractors.prep import AlignReviewGate
 from macaw.media.align import (
     GCC_PHAT,
     MANUAL,
@@ -27,6 +27,7 @@ from macaw.media.align import (
 )
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from setup_helpers import camera, mics, put, write_setup
 
 
 @pytest.fixture
@@ -34,11 +35,12 @@ def project(tmp_path):
     """Two recordings, each with a mic per person and a room camera without audio."""
     raw = tmp_path / "raw"
     for name in ("003", "004"):
-        (raw / name).mkdir(parents=True)
-        for file in (f"{name}_parent.wav", f"{name}_child.wav", f"{name}_room.mp4"):
-            (raw / name / file).write_bytes(b"")
+        put(raw, name, "parent_mic", "a.wav")
+        put(raw, name, "child_mic", "a.wav")
+        put(raw, name, "room", "a.mp4")
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_setup(config, cameras={"room": camera()}, microphones=mics())
     return SimpleNamespace(config=config, raw=raw, resolved=lambda: resolve_config(config))
 
 
@@ -50,7 +52,7 @@ def configure(project, section, **values):
 
 def result(target, offset_s=0.0, *, method=GCC_PHAT, confidence=0.9, **extra):
     return AlignResult(
-        reference="003_parent.wav", target=target, offset_s=offset_s, confidence=confidence, method=method, **extra
+        reference="parent_mic", target=target, offset_s=offset_s, confidence=confidence, method=method, **extra
     )
 
 
@@ -64,9 +66,9 @@ def align_pending(project, recording="003"):
 
 
 GOOD = [
-    result("003_parent.wav", confidence=1.0),
-    result("003_child.wav", 0.003, confidence=0.44, agreement=0.95),
-    result("003_room.mp4", method=UNALIGNED, confidence=None, note="no audio stream", accepted="ann 2026-10-25T10:00:00"),
+    result("parent_mic", confidence=1.0),
+    result("child_mic", 0.003, confidence=0.44, agreement=0.95),
+    result("room", method=UNALIGNED, confidence=None, note="no audio stream", accepted="ann 2026-10-25T10:00:00"),
 ]
 
 
@@ -80,27 +82,27 @@ class TestAlignReview:
         assert align_pending(project) is None
 
     def test_a_blunt_peak_the_segments_do_not_back_holds_it(self, project):
-        table(project, [*GOOD[:1], result("003_child.wav", confidence=0.3, agreement=0.1), GOOD[2]])
+        table(project, [*GOOD[:1], result("child_mic", confidence=0.3, agreement=0.1), GOOD[2]])
         reason = align_pending(project)
-        assert "003_child.wav (low confidence)" in reason
+        assert "child_mic (low confidence)" in reason
         assert "macaw accept-offset -r 003" in reason
 
     def test_a_camera_without_audio_holds_it_until_kept(self, project):
-        table(project, [*GOOD[:2], result("003_room.mp4", method=UNALIGNED, confidence=None, note="no audio stream")])
-        assert "003_room.mp4 (not aligned: no audio stream)" in align_pending(project)
+        table(project, [*GOOD[:2], result("room", method=UNALIGNED, confidence=None, note="no audio stream")])
+        assert "room (not aligned: no audio stream)" in align_pending(project)
 
     def test_drift_that_moves_the_offset_holds_it(self, project):
-        drifting = result("003_child.wav", drift_ppm=120.0, drift_r2=1.0, overlap_s=1200.0)
+        drifting = result("child_mic", drift_ppm=120.0, drift_r2=1.0, overlap_s=1200.0)
         table(project, [GOOD[0], drifting, GOOD[2]])
-        assert "003_child.wav (drift)" in align_pending(project)
+        assert "child_mic (drift)" in align_pending(project)
 
     def test_a_hand_set_offset_needs_nothing_more(self, project):
-        table(project, [*GOOD[:2], result("003_room.mp4", 1.5, method=MANUAL, confidence=None)])
+        table(project, [*GOOD[:2], result("room", 1.5, method=MANUAL, confidence=None)])
         assert align_pending(project) is None
 
     def test_a_file_added_after_aligning_asks_for_a_rerun(self, project):
         table(project, GOOD[:2])
-        assert "003_room.mp4 came after aligning" in align_pending(project)
+        assert "room came after aligning" in align_pending(project)
 
     @pytest.mark.parametrize("section, values", [("align", {"review": "skip"}), ("align", {"method": "none"})])
     def test_skipping_or_files_recorded_in_sync_clear_it(self, project, section, values):
@@ -111,100 +113,55 @@ class TestAlignReview:
         configure(project, "align", review="always")
         table(project, GOOD)
         reason = align_pending(project)
-        assert "003_child.wav (not looked at yet)" in reason
-        assert "003_parent.wav" not in reason and "003_room.mp4" not in reason
+        assert "child_mic (not looked at yet)" in reason
+        assert "parent_mic" not in reason and "room" not in reason
         outcome = CliRunner().invoke(app, ["accept-offset", "-c", str(project.config), "-r", "003", "--by", "ann"])
         assert outcome.exit_code == 0, outcome.output
         assert align_pending(project) is None
 
     def test_a_single_file_has_nothing_to_line_up(self, project):
-        for name in ("003_child.wav", "003_room.mp4"):
-            (project.raw / "003" / name).unlink()
+        for name in ("child_mic", "room"):
+            for path in (project.raw / "003" / name).iterdir():
+                path.unlink()
         assert align_pending(project) is None
 
 
 class TestKeepAccepted:
     def test_the_same_result_stays_accepted(self):
-        old = [result("003_child.wav", 0.003, accepted="ann")]
-        fresh, dropped = keep_accepted([result("003_child.wav", 0.010)], old)
+        old = [result("child_mic", 0.003, accepted="ann")]
+        fresh, dropped = keep_accepted([result("child_mic", 0.010)], old)
         assert fresh[0].accepted == "ann" and dropped == []
 
     def test_a_moved_offset_has_to_be_looked_at_again(self):
-        fresh, dropped = keep_accepted([result("003_child.wav", 0.5)], [result("003_child.wav", 0.003, accepted="ann")])
-        assert fresh[0].accepted is None and dropped == ["003_child.wav"]
+        fresh, dropped = keep_accepted([result("child_mic", 0.5)], [result("child_mic", 0.003, accepted="ann")])
+        assert fresh[0].accepted is None and dropped == ["child_mic"]
 
     def test_a_camera_without_audio_stays_accepted(self):
-        old = [result("003_room.mp4", method=UNALIGNED, confidence=None, accepted="ann")]
-        fresh, _ = keep_accepted([result("003_room.mp4", method=UNALIGNED, confidence=None)], old)
+        old = [result("room", method=UNALIGNED, confidence=None, accepted="ann")]
+        fresh, _ = keep_accepted([result("room", method=UNALIGNED, confidence=None)], old)
         assert fresh[0].accepted == "ann"
-
-
-def identity_gate(project, recording="003"):
-    config = project.resolved()
-    gate = IdentityConfirmGate(config)
-    return gate, build_recording(recording, config)
-
-
-class TestIdentityConfirm:
-    def test_unconfirmed_it_points_at_the_command(self, project):
-        gate, recording = identity_gate(project)
-        assert "macaw identify" in gate.pending(recording)
-
-    def test_one_confirmation_clears_every_recording(self, project):
-        assert CliRunner().invoke(app, ["identify", "-c", str(project.config), "--yes"]).exit_code == 0
-        for recording in ("003", "004"):
-            gate, built = identity_gate(project, recording)
-            assert gate.pending(built) is None
-
-    def test_a_changed_naming_rule_needs_a_new_confirmation(self, project):
-        CliRunner().invoke(app, ["identify", "-c", str(project.config), "--yes"])
-        configure(project, "project", media_pattern="{subject_id}_*.*")
-        gate, recording = identity_gate(project)
-        assert "again" in gate.pending(recording)
-
-    def test_skipping_clears_it_and_says_so_every_run(self, project):
-        configure(project, "identity", confirm="skip")
-        gate, recording = identity_gate(project)
-        assert gate.pending(recording) is None
-        assert [note.check for note in gate.notes(recording)] == ["identity_unconfirmed"]
-
-
-class TestIdentifyCommand:
-    def test_it_shows_who_owns_what_and_records_names_only(self, project):
-        output = CliRunner().invoke(app, ["identify", "-c", str(project.config), "--yes", "--by", "ann"]).output
-        assert "parent: 003_parent.wav" in output and "shared: 003_room.mp4" in output
-        path = layout_for(project.resolved()).identity_path
-        text = path.read_text(encoding="utf-8")
-        assert '"confirmed_by": "ann"' in text
-        assert str(project.raw) not in text and "\\\\" not in text
-
-    def test_saying_no_records_nothing(self, project):
-        outcome = CliRunner().invoke(app, ["identify", "-c", str(project.config)], input="n\n")
-        assert outcome.exit_code == 1
-        assert not layout_for(project.resolved()).identity_path.is_file()
 
 
 class TestAcceptOffset:
     def test_every_flagged_file_is_kept_and_named(self, project):
-        table(project, [*GOOD[:2], result("003_room.mp4", method=UNALIGNED, confidence=None)])
+        table(project, [*GOOD[:2], result("room", method=UNALIGNED, confidence=None)])
         outcome = CliRunner().invoke(app, ["accept-offset", "-c", str(project.config), "-r", "003", "--by", "ann"])
-        assert "kept 003_room.mp4" in outcome.output
+        assert "kept room" in outcome.output
         kept = {r.target: r for r in read_offset_table(layout_for(project.resolved()).offset_table_path("003"))}
-        assert kept["003_room.mp4"].accepted.startswith("ann ")
-        assert kept["003_child.wav"].accepted is None
+        assert kept["room"].accepted.startswith("ann ")
+        assert kept["child_mic"].accepted is None
         assert align_pending(project) is None
 
     def test_a_file_in_no_table_is_an_error(self, project):
         table(project, GOOD)
-        outcome = CliRunner().invoke(app, ["accept-offset", "-c", str(project.config), "--media", "nope.wav"])
+        outcome = CliRunner().invoke(app, ["accept-offset", "-c", str(project.config), "--device", "nope"])
         assert outcome.exit_code != 0
 
 
 class TestWiring:
-    def test_cutting_waits_for_the_offsets_and_turns_wait_for_identity(self):
+    def test_cutting_waits_for_the_offsets(self):
         assert AlignReviewGate.name in get_extractor("prep.media").requires
-        assert IdentityConfirmGate.name in get_extractor("turns.structure").requires
-        assert get_extractor("align.review").phase == get_extractor("identity.confirm").phase == Phase.INTERACTIVE
+        assert get_extractor("align.review").phase == Phase.INTERACTIVE
 
 
 @pytest.fixture

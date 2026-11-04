@@ -96,14 +96,14 @@ class MEAExtractor(Extractor):
             energy, size = frame_difference_energy(item.frames_path, rois, threshold=cfg.threshold, frames=(first, stop))
             energy["t"] = energy["frame"] / fps + item.offset_s
             energy = energy[(energy["t"] >= start) & (energy["t"] <= end)]
-            pictures.append(energy[["frame", "t", "whole_picture", "identical"]].assign(video=path.name))
-            warnings += self._clip_warnings(recording, path, rois, size)
+            pictures.append(energy[["frame", "t", "whole_picture", "identical"]].assign(video=item.name))
+            warnings += self._clip_warnings(recording, item.name, rois, size)
             n_jumps = int((energy["whole_picture"] > WHOLE_PICTURE_CHANGE).sum())
             if n_jumps:
                 warnings.append(
                     self._warning(
                         recording, None, "warn",
-                        f"{path.name}: in {n_jumps} frame(s) more than half of the whole picture changed at once "
+                        f"{item.name}: in {n_jumps} frame(s) more than half of the whole picture changed at once "
                         "(lighting or a moved camera); motion energy there is not movement",
                     )
                 )
@@ -111,7 +111,7 @@ class MEAExtractor(Extractor):
                 series = smooth(energy[subject_id], round(cfg.smoothing_s * fps))
                 if not (series > 0).any():
                     warnings.append(
-                        self._warning(recording, subject_id, "warn", f"{path.name}: nothing moved in this person's region")
+                        self._warning(recording, subject_id, "warn", f"{item.name}: nothing moved in this person's region")
                     )
                 frames.append(
                     build_long_rows(
@@ -154,12 +154,12 @@ class MEAExtractor(Extractor):
             warnings=warnings,
         )
 
-    def _clip_warnings(self, recording, path: Path, rois: dict, size: tuple[int, int]) -> list[QCWarning]:
+    def _clip_warnings(self, recording, camera: str, rois: dict, size: tuple[int, int]) -> list[QCWarning]:
         width, height = size
         return [
             self._warning(
                 recording, subject_id, "warn",
-                f"{path.name}: the region {list(roi)} reaches outside the {width}x{height} picture and was cut to it",
+                f"{camera}: the region {list(roi)} reaches outside the {width}x{height} picture and was cut to it",
             )
             for subject_id, roi in rois.items()
             if roi[0] < 0 or roi[1] < 0 or roi[0] + roi[2] > width or roi[1] + roi[3] > height

@@ -282,11 +282,11 @@ def resolve_diarizer(config) -> DiarizationBackend:
 
 
 def shared_track(prep, recording_id: str) -> str:
-    """The one shared audio file the voices are read from."""
+    """The one device whose sound carries several people's voices, which the voices are read from."""
     if len(prep.shared_tracks) != 1:
-        found = ", ".join(sorted(prep.shared_tracks)) or "none"
         raise InputNotFoundError(
-            f"{recording_id}: text.diarization {SHARED_MODE} reads exactly one shared audio file, found: {found}"
+            f"{recording_id}: text.diarization {SHARED_MODE} separates the voices on the device the setup says hears "
+            "several people, and this recording has none with sound"
         )
     return next(iter(prep.shared_tracks))
 

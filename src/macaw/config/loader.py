@@ -1,4 +1,4 @@
-"""Layered merge: packaged defaults, then project.yaml, then recordings/<id>.yaml, then --set."""
+"""Layered merge: packaged defaults, project.yaml, setups/<name>.yaml, recordings/<id>.yaml, then --set."""
 
 from __future__ import annotations
 
@@ -48,6 +48,9 @@ project:
   n_subjects: $n_subjects
   roles: $roles
 
+# Each recording folder holds one folder per camera or microphone. What each holds is
+# described on the workbench's Setup page, which writes setups/main.yaml next to this file.
+
 # Cluster resources are configured separately; see hpc.yaml.
 execution:
   n_workers: 4
@@ -58,7 +61,7 @@ execution:
 class KeySource:
     """Where a value came from, so an error can point at a file and a line."""
 
-    layer: str                  # defaults | project | recording | cli
+    layer: str                  # defaults | project | setup | recording | cli
     path: Path | None = None
     line: int | None = None
 
@@ -223,15 +226,28 @@ def resolve_config(
     merged = deep_merge(merged, project_data)
     sources.update(project_sources)
 
+    recording_data: dict[str, Any] = {}
+    recording_sources: dict[str, KeySource] = {}
     if recording_id is not None:
         recording_yaml = recording_override_path(project_yaml, recording_id)
         if recording_yaml is not None:
             recording_data, recording_sources = load_yaml(recording_yaml, layer="recording")
             check_recording_overridable(recording_data, recording_yaml)
-            merged = deep_merge(merged, recording_data)
-            sources.update(recording_sources)
-
     overrides = parse_cli_overrides(cli_overrides)
+
+    # below the recording's own file, which may choose another setup or change parts of it
+    setup_file = setup_file_for(merged, recording_data, overrides, project_yaml)
+    if setup_file.is_file():
+        setup_data, setup_sources = load_yaml(setup_file, layer="setup")
+        if "name" in setup_data:
+            raise ConfigError(f"{setup_file}: a setup is named by its file, so the file does not set name")
+        merged = deep_merge(merged, {"setup": setup_data})
+        sources.update({f"setup.{key}": source for key, source in setup_sources.items()})
+
+    if recording_data:
+        merged = deep_merge(merged, recording_data)
+        sources.update(recording_sources)
+
     if overrides:
         merged = deep_merge(merged, overrides)
         sources.update({key: KeySource("cli") for key in _dotted_keys(overrides)})
@@ -258,6 +274,20 @@ def resolve_config(
 
         register_judge_versions(config)
     return config
+
+
+def setup_file_for(
+    merged: dict[str, Any], recording_data: dict[str, Any], overrides: dict[str, Any], project_yaml: Path
+) -> Path:
+    name = "main"
+    for layer in (merged, recording_data, overrides):
+        chosen = layer.get("setup")
+        if isinstance(chosen, dict) and isinstance(chosen.get("name"), str):
+            name = chosen["name"]
+    directory = Path((merged.get("project") or {}).get("setups_dir") or "setups")
+    if not directory.is_absolute():
+        directory = project_yaml.resolve().parent / directory
+    return directory / f"{name}.yaml"
 
 
 def _validate(merged: dict[str, Any], sources: dict[str, KeySource]) -> MacawConfig:

@@ -23,7 +23,6 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
-from macaw.project.identity import read_confirmation
 from macaw.project.scale import DEPTH_NOTE, HAND, recording_scale
 from macaw.project.segments import segments_of, summaries
 from macaw.store import _io
@@ -89,7 +88,7 @@ def _media(config: MacawConfig, recording) -> list[dict]:
     except Exception:
         pass   # before prep.media has run the files are still worth listing
     rows = []
-    for item in sorted(recording.media, key=lambda media: media.path.name):
+    for item in sorted(recording.media, key=lambda media: media.name):
         detail = []
         if item.kind == "video" and item.fps:
             detail.append(f"{item.fps:g} fps")
@@ -98,7 +97,7 @@ def _media(config: MacawConfig, recording) -> list[dict]:
         if item.offset_s:
             detail.append(f"starts at {item.offset_s:+.3f} s")
         rows.append(
-            {"name": item.path.name, "owner": item.subject_id or f"shared {item.kind}", "detail": ", ".join(detail)}
+            {"name": item.name, "owner": item.subject_id or f"shared {item.kind}", "detail": ", ".join(detail)}
         )
     return rows
 
@@ -237,14 +236,11 @@ def _decisions(
     from macaw.extractors.audio.content.diarization import AUTOMATIC, read_voice_owners
 
     rows = []
-    confirmation = read_confirmation(layout.identity_path)
-    if config.identity.confirm == "skip":
-        rows.append({"what": "Which file is whose", "decided": "taken from the file names, not confirmed (identity.confirm: skip)", "by": "software", "href": None})
-    elif confirmation is not None:
-        stamp = f"{confirmation.get('confirmed_by', '')} {confirmation.get('confirmed_at', '')}".strip()
-        rows.append({"what": "Which file is whose", "decided": "confirmed for the project", "by": _who_and_when(stamp), "href": None})
-    else:
-        rows.append({"what": "Which file is whose", "decided": "not confirmed yet", "by": "waiting", "href": None})
+    rows.append({
+        "what": "Which file is whose",
+        "decided": f"stated in setup {config.setup.name}: each device's folder and whom it records",
+        "by": "person", "href": None,
+    })
 
     if alignment:
         kept = sum(1 for row in alignment if row["accepted"])

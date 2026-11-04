@@ -25,10 +25,9 @@ from macaw.media.align import (
 )
 from macaw.media.ffmpeg import HDR_TRANSFERS, has_filter, normalise_video, run_ffmpeg
 from macaw.media.probe import frame_rate, is_variable_rate, probe
-from macaw.project.identity import identity_basis, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
-from macaw.project.recording import MediaFile, Recording
+from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 
@@ -92,7 +91,7 @@ def load_prep(config, recording_id: str) -> PrepInfo:
 
 
 def load_video_prep(config, recording_id: str) -> dict[str, dict]:
-    """prep.video's record of each video by file name, with the path of its copy; empty before it has run."""
+    """prep.video's record of each video by device, with the path of its copy; empty before it has run."""
     root = layout_for(config, create=False).artifacts_dir(recording_id, VideoPrepExtractor.name)
     path = root / VIDEO_INFO_NAME
     if not path.is_file():
@@ -111,7 +110,7 @@ def apply_prep_timing(config, recording: Recording) -> PrepInfo:
     entries = {entry["name"]: entry for entry in prep.media}
     videos = load_video_prep(config, recording.recording_id)
     for item in recording.media:
-        entry = entries.get(item.path.name)
+        entry = entries.get(item.name)
         if entry is None:
             continue
         item.duration_s = entry["duration_s"]
@@ -120,7 +119,7 @@ def apply_prep_timing(config, recording: Recording) -> PrepInfo:
         item.offset_s = entry["offset_s"]
         item.drift_ppm = entry["drift_ppm"]
         item.offset_confidence = entry["offset_confidence"]
-        video = videos.get(item.path.name)
+        video = videos.get(item.name)
         if video is not None:
             item.fps = video["fps"]
             # from here on offset_s places frame 0 of the file the video steps read
@@ -220,61 +219,21 @@ class AlignReviewGate(Gate):
             return f"no offset table yet: run `macaw align -r {rid}`, {in_sync}"
 
         by_name = {result.target: result for result in read_offset_table(table[0])}
-        missing = [item.path.name for item in recording.media if item.path.name not in by_name]
+        missing = [item.name for item in recording.media if item.name not in by_name]
         if missing:
             return f"{', '.join(missing)} came after aligning: run `macaw align -r {rid}` again"
         flagged = [
-            f"{item.path.name} ({reason})"
+            f"{item.name} ({reason})"
             for item in recording.media
-            if (reason := needs_person(by_name[item.path.name], cfg)) is not None
+            if (reason := needs_person(by_name[item.name], cfg)) is not None
         ]
         if not flagged:
             return None
         return (
-            f"{len(flagged)} file(s) to look at: {'; '.join(flagged)}. The figures are in "
+            f"{len(flagged)} device(s) to look at: {'; '.join(flagged)}. The figures are in "
             f"{layout.renders_dir(rid) / 'align'}; keep them with `macaw accept-offset -r {rid}` "
             "or change one with `macaw set-offset`"
         )
-
-
-@register_extractor
-class IdentityConfirmGate(Gate):
-    """Which file belongs to whom, confirmed once per project; everything per person rests on it."""
-
-    name = "identity.confirm"
-    version = "0.1.0"
-    scale = Scale.RECORDING
-    group = "prep"
-    config_sections = ("identity",)
-
-    def inputs_for(self, recording: Recording) -> list[Path]:
-        path = layout_for(self.config, create=False).identity_path
-        return [path] if path.is_file() else []
-
-    def pending(self, recording: Recording) -> str | None:
-        if self.config.identity.confirm == "skip":
-            return None
-        confirmation = read_confirmation(layout_for(self.config, create=False).identity_path)
-        if confirmation is None:
-            return "nobody has confirmed which file belongs to whom: run `macaw identify` once for the project"
-        if confirmation.get("basis") != identity_basis(self.config):
-            return (
-                "the confirmation was for another media_pattern or list of people: run `macaw identify` again"
-            )
-        return None
-
-    def notes(self, recording: Recording) -> list[QCWarning]:
-        if self.config.identity.confirm != "skip":
-            return []
-        return [
-            QCWarning(
-                check="identity_unconfirmed",
-                recording_id=recording.recording_id,
-                subject_id=None,
-                severity="warn",
-                message="identity.confirm is skip: nobody confirmed which file belongs to whom",
-            )
-        ]
 
 
 @register_extractor
@@ -284,7 +243,7 @@ class MediaPrepExtractor(Extractor):
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
-    config_sections = ("segment", "align")
+    config_sections = ("segment", "align", "setup.cameras", "setup.microphones")
     requires = (AlignReviewGate.name,)
     resource_profile = "data_manage"
 
@@ -317,35 +276,35 @@ class MediaPrepExtractor(Extractor):
         duration = end - start
 
         artifacts: dict[str, Path] = {}
-        shared_audio = sorted(
-            (item for item in recording.media if item.kind == "audio" and item.subject_id is None),
-            key=lambda item: item.path.name,
-        )
-        camera = None if shared_audio else _camera_sound(recording)
-        if camera is not None:
-            shared_audio = [camera]
-            warnings.append(
-                QCWarning(
-                    check="prep_camera_sound",
-                    recording_id=recording.recording_id,
-                    subject_id=None,
-                    severity="info",
-                    message=f"No shared audio file; the sound of {camera.path.name} is the shared microphone.",
-                )
+        warnings += [
+            QCWarning(check="setup_files", recording_id=recording.recording_id, subject_id=None, severity="warn", message=note)
+            for note in recording.metadata.get("setup_notes", [])
+        ]
+        silent = [item for item in recording.media if item.hears and item.sample_rate is None]
+        warnings += [
+            QCWarning(
+                check="setup_files", recording_id=recording.recording_id, subject_id=None, severity="warn",
+                message=f"the setup says {item.name} hears {', '.join(item.hears)}, but its file has no sound",
             )
+            for item in silent
+        ]
         shared_tracks: dict[str, str] = {}
-        for item in shared_audio:
-            name = f"{SHARED_TRACK_PREFIX}{item.path.stem}.wav"
+        for item in recording.shared_sound():
+            if item in silent:
+                continue
+            name = f"{SHARED_TRACK_PREFIX}{item.name}.wav"
             _extract_track(
                 item.path, workspace / name, start_s=start - item.offset_s, duration_s=duration,
                 sample_rate=PREP_SAMPLE_RATE,
             )
             artifacts[name] = workspace / name
-            shared_tracks[item.path.name] = name
+            shared_tracks[item.name] = name
 
         tracks: dict[str, str] = {}
         for subject in recording.subjects:
             track = recording.audio_for(subject.subject_id)
+            if track is not None and track.sample_rate is None:
+                track = None
             if track is None:
                 # with a shared microphone their voice is in the room track, found by diarization
                 warnings.append(
@@ -355,10 +314,10 @@ class MediaPrepExtractor(Extractor):
                         subject_id=subject.subject_id,
                         severity="info" if shared_tracks else "warn",
                         message=(
-                            f"No audio file is attributed to '{subject.subject_id}'; their voice can come "
-                            f"only from the shared track(s) {', '.join(shared_tracks)}."
+                            f"No device carries the voice of '{subject.subject_id}' alone; their voice can come "
+                            f"only from the shared sound of {', '.join(shared_tracks)}."
                             if shared_tracks else
-                            f"No audio file is attributed to '{subject.subject_id}'. "
+                            f"No device in the setup hears '{subject.subject_id}'. "
                             "Per-speaker audio features cannot be computed for them."
                         ),
                     )
@@ -376,7 +335,7 @@ class MediaPrepExtractor(Extractor):
             artifacts[name] = workspace / name
             tracks[subject.subject_id] = name
 
-        shared = [item.path.name for item in recording.media if item.subject_id is None]
+        shared = [item.name for item in recording.media if item.subject_id is None]
         info = PrepInfo(
             recording_id=recording.recording_id,
             t_origin_s=start,
@@ -421,7 +380,7 @@ class MediaPrepExtractor(Extractor):
                         subject_id=None,
                         severity="warn",
                         message=(
-                            f"{len(recording.media)} media files but no offset table. "
+                            f"{len(recording.media)} devices but no offset table. "
                             "Run `macaw align` first, or every track is assumed to start together."
                         ),
                     )
@@ -445,28 +404,28 @@ class MediaPrepExtractor(Extractor):
 
         by_name = {result.target: result for result in results}
         for item in recording.media:
-            result = by_name.get(item.path.name)
+            result = by_name.get(item.name)
             if result is None:
-                warn("alignment_missing", item, f"{item.path.name} is not in the offset table; run `macaw align` again")
+                warn("alignment_missing", item, f"{item.name} is not in the offset table; run `macaw align` again")
                 continue
             if result.method == UNALIGNED:
                 warn(
                     "alignment_missing", item,
-                    f"{item.path.name} was not aligned ({result.note}) and is taken to start with "
+                    f"{item.name} was not aligned ({result.note}) and is taken to start with "
                     f"{result.reference}; check it and set it with `macaw set-offset`",
                     metadata_offset_s=result.metadata_offset_s,
                 )
             elif low_confidence(result, cfg):
                 warn(
                     "alignment_confidence", item,
-                    f"{item.path.name} aligned at confidence {result.confidence:.3f}, below {cfg.min_confidence:.3f}, "
+                    f"{item.name} aligned at confidence {result.confidence:.3f}, below {cfg.min_confidence:.3f}, "
                     f"and {describe_agreement(result)}",
                     offset_s=result.offset_s, agreement=result.agreement,
                 )
             if drift_flagged(result):
                 warn(
                     "clock_drift", item,
-                    f"{item.path.name} has {describe_drift(result)}; drift is not corrected, so the offset is "
+                    f"{item.name} has {describe_drift(result)}; drift is not corrected, so the offset is "
                     "off by that much at the far end",
                 )
 
@@ -572,7 +531,7 @@ class VideoPrepExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         entries, warnings = [], []
-        for item in sorted((item for item in recording.media if item.kind == "video"), key=lambda item: item.path.name):
+        for item in sorted((item for item in recording.media if item.kind == "video"), key=lambda item: item.name):
             entry = self._prepare(item, workspace)
             entries.append(entry)
             warnings += self._notes(recording, item, entry)
@@ -596,7 +555,7 @@ class VideoPrepExtractor(Extractor):
         clock = sound if sound is not None else pictures
         target = rate if cfg.fps is None else self._target(item, rate)
         entry = {
-            "name": item.path.name,
+            "name": item.name,
             "file": None,
             "fps": float(target) if cfg.normalise else stream.fps,
             "frames_start_s": 0.0 if cfg.normalise else pictures - clock,
@@ -617,7 +576,7 @@ class VideoPrepExtractor(Extractor):
             "frames_dropped": None,
         }
         if cfg.normalise:
-            name = f"{item.path.name}.mp4"
+            name = f"{item.name}.mp4"
             tone_map = stream.color_transfer in HDR_TRANSFERS and has_filter("zscale")
             counts = normalise_video(
                 item.path, workspace / name, fps=target, start_s=clock, quality=cfg.quality, encoder=cfg.encoder,
@@ -636,7 +595,7 @@ class VideoPrepExtractor(Extractor):
         if every < 1 or abs(step - every) > Fraction(1, 1000) * every:
             choices = ", ".join(f"{float(rate / k):g}" for k in range(1, 5))
             raise ConfigError(
-                f"{item.path.name} runs at {float(rate):g} fps, which video.fps {float(wanted):g} does not divide by a whole "
+                f"{item.name} runs at {float(rate):g} fps, which video.fps {float(wanted):g} does not divide by a whole "
                 f"number, so frames would be kept unevenly; rates this file can take: {choices}"
             )
         return rate / every
@@ -649,7 +608,7 @@ class VideoPrepExtractor(Extractor):
             notes.append(
                 QCWarning(
                     check=check, recording_id=recording.recording_id, subject_id=item.subject_id,
-                    severity=severity or ("info" if fixed else "warn"), message=f"{item.path.name}: {message}",
+                    severity=severity or ("info" if fixed else "warn"), message=f"{item.name}: {message}",
                 )
             )
 
@@ -734,21 +693,11 @@ class VideoPrepExtractor(Extractor):
         ]
 
 
-def _camera_sound(recording: Recording) -> MediaFile | None:
-    """The shared camera whose sound stands in for a room microphone when someone has no mic of their own."""
-    if all(recording.audio_for(subject.subject_id) is not None for subject in recording.subjects):
-        return None
-    sounding = [
-        item for item in recording.media
-        if item.kind == "video" and item.subject_id is None and item.sample_rate is not None
-    ]
-    return recording.reference_media(among=sounding) if sounding else None
-
-
 def _media_entry(item) -> dict:
     return {
         "path": str(item.path),
-        "name": item.path.name,
+        "name": item.name,
+        "device": item.device,
         "kind": item.kind,
         "subject_id": item.subject_id,
         "duration_s": item.duration_s,

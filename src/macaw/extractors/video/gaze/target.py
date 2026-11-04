@@ -120,7 +120,7 @@ class GazeTargetExtractor(Extractor):
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
         views = primary_views(keypoints, recording)
-        by_name = {item.path.name: item for item in recording.media if item.kind == "video"}
+        by_name = {item.name: item for item in recording.media if item.kind == "video"}
         if backend.finds_points:
             points, warnings = self._points(recording, backend, keypoints, views, by_name, span)
         else:

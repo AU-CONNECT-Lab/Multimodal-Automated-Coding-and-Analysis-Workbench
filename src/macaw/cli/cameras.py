@@ -8,7 +8,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.project.layout import layout_for
-from macaw.project.recording import VIDEO_SUFFIXES, media_label
+from macaw.project.recording import camera_clips
 
 app = typer.Typer()
 
@@ -35,21 +35,22 @@ def calibration_board(
 
 @app.command("calibrate-cameras")
 def calibrate_cameras(
-    setup: str = typer.Argument(..., help="Folder in project.calibration_dir holding one board clip per camera."),
+    setup: str = typer.Argument(..., help="Folder in project.calibration_dir holding a folder per camera with its board clip."),
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     until: float = typer.Option(None, "--until", help="Read the clips only up to this many seconds."),
 ) -> None:
     """Find each camera's lens and where the cameras stand from a ChArUco board filmed by all of them at once;
-    writes the calibration pose3d.calibration reads. Name each clip like its camera in the recordings."""
+    writes the calibration pose3d.calibration reads. Name each camera's folder as in the recordings."""
     from macaw.extractors.video.pose.board import calibrate, describe_board, find_board, make_board
     from macaw.extractors.video.pose.cameras import write_setup
 
     resolved = resolve_config(config)
     folder = Path(resolved.project.calibration_dir) / setup
-    clips = sorted(path for path in folder.iterdir() if path.suffix.lower() in VIDEO_SUFFIXES) if folder.is_dir() else []
-    if len(clips) < 2:
-        raise MacawError(f"{folder} holds {len(clips)} video(s); put one board clip per camera there, two or more")
-    names = {clip: media_label(clip, resolved.project.media_pattern) for clip in clips}
+    by_camera = camera_clips(folder)
+    if len(by_camera) < 2:
+        raise MacawError(f"{folder} holds {len(by_camera)} camera folder(s) with a clip; put each camera's board clip in a folder named after it, two or more")
+    clips = list(by_camera.values())
+    names = {clip: camera for camera, clip in by_camera.items()}
     offsets, notes = _offsets(clips, resolved)
     board = make_board(resolved.pose3d.board)
     found = []

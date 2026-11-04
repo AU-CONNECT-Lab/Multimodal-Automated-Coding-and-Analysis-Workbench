@@ -24,9 +24,9 @@ from macaw.extractors.base import Gate
 
 # the settings most projects change; everything else is edited as text below the form
 FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("Project", "Where the recordings are, how their files are named, and the part of each recording to analyse.", (
+    ("Project", "Where the recordings are, who takes part, and the part of each recording to analyse.", (
         "project.name", "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern",
-        "project.media_pattern", "project.n_subjects", "project.roles", "segment.task_start_s", "segment.task_end_s",
+        "project.n_subjects", "project.roles", "segment.task_start_s", "segment.task_end_s",
     )),
     ("Video", "How the videos are brought to one frame rate and format before anything is measured on them.", (
         "video.normalise", "video.fps", "video.quality", "video.encoder",
@@ -40,7 +40,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "gaze.targets",
     )),
     ("Checks by a person", "Where the software waits for a person before going on: always, only when it is unsure, or never.", (
-        "identity.confirm", "align.review", "pose.review", "text.voice_review",
+        "align.review", "pose.review", "text.voice_review",
     )),
     ("Coding", "Coding layers, and the language model that codes speech acts in layer B.", (
         "coding.layers", "coding.codebook", "coding.llm.provider", "coding.llm.model", "coding.llm.base_url",
@@ -58,7 +58,6 @@ LABELS = {
     "project.output_dir": "Results folder",
     "project.work_dir": "Working folder",
     "project.recording_pattern": "Recording folder pattern",
-    "project.media_pattern": "Media file pattern",
     "project.n_subjects": "People per recording",
     "project.roles": "Roles",
     "segment.task_start_s": "Task starts at (s)",
@@ -83,7 +82,6 @@ LABELS = {
     "gaze.backend": "Where people look",
     "gaze.model": "Gaze model",
     "gaze.targets": "Things people look at",
-    "identity.confirm": "Which file is whose",
     "align.review": "Offsets between files",
     "pose.review": "Who is on camera",
     "text.voice_review": "Voices on a shared microphone",

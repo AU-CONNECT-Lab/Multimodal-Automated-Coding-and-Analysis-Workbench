@@ -10,11 +10,9 @@ project:
   # Longitudinal:  "sub-{group_id}/ses-{session_id}"
   # Several tasks per visit: "sub-{group_id}/ses-{session_id}/task-{task}_run-{run}"
   recording_pattern: "{group_id}"
-  # Which media file belongs to which person. A capture that is not one of the recording's
-  # subject ids means the file is shared, e.g. "room_camera.mp4" with subjects parent/child.
-  media_pattern: "*_{subject_id}.*"
   recording_prefix: ""               # directory prefix under raw_dir, e.g. "dyad-". "" = every dir
   recording_config_dir: recordings   # dir of <recording_id>.yaml files overriding this config
+  setups_dir: setups                 # dir of <name>.yaml files, each saying what the device folders of a recording hold
   scripts_dir: scripts               # your own .py files: measure functions, extractors, backends
   calibration_dir: calibration       # clips filmed before recording: an object of known length, a board per camera setup
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
@@ -33,8 +31,14 @@ align:
   apply: offset_table                # offset_table (cheap) | recut (re-encodes media)
   review: flagged                    # always: every offset waits for a person | flagged: only uncertain ones do | skip
 
+# Each recording folder holds one folder per device, named as here, with that device's file in it.
+# The cameras and microphones are written in setups/<name>.yaml, normally from the Setup page.
+setup:
+  name: main                         # which file in project.setups_dir; a recording can name another in its own file
+  cameras: {}                        # name: {body: [roles], face: [roles], gaze: [roles], hears: [roles]}
+  microphones: {}                    # name: {hears: [roles]}
+
 identity:
-  confirm: always                    # always: a person confirms once which file belongs to whom (`macaw identify`) | skip, and every run warns
   voice_hints: []                    # shared microphone: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
   pitch_order: []                    # shared microphone: roles from the lowest voice to the highest, e.g. [mother, child]
 

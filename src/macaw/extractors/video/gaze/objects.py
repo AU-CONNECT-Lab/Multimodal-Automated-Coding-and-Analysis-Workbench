@@ -171,7 +171,7 @@ class GazeObjectsExtractor(Extractor):
         keypoints = keypoints_store.read_keypoints(
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
-        by_name = {item.path.name: item for item in recording.media if item.kind == "video"}
+        by_name = {item.name: item for item in recording.media if item.kind == "video"}
         found, warnings = [], []
         for video in sorted(set(primary_views(keypoints, recording).values())):
             item = by_name[video]

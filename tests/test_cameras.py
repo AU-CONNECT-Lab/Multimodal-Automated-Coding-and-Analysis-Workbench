@@ -25,6 +25,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.store.keypoints import write_keypoints
 from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+from setup_helpers import camera as setup_camera, mics, put, write_setup as write_devices
 
 runner = CliRunner()
 K = np.array([[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]])
@@ -197,12 +198,12 @@ class TestCalibration:
 
 @pytest.fixture
 def project(tmp_path):
-    raw = tmp_path / "raw" / "003"
-    raw.mkdir(parents=True)
-    for name in ("003_parent.wav", "003_left.mp4", "003_right.mp4"):
-        (raw / name).write_bytes(b"")
+    raw = tmp_path / "raw"
+    for device, name in (("parent_mic", "a.wav"), ("left", "a.mp4"), ("right", "a.mp4")):
+        put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_devices(config, cameras={"left": setup_camera(), "right": setup_camera()}, microphones=mics(["parent"]))
     return config
 
 
@@ -231,7 +232,8 @@ def render_clips(folder, cameras, steps=40, fps=10, seed=4):
     poses = [(Rotation.from_euler("xyz", rng.normal(0, [0.5, 0.5, 0.2])), np.array([300.0, 0.0, 1100.0]) + rng.normal(0, [120, 80, 120])) for _ in range(steps)]
     folder.mkdir(parents=True, exist_ok=True)
     for camera in cameras:
-        writer = cv2.VideoWriter(str(folder / f"{camera.name}.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, camera.size)
+        (folder / camera.name).mkdir(exist_ok=True)
+        writer = cv2.VideoWriter(str(folder / camera.name / "clip.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, camera.size)
         rotation = Rotation.from_rotvec(camera.rotation)
         for pose, centre in poses:
             shift = centre - pose.apply([525 / 2, 375 / 2, 0.0])
@@ -266,7 +268,7 @@ def test_calibrate_cameras_finds_them_from_board_clips(project):
 def test_calibrate_cameras_needs_two_clips(project):
     (project.parent / "calibration" / "lab").mkdir(parents=True)
     result = runner.invoke(app, ["calibrate-cameras", "lab", "-c", str(project)])
-    assert result.exit_code != 0 and "one board clip per camera" in said(result)
+    assert result.exit_code != 0 and "board clip in a folder named after it" in said(result)
 
 
 def test_the_board_prints_at_its_size(project):
@@ -324,7 +326,7 @@ def seated(project):
     settings(project, "pose3d:\n  calibration: lab.toml\n")
     people = {"parent": person([0, 0, 2000], [1, 0, 0], 60, wrist_speed=0.5), "child": person([1000, 100, 2000], [-1, 0, 0], 60)}
     config = resolve_config(project)
-    write_keypoints(keypoints_of(cameras, ["003_left.mp4", "003_right.mp4"], people, 60), layout_for(config).keypoints_path("003"))
+    write_keypoints(keypoints_of(cameras, ["left", "right"], people, 60), layout_for(config).keypoints_path("003"))
     return SimpleNamespace(config=config, people=people, cameras=cameras)
 
 
@@ -339,10 +341,10 @@ class TestSteps:
         assert any("in 3D in 100%" in message for message in messages), messages
         assert not [warning.message for warning in result.warnings if warning.severity == "warn"]
 
-    def test_cameras_are_matched_by_the_name_in_the_file_name(self, seated, tmp_path):
+    def test_cameras_are_matched_by_name(self, seated, tmp_path):
         renamed = [Camera(f"cam{index}", camera.size, camera.matrix, camera.distortions, camera.rotation, camera.translation) for index, camera in enumerate(seated.cameras)]
         write_setup(CameraSetup(renamed, "mm"), seated.config.project.calibration_dir / "lab.toml")
-        with pytest.raises(MacawError, match="match a video people were measured on"):
+        with pytest.raises(MacawError, match="match a camera people were measured on"):
             TriangulationExtractor(seated.config).run(build_recording("003", seated.config), tmp_path)
 
     def test_a_folder_of_board_clips_wants_calibrating_first(self, project):
@@ -508,7 +510,7 @@ def gesturing(project):
     people = {"parent": parent, "child": person([1000, 100, 2000], [-1, 0, 0], frames, hips=True)}
     settings(project, "pose3d:\n  calibration: lab.toml\n" + GESTURES)
     config = resolve_config(project)
-    write_keypoints(keypoints_of(cameras, ["003_left.mp4", "003_right.mp4"], people, frames), layout_for(config).keypoints_path("003"))
+    write_keypoints(keypoints_of(cameras, ["left", "right"], people, frames), layout_for(config).keypoints_path("003"))
     code_gestures(config, [("parent", 0.0, 3.4)])
     return SimpleNamespace(project=project, people=people)
 

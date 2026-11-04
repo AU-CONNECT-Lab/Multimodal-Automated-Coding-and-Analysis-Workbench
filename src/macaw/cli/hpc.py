@@ -12,6 +12,7 @@ from macaw.execution import runner, slurm
 from macaw.execution.array_map import read_map, recording_for_index
 from macaw.execution.job_db import JobDB
 from macaw.project.layout import layout_for
+from macaw.project.setup import require_setup
 
 app = typer.Typer(help="Run on a Slurm cluster: job arrays you submit with sbatch, and model weights fetched beforehand.")
 
@@ -26,6 +27,7 @@ def generate(
     """Write job arrays for the steps still to run, one element per recording, and say how to submit them.
     Run it again after a person has cleared what a run stopped at, or after failures: finished steps are left out."""
     resolved = resolve_config(config)
+    require_setup(resolved)
     hpc = load_hpc_config(hpc_config, config)
     jobs = slurm.generate(resolved, hpc, runner.resolve_recordings(resolved, recordings), list(extractor or ()))
     for note in jobs.notes:

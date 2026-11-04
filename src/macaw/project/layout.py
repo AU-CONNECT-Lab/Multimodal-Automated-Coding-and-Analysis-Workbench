@@ -108,11 +108,6 @@ class Layout:
     def corrected_transcript_stamp_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "transcript_corrected.json"
 
-    # a person's decision about who is who feeds the results, so it lives with them
-    @property
-    def identity_path(self) -> Path:
-        return self.output_dir / "identity" / "project.json"
-
     # the three tables are directories of parquet files, one per writer; store/_io.py
     # explains why a single file cannot survive concurrent extractors
     def long_table_path(self, recording_id: str) -> Path:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,16 +27,17 @@ from macaw.project.layout import layout_for
 from macaw.qc.downsample import min_max_downsample
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
+from setup_helpers import camera as setup_camera, mics, put, write_setup as write_devices
 
 
 @pytest.fixture
 def project(tmp_path):
-    raw = tmp_path / "raw" / "003"
-    raw.mkdir(parents=True)
-    for name in ("003_parent.wav", "003_child.wav", "003_room.mp4"):
-        (raw / name).write_bytes(b"")
+    raw = tmp_path / "raw"
+    for device, name in (("parent_mic", "a.wav"), ("child_mic", "a.wav"), ("room", "a.mp4")):
+        put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_devices(config, cameras={"room": setup_camera()}, microphones=mics())
     return config
 
 
@@ -74,10 +77,10 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
     config = resolve_config(project)
     owners = layout_for(config).artifacts_dir("003", PoseExtractor.name) / "owners"
     owners.parent.mkdir(parents=True, exist_ok=True)
-    owners.write_text(json.dumps({"003_room.mp4": {"people": {"parent": [1], "child": [2]}, "chosen_by": {}, "doubt": "who is who", "spans": []}}))
+    owners.write_text(json.dumps({"room": {"people": {"parent": [1], "child": [2]}, "chosen_by": {}, "doubt": "who is who", "spans": []}}))
     shown = text_of(review.body(project, "003"))
-    assert "Who is on camera" in shown and "accept-owner" in shown and "Which file is whose" in shown
-    argv = review.action_command(project, "003", "rename-owner", "003_room.mp4", "ann", {}, {"003_room.mp4": "parent=child,child=parent"})
+    assert "Who is on camera" in shown and "accept-owner" in shown and "Which file is whose" not in shown
+    argv = review.action_command(project, "003", "rename-owner", "room", "ann", {}, {"room": "parent=child,child=parent"})
     assert argv[1] == "accept-owner" and argv[argv.index("--rename") + 1] == "parent=child,child=parent"
     voices = review.action_command(project, "003", "accept-voices", "", "ann", {"S1": "child", "S0": "none"}, {})
     assert voices[voices.index("--rename") + 1] == "S0=none,S1=child"
@@ -87,7 +90,7 @@ def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     shown = text_of(review.body(project, "003"))
     assert "Pixels to centimetres" in shown and "set-scale" in shown and "No scale yet" in shown
     assert "right only at the distance from the camera" in shown
-    measured = {"video": "003_room.mp4", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
+    measured = {"video": "room", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
     argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
     assert argv[1] == "set-scale" and argv[argv.index("-r") + 1] == "003" and argv[argv.index("--points") + 1] == "0,0,30,40"
     assert argv[argv.index("--length-cm") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
@@ -182,16 +185,16 @@ def test_the_frame_is_read_from_the_video_the_people_are_measured_on(project):
     from macaw.exceptions import ExternalToolError
     from macaw.media.ffmpeg import run_ffmpeg
 
-    video = project.parent / "raw" / "003" / "003_room.mp4"
+    video = project.parent / "raw" / "003" / "room" / "a.mp4"
     try:
         run_ffmpeg(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=2", "-pix_fmt", "yuv420p", str(video)])
     except ExternalToolError:
         pytest.skip("needs ffmpeg")
-    uri, problem = review.frame_uri(project, "003", "003_room.mp4", 1.0)
+    uri, problem = review.frame_uri(project, "003", "room", 1.0)
     assert uri is None and "prep.video" in problem
     with open(project, "a", encoding="utf-8") as handle:
         handle.write("\nvideo:\n  normalise: false\n")
-    uri, problem = review.frame_uri(project, "003", "003_room.mp4", 1.0)
+    uri, problem = review.frame_uri(project, "003", "room", 1.0)
     assert problem is None and uri.startswith("data:image/jpeg;base64,")
 
 
@@ -373,7 +376,8 @@ def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
 
 def test_the_cameras_tab_shows_only_where_two_cameras_film(project):
     assert nav_style(project, "cameras") == {"display": "none"}
-    (project.parent / "raw" / "003" / "003_side.mp4").write_bytes(b"")
+    put(project.parent / "raw", "003", "side", "a.mp4")
+    write_devices(project, cameras={"room": setup_camera(), "side": setup_camera()}, microphones=mics())
     assert nav_style(project, "cameras") is None
 
 
@@ -384,9 +388,9 @@ def calibrated(project, notes=(), together=40):
 
     config = resolve_config(project)
     folder = config.project.calibration_dir / "lab"
-    folder.mkdir(parents=True)
-    for name in ("room.mp4", "side.mp4"):
-        (folder / name).write_bytes(b"")
+    for name in ("room", "side"):
+        (folder / name).mkdir(parents=True)
+        (folder / name / "clip.mp4").write_bytes(b"")
     target = [0.0, 0.0, 2000.0]
     cameras = [look_at("room", [0, 0, 0], target), look_at("side", [1500, 0, 500], target)]
     metadata = {
@@ -402,15 +406,13 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
 
     config = resolve_config(project)
     assert cameras.setups(config) == [] and "No setup yet" in text_of(cameras.setup_view(project, None))
-    (config.project.calibration_dir / "lab").mkdir(parents=True)
-    (config.project.calibration_dir / "lab" / "room.mp4").write_bytes(b"")
-    (config.project.calibration_dir / "lab" / "side.mp4").write_bytes(b"")
+    for name in ("room", "side"):
+        (config.project.calibration_dir / "lab" / name).mkdir(parents=True)
+        (config.project.calibration_dir / "lab" / name / "clip.mp4").write_bytes(b"")
     assert cameras.setups(config) == ["lab"]
     waiting = text_of(cameras.setup_view(project, "lab"))
     assert "not found yet" in waiting and "calibrate-cameras" in waiting
-    for clip in (config.project.calibration_dir / "lab").iterdir():
-        clip.unlink()
-    (config.project.calibration_dir / "lab").rmdir()
+    shutil.rmtree(config.project.calibration_dir / "lab")
 
     calibrated(project, notes=["side.mp4 has no sound"], together=8)
     shown = text_of(cameras.setup_view(project, "lab"))
@@ -485,9 +487,13 @@ def test_a_file_that_does_not_check_still_opens_the_settings(project):
 
 def test_a_form_edit_keeps_the_files_comments(project):
     text = project.read_text(encoding="utf-8")
-    edited = project_file.with_values(text, {"execution.n_workers": 2, "pose.backend": "yolo", "project.roles": ["a", "b"]})
-    assert "# short project name" in edited and "n_workers: 2" in edited and "roles: [a, b]" in edited
+    edited = project_file.with_values(
+        text, {"execution.n_workers": 2, "pose.backend": "yolo", "project.n_subjects": 3, "project.roles": ["parent", "child", "sibling"]}
+    )
+    assert "# short project name" in edited and "n_workers: 2" in edited and "roles: [parent, child, sibling]" in edited
     assert project_file.check(project, edited).pose.backend == "yolo"
+    with pytest.raises(MacawError, match="setup main names child, parent"):
+        project_file.check(project, project_file.with_values(text, {"project.roles": ["a", "b"]}))
 
 
 def test_a_yes_or_no_setting_is_asked_as_one_and_written_back(project):
@@ -549,7 +555,7 @@ def test_the_segments_page_plays_a_copy_and_saves_what_is_marked(project):
     from macaw.media.ffmpeg import make_preview, run_ffmpeg
     from macaw.media.probe import probe
 
-    video = project.parent / "raw" / "003" / "003_room.mp4"
+    video = project.parent / "raw" / "003" / "room" / "a.mp4"
     try:
         run_ffmpeg(["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=2", "-f", "lavfi", "-i", "sine=duration=2",
                     "-pix_fmt", "yuv420p", "-shortest", str(video)])

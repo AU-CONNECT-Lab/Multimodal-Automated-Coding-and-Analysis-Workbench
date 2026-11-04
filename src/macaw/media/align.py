@@ -263,18 +263,18 @@ def align_recording(
     infos: dict,
     on_pair: Callable[[np.ndarray, np.ndarray, AlignResult], None] | None = None,
 ) -> list[AlignResult]:
-    """Aligns every file to one reference that has audio. infos maps file name to its probe
+    """Aligns every file to one reference that has audio. infos maps device name to its probe
     result; on_pair sees each correlated pair's signals, e.g. to draw it for review."""
-    audible = [item for item in recording.media if infos[item.path.name].audio_streams()]
+    audible = [item for item in recording.media if infos[item.name].audio_streams()]
     if not audible:
         raise AlignmentFailedError(f"{recording.recording_id}: no file has an audio stream to align by")
     reference = recording.reference_media(among=audible)
-    reference_name = reference.path.name
+    reference_name = reference.name
     reference_audio = load_normalised(reference.path, limit_s=None)
 
     results: list[AlignResult] = []
     for item in recording.media:
-        name = item.path.name
+        name = item.name
         if item is reference:
             results.append(AlignResult(reference=name, target=name, offset_s=0.0, confidence=1.0))
             continue
@@ -364,10 +364,10 @@ def apply_alignment(
     recording: Recording, results: list[AlignResult], *, recut: bool = False
 ) -> Recording:
     """Default is to record the offset and let readers add it; recut re-encodes instead.
-    Files are matched by name, so a table made on another machine still applies."""
+    Devices are matched by name, so a table made on another machine still applies."""
     by_name = {result.target: result for result in results}
     for item in recording.media:
-        result = by_name.get(item.path.name)
+        result = by_name.get(item.name)
         if result is None:
             continue
         item.offset_s = result.offset_s

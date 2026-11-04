@@ -39,6 +39,7 @@ from macaw.extractors.audio.content.speaker_id import by_pitch, by_words, descri
 from macaw.extractors.prep import MediaPrepExtractor, PrepInfo
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from setup_helpers import EVERYONE, camera, mics, put, write_setup
 
 from conftest import SAMPLE_RATE
 
@@ -46,11 +47,10 @@ from conftest import SAMPLE_RATE
 @pytest.fixture
 def project(tmp_path):
     """One recording of a parent and a child on a single room microphone."""
-    raw = tmp_path / "raw" / "003"
-    raw.mkdir(parents=True)
-    (raw / "003_room.wav").write_bytes(b"")
+    put(tmp_path / "raw", "003", "room_mic", "a.wav")
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    write_setup(config, microphones={"room_mic": {"hears": list(EVERYONE)}})
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     data.setdefault("text", {})["diarization"] = "pyannote"
     config.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -69,35 +69,35 @@ def test_prep_cuts_the_shared_microphone_on_the_same_clock(project, monkeypatch,
     cut = []
     (tmp_path / "work").mkdir()
     extractor = MediaPrepExtractor(config)
-    monkeypatch.setattr(extractor, "_probe_media", lambda recording: None)
+    monkeypatch.setattr(extractor, "_probe_media", lambda recording: [setattr(item, "sample_rate", 48000.0) for item in recording.media])
     monkeypatch.setattr(extractor, "_apply_offsets", lambda recording, warnings: None)
     monkeypatch.setattr(prep_module, "_window", lambda recording: (0.0, 10.0))
     monkeypatch.setattr(prep_module, "_extract_track", lambda src, dest, **kwargs: cut.append((src.name, dest.name)))
     result = extractor.run(recording, tmp_path / "work")
     info = json.loads((tmp_path / "work" / "prep.json").read_text(encoding="utf-8"))
-    assert cut == [("003_room.wav", "shared_003_room.wav")]
-    assert info["shared_tracks"] == {"003_room.wav": "shared_003_room.wav"}
+    assert cut == [("a.wav", "shared_room_mic.wav")]
+    assert info["shared_tracks"] == {"room_mic": "shared_room_mic.wav"}
     missing = [warning for warning in result.warnings if warning.check == "prep_missing_track"]
     assert {warning.severity for warning in missing} == {"info"}
 
 
 @pytest.mark.parametrize(
-    "files, camera_has_sound, shared",
+    "cameras, microphones, camera_has_sound, shared",
     [
-        (["003_room.mp4"], True, {"003_room.mp4": "shared_003_room.wav"}),
-        (["003_room.mp4"], False, {}),
-        (["003_room.mp4", "003_parent.wav", "003_child.wav"], True, {}),
-        (["003_room.mp4", "003_room.wav"], True, {"003_room.wav": "shared_003_room.wav"}),
+        ({"room": camera(hears=EVERYONE)}, {}, True, {"room": "shared_room.wav"}),
+        ({"room": camera(hears=EVERYONE)}, {}, False, {}),
+        ({"room": camera()}, mics(), True, {}),
+        ({"room": camera()}, {"room_mic": {"hears": list(EVERYONE)}}, True, {"room_mic": "shared_room_mic.wav"}),
     ],
-    ids=["camera-stands-in", "silent-camera", "everyone-has-a-mic", "room-mic-first"],
+    ids=["camera-hears-both", "silent-camera", "everyone-has-a-mic", "room-mic-hears-both"],
 )
-def test_the_cameras_sound_is_the_shared_microphone_only_when_there_is_none(
-    project, monkeypatch, tmp_path, files, camera_has_sound, shared
+def test_the_shared_sound_is_the_device_the_setup_says_hears_several(
+    project, monkeypatch, tmp_path, cameras, microphones, camera_has_sound, shared
 ):
-    raw = tmp_path / "raw" / "003"
-    (raw / "003_room.wav").unlink()
-    for name in files:
-        (raw / name).write_bytes(b"")
+    raw = tmp_path / "raw"
+    for device in {**cameras, **microphones}:
+        put(raw, "003", device, "a.mp4" if device in cameras else "a.wav")
+    write_setup(project.config, cameras=cameras, microphones=microphones)
     config = project.resolved()
     recording = build_recording("003", config)
     (tmp_path / "work").mkdir()
@@ -114,8 +114,8 @@ def test_the_cameras_sound_is_the_shared_microphone_only_when_there_is_none(
     result = extractor.run(recording, tmp_path / "work")
     info = json.loads((tmp_path / "work" / "prep.json").read_text(encoding="utf-8"))
     assert info["shared_tracks"] == shared
-    stand_in = [warning.message for warning in result.warnings if warning.check == "prep_camera_sound"]
-    assert stand_in == (["No shared audio file; the sound of 003_room.mp4 is the shared microphone."] if "003_room.mp4" in shared else [])
+    silent = [warning.message for warning in result.warnings if "has no sound" in warning.message]
+    assert silent == ([] if camera_has_sound else ["the setup says room hears child, parent, but its file has no sound"])
 
 
 class TestExtraVoices:

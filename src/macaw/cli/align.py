@@ -89,16 +89,16 @@ def align(
 def set_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recording: str = typer.Option(..., "--recording", "-r"),
-    media: str = typer.Option(..., "--media", help="Media file name to adjust."),
+    media: str = typer.Option(..., "--device", help="Device to adjust, as its folder is named."),
     offset: float = typer.Option(..., "--offset", help="Seconds."),
 ) -> None:
     """Manually override one offset after inspecting it; a later `macaw align` keeps it."""
     resolved = resolve_config(config)
     layout = layout_for(resolved)
     built = build_recording(recording, resolved)
-    names = [item.path.name for item in built.media]
+    names = [item.name for item in built.media]
     if media not in names:
-        raise MacawError(f"{media} is not a file of {recording}; its files are {', '.join(names)}")
+        raise MacawError(f"{media} is not a device of {recording}; its devices are {', '.join(names)}")
 
     path = layout.offset_table_path(recording)
     results = read_offset_table(path) if path.is_file() else []
@@ -106,7 +106,7 @@ def set_offset(
         reference = results[0].reference
     else:
         _probe_all(built)
-        reference = built.reference_media().path.name
+        reference = built.reference_media().name
         results = [AlignResult(reference=reference, target=reference, offset_s=0.0, confidence=None, method=MANUAL)]
     if media == reference:
         raise MacawError(f"{media} is the reference; every other offset is measured against it")
@@ -125,7 +125,7 @@ def set_offset(
 def accept_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    media: list[str] = typer.Option(None, "--media", help="File to keep, repeatable. Default: every file waiting for a person."),
+    media: list[str] = typer.Option(None, "--device", help="Device to keep, repeatable. Default: every one waiting for a person."),
     by: str = typer.Option(None, "--by", help="Who looked at them. Default: the login name."),
 ) -> None:
     """Keep offsets waiting for review, after looking at their figures, so the run goes on."""
@@ -163,7 +163,7 @@ def _probe_all(recording) -> dict:
     for item in recording.media:
         info = probe(item.path)
         item.duration_s = info.duration_s
-        infos[item.path.name] = info
+        infos[item.name] = info
     return infos
 
 

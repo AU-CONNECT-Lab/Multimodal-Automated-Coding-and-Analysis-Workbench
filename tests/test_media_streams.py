@@ -16,6 +16,7 @@ from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, _extra
 from macaw.media.ffmpeg import decode_audio, has_filter, run_ffmpeg
 from macaw.media.probe import probe, require_ffmpeg, require_ffprobe
 from macaw.project.recording import MediaFile, build_recording
+from setup_helpers import EVERYONE, camera, write_setup
 
 try:
     require_ffmpeg()
@@ -98,21 +99,22 @@ class TestPreparedTrack:
 
     @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("late_sound_ts", True), ("variable", False)])
     def test_a_lone_camera_gives_its_sound_as_the_shared_track(self, sources, tmp_path, which, sounding):
-        raw = tmp_path / "raw" / "003"
-        raw.mkdir(parents=True)
-        camera = f"003_room{sources[which].suffix}"
-        shutil.copy(sources[which], raw / camera)
+        folder = tmp_path / "raw" / "003" / "room"
+        folder.mkdir(parents=True)
+        shutil.copy(sources[which], folder / f"clip{sources[which].suffix}")
         project = tmp_path / "project.yaml"
         scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        write_setup(project, cameras={"room": camera(hears=EVERYONE)})
         config = resolve_config(project)
         (tmp_path / "work").mkdir()
-        MediaPrepExtractor(config).run(build_recording("003", config), tmp_path / "work")
+        result = MediaPrepExtractor(config).run(build_recording("003", config), tmp_path / "work")
         shared = json.loads((tmp_path / "work" / "prep.json").read_text(encoding="utf-8"))["shared_tracks"]
         if not sounding:
             assert shared == {}
+            assert any("has no sound" in warning.message for warning in result.warnings)
             return
         expected = beep_at(decode_audio(sources[which], sample_rate=RATE))
-        assert beep_at(read_wav(tmp_path / "work" / shared[camera])) == pytest.approx(expected, abs=1e-3)
+        assert beep_at(read_wav(tmp_path / "work" / shared["room"])) == pytest.approx(expected, abs=1e-3)
 
 
 def prepare(path: Path, workspace: Path, **settings):

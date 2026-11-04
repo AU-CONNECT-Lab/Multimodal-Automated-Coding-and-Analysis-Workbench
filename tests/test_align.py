@@ -34,6 +34,7 @@ from macaw.media.align import (
 )
 from macaw.media.drift import drift_is_real, segment_offsets
 from macaw.media.probe import MediaInfo, StreamInfo
+from setup_helpers import camera as setup_camera, put, write_setup
 from macaw.project.layout import make_layout
 from macaw.project.recording import MediaFile, Recording
 
@@ -350,30 +351,36 @@ class TestFigure:
 class TestSetOffsetCommand:
     @pytest.fixture
     def project(self, tmp_path):
-        recording = tmp_path / "raw" / "003"
-        recording.mkdir(parents=True)
-        for name in ("room.wav", "parent.wav", "camera.avi"):
-            (recording / name).write_bytes(b"")
+        raw = tmp_path / "raw"
+        put(raw, "003", "room_mic", "a.wav")
+        put(raw, "003", "parent_mic", "a.wav")
+        put(raw, "003", "camera", "a.avi")
         config = tmp_path / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+        write_setup(
+            config, cameras={"camera": setup_camera()},
+            microphones={"room_mic": {"hears": ["parent", "child"]}, "parent_mic": {"hears": ["parent"]}},
+        )
         table = make_layout(tmp_path / "out").offset_table_path("003")
-        write_offset_table([entry("room.wav", confidence=1.0), entry("parent.wav", 4.0)], table)
+        write_offset_table(
+            [entry("room_mic", reference="room_mic", confidence=1.0), entry("parent_mic", 4.0, reference="room_mic")], table
+        )
         return SimpleNamespace(config=config, table=table)
 
     def invoke(self, project, *args):
         return CliRunner().invoke(app, ["set-offset", "-c", str(project.config), "-r", "003", *args])
 
     def test_a_hand_set_offset_replaces_the_estimate_and_keeps_the_rest(self, project):
-        result = self.invoke(project, "--media", "camera.avi", "--offset", "7.0")
+        result = self.invoke(project, "--device", "camera", "--offset", "7.0")
         assert result.exit_code == 0, result.output
         table = {r.target: r for r in read_offset_table(project.table)}
-        assert (table["camera.avi"].offset_s, table["camera.avi"].method) == (7.0, MANUAL)
-        assert table["parent.wav"].offset_s == 4.0
+        assert (table["camera"].offset_s, table["camera"].method) == (7.0, MANUAL)
+        assert table["parent_mic"].offset_s == 4.0
 
     def test_the_reference_cannot_be_moved(self, project):
-        assert self.invoke(project, "--media", "room.wav", "--offset", "1.0").exit_code != 0
+        assert self.invoke(project, "--device", "room_mic", "--offset", "1.0").exit_code != 0
 
-    def test_an_unknown_file_is_refused_with_the_known_ones(self, project):
-        result = self.invoke(project, "--media", "nope.wav", "--offset", "1.0")
+    def test_an_unknown_device_is_refused_with_the_known_ones(self, project):
+        result = self.invoke(project, "--device", "nope", "--offset", "1.0")
         assert result.exit_code != 0
-        assert "parent.wav" in str(result.exception) + result.output
+        assert "parent_mic" in str(result.exception) + result.output

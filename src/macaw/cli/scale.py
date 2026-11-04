@@ -32,7 +32,7 @@ def set_scale(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recording: str = typer.Option(None, "--recording", "-r", help="Measure on this recording's own video."),
     calibration: str = typer.Option(None, "--calibration", help="Measure on this clip in project.calibration_dir instead."),
-    media: str = typer.Option(None, "--media", help="The recording's video measured on; needed when it has several."),
+    media: str = typer.Option(None, "--camera", help="The camera measured on; needed when the recording has several."),
     points: str = typer.Option(None, "--points", help="The object's two ends in pixels of the frame: x1,y1,x2,y2."),
     length_cm: float = typer.Option(None, "--length-cm", help="Its real length in centimetres."),
     person: str = typer.Option(None, "--person", help="Role at whose place the object stood. Default: everyone."),
@@ -94,10 +94,10 @@ def set_scale(
 
 
 def _video(config, recording_id: str, media: str | None) -> str:
-    videos = [item.path.name for item in build_recording(recording_id, config).media if item.kind == "video"]
+    videos = [item.name for item in build_recording(recording_id, config).media if item.kind == "video"]
     if media is None:
         if len(videos) != 1:
-            raise MacawError(f"{recording_id} has {len(videos)} videos; name the one measured on with --media")
+            raise MacawError(f"{recording_id} has {len(videos)} videos; name the one measured on with --camera")
         return videos[0]
     if media not in videos:
         raise MacawError(f"{media} is not a video of {recording_id}; its videos are {', '.join(videos) or 'none'}")

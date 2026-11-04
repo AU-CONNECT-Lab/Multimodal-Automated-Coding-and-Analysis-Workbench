@@ -18,7 +18,7 @@ from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
 from macaw.interface.pages.results import _shown, in_first_camera
 from macaw.project.layout import layout_for
-from macaw.project.recording import VIDEO_SUFFIXES, build_recording, media_label
+from macaw.project.recording import build_recording, camera_clips
 
 LABEL = "Cameras"
 PATH = "/cameras"
@@ -53,8 +53,11 @@ def setups(config) -> list[str]:
     return sorted(path.name for path in folder.iterdir() if (path.is_dir() and _clips(path)) or path.suffix.lower() == ".toml")
 
 
-def _clips(folder: Path) -> list[Path]:
-    return sorted(path for path in folder.iterdir() if path.suffix.lower() in VIDEO_SUFFIXES)
+def _clips(folder: Path) -> dict[str, Path]:
+    try:
+        return camera_clips(folder)
+    except MacawError:
+        return {}
 
 
 def layout(config_path: Path):
@@ -87,8 +90,8 @@ def layout(config_path: Path):
                 "Setup",
                 dcc.Loading(html.Div(id="cameras-view")),
                 desc=(
-                    "A folder in the calibration folder with one board clip per camera, each named like its camera in the "
-                    "recordings, or a calibration file from another tool. Recordings filmed with another setup name it in "
+                    "A folder in the calibration folder holding a folder per camera, named as in the recordings, with its "
+                    "board clip, or a calibration file from another tool. Recordings filmed with another setup name it in "
                     "their own file, recordings/<id>.yaml."
                 ),
                 actions=[ui.button("Find the cameras", "cameras-find", icon_name="play"), ui.button("Use for this project", "cameras-use", primary=True)],
@@ -135,15 +138,15 @@ def setup_view(config_path: Path, name: str | None):
     config = resolve_config(config_path)
     if name is None:
         return ui.note(
-            f"No setup yet. Make a folder in {config.project.calibration_dir} with one board clip per camera, filmed before "
+            f"No setup yet. Make a folder in {config.project.calibration_dir} with a folder per camera holding its board clip, filmed before "
             "the session with the cameras where they stay, then press Refresh."
         )
     source = Path(config.project.calibration_dir) / name
     parts = [ui.pill("used by this project", "ok")] if config.pose3d.calibration == name else []
-    clips = _clips(source) if source.is_dir() else []
+    clips = _clips(source) if source.is_dir() else {}
     if source.is_dir():
         parts += [
-            ui.table(["Camera", "Clip"], [[media_label(clip, config.project.media_pattern), clip.name] for clip in clips]),
+            ui.table(["Camera", "Clip"], [[camera, clip.name] for camera, clip in clips.items()]),
             html.Span("The same in a terminal", className="hint"),
             ui.command(_find_command(config_path, name)),
         ]
@@ -158,7 +161,7 @@ def setup_view(config_path: Path, name: str | None):
     made_here = meta.get("made_by") == "macaw calibrate-cameras"
     status = f"Found on {meta.get('made_at', '?')} from the clips above." if made_here else f"Read from {path.name}, made with another tool."
     notes = [ui.note(status, "ok")]
-    if made_here and clips and max(clip.stat().st_mtime for clip in clips) > path.stat().st_mtime:
+    if made_here and clips and max(clip.stat().st_mtime for clip in clips.values()) > path.stat().st_mtime:
         notes.append(ui.note("A clip changed since the cameras were found: find them again.", "warn"))
     if made_here and meta.get("board") not in (None, describe_board(config.pose3d.board)):
         notes.append(ui.note(f"The board was {meta['board']} then, and pose3d.board differs now: find the cameras again.", "warn"))
@@ -301,7 +304,7 @@ def register(app, config_path: Path) -> None:
         if not source.is_dir():
             return ui.note(f"{name} is a calibration file; there is nothing to find.", "warn"), no_update
         if len(_clips(source)) < 2:
-            return ui.note(f"{source} holds {len(_clips(source))} clip(s); put one board clip per camera there, two or more.", "warn"), no_update
+            return ui.note(f"{source} holds {len(_clips(source))} camera folder(s) with a clip; put each camera's board clip in a folder named after it, two or more.", "warn"), no_update
         current = _CURRENT.get(str(config_path))
         if current is not None and cli_bridge.is_running(current):
             return ui.note("The cameras of a setup are still being found; wait for it to finish.", "warn"), no_update

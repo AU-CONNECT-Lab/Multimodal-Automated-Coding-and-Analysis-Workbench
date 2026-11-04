@@ -17,6 +17,7 @@ from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.execution import runner as runner_module
 from macaw.execution import slurm
 from macaw.execution.dag import build_dag
+from setup_helpers import mics, put, write_setup
 
 from conftest import SAMPLE_RATE
 
@@ -38,12 +39,11 @@ HPC = {
 def project(tmp_path):
     """Two recordings of a parent and a child, each with their own microphone."""
     for recording in ("003", "004"):
-        raw = tmp_path / "raw" / recording
-        raw.mkdir(parents=True)
         for who in ("parent", "child"):
-            (raw / f"{recording}_{who}.wav").write_bytes(b"")
+            put(tmp_path / "raw", recording, f"{who}_mic", "a.wav")
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    write_setup(config, microphones=mics())
     hpc = tmp_path / "hpc.yaml"
     hpc.write_text(yaml.safe_dump(HPC), encoding="utf-8")
 
@@ -178,10 +178,10 @@ def test_the_arrays_run_each_recording_through_and_a_second_generate_finds_nothi
     t = np.arange(4 * SAMPLE_RATE) / SAMPLE_RATE
     for recording in ("003", "004"):
         for who, pitch in (("parent", 180.0), ("child", 300.0)):
-            write_wav(project.root / "raw" / recording / f"{recording}_{who}.wav", 0.3 * np.sin(2 * np.pi * pitch * t))
+            write_wav(project.root / "raw" / recording / f"{who}_mic" / "a.wav", 0.3 * np.sin(2 * np.pi * pitch * t))
     # no person in the loop here; what waits for one is TestPlan's business
     data = yaml.safe_load(project.config.read_text(encoding="utf-8"))
-    data.update(align={"method": "none"}, identity={"confirm": "skip"})
+    data.update(align={"method": "none"})
     project.config.write_text(yaml.safe_dump(data), encoding="utf-8")
     # prep.media on a GPU tier, so the run is two chained arrays
     hpc = yaml.safe_load(yaml.safe_dump(HPC))

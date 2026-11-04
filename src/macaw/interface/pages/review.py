@@ -17,7 +17,6 @@ from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
 from macaw.interop.coding_files import SUFFIXES as CODING_SUFFIXES
-from macaw.project.identity import pairing, read_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame, read_measurements, recording_scale
@@ -73,24 +72,6 @@ def layout(config_path: Path):
 
 def _button(label: str, action: str, target: str = "", primary: bool = False, small: bool = False):
     return ui.button(label, {"type": ACT, "action": action, "target": target}, primary=primary, small=small)
-
-
-def _identity(config, recording):
-    entry = pairing(recording)
-    confirmation = read_confirmation(layout_for(config, create=False).identity_path)
-    rows = [[subject, ", ".join(files) or "(none)"] for subject, files in entry["subjects"].items()]
-    rows += [["shared", ", ".join(entry["shared"])]] if entry["shared"] else []
-    if config.identity.confirm == "skip":
-        status = ui.note("identity.confirm is skip: file names are trusted without a person confirming.", "warn")
-    elif confirmation:
-        status = ui.note(f"Confirmed for the project by {confirmation.get('confirmed_by')} on {str(confirmation.get('confirmed_at', ''))[:10]}.", "ok")
-    else:
-        status = ui.note("Nobody has confirmed this yet.", "warn")
-    return ui.card(
-        "Which file is whose", ui.table(["Person", "Files"], rows), status,
-        html.Div(_button("Confirm for the whole project", "identify", primary=True), className="buttons"),
-        desc="Read from the file names by project.media_pattern. Confirming covers every recording in the project.",
-    )
 
 
 def _offsets(config, layout, rid):
@@ -246,7 +227,7 @@ def _voices(config, layout, recording):
 
 def _scale(config, layout, recording):
     rid = recording.recording_id
-    videos = sorted(item.path.name for item in recording.media if item.kind == "video")
+    videos = sorted(item.name for item in recording.media if item.kind == "video")
     clips = calibration_clips(config)
     if not videos and not clips:
         return None
@@ -320,7 +301,7 @@ def _gaze(config, layout, recording):
     from macaw.qc.checks import check_gaze_labels
 
     rid = recording.recording_id
-    videos = sorted(item.path.name for item in recording.media if item.kind == "video")
+    videos = sorted(item.name for item in recording.media if item.kind == "video")
     if not videos:
         return None
     labels = read_labels(layout.gaze_labels_path(rid))
@@ -376,7 +357,7 @@ def gaze_frame(config_path: Path, rid: str, video: str, at_s: float):
         apply_prep_timing(config, recording)
     except Exception:   # before prep.media there are no people to draw anyway
         pass
-    item = next(item for item in recording.media if item.path.name == video)
+    item = next(item for item in recording.media if item.name == video)
     figure = scale_figure(uri, [])
     if keypoints.empty or not item.fps:
         return figure, ui.note("Run pose first to see whose head is whose on the frame.")
@@ -397,7 +378,7 @@ def random_time(config_path: Path, rid: str, video: str) -> float:
         prep = apply_prep_timing(config, recording)
         start, length = prep.t_origin_s, prep.duration_s
     except Exception:   # before prep.media only the file's own length is known
-        item = next(item for item in recording.media if item.path.name == video)
+        item = next(item for item in recording.media if item.name == video)
         start, length = item.offset_s, item.duration_s or 0.0
     return round(start + float(np.random.default_rng().uniform(0, max(length, 0.0))), 2)
 
@@ -422,7 +403,7 @@ def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str
         apply_prep_timing(config, recording)
     except Exception:   # before prep.media the file's own clock is all there is
         pass
-    item = next((item for item in recording.media if item.path.name == video), None)
+    item = next((item for item in recording.media if item.name == video), None)
     if item is None:
         return None, f"{video} is not a video of {rid}."
     if config.video.normalise and item.prepared_video is None:
@@ -556,7 +537,6 @@ def body(config_path: Path, rid: str | None):
             html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(message, className="value")], className="what")]) for gate, message in waiting], className="status-list")
             if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
         ),
-        _identity(config, recording),
         _offsets(config, layout, rid),
         _people_on_camera(layout, results, rid),
         _model_look(config, layout, rid),
@@ -607,7 +587,7 @@ def action_command(
         def measure(*extra):
             if on_clip:
                 return cli_bridge.build_command(["set-scale"], config_path=config_path, extra_flags=["--calibration", source[len(CLIP):], *extra])
-            return command("set-scale", extra=[*(["--media", source] if source else []), *extra])
+            return command("set-scale", extra=[*(["--camera", source] if source else []), *extra])
 
         if action == "clear-scale":
             return measure("--clear")
@@ -618,14 +598,12 @@ def action_command(
             "--points", f"{x1:g},{y1:g},{x2:g},{y2:g}", "--length-cm", f"{scale['length']:g}", "--at", f"{scale['at']:g}",
             *person, *named, *by_flag,
         )
-    if action == "identify":
-        return command("identify", extra=["--yes", *by_flag])
     if action == "accept-offset":
-        return command("accept-offset", extra=["--media", target, *by_flag])
+        return command("accept-offset", extra=["--device", target, *by_flag])
     if action == "accept-owner":
-        return command("accept-owner", extra=["--media", target, *by_flag])
+        return command("accept-owner", extra=["--camera", target, *by_flag])
     if action == "rename-owner":
-        return command("accept-owner", extra=["--media", target, "--rename", renames.get(target) or "", *by_flag])
+        return command("accept-owner", extra=["--camera", target, "--rename", renames.get(target) or "", *by_flag])
     if action == "accept-voices":
         return command("accept-voices", extra=["--rename", ",".join(f"{label}={who}" for label, who in sorted(voices.items())), *by_flag])
     if action == "render":

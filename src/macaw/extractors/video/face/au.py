@@ -92,7 +92,7 @@ class FaceExtractor(Extractor):
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
         views = primary_views(keypoints, recording)
-        by_name = {item.path.name: item for item in recording.media if item.kind == "video"}
+        by_name = {item.name: item for item in recording.media if item.kind == "video"}
         per_subject: dict[str, pd.DataFrame] = {}
         seen_frames: dict[str, int] = {}
         for video in sorted(set(views.values())):

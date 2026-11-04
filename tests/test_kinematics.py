@@ -285,7 +285,7 @@ class TestPosturalOpenness:
 
 
 def video(name, subject_id=None):
-    return SimpleNamespace(path=Path(name), kind="video", subject_id=subject_id)
+    return SimpleNamespace(path=Path(name), kind="video", subject_id=subject_id, name=name, device=name, hears=())
 
 
 @pytest.fixture

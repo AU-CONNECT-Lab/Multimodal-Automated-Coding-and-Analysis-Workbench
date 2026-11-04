@@ -21,6 +21,7 @@ from macaw.extractors import (
 from macaw.extractors.video.pose.backends import BACKEND_GROUP as POSE_BACKENDS
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
+from macaw.project.setup import require_setup
 from macaw.store import cache
 
 app = typer.Typer()
@@ -60,6 +61,7 @@ def run(
     resolved = resolve_config(
         config, cli_overrides=overrides, output_dir=output_dir, work_dir=work_dir
     )
+    require_setup(resolved)
     recording_ids = runner.resolve_recordings(resolved, recordings)
     if not recording_ids:
         raise MacawError(f"No recordings found under {resolved.project.raw_dir}")

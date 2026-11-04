@@ -90,7 +90,7 @@ def select_videos(recording: Recording, *, read_shared: bool = False) -> tuple[l
 
 def own_views(recording: Recording) -> dict[str, str]:
     """subject -> the file name of their own camera, where they have one."""
-    return {item.subject_id: item.path.name for item in select_videos(recording)[0] if item.subject_id is not None}
+    return {item.subject_id: item.name for item in select_videos(recording)[0] if item.subject_id is not None}
 
 
 def primary_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, str]:
@@ -184,7 +184,7 @@ class PoseDetectExtractor(Extractor):
                     "not read (pose.read_shared)",
                 )
             )
-        repeated = [item.path.name for item in skipped if item.subject_id is not None]
+        repeated = [item.name for item in skipped if item.subject_id is not None]
         if repeated:
             warnings.append(
                 _warning(
@@ -224,7 +224,7 @@ class PoseDetectExtractor(Extractor):
             # the backend counts frames from the file's own start; offset_s is what puts it on
             # the recording clock, and it is applied once, here, exactly as prep does for audio
             piece = piece.copy()
-            piece["video"] = item.path.name
+            piece["video"] = item.name
             piece["t"] = piece["frame"] / fps + item.offset_s
             piece = piece[(piece["t"] >= start) & (piece["t"] <= end)]
             if piece.empty:
@@ -329,18 +329,18 @@ class PoseExtractor(Extractor):
         # head motion of the people already named on an earlier one
         shared_done = False
         for item in sorted(sources, key=lambda item: item.subject_id is None):
-            piece = detections[detections["video"] == item.path.name].reset_index(drop=True)
+            piece = detections[detections["video"] == item.name].reset_index(drop=True)
             if piece.empty:
                 continue
             piece, swaps, owner = self._identify(
-                piece, item, subjects, cfg, named.get(item.path.name), pieces, first_shared=not shared_done
+                piece, item, subjects, cfg, named.get(item.name), pieces, first_shared=not shared_done
             )
             shared_done = shared_done or item.subject_id is None
-            swaps_by_file[item.path.name] = swaps
+            swaps_by_file[item.name] = swaps
             if owner is not None:
-                owners[item.path.name] = owner
+                owners[item.name] = owner
                 if owner["doubt"]:
-                    warnings.append(self._owner_warning(recording, item.path.name, owner))
+                    warnings.append(self._owner_warning(recording, item.name, owner))
             pieces.append(piece)
 
         if not pieces:

@@ -17,7 +17,6 @@ from macaw.extractors.audio.content.diarization import NO_ONE, read_voices
 from macaw.extractors.audio.content.speaker_id import suggest_voices
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
 from macaw.logging_setup import get_logger
-from macaw.project.identity import identity_basis, pairing, write_confirmation
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
@@ -154,47 +153,12 @@ def check_look(
     typer.echo(f"{recording}: {describe(summary(layout, recording))}")
 
 
-@app.command("identify")
-def identify_speakers(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Record the confirmation without asking."),
-    by: str = typer.Option(None, "--by", help="Who is confirming. Default: the login name."),
-) -> None:
-    """Show which file belongs to whom across the project, then record that a person checked it."""
-    resolved = resolve_config(config)
-    basis = identity_basis(resolved)
-    pairings = [
-        pairing(build_recording(recording_id, resolved)) for recording_id in resolve_recordings(resolved, recordings)
-    ]
-    if not pairings:
-        raise MacawError(f"No recordings found under {resolved.project.raw_dir}")
-
-    typer.echo(f"which file belongs to whom, read from file names by media_pattern '{basis['media_pattern']}':")
-    for entry in pairings:
-        people = "   ".join(
-            f"{subject}: {', '.join(files) if files else '(none)'}" for subject, files in entry["subjects"].items()
-        )
-        shared = ", ".join(entry["shared"]) or "-"
-        typer.echo(f"  {entry['recording_id']}   {people}   shared: {shared}")
-    empty = sorted({subject for entry in pairings for subject, files in entry["subjects"].items() if not files})
-    if empty:
-        typer.echo(f"no file of their own in some recordings: {', '.join(empty)}")
-
-    if not yes and not typer.confirm("Is every file paired with the right person?", default=False):
-        typer.echo("nothing recorded; fix project.media_pattern or the file names, then run this again")
-        raise typer.Exit(code=1)
-    layout = layout_for(resolved)
-    path = write_confirmation(layout.identity_path, basis, pairings, by or getpass.getuser())
-    typer.echo(f"confirmed for the project: {path}")
-
-
 @app.command("accept-owner")
 def accept_owner(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    media: list[str] = typer.Option(None, "--media", help="Camera file, repeatable. Default: every one waiting for a person."),
-    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of one person, for one --media."),
+    media: list[str] = typer.Option(None, "--camera", help="Camera, repeatable. Default: every one waiting for a person."),
+    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of one person, for one --camera."),
     subject: str = typer.Option(None, "--subject", help="Whose tracks --tracks names. Default: the camera's own subject."),
     rename: str = typer.Option(
         None, "--rename", help="SHOWN=RIGHT pairs, comma-separated: the person labelled SHOWN in the renders is RIGHT."
@@ -212,7 +176,7 @@ def accept_owner(
         if tracks is not None and rename is not None:
             raise MacawError("give --tracks or --rename, not both")
         if len(wanted) != 1 or len(recording_ids) != 1:
-            raise MacawError("--tracks and --rename correct one camera: give one -r and one --media")
+            raise MacawError("--tracks and --rename correct one camera: give one -r and one --camera")
         recording_id, file_name = recording_ids[0], next(iter(wanted))
         recording = build_recording(recording_id, resolved)
         if tracks is not None:
@@ -269,9 +233,9 @@ def _shortened(ids: list[int], shown: int = 6) -> str:
 
 
 def _tracks_owner(recording, file_name: str, subject: str | None) -> str:
-    camera = next((item for item in recording.media if item.path.name == file_name), None)
+    camera = next((item for item in recording.media if item.name == file_name), None)
     if camera is None:
-        raise MacawError(f"{recording.recording_id} has no file {file_name}")
+        raise MacawError(f"{recording.recording_id} has no camera {file_name}")
     who = subject or camera.subject_id
     if who is None:
         raise MacawError(f"{file_name} is a shared camera: say whose tracks these are with --subject")
