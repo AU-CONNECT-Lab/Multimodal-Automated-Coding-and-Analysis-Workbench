@@ -569,6 +569,8 @@ def _detect(config, spec, names) -> str:
 
 
 def _keypoints(config, spec, names) -> str:
+    from macaw.extractors.video.pose.look_names import LOOK_FRAMES
+
     pose = config.pose
     text = (
         "Detections were linked into tracks. On each camera a researcher marked each participant on a video frame, and the "
@@ -576,9 +578,21 @@ def _keypoints(config, spec, names) -> str:
         "alone needed no mark while no one else was in view"
     )
     if pose.suggest_names:
+        look = config.qc.look
         text += (
             ". Where no participant was marked, participants were matched to tracks by the correlation of head motion with "
             "their head motion on another camera, or with the voice activity on their own microphone"
+        )
+        if look.model and look.people:
+            text += (
+                f", or, where neither was available, by a vision-language model ({look.model}) that was shown each tracked "
+                f"person on up to {LOOK_FRAMES} frames with a description of each participant's appearance; a track was named "
+                "only when the model gave one participant on more than half of its frames and no other"
+            )
+        text += (
+            "; on a camera filming one participant, the person most in view and largest was taken as that participant, and "
+            "the assignment was held for a person when another person was in view at least half as long or the participant "
+            "chosen was in fewer than half of the frames with anyone in view"
         )
     text += {
         "always": "; every assignment was checked by a person.",

@@ -12,9 +12,11 @@ from macaw.cli.main import app
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
+from macaw.extractors.video.pose.look_names import named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
     join_fragments,
+    most_in_view,
     named_by_clicks,
     owner_rows,
     several_people,
@@ -63,6 +65,73 @@ class TestOneTrackPerFrame:
     def test_one_person_in_view_is_not_several(self):
         assert not several_people(table(person(1, range(10)), person(2, range(10, 20))))
         assert several_people(table(person(1, range(10)), person(2, range(5, 15))))
+
+
+class TestMostInView:
+    def test_tracker_fragments_are_joined_and_a_passer_by_is_not(self):
+        keypoints = table(
+            person(1, range(0, 52)),
+            person(2, range(50, 100), cx=210),          # the same person after a hand-over
+            person(3, range(20, 30), cx=60, size=160),  # someone walking past, nearer the lens
+        )
+        choice = most_in_view(keypoints, "child")
+        assert choice.people == {"child": [1, 2]} and choice.doubt is None
+
+    def test_someone_else_in_view_at_least_half_as_long_is_a_doubt_with_where_to_look(self):
+        keypoints = table(person(1, range(0, 100)), person(2, range(50, 100), cx=60, size=20))
+        choice = most_in_view(keypoints, "child")
+        assert choice.people == {"child": [1]}
+        assert "in view nearly as long" in choice.doubt and choice.spans == [(5.0, 9.9)]
+
+    def test_one_chosen_but_rarely_in_view_is_a_doubt(self):
+        others = [person(track, range(start, start + 14), cx=cx, size=20) for track, start, cx in ((2, 30, 600), (3, 50, 900), (4, 70, 1200))]
+        choice = most_in_view(table(person(1, range(0, 30), size=300), *others), "child")
+        assert choice.people == {"child": [1]} and "in only 42% of the frames with anyone" in choice.doubt
+
+    def test_nobody_in_view_names_nobody(self):
+        assert most_in_view(table(person(1, range(0, 10))).iloc[0:0], "child").people == {}
+
+
+def answers_by_place(*names):
+    """A model that names whoever is left of x 300 as the first name and the rest as the second."""
+    def ask(picture):
+        return {"person": True, "who": names[0] if picture < 300 else names[1]}
+    return ask
+
+
+def frames_with_place(keypoints):
+    """Reads each frame as the x of the person it will be cut around, which the fake model turns into a name."""
+    def read(frames):
+        for frame in frames:
+            yield frame, frame
+    return read
+
+
+class TestNamedByLook:
+    def ask_about(self, keypoints, answer, monkeypatch):
+        import macaw.extractors.video.pose.look_names as module
+
+        monkeypatch.setattr(module, "picture_of", lambda image, rows, chain, frame: float(chain.x))
+        return named_by_look(keypoints, ["child", "parent"], frames_with_place(keypoints), answer, "the model")
+
+    def test_a_name_given_on_most_frames_names_the_person(self, monkeypatch):
+        choice, record = self.ask_about(room(), answers_by_place("child", "parent"), monkeypatch)
+        assert choice.people == {"child": [1, 3], "parent": [2]} and choice.doubt is None
+        assert [entry["named"] for entry in record] == ["parent", "child"] and len(record[0]["answers"]) == 5
+
+    def test_a_name_given_to_two_people_goes_to_neither(self, monkeypatch):
+        choice, _ = self.ask_about(room(), answers_by_place("parent", "parent"), monkeypatch)
+        assert choice.people == {} and "took two people for parent" in choice.doubt and "did not clearly tell child, parent" in choice.doubt
+
+    def test_unsure_answers_leave_the_person_waiting(self, monkeypatch):
+        choice, _ = self.ask_about(room(), answers_by_place("unsure", "parent"), monkeypatch)
+        assert choice.people == {"parent": [2]}
+        assert "did not clearly tell child" in choice.doubt and "unsure 5" in choice.doubt
+
+    def test_two_names_for_one_person_name_them_nothing(self, monkeypatch):
+        flip = iter(["child", "parent"] * 10)
+        choice, _ = self.ask_about(table(person(1, range(0, 100))), lambda picture: {"person": True, "who": next(flip)}, monkeypatch)
+        assert choice.people == {}
 
 
 class TestJoiningFragments:

@@ -256,11 +256,12 @@ def _decisions(
         rows.append(video)
     if cameras:
         clicked = sum(1 for camera in cameras if camera["people"] and all("clicked" in person["chosen_by"] for person in camera["people"]))
-        suggested = sum(1 for camera in cameras if any(person["chosen_by"] == "suggested" for person in camera["people"]))
+        hows = sorted({person["chosen_by"].removeprefix("suggested ") for camera in cameras for person in camera["people"] if person["chosen_by"].startswith("suggested")})
+        suggested = sum(1 for camera in cameras if any(person["chosen_by"].startswith("suggested") for person in camera["people"]))
         kept = sum(1 for camera in cameras if camera["accepted"])
         doubt = sum(1 for camera in cameras if camera["doubt"] and not camera["accepted"])
         parts = [f"{clicked} named by a person's clicks"]
-        parts += [f"{suggested} suggested from head motion or a microphone"] if suggested else []
+        parts += [f"{suggested} suggested by the software ({'; '.join(hows)})"] if suggested else []
         parts += [f"{kept} kept as they stood by a person"] if kept else []
         parts += [f"{doubt} in doubt"] if doubt else []
         rows.append({

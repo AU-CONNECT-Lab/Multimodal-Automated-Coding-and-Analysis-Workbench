@@ -276,3 +276,15 @@ def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats(
     seats = {"camera": [0, 0, 100], "parent": [-50, 100, 110]}
     text, used = render(describe(manifest(spec("gaze.target", "looks_at", "angles", "1.0")), config(project={"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["parent", "child"]}, gaze={"backend": "angles", "seats": seats, "tolerance_deg": 20})), load_references())
     assert "head pose" in text and "within 20°" in text and "seats" in text and not used
+
+
+def test_name_suggestions_are_described_only_when_set_and_the_picture_model_only_when_described():
+    ran = manifest(spec("pose.keypoints", "detection_rate", "yolo", "8.0"))
+    text, _ = render(describe(ran, config()), load_references())
+    assert "a researcher marked each participant" in text and "most in view" not in text
+    suggested = config(pose={"suggest_names": True})
+    text, _ = render(describe(ran, suggested), load_references())
+    assert "head motion" in text and "the person most in view and largest" in text and "vision-language model" not in text
+    looked = config(pose={"suggest_names": True}, qc={"look": {"model": "qwen3-vl:8b-instruct", "people": {"parent": "an adult"}}})
+    text, _ = render(describe(ran, looked), load_references())
+    assert "vision-language model (qwen3-vl:8b-instruct)" in text and "up to 5 frames" in text

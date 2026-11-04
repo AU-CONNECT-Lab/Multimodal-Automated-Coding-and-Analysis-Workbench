@@ -92,7 +92,7 @@ pose:
   review: flagged                    # always: every camera's people wait for a person | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
-  suggest_names: false               # true: on a camera nobody clicked, who is who is suggested from each person's head motion where they are named, else from their own microphone; a clear match stands, a weak one waits for a person
+  suggest_names: false               # true: on a camera nobody clicked, who is who is suggested: on a camera for one person, whoever is most in view and largest; on one for several, from head motion where they are named, else their own microphones, else qc.look's model from qc.look.people; a clear suggestion stands, a doubtful one waits for a person
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
@@ -215,7 +215,7 @@ qc:
     model: null                      # a model that reads pictures, e.g. qwen3-vl:8b-instruct; null = not asked
     base_url: null                   # null = the provider's usual address
     timeout_s: 300
-    people: {}                       # what each person looks like, by role, e.g. {parent: an adult, child: a young child}; only these names are checked
+    people: {}                       # what each person looks like, by role, e.g. {parent: an adult, child: a young child}; only these names are checked, and with pose.suggest_names the model suggests who is who from them
     random_check: 5                  # frames per recording the model passed, drawn at random for a person to check
 
 # Cluster resources are not configured here. They describe the machine rather than the

@@ -7,15 +7,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import InputNotFoundError, UnreadableMediaError
+from macaw.exceptions import InputNotFoundError, MacawError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
+from macaw.extractors.video.pose.look_names import answer_key, named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
     PeopleChoice,
     detect_swaps,
+    most_in_view,
     named_by_clicks,
     repair_tracks,
     several_people,
@@ -91,6 +93,8 @@ def _frames_between(item, start: float, end: float) -> int:
 
 
 DETECTIONS_NAME = "detections.parquet"
+LOOK_NAME = "look_names.json"
+LOOKER = "the picture-reading model"
 SWAPS_NAME = "swaps.json"
 BACKEND_NAME = "backend.json"
 
@@ -270,6 +274,7 @@ class PoseExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         detections, backend = load_detections(self.config, recording.recording_id)
+        self._start_looking(recording)
         apply_prep_timing(self.config, recording)
         videos = load_video_prep(self.config, recording.recording_id)
         names = read_names(layout_for(self.config, create=False).names_path(recording.recording_id))
@@ -307,7 +312,7 @@ class PoseExtractor(Extractor):
         keypoints["source"] = self.name
         keypoints = coerce_frame(keypoints, KEYPOINT_SCHEMA, "keypoints")
 
-        artifacts = self._write_swaps(workspace, swaps_by_file)
+        artifacts = {**self._write_swaps(workspace, swaps_by_file), **self._write_looks(workspace)}
         if owners:
             artifacts["owners"] = self._write_json(workspace, "owners.json", owners)
         rows = self._rows(recording, keypoints, swaps_by_file, warnings)
@@ -340,6 +345,7 @@ class PoseExtractor(Extractor):
             return piece, [], None
 
         swaps: list = []
+        how = ""
         identified = piece
         if alone is None and self.config.pose.track_repair:
             swaps = detect_swaps(piece, max_gap_s=self.config.pose.track_repair_max_gap_s)
@@ -352,9 +358,10 @@ class PoseExtractor(Extractor):
             if missing:
                 doubts.append(f"{', '.join(missing)} {'was' if len(missing) == 1 else 'were'} not clicked on {item.name}")
             choice.doubt = "; ".join(doubts) or None
+        elif self.config.pose.suggest_names and alone is not None:
+            choice, how = most_in_view(identified, alone), "for being most in view"
         elif self.config.pose.suggest_names:
-            references, voices, edges = self._evidence(named, camera_people(item), recording)
-            choice = suggested_people(identified, camera_people(item), references=references, voices=voices, edges=edges)
+            choice, how = self._suggest(identified, item, named, recording)
         elif alone is not None:
             choice = PeopleChoice(people={}, doubt=(
                 f"more than one person is in view at once on {item.name}, which the setup reads for {alone} alone: "
@@ -367,11 +374,73 @@ class PoseExtractor(Extractor):
         by = {click["person"]: f"{click.get('by', '')} (clicked at {float(click['at']):g} s)".strip() for click in written}
         owner = {
             "people": choice.people,
-            "chosen_by": {subject: by.get(subject, "suggested") for subject in choice.people},
+            "chosen_by": {subject: by.get(subject, f"suggested {how}") for subject in choice.people},
             "doubt": choice.doubt,
             "spans": choice.spans or [],
         }
         return piece, swaps, owner
+
+    def _suggest(self, identified: pd.DataFrame, item, named: list[pd.DataFrame], recording: Recording) -> tuple[PeopleChoice, str]:
+        """Who is who on a camera read for several people, from the first evidence there is: head motion where they are
+        named, their own microphones, then the picture-reading model where qc.look.people describes them."""
+        people = camera_people(item)
+        references, voices, edges = self._evidence(named, people, recording)
+        if references is None and voices is None and self._describes(people):
+            return self._looked(identified, people, item), f"by {LOOKER}"
+        how = "by head motion where they are named" if references else "by their own microphone"
+        return suggested_people(identified, people, references=references, voices=voices, edges=edges), how
+
+    def _describes(self, people: list[str]) -> bool:
+        look = self.config.qc.look
+        return bool(look.model) and all(person in look.people for person in people)
+
+    def _looked(self, identified: pd.DataFrame, people: list[str], item) -> PeopleChoice:
+        from macaw.qc.look import backend_for, parsed_answer, question
+        from macaw.qc.overlay import read_frames
+
+        look, state = self.config.qc.look, self._look_state
+        described = {person: look.people[person] for person in people}
+        if state.get("backend") is None:
+            try:
+                state["backend"] = backend_for(look)
+                state["model"] = state["backend"].model_version()
+            except MacawError as error:
+                return PeopleChoice(people={}, doubt=f"{LOOKER} could not be asked ({error}); click the people on a frame")
+
+        def ask(picture: bytes) -> dict | None:
+            key = answer_key(picture, state["model"], described)
+            if key not in state["answers"]:
+                reply = state["backend"].complete(question(described), "Check this person.", seed=0, images=[picture])
+                state["answers"][key] = parsed_answer(reply.text)
+            state["used"].add(key)
+            return state["answers"][key]
+
+        choice, record = named_by_look(identified, people, lambda frames: read_frames(item.frames_path, frames), ask, LOOKER)
+        state["cameras"][item.name] = record
+        return choice
+
+    def _start_looking(self, recording: Recording) -> None:
+        """Answers kept from the last run are used again for the same picture, model and descriptions."""
+        earlier = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / LOOK_NAME
+        kept = json.loads(earlier.read_text(encoding="utf-8")).get("answers", {}) if earlier.is_file() else {}
+        self._look_state = {"answers": kept, "used": set(), "cameras": {}}
+
+    def _write_looks(self, workspace: Path) -> dict[str, Path]:
+        state = self._look_state
+        if not state["cameras"]:
+            return {}
+        look = self.config.qc.look
+        payload = {
+            "model": state.get("model"), "provider": look.provider, "described": look.people, "cameras": state["cameras"],
+            "answers": {key: value for key, value in state["answers"].items() if key in state["used"]},
+        }
+        return {LOOK_NAME: self._write_json(workspace, LOOK_NAME, payload)}
+
+    def extra_key(self, recording: Recording) -> str:
+        if not self.config.pose.suggest_names:
+            return ""
+        look = self.config.qc.look
+        return json.dumps([look.provider, look.model, look.people], sort_keys=True)
 
     def _evidence(self, named: list[pd.DataFrame], people: list[str], recording: Recording):
         """(references, voices, edges) to suggest who is who from: each person's head motion on the first camera

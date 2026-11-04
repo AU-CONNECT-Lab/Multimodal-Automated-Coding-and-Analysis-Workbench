@@ -66,14 +66,14 @@ def backend_for(cfg: LookSection) -> LLMBackend:
     return backend
 
 
-def notice(cfg: LookSection) -> str | None:
+def notice(cfg: LookSection, sent: str = "the review frames, pictures of the people recorded,") -> str | None:
     """What to say before frames leave this machine; None for a server on it."""
     from macaw.coding.llm.backends import BACKEND_GROUP
 
     if get_backend(BACKEND_GROUP, cfg.provider).is_local:
         return None
     return (
-        f"qc.look.provider {cfg.provider}: the review frames, pictures of the people recorded, are sent to its servers. "
+        f"qc.look.provider {cfg.provider}: {sent} are sent to its servers. "
         "Whether that is allowed is for your ethics approval to say."
     )
 
@@ -113,7 +113,7 @@ def person_picture(image: np.ndarray, person: dict, subjects: list[str]) -> byte
     return _jpeg(drawn[y0:y1, x0:x1], CROP_SIDE)
 
 
-def _answer(text: str) -> dict | None:
+def parsed_answer(text: str) -> dict | None:
     try:
         parsed = json.loads(repair_json(text))
     except ValueError:
@@ -149,7 +149,7 @@ def problems(people_seen: int | None, boxes: list[dict], names: list[str]) -> li
 
 def look_at_frame(backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, subjects: list[str], described: dict[str, str]) -> dict:
     """described is qc.look.people for this recording's people; only their names are checked."""
-    counted = _answer(backend.complete(COUNT, "Count the people.", seed=0, images=[_jpeg(image, LONG_SIDE)]).text)
+    counted = parsed_answer(backend.complete(COUNT, "Count the people.", seed=0, images=[_jpeg(image, LONG_SIDE)]).text)
     seen = counted.get("people") if counted else None
     unreadable = int(not isinstance(seen, (int, float)) or isinstance(seen, bool))
     people_seen = None if unreadable else int(seen)
@@ -157,7 +157,7 @@ def look_at_frame(backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, 
     names = list(described)
     boxes = []
     for person in drawn_people(people):
-        said = _answer(backend.complete(system, "Check this person.", seed=0, images=[person_picture(image, person, subjects)]).text)
+        said = parsed_answer(backend.complete(system, "Check this person.", seed=0, images=[person_picture(image, person, subjects)]).text)
         is_person = said.get("person") if said else None
         unreadable += int(not isinstance(is_person, bool))
         who = str(said.get("who") or UNSURE).strip() if said else UNSURE

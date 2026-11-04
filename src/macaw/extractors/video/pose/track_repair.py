@@ -176,6 +176,8 @@ CLICK_REACH = 0.15
 NEAREST_SHARE = 0.5
 # frames closer than this are one span when pointing a person at where to look
 SPAN_GAP_S = 1.0
+# the one a camera is pointed at is in doubt when in fewer than this share of the frames with anyone
+MIN_OWNER_COVERAGE = 0.5
 
 
 @dataclass
@@ -409,6 +411,26 @@ def suggested_people(
         doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people suggested")
         spans = _spans(left_out[0].t)
     return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
+
+
+def most_in_view(keypoints: pd.DataFrame, person: str) -> PeopleChoice:
+    """On a camera read for one person alone: the person most in view and largest. In doubt when someone else is in view
+    at least half as long, or the one chosen is in fewer than half the frames with anyone."""
+    chains = join_fragments(keypoints)
+    if not chains:
+        return PeopleChoice(people={}, doubt="nobody was detected")
+    owner, others = chains[0], chains[1:]
+    people = {person: owner.tracks}
+    chosen = f"tracks {owner.tracks[:5]} suggested as {person} for being most in view and largest"
+    rival = max(others, key=lambda chain: chain.present, default=None)
+    if rival is not None and rival.present >= RIVAL_SHARE * owner.present:
+        return PeopleChoice(people, doubt=f"{chosen}, but tracks {rival.tracks[:5]} are in view nearly as long", spans=_spans(rival.t))
+    seen = np.unique(np.concatenate([chain.frames for chain in chains]))
+    coverage = owner.present / seen.size
+    if coverage < MIN_OWNER_COVERAGE:
+        elsewhere = np.concatenate([chain.t[~np.isin(chain.frames, owner.frames)] for chain in others])
+        return PeopleChoice(people, doubt=f"{chosen}, but in only {coverage:.0%} of the frames with anyone in them", spans=_spans(elsewhere))
+    return PeopleChoice(people)
 
 
 def _clicked_track(keypoints: pd.DataFrame, frame, candidates: list[int], click: Click) -> int | None:

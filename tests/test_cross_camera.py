@@ -126,7 +126,7 @@ class TestNamingTheRoomFromOwnCameras:
         room = result.keypoints[result.keypoints.video == "room.mp4"]
         assert room.groupby("subject_id")["x"].min().lt(300).to_dict() == {"child": True, "parent": False}
         owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
-        assert owners["room.mp4"]["doubt"] is None and owners["room.mp4"]["chosen_by"] == {"child": "suggested", "parent": "suggested"}
+        assert owners["room.mp4"]["doubt"] is None and owners["room.mp4"]["chosen_by"] == dict.fromkeys(["child", "parent"], "suggested by head motion where they are named")
 
     def test_quality_rows_come_from_each_persons_own_camera(self, room_and_own):
         _, result = room_and_own(True)

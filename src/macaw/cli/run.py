@@ -116,6 +116,11 @@ def _echo_reporting(config, dag) -> None:
             f"{name} sends {llm.n_samples} x ceil(units / {units_per_request(llm)}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
+    look = config.qc.look
+    if "pose.keypoints" in dag.nodes and config.pose.suggest_names and look.model and look.people:
+        from macaw.qc.look import notice
+
+        notices.append(notice(look, "pictures of the people on cameras nobody clicked, for pose.suggest_names,"))
     from macaw.execution import models
 
     fetching = models.fetching_steps(dag.topological_order())

@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from macaw.config.schema import PoseSection
+from macaw.config.schema import LookSection, PoseSection, QCSection
 from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
@@ -148,8 +149,8 @@ def clicks(tmp_path, camera, at, **people):
 class Chain:
     """pose.detect then pose.keypoints, the way the runner chains them."""
 
-    def __init__(self, backend, **pose):
-        config = SimpleNamespace(pose=PoseSection(**pose))
+    def __init__(self, backend, look=None, **pose):
+        config = SimpleNamespace(pose=PoseSection(**pose), qc=QCSection(look=look or LookSection()))
         self.fake = backend
         self.detect = PoseDetectExtractor(config)
         self.identify = PoseExtractor(config)
@@ -168,14 +169,14 @@ class Chain:
 
 @pytest.fixture
 def extractor(monkeypatch, offsets):
-    def build(backend=None, **pose):
+    def build(backend=None, look=None, **pose):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
         monkeypatch.setattr(
             pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=N_FRAMES / FPS)
         )
-        return Chain(backend, **pose)
+        return Chain(backend, look, **pose)
 
     return build
 
@@ -428,9 +429,103 @@ class TestSeveralPeopleOnAPersonalCamera:
         keypoints = self.run(extractor, recording, tmp_path).keypoints
         assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {2}
 
+    def test_with_suggestions_the_one_most_in_view_and_largest_is_taken(self, extractor, recording, tmp_path):
+        instance = extractor(FakeBackend(self.FRAMES), suggest_names=True)
+        result = instance.run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        assert set(result.keypoints.loc[result.keypoints.subject_id == "parent", "track_id"]) == {1}
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["a.mp4"]["doubt"] is None and owners["a.mp4"]["chosen_by"] == {"parent": "suggested for being most in view"}
+
+    def test_with_suggestions_someone_else_in_view_as_long_waits_for_a_person(self, extractor, recording, tmp_path):
+        frames = spread_frame((1, range(N_FRAMES), 200.0, 100.0), (2, range(5, 15), 500.0, 100.0))
+        result = extractor(FakeBackend(frames), suggest_names=True).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert "tracks [2] are in view nearly as long" in owners["a.mp4"]["doubt"] and owners["a.mp4"]["spans"] == [[0.5, 1.4]]
+
     def test_the_clicks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
         clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
         assert tmp_path / "names.json" in extractor().identify.inputs_for(recording([media("a.mp4", subject_id="parent")]))
+
+
+class Looker:
+    """A model that reads pictures: whoever is cut out of the red left half is the parent, of the blue right half the child."""
+
+    def __init__(self, unsure=()):
+        self.asked, self.unsure = 0, set(unsure)
+
+    def model_version(self):
+        return "vision@1"
+
+    def complete(self, system, user, *, seed=None, images=()):
+        import cv2
+
+        self.asked += 1
+        picture = cv2.imdecode(np.frombuffer(images[0], np.uint8), cv2.IMREAD_COLOR)
+        blue, _, red = picture.reshape(-1, 3).mean(axis=0)
+        who = "parent" if red > blue else "child"
+        return SimpleNamespace(text=json.dumps({"person": True, "who": "unsure" if who in self.unsure else who}))
+
+
+class TestNamingByLook:
+    """A shared camera with no click, no other camera and no microphone of anyone's own."""
+
+    FRAMES = spread_frame((1, range(N_FRAMES), 150.0, 100.0), (2, range(N_FRAMES), 450.0, 100.0))
+    LOOKS = LookSection(model="vision", people={"parent": "an adult", "child": "a young child"})
+
+    @pytest.fixture
+    def run(self, extractor, recording, tmp_path, monkeypatch):
+        import macaw.qc.look as look_module
+        import macaw.qc.overlay as overlay_module
+
+        picture = np.zeros((PICTURE[1], PICTURE[0], 3), np.uint8)
+        picture[:, : PICTURE[0] // 2] = (40, 40, 220)
+        picture[:, PICTURE[0] // 2 :] = (220, 40, 40)
+        # each frame a little different, as frames of a video are
+        monkeypatch.setattr(overlay_module, "read_frames", lambda path, frames: ((frame, picture + frame) for frame in sorted(frames)))
+
+        def go(model, look=self.LOOKS):
+            def reach(cfg):
+                if isinstance(model, Exception):
+                    raise model
+                return model
+
+            monkeypatch.setattr(look_module, "backend_for", reach)
+            result = extractor(FakeBackend(self.FRAMES), look=look, suggest_names=True).run(recording([media()]), tmp_path)
+            kept = tmp_path / "artifacts" / PoseExtractor.name
+            kept.mkdir(parents=True, exist_ok=True)
+            for name, path in result.artifacts.items():
+                (kept / name).write_bytes(path.read_bytes())
+            return result, json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))["room.mp4"]
+
+        return go
+
+    def test_clear_answers_name_the_people(self, run):
+        model = Looker()
+        result, owner = run(model)
+        assert result.keypoints.groupby("track_id")["subject_id"].first().to_dict() == {1: "parent", 2: "child"}
+        assert owner["doubt"] is None and set(owner["chosen_by"].values()) == {"suggested by the picture-reading model"}
+        assert model.asked == 10 and "look_names.json" in result.artifacts
+
+    def test_answers_are_kept_and_not_asked_again(self, run):
+        run(Looker())
+        again = Looker()
+        _, owner = run(again)
+        assert again.asked == 0 and owner["doubt"] is None
+
+    def test_a_person_the_model_cannot_tell_waits_for_a_click(self, run):
+        _, owner = run(Looker(unsure={"child"}))
+        assert owner["people"] == {"parent": [1]} and "did not clearly tell child" in owner["doubt"]
+
+    def test_a_model_that_cannot_be_reached_leaves_the_camera_waiting(self, run):
+        from macaw.exceptions import MacawError
+
+        _, owner = run(MacawError("no server at 127.0.0.1:11434"))
+        assert owner["people"] == {} and "could not be asked (no server" in owner["doubt"]
+
+    def test_people_nobody_described_are_not_asked_about(self, run):
+        model = Looker()
+        _, owner = run(model, LookSection(model="vision", people={"parent": "an adult"}))
+        assert model.asked == 0 and owner["people"] == {} and "nothing to suggest" in owner["doubt"]
 
 
 class TestJoinedFragments:
