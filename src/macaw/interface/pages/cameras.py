@@ -17,9 +17,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
-from macaw.interface.pages.results import _shown, in_first_camera
+from macaw.interface.pages.results import _shown, axes_3d, in_first_camera
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording, camera_clips
+from macaw.project.room import CM_PER_UNIT, DECIMALS
+from macaw.project.scale import CM_PER_METRE
 
 PATH = "/setup"
 PAPERS = ("A4", "A3", "A2", "A1")
@@ -186,8 +188,8 @@ def setup_view(config_path: Path, name: str | None):
         ))
     shared = meta.get("together", {})
     tables = [ui.table(
-        ["Camera", "Picture", "Board seen", "Own lens fit (px)", "All together (px)", "Across, ahead, up of the first camera (m)"],
-        [_camera_row(camera, setup, meta) for camera in setup.cameras],
+        ["Camera", "Picture", "Board seen", "Own lens fit (px)", "All together (px)", f"Across, ahead, up of the first camera ({config.project.units})"],
+        [_camera_row(camera, setup, meta, config.project.units) for camera in setup.cameras],
         numeric={"Board seen", "Own lens fit (px)", "All together (px)"},
     )]
     if shared:
@@ -195,33 +197,35 @@ def setup_view(config_path: Path, name: str | None):
             ["Cameras", "Saw the board together"],
             [[pair, f"{count}" + (" (few: film more where both see it)" if count < _FEW_TOGETHER else "")] for pair, count in shared.items()],
         ))
-    return [*parts, *notes, *tables, dcc.Graph(figure=cameras_figure(setup, name), config={"displaylogo": False})]
+    return [*parts, *notes, *tables, dcc.Graph(figure=cameras_figure(setup, name, config.project.units), config={"displaylogo": False})]
 
 
-def _camera_row(camera, setup, meta: dict) -> list[str]:
+def _camera_row(camera, setup, meta: dict, units: str) -> list[str]:
     from macaw.extractors.video.pose.cameras import UNITS_TO_METRES
 
-    where = np.stack(_shown(in_first_camera(setup, camera.position() * UNITS_TO_METRES[setup.units])))
+    where = np.stack(_shown(in_first_camera(setup, camera.position() * UNITS_TO_METRES[setup.units]) * CM_PER_METRE / CM_PER_UNIT[units]))
+    places = DECIMALS[units]
     # adding zero turns the -0.00 of a rounding residue into 0.00
-    x, y, z = np.round(where, 2) + 0.0
+    x, y, z = np.round(where, places) + 0.0
     number = lambda key, form: format(meta[key][camera.name], form) if camera.name in meta.get(key, {}) else ""
     return [
         camera.name, f"{camera.size[0]} x {camera.size[1]}", number("views", "d"), number("lens_error_px", ".2f"),
-        number("error_px", ".2f"), f"{x:.2f}, {y:.2f}, {z:.2f}",
+        number("error_px", ".2f"), f"{x:.{places}f}, {y:.{places}f}, {z:.{places}f}",
     ]
 
 
-def cameras_figure(setup, name: str) -> go.Figure:
+def cameras_figure(setup, name: str, units: str) -> go.Figure:
     """Where the cameras stand and which way each looks, turned like the Results page's 3D view."""
     from macaw.extractors.video.pose.cameras import UNITS_TO_METRES
 
+    per = CM_PER_METRE / CM_PER_UNIT[units]
     where = np.vstack([camera.position() for camera in setup.cameras]) * UNITS_TO_METRES[setup.units]
     ahead = np.vstack([Rotation.from_rotvec(camera.rotation).inv().apply([0.0, 0.0, 1.0]) for camera in setup.cameras])
     figure = go.Figure()
     sights = np.vstack([np.vstack([start, start + _SIGHT_M * direction, [np.nan] * 3]) for start, direction in zip(where, ahead)])
-    x, y, z = _shown(in_first_camera(setup, sights))
+    x, y, z = _shown(in_first_camera(setup, sights) * per)
     figure.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", line={"color": "#8b8b90", "width": 4}, name="looking", hoverinfo="skip"))
-    x, y, z = _shown(in_first_camera(setup, where))
+    x, y, z = _shown(in_first_camera(setup, where) * per)
     figure.add_trace(go.Scatter3d(
         x=x, y=y, z=z, mode="markers+text", text=[camera.name for camera in setup.cameras], textposition="top center",
         marker={"size": 5, "symbol": "diamond", "color": "#1d4e89"}, name="cameras",
@@ -233,8 +237,7 @@ def cameras_figure(setup, name: str) -> go.Figure:
         scene={
             # a little further out than the default, so cameras at the edge of the room stay in view
             "camera": {"eye": {"x": 1.7, "y": 1.7, "z": 1.1}},
-            "aspectmode": "data", "xaxis": {"title": "across (m)", **axis}, "yaxis": {"title": "ahead of the first camera (m)", **axis},
-            "zaxis": {"title": "up (m)", **axis},
+            **axes_3d(units, axis),
         },
         uirevision=name,
     )

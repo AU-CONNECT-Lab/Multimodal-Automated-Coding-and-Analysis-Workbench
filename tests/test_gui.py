@@ -214,6 +214,36 @@ def test_results_show_one_number_per_person_or_a_curve(project):
     assert graph.figure.data[0].name == "parent"
 
 
+def test_results_give_metres_in_the_projects_unit_and_other_measures_as_stored(project):
+    from macaw.project.manifest import FeatureManifest, FeatureSpec, write_manifest
+
+    config = resolve_config(project)
+    layout = layout_for(config)
+    directory = layout.long_table_path("003")
+    directory.mkdir(parents=True)
+    curves = build_long_rows(
+        values=pd.DataFrame({"t_start": np.arange(3.0), "wrist_speed_3d": [0.5, 1.0, 0.25], "wrist_speed": [10.0, 20, 30]}),
+        scale=Scale.FRAME, recording_id="003", source="pose.kinematics3d", subject_id="parent",
+    )
+    whole = build_long_rows(
+        values=pd.DataFrame({"t_start": [0.0], "interpersonal_distance_3d_mean": [1.0]}),
+        scale=Scale.RECORDING, recording_id="003", source="pose.distance3d", subject_id="parent",
+    )
+    curves.to_parquet(directory / "pose.kinematics3d.parquet", index=False)
+    whole.to_parquet(directory / "pose.distance3d.parquet", index=False)
+    manifest = FeatureManifest()
+    for name, unit, scale in (("wrist_speed_3d", "m/s", Scale.FRAME), ("wrist_speed", "px/s", Scale.FRAME), ("interpersonal_distance_3d_mean", "m", Scale.RECORDING)):
+        manifest.add(FeatureSpec(name=name, description="", unit=unit, scale=scale, group="pose", extractor="pose.kinematics3d", extractor_version="0.1.0"))
+    write_manifest(manifest, layout.manifest_path)
+    graph = results.view(project, "003", "pose.kinematics3d", "wrist_speed_3d")
+    assert list(graph.figure.data[0].y) == pytest.approx([50.0, 100.0, 25.0]) and graph.figure.layout.yaxis.title.text == "wrist_speed_3d (cm/s)"
+    graph = results.view(project, "003", "pose.kinematics3d", "wrist_speed")
+    assert list(graph.figure.data[0].y) == pytest.approx([10.0, 20.0, 30.0]) and graph.figure.layout.yaxis.title.text == "wrist_speed (px/s)"
+    project.write_text(project.read_text(encoding="utf-8").replace("units: cm", "units: in"), encoding="utf-8")
+    shown = text_of(results.view(project, "003", "pose.distance3d", "interpersonal_distance_3d_mean"))
+    assert "interpersonal_distance_3d_mean (in)" in shown and "39.37" in shown
+
+
 def test_min_max_keeps_the_extremes_of_every_run():
     t = np.arange(10_000.0)
     y = np.sin(t / 50.0)
@@ -418,7 +448,7 @@ def test_a_setup_shows_each_camera_and_what_to_redo(project):
     shown = text_of(cameras.setup_view(project, "lab"))
     assert "Found on 2026-10-31T10:00:00" in shown and "side.mp4 has no sound" in shown
     assert "up to 2.6 px" in shown and "8 (few: film more where both see it)" in shown
-    assert "1.50, 0.50, 0.00" in shown and "used by this project" not in shown
+    assert "Across, ahead, up of the first camera (cm)" in shown and "150, 50, 0" in shown and "used by this project" not in shown
     project.write_text(project.read_text(encoding="utf-8") + "\npose3d:\n  board:\n    square: 7.45\n", encoding="utf-8")
     assert "pose3d.board differs now" in text_of(cameras.setup_view(project, "lab"))
 
@@ -427,9 +457,13 @@ def test_the_cameras_are_drawn_where_they_stand(project):
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.interface.pages import cameras
 
-    figure = cameras.cameras_figure(read_setup(calibrated(project)), "lab")
+    setup = read_setup(calibrated(project))
+    figure = cameras.cameras_figure(setup, "lab", "cm")
     shown = next(trace for trace in figure.data if trace.name == "cameras")
-    assert list(shown.text) == ["room", "side"] and list(shown.x) == pytest.approx([0.0, 1.5]) and list(shown.y) == pytest.approx([0.0, 0.5])
+    assert list(shown.text) == ["room", "side"] and list(shown.x) == pytest.approx([0.0, 150.0]) and list(shown.y) == pytest.approx([0.0, 50.0])
+    assert figure.layout.scene.xaxis.title.text == "across (cm)"
+    inches = next(trace for trace in cameras.cameras_figure(setup, "lab", "in").data if trace.name == "cameras")
+    assert list(inches.x) == pytest.approx([0.0, 150 / 2.54])
 
 
 def test_the_view_follows_the_first_camera_whatever_axes_a_file_uses(project):
@@ -771,13 +805,16 @@ def test_dragging_a_shape_moves_the_item_behind_it(project):
     config = resolve_config(project)
     rows = room.rows_of(config, "main")
     shapes = room.drawn(config, rows)[4]
-    moved = room.dragged(rows, shapes, "top", {"shapes[2].x0": 60, "shapes[2].x1": 104, "shapes[2].y0": 228, "shapes[2].y1": 272})
+    moved = room.dragged(rows, shapes, "top", {"shapes[2].x0": 60, "shapes[2].x1": 104, "shapes[2].y0": 228, "shapes[2].y1": 272}, "cm")
     assert (moved["people"]["parent"]["x"], moved["people"]["parent"]["y"]) == (82, 250)
-    raised = room.dragged(rows, shapes, "front", {"shapes[1].x0": 140, "shapes[1].x1": 156, "shapes[1].y0": 142, "shapes[1].y1": 158})
+    raised = room.dragged(rows, shapes, "front", {"shapes[1].x0": 140, "shapes[1].x1": 156, "shapes[1].y0": 142, "shapes[1].y1": 158}, "cm")
     assert (raised["cameras"]["room"]["x"], raised["cameras"]["room"]["height"]) == (148, 150)
-    taller = room.dragged(rows, shapes, "side", {"shapes[0].x0": 160, "shapes[0].x1": 210, "shapes[0].y0": 10, "shapes[0].y1": 90})
+    taller = room.dragged(rows, shapes, "side", {"shapes[0].x0": 160, "shapes[0].x1": 210, "shapes[0].y0": 10, "shapes[0].y1": 90}, "cm")
     assert (taller["things"]["table"]["y"], taller["things"]["table"]["height"]) == (185, 90)
-    assert room.dragged(rows, shapes, "top", {"autosize": True}) is None
+    assert room.dragged(rows, shapes, "top", {"autosize": True}, "cm") is None
+    # in metres a drop keeps millimetres, not tenths of a metre
+    metres = room.dragged(rows, shapes, "top", {"shapes[2].x0": 0.6, "shapes[2].x1": 1.044, "shapes[2].y0": 2.28, "shapes[2].y1": 2.72}, "m")
+    assert (metres["people"]["parent"]["x"], metres["people"]["parent"]["y"]) == (0.822, 2.5)
 
 
 def test_the_room_is_saved_beside_the_devices_and_kept_when_the_devices_are_saved(project):

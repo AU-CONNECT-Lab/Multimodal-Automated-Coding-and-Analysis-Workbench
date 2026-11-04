@@ -23,6 +23,7 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
+from macaw.project.room import UNIT_NAMES
 from macaw.project.scale import DEPTH_NOTE, HAND, recording_scale
 from macaw.project.segments import segments_of, summaries
 from macaw.store import _io
@@ -318,7 +319,7 @@ def _decisions(
         people = ", ".join(sorted({item.by for item in scale.measurements if item.by}))
         last = max((item.at for item in scale.measurements if item.at), default="")[:10]
         rows.append({
-            "what": "Pixels to centimetres", "decided": f"{scale.describe()}; exports add centimetres beside pixels, {DEPTH_NOTE}",
+            "what": f"Pixels to {UNIT_NAMES[scale.units]}", "decided": f"{scale.describe()}; exports add {UNIT_NAMES[scale.units]} beside pixels, {DEPTH_NOTE}",
             "by": "settings" if scale.source == HAND else ", ".join(part for part in (people, last) if part), "href": None,
         })
     return rows

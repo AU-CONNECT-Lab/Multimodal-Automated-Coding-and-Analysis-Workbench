@@ -375,8 +375,9 @@ def _frustum(view: geometry.View, lens: float, reach: float, aspect: float = 9 /
     return [centre + sx * half_w * view.right + sy * half_h * view.up for sx, sy in ((-1, 1), (1, 1), (1, -1), (-1, -1))]
 
 
-def dragged(rows: dict, shapes: dict, view: str, change: dict) -> dict | None:
+def dragged(rows: dict, shapes: dict, view: str, change: dict, units: str) -> dict | None:
     """The rows with the item behind a dragged shape moved to where it was dropped; None when nothing was dragged."""
+    places = geometry.DECIMALS[units] + 1
     moved = {}
     for key, value in change.items():
         found = re.fullmatch(r"shapes\[(\d+)\]\.([xy][01])", key)
@@ -390,15 +391,15 @@ def dragged(rows: dict, shapes: dict, view: str, change: dict) -> dict | None:
             continue
         kind, name = shapes[view][index]
         row = rows[kind][name]
-        middle_x = round((ends["x0"] + ends["x1"]) / 2, 1)
-        middle_y = round((ends["y0"] + ends["y1"]) / 2, 1)
+        middle_x = round((ends["x0"] + ends["x1"]) / 2, places)
+        middle_y = round((ends["y0"] + ends["y1"]) / 2, places)
         if view == "top":
             row["x"], row["y"] = middle_x, middle_y
             continue
         row["x" if view == "front" else "y"] = middle_x
         level = "eyes" if kind == "people" else "height"
         # a thing stands on the floor, so where its top was dropped is its height
-        row[level] = round(max(ends["y0"], ends["y1"]), 1) if kind == "things" else max(middle_y, 0.0)
+        row[level] = round(max(ends["y0"], ends["y1"]), places) if kind == "things" else max(middle_y, 0.0)
     return rows
 
 
@@ -428,7 +429,7 @@ def notes(setup: SetupSection, room: RoomSection, units: str) -> list[str]:
         if len(body) > 1:
             near, far = min(body, key=distances.get), max(body, key=distances.get)
             ratio = distances[far] / distances[near]
-            listed = ", ".join(f"{person} {distances[person]:.0f} {units}" for person in body)
+            listed = ", ".join(f"{person} {distances[person]:.{geometry.DECIMALS[units]}f} {units}" for person in body)
             found.append(
                 f"{name}: {listed} away. One pixel spans {ratio:.2f} times as much at {far}'s place as at {near}'s, so a scale "
                 "measured at one of them misstates the other by that much."
@@ -554,7 +555,7 @@ def register(app, config_path: Path) -> None:
     def drag(front, side, top, values, ids, shapes):
         view = {"room-front": "front", "room-side": "side", "room-top": "top"}.get(ctx.triggered_id)
         change = {"front": front, "side": side, "top": top}.get(view) or {}
-        rows = dragged(rows_from(values, ids), shapes or {}, view, change)
+        rows = dragged(rows_from(values, ids), shapes or {}, view, change, resolve_config(config_path).project.units)
         if rows is None:
             return [no_update] * len(ids)
         return [rows[identity["kind"]][identity["name"]][identity["field"]] for identity in ids]

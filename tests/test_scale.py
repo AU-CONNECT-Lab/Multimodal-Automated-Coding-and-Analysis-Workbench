@@ -23,6 +23,7 @@ from macaw.project.scale import (
     pixel_power,
     read_measurements,
     recording_scale,
+    shown_in,
     size_change,
     unusable,
     write_measurements,
@@ -113,6 +114,11 @@ class TestUnits:
         scaled = unit_rows(rows, features, "m", lambda first, second: 0.5).groupby("feature")["value"].apply(list).to_dict()
         assert scaled["hand_distance_m"] == pytest.approx([0.5, 0.2]) and scaled["wrist_speed_3d_m"] == pytest.approx([1.0, 0.5])
         assert in_unit("m/s", "in") == "in/s" and in_unit("px^2", "m") == "m^2"
+
+    def test_a_measure_in_metres_is_read_in_the_projects_unit_and_any_other_as_stored(self):
+        assert shown_in("m/s", "cm") == (100.0, "cm/s") and shown_in("m", "m") == (1.0, "m")
+        assert shown_in("m^2", "in")[1] == "in^2" and shown_in("m^2", "in")[0] == pytest.approx((100 / 2.54) ** 2)
+        assert shown_in("px/s", "cm") == (1.0, "px/s") and shown_in("Hz", "in") == (1.0, "Hz") and shown_in(None, "m") == (1.0, None)
 
     def test_rows_without_a_factor_stay_in_pixels_only(self):
         rows = concat_long_tables([rows_of({"hand_distance": [100.0, 40.0]}), rows_of({"hand_distance": [10.0, 20.0]}, subject="child")])
@@ -349,3 +355,16 @@ def test_the_methods_say_how_many_recordings_were_converted(project):
     assert "holds only at the distance from the camera" in text
     text, _ = render(describe(manifest, config, scaled=(0, 2)), load_references())
     assert "centimetres" not in text
+
+
+def test_the_reports_decision_names_the_projects_unit(project):
+    from macaw.qc.checks import RecordingResults
+    from macaw.qc.report import _decisions
+
+    settings(project, "scale:\n  per_px: 0.5\n")
+    project.write_text(project.read_text(encoding="utf-8").replace("units: cm", "units: in"), encoding="utf-8")
+    config = resolve_config(project)
+    layout = layout_for(config)
+    rows = _decisions(config, layout, RecordingResults(layout, "003"), "003", [], [], [], [], [])
+    row = next(row for row in rows if row["what"].startswith("Pixels to"))
+    assert row["what"] == "Pixels to inches" and "in per pixel 0.5" in row["decided"] and "exports add inches beside pixels" in row["decided"]

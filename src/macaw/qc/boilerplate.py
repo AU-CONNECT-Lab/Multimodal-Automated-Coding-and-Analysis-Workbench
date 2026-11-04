@@ -640,7 +640,7 @@ def _gestures_3d(config, spec, names) -> str:
     gestures = config.kinematics.gestures
     still = "both wrists and both elbows" if gestures.holds == "both_hands" else "wrist and elbow"
     return (
-        f"The same measures of each coded gesture were also taken from the wrists placed in 3D, with speeds in m/s, "
+        f"The same measures of each coded gesture were also taken from the wrists placed in 3D, with speeds in {config.project.units}/s, "
         f"submovements rising at least {gestures.peak_prominence_3d:g} {config.project.units}/s above their surroundings and holds where {still} "
         f"moved slower than {gestures.still_speed_3d:g} {config.project.units}/s. The area, the levels and the gesture spaces were taken in each "
         "person's own frontal plane, set by their hips and shoulders, so that they do not depend on where the cameras stood."

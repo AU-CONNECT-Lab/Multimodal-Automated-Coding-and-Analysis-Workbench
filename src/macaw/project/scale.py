@@ -202,6 +202,14 @@ def in_unit(unit: str, units: str) -> str:
     return units + unit[2 if unit.startswith("px") else 1:]
 
 
+def shown_in(unit: str | None, units: str) -> tuple[float, str | None]:
+    """The factor and unit a measure is read in: one in metres in the project's unit, any other as stored."""
+    power = metre_power(unit)
+    if not power:
+        return 1.0, unit
+    return (CM_PER_METRE / CM_PER_UNIT[units]) ** power, in_unit(unit, units)
+
+
 def unit_rows(rows: pd.DataFrame, features: dict[str, str | None], units: str, factor_of=None) -> pd.DataFrame:
     """A copy of every metre feature's rows, and of every pixel feature's rows where factor_of gives a scale, in the
     project's unit, each named <feature>_<unit>. factor_of gives the cm per pixel for a (subject_id, subject_id_b)

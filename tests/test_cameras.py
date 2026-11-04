@@ -470,6 +470,13 @@ def test_the_viewer_draws_each_person_and_the_cameras(seated, tmp_path):
     assert {"parent", "child", "cameras"} <= names
     shown = next(trace for trace in graph.figure.data if trace.name == "cameras")
     assert list(shown.text) == ["left", "right"]
+    from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, read_setup
+    from macaw.extractors.video.pose.triangulate import calibration_path
+
+    setup = read_setup(calibration_path(seated.config), seated.config.pose3d.units)
+    baseline_m = np.linalg.norm(setup.cameras[1].position() - setup.cameras[0].position()) * UNITS_TO_METRES[setup.units]
+    apart = np.linalg.norm([shown.x[1] - shown.x[0], shown.y[1] - shown.y[0], shown.z[1] - shown.z[0]])
+    assert apart == pytest.approx(baseline_m * 100) and graph.figure.layout.scene.zaxis.title.text == "up (cm)"
 
 
 GESTURES = """kinematics:
@@ -574,4 +581,4 @@ class TestGestures3D:
         for spec in Gesture3DExtractor(config).run(build_recording("003", config), tmp_path).specs:
             manifest.add(spec)
         text, _ = render(describe(manifest, config), load_references())
-        assert "at least 5 cm/s" in text and "slower than 2 cm/s" in text and "frontal plane" in text
+        assert "speeds in cm/s" in text and "at least 5 cm/s" in text and "slower than 2 cm/s" in text and "frontal plane" in text

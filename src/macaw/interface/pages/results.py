@@ -14,6 +14,9 @@ from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
 from macaw.project.layout import layout_for
+from macaw.project.manifest import read_manifest
+from macaw.project.room import CM_PER_UNIT
+from macaw.project.scale import CM_PER_METRE, shown_in
 from macaw.project.segments import segments_of, summaries
 from macaw.qc.checks import RecordingResults
 from macaw.qc.downsample import min_max_downsample
@@ -89,6 +92,8 @@ def view(config_path: Path, rid: str, source: str, feature: str):
     rows = rows.assign(who=_who(rows))
     if set(rows["scale"].astype(str)) == {Scale.RECORDING.value}:
         return per_person(config, rid, source, feature, rows)
+    factor, unit = measure_unit(config, feature)
+    rows = rows.assign(value=rows["value"].astype(float) * factor)
     figure = go.Figure()
     for index, (name, group) in enumerate(rows.sort_values("t_start").groupby("who", sort=True)):
         t, y = min_max_downsample(group["t_start"].to_numpy(dtype=float), group["value"].to_numpy(dtype=float), config.qc.report_downsample_px)
@@ -99,9 +104,20 @@ def view(config_path: Path, rid: str, source: str, feature: str):
     figure.update_layout(
         template="plotly_white", height=420, margin={"l": 50, "r": 20, "t": 20, "b": 40},
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": "#8b8b90"},
-        xaxis={"title": "recording time (s)", **axis}, yaxis={"title": feature, **axis}, legend={"orientation": "h", "y": 1.08},
+        xaxis={"title": "recording time (s)", **axis}, yaxis={"title": _titled(feature, unit), **axis}, legend={"orientation": "h", "y": 1.08},
     )
     return dcc.Graph(figure=figure, config={"displaylogo": False})
+
+
+def measure_unit(config, feature: str) -> tuple[float, str | None]:
+    """The factor and unit a measure is shown in, from the manifest: a length in metres in the project's unit."""
+    path = layout_for(config, create=False).manifest_path
+    spec = read_manifest(path).specs.get(feature) if path.is_file() else None
+    return shown_in(spec.unit if spec else None, config.project.units)
+
+
+def _titled(name: str, unit: str | None) -> str:
+    return name if unit is None else f"{name} ({unit})"
 
 
 def _who(rows):
@@ -116,12 +132,14 @@ def per_person(config, rid: str, source: str, feature: str, rows):
     parts = summaries(config, rid)
     parts = parts[(parts["source"].astype(str) == source) & (parts["feature"].astype(str) == feature)] if not parts.empty else parts
     named = [segment.name for segment in segments_of(config, rid) if (parts["segment"].astype(str) == segment.name).any()]
+    factor, unit = measure_unit(config, feature)
     if not named:
-        return ui.table(["Person", feature], [[name, f"{value:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={feature})
-    within = {name: dict(zip(_who(own), own["value"])) for name, own in parts.groupby("segment", observed=True)}
-    columns = ["Person", "Whole recording", *named]
+        head = _titled(feature, unit)
+        return ui.table(["Person", head], [[name, f"{value * factor:.4g}"] for name, value in zip(rows["who"], rows["value"])], numeric={head})
+    within = {name: dict(zip(_who(own), own["value"] * factor)) for name, own in parts.groupby("segment", observed=True)}
+    columns = ["Person", _titled("Whole recording", unit), *named]
     table = [
-        [name, f"{value:.4g}", *(_shown_value(within.get(segment, {}).get(name)) for segment in named)]
+        [name, f"{value * factor:.4g}", *(_shown_value(within.get(segment, {}).get(name)) for segment in named)]
         for name, value in zip(rows["who"], rows["value"])
     ]
     return ui.table(columns, table, numeric=set(columns[1:]))
@@ -173,7 +191,9 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
         setup = read_setup(calibration_path(config), config.pose3d.units)
     except Exception:   # the cameras are context; the people still show without them, in the file's own axes
         setup = None
-    place = (lambda xyz: _shown(in_first_camera(setup, xyz))) if setup else _shown
+    units = config.project.units
+    per = CM_PER_METRE / CM_PER_UNIT[units]
+    place = (lambda xyz: _shown(in_first_camera(setup, xyz) * per)) if setup else (lambda xyz: _shown(np.asarray(xyz) * per))
     times = np.sort(points["t"].unique())
     moment = points[points["t"] == times[np.abs(times - at_s).argmin()]]
     figure = go.Figure()
@@ -199,12 +219,18 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
         scene={
             # a little further out than the default, so cameras at the edge of the room stay in view
             "camera": {"eye": {"x": 1.7, "y": 1.7, "z": 1.1}},
-            "aspectmode": "data", "xaxis": {"title": "across (m)", **axis}, "yaxis": {"title": "ahead of the first camera (m)", **axis},
-            "zaxis": {"title": "up (m)", **axis},
+            **axes_3d(units, axis),
         },
         uirevision=rid,
     )
     return dcc.Graph(figure=figure, config={"displaylogo": False})
+
+
+def axes_3d(units: str, axis: dict) -> dict:
+    return {
+        "aspectmode": "data", "xaxis": {"title": f"across ({units})", **axis},
+        "yaxis": {"title": f"ahead of the first camera ({units})", **axis}, "zaxis": {"title": f"up ({units})", **axis},
+    }
 
 
 def register(app, config_path: Path) -> None:
