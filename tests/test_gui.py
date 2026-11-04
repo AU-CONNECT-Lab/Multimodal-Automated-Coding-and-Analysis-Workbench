@@ -802,3 +802,26 @@ def test_the_room_is_saved_beside_the_devices_and_kept_when_the_devices_are_save
     assert kept.things["toy"].height == 75 and kept.people["child"].eyes == 80.5
     with pytest.raises(MacawError, match="not saved yet"):
         room.save_room(project, "home", rows)
+
+
+def test_the_camera_sketch_draws_the_room_from_where_the_sliders_put_the_camera(project, monkeypatch):
+    from macaw.config.schema import RoomSection
+    from macaw.interface.pages import room, sketch
+
+    placed_project(project)
+    config = resolve_config(project)
+    laid = RoomSection.model_validate(room.room_of(room.rows_of(config, "main")))
+    frame = {"uri": "data:image/jpeg;base64,", "width": 640, "height": 360, "rid": "003", "camera": "room", "at": 0.0}
+    camera = sketch.placed_with(laid, "room", {"height": 150, "tilt": None, "facing": 0, "lens": 70})
+    assert camera.height == 150 and camera.tilt == 0 and camera.at == (150, 0)
+    figure = sketch.sketch_figure(frame, laid, camera, ["parent", "child"], "cm")
+    drawn = [trace for trace in figure.data if trace.type == "scatter" and trace.mode == "lines"]
+    assert len(drawn) > 6 and any(trace.line.color == "#1d4e89" for trace in drawn)
+    # the parent, a metre to the camera's left and two metres ahead, lands left of the middle at a 70 degree lens
+    ring = next(trace for trace in drawn if trace.line.color == "#1d4e89" and len(trace.x) > 2)
+    assert 0 < np.nanmean(ring.x) < 320
+    assert sketch.placed_with(laid, "side", {}) is None
+    app = create_app(project)
+    use = callback(app, next(key for key, value in app.callback_map.items() if any(item["id"] == "sketch-use" for item in value["inputs"])))
+    ids = [{"type": room.NUM, "kind": "cameras", "name": "room", "field": field} for field in ("height", "tilt", "x")]
+    assert use(1, 150, 0, 20, 80, [120, 0, 150], ids, "room") == [150, 20, 150]
