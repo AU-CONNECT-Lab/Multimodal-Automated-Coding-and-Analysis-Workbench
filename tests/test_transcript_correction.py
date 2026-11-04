@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pandas as pd
@@ -9,11 +10,12 @@ from typer.testing import CliRunner
 from macaw.cli.main import app
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.exceptions import EafError
-from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, write_transcript
+from macaw.extractors.audio.content.asr import CORRECTED_CHECK, TRANSCRIPT_NAME, ASRExtractor, write_transcript
 from macaw.extractors.prep import PrepInfo
 from macaw.interop.transcript_eaf import export_transcript_eaf, read_transcript_eaf
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from macaw.qc.boilerplate import transcripts_corrected
 
 pytest.importorskip("pympi")
 
@@ -90,3 +92,13 @@ def test_without_a_correction_the_cache_key_reads_only_files_that_exist(project,
     corrected.parent.mkdir(parents=True, exist_ok=True)
     corrected.write_text("<ANNOTATION_DOCUMENT/>", encoding="utf-8")
     assert extractor.inputs_for(project.recording) == [corrected]
+
+
+def test_the_methods_count_recordings_whose_last_run_read_a_correction(project):
+    path = layout_for(project.resolved).warnings_path("003", ASRExtractor.name)
+    assert transcripts_corrected(project.resolved) == (0, 0)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([{"check": "asr_confidence"}]), encoding="utf-8")
+    assert transcripts_corrected(project.resolved) == (0, 1)
+    path.write_text(json.dumps([{"check": CORRECTED_CHECK}]), encoding="utf-8")
+    assert transcripts_corrected(project.resolved) == (1, 1)

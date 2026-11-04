@@ -123,6 +123,19 @@ def test_write_methods_writes_the_text_and_only_the_cited_entries(tmp_path):
     assert bib.read_text(encoding="utf-8").count("@") == 1
 
 
+def test_a_corrected_transcript_is_said_right_after_how_speech_was_transcribed():
+    ran = manifest(spec("text.asr", "n_words", "whisperx", "3.4"), spec("text.features", "mlu_words"))
+    text, _ = render(describe(ran, config(), corrected=(1, 2)), load_references())
+    assert "removed as cross-talk. For 1 of the 2 recordings, the recognised transcript was then corrected by hand" in text
+    text, _ = render(describe(ran, config(), corrected=(2, 2)), load_references())
+    assert "For each recording, the recognised transcript was then corrected by hand" in text
+    for corrected in ((0, 2), None):
+        text, _ = render(describe(ran, config(), corrected=corrected), load_references())
+        assert "corrected by hand" not in text
+    text, _ = render(describe(manifest(spec("text.features", "mlu_words")), config(), corrected=(1, 1)), load_references())
+    assert "corrected by hand" not in text
+
+
 def test_a_shared_microphone_is_described_only_when_one_was_diarized():
     own = render(describe(manifest(spec("text.diarize", "n_shared_tracks_diarized"), spec("text.asr", "n_words", "whisperx", "3.8")), config()), load_references())[0]
     assert "diarized" not in own and "own track" in own

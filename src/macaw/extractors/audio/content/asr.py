@@ -38,6 +38,8 @@ BACKEND_GROUP = "asr"
 SHARED_ASR = "text.shared_asr"
 
 TRANSCRIPT_NAME = "transcript.parquet"
+# the warning that says a run used a person's corrected transcript; the Methods text counts it
+CORRECTED_CHECK = "asr_corrected"
 SHARED_UTTERANCES_NAME = "shared_utterances.parquet"
 SHARED_WORDS_NAME = "shared_words.parquet"
 # what each voice on a shared microphone said and how high it is, before anyone names it
@@ -464,7 +466,7 @@ class ASRExtractor(Extractor):
         stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.is_file() else {}
         warnings.append(
             QCWarning(
-                check="asr_corrected", recording_id=rid, subject_id=None, severity="info",
+                check=CORRECTED_CHECK, recording_id=rid, subject_id=None, severity="info",
                 message=f"the transcript is the one {stamp.get('by', 'a person')} corrected; speech was not recognised again",
             )
         )

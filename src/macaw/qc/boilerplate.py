@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from importlib.resources import files
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from macaw import __version__
+from macaw.extractors.audio.content.asr import CORRECTED_CHECK, ASRExtractor
 from macaw.extractors.audio.content.diarization import others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
@@ -47,15 +49,32 @@ def recordings_scaled(config_path: Path, config) -> tuple[int, int]:
     return found, len(recording_ids)
 
 
+def transcripts_corrected(config) -> tuple[int, int]:
+    """(recordings whose last text.asr run read a corrected transcript, recordings text.asr ran on)."""
+    from macaw.execution.runner import resolve_recordings
+    from macaw.project.layout import layout_for
+
+    layout = layout_for(config, create=False)
+    corrected = transcribed = 0
+    for rid in resolve_recordings(config, None):
+        path = layout.warnings_path(rid, ASRExtractor.name)
+        if not path.is_file():
+            continue
+        transcribed += 1
+        corrected += any(item.get("check") == CORRECTED_CHECK for item in json.loads(path.read_text(encoding="utf-8")))
+    return corrected, transcribed
+
+
 def load_references() -> dict[str, dict]:
     return yaml.safe_load(files("macaw.qc").joinpath("references.yaml").read_text(encoding="utf-8"))
 
 
 def write_methods(
     manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
+    corrected: tuple[int, int] | None = None,
 ) -> tuple[Path, Path]:
     references = load_references()
-    text, used = render(describe(manifest, config, scaled=scaled, looked=looked), references)
+    text, used = render(describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected), references)
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
     methods.write_text(text, encoding="utf-8")
@@ -66,8 +85,9 @@ def write_methods(
 
 def describe(
     manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
+    corrected: tuple[int, int] | None = None,
 ) -> dict[str, list[str]]:
-    """scaled is (recordings with a scale, recordings), when known; looked is what qc.look.project_summary gives."""
+    """scaled and corrected are what recordings_scaled and transcripts_corrected give; looked is qc.look.project_summary's."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
         by_extractor.setdefault(spec.extractor, []).append(spec)
@@ -79,6 +99,8 @@ def describe(
         text = writer(config, specs[0], {spec.name for spec in specs})
         if not text:
             continue
+        if name == "text.asr" and corrected and corrected[0]:
+            text += " " + _corrected(*corrected)
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
@@ -121,6 +143,14 @@ def _segments(found: dict) -> str:
         "fell, and turns, pauses and floor transfers were formed again from what remained. Speech recognition, the "
         "separation of voices, the tracking of people and the decisions about who was who were made once over the whole "
         "recording and held in every segment."
+    )
+
+
+def _corrected(corrected: int, transcribed: int) -> str:
+    which = "each recording" if corrected == transcribed else f"{corrected} of the {transcribed} recordings"
+    return (
+        f"For {which}, the recognised transcript was then corrected by hand, and the corrected transcript, which times "
+        "each utterance but not each word, replaced it in every step that followed."
     )
 
 
