@@ -51,6 +51,7 @@
 - The Setup page is one editor for the whole setup: the room's size first, a list of people, devices and things pinned on a plan or dropped into a view, the room in 3D with handles to move, turn, tilt and raise them, three flat views drawn for a paper or as the model, the chosen one's settings with what a camera sees, and the room seen from a camera over a frame of its file. The workbench fills the window's width.
 - The workbench comes in three styles chosen on the settings page for each browser (Lab, the default, white with a teal accent; Playroom, warm with a wooden room; Blueprint, navy on gridded paper), their fonts shipped with it, one dark palette over any of them; the Setup page's 3D view keeps the whole room in view when it is narrow.
 - The Setup page places calibrated cameras in its room from the calibration (From the calibration, or macaw place-cameras), tied to the room by whatever was measured there (camera places, heights, facings, tilts) and by the board lying flat on the floor or a table at a moment of the board clips (Board lying flat, or macaw calibration-floor); what is still missing is named and values that do not agree are marked; a camera tilt left blank is no longer taken for level.
+- The workbench opens straight in the style and light or dark chosen, its pages explain themselves in one short sentence each, and in the plan a name too long for its circle sits behind the person, clear of the facing arrow.
 
 ## [0.1.0-alpha] – 2026-08-13
 
