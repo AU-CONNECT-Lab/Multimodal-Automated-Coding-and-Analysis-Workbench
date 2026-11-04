@@ -37,11 +37,12 @@ Reviewing the output works the same way. The quality report points at the frames
 - Body points exported per recording, in pixels and in 3D.
 - Who looks at whom and at which named things, from the picture or from where the room places people and things, mutual gaze, and labelled frames to check it.
 - Named segments of a recording, each with every recording-level measure and the turn checks worked out again as if the recording had been cut there, marked on the video in the workbench.
+- A codebook made clearer by the language model from the units a person and the model coded differently, or drafted from the transcripts, and transcript lines the model marks as possibly misheard, each for a person to read and decide.
 
 ### 0.1.0-alpha
 - Framework scaffold.
 
 ## Milestones
 
-- A language-model observation pass before coding, and transcript cleanup.
+- A language-model observation pass before coding.
 - 3D from a single camera or a depth camera, with body models suited to children; the storage schema reserves room for it.

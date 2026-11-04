@@ -52,6 +52,7 @@
 - The workbench comes in three styles chosen on the settings page for each browser (Lab, the default, white with a teal accent; Playroom, warm with a wooden room; Blueprint, navy on gridded paper), their fonts shipped with it, one dark palette over any of them; the Setup page's 3D view keeps the whole room in view when it is narrow.
 - The Setup page places calibrated cameras in its room from the calibration (From the calibration, or macaw place-cameras), tied to the room by whatever was measured there (camera places, heights, facings, tilts) and by the board lying flat on the floor or a table at a moment of the board clips (Board lying flat, or macaw calibration-floor); what is still missing is named and values that do not agree are marked; a camera tilt left blank is no longer taken for level.
 - The workbench opens straight in the style and light or dark chosen, its pages explain themselves in one short sentence each, and in the plan a name too long for its circle sits behind the person, clear of the facing arrow.
+- The language model proposes a clearer codebook from the units a person and the model coded differently (macaw codebook refine, or the Agreement page), drafts a first one from the transcripts (macaw codebook draft), and marks transcript lines that look misheard for a person to check (macaw transcript check, or the Review page), never changing the codebook in use or the transcript.
 
 ## [0.1.0-alpha] – 2026-08-13
 
