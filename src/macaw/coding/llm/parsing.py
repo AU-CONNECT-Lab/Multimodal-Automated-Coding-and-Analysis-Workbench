@@ -34,6 +34,15 @@ def parse_annotation_response(
     return pd.DataFrame({"unit_id": list(labels), "label": list(labels.values()), "reason": list(reasons.values())})
 
 
+def answer_object(text: str) -> dict:
+    """The JSON object an answer holds, or an empty one when there is none."""
+    try:
+        parsed = json.loads(repair_json(text))
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _items(text: str) -> list:
     try:
         parsed = json.loads(repair_json(text))

@@ -49,21 +49,7 @@ def build_annotation_prompt(
         )
     if notes.strip():
         lines.append(f"Notes from the researchers: {notes.strip()}")
-    lines += [f"Codebook: {codebook.name}. Each unit gets exactly one code.", ""]
-    for definition in codebook.codes:
-        lines.append(f"## {definition.code}")
-        if definition.description:
-            lines.append(definition.description)
-        for title, items in (
-            ("Criteria", definition.criteria),
-            ("Examples of this code", definition.positive_examples),
-            ("Not this code", definition.negative_examples),
-            ("Boundary cases", definition.boundary_cases),
-        ):
-            if items:
-                lines.append(f"{title}:")
-                lines.extend(f"- {item}" for item in items)
-        lines.append("")
+    lines += codebook_lines(codebook)
     if examples is not None and not examples.empty:
         lines.append("Units people coded in other conversations, as examples:")
         for row in examples.itertuples(index=False):
@@ -97,6 +83,25 @@ def build_annotation_prompt(
         for row in units.itertuples(index=False)
     )
     return "\n".join(lines), "\n".join(user)
+
+
+def codebook_lines(codebook: Codebook) -> list[str]:
+    lines = [f"Codebook: {codebook.name}. Each unit gets exactly one code.", ""]
+    for definition in codebook.codes:
+        lines.append(f"## {definition.code}")
+        if definition.description:
+            lines.append(definition.description)
+        for title, items in (
+            ("Criteria", definition.criteria),
+            ("Examples of this code", definition.positive_examples),
+            ("Not this code", definition.negative_examples),
+            ("Boundary cases", definition.boundary_cases),
+        ):
+            if items:
+                lines.append(f"{title}:")
+                lines.extend(f"- {item}" for item in items)
+        lines.append("")
+    return lines
 
 
 def _describe(row, show: Sequence[str]) -> str:
