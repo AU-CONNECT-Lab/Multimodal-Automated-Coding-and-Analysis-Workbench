@@ -168,7 +168,7 @@ From the command line, the same is done with `macaw name-people -r dyad01 --came
 
 {bdg-warning}`You do this`
 
-The settings most studies adjust are arranged as a form in six groups. All other settings can be edited as text in the *project.yaml* box below the form. On saving, MACAW validates the settings and lists the finished results that the change would make out of date.
+The settings most studies adjust are arranged as a form in six groups. All other settings can be edited as text in the *project.yaml* box below the form; a setting the file leaves out takes its default, and `macaw config show` lists every setting with the value in effect. On saving, MACAW validates the settings and lists the finished results that the change would make out of date.
 
 Project
 : Location of the recordings, the number of participants per recording and their roles. *Task starts at* and *Task ends at*, in seconds, restrict the analysis to the task period, for example to exclude the experimenter's instructions.
