@@ -129,6 +129,16 @@ class SetupSection(_Section):
         shared = sorted(name for name, device in self.devices().items() if len(set(device.hears)) > 1)
         if len(shared) > 1:
             raise ValueError(f"{', '.join(shared)} all carry several people's voices; voices are separated on one, so say it of one of them")
+        # a person's face and gaze are read from one picture; several cameras on a body serve three dimensions
+        for use in ("face", "gaze"):
+            claimed: dict[str, list[str]] = {}
+            for name, camera in self.cameras.items():
+                for person in set(getattr(camera, use)):
+                    claimed.setdefault(person, []).append(name)
+            twice = {person: names for person, names in claimed.items() if len(names) > 1}
+            if twice:
+                person, names = sorted(twice.items())[0]
+                raise ValueError(f"{' and '.join(sorted(names))} are both read for {person}'s {use}; say it of one of them")
         return self
 
     def devices(self) -> dict[str, CameraDevice | MicrophoneDevice]:
@@ -202,8 +212,8 @@ class PoseSection(_Section):
     review: Literal["always", "flagged", "skip"] = "flagged"
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
-    identity_anchors: dict[str, float] = Field(default_factory=dict)
-    read_shared: bool = False
+    # on a camera nobody clicked, suggest who is who from head motion where people are named, else their own mic
+    suggest_names: bool = False
 
 
 class MeasureSection(_Section):

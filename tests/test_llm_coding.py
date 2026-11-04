@@ -28,6 +28,7 @@ from macaw.execution.dag import build_dag
 from macaw.project.layout import layout_for
 from macaw.store.annotations import read_annotations, write_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+from setup_helpers import video_file
 
 CODEBOOK = Codebook(
     name="acts",
@@ -703,8 +704,8 @@ class TestFrames:
         # the child's camera stops at 5.8 s of its own clock, 7.8 s of the recording's
         monkeypatch.setattr(module, "video_length", lambda path: {"room.mp4": 100.0, "child.mp4": 5.8}[path.name])
         media = [
-            MediaFile(tmp_path / "room.mp4", "video", duration_s=100.0, offset_s=1.0),
-            MediaFile(tmp_path / "child.mp4", "video", subject_id="child", duration_s=50.0, offset_s=-2.0),
+            video_file(tmp_path / "room.mp4", ["mother"], uses=("body",), duration_s=100.0, offset_s=1.0),
+            video_file(tmp_path / "child.mp4", ["child"], duration_s=50.0, offset_s=-2.0),
             MediaFile(tmp_path / "a.wav", "audio", duration_s=200.0),
         ]
         recording = Recording("r1", tmp_path, subjects=[Subject("mother"), Subject("child")], media=media)

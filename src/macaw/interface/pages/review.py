@@ -104,7 +104,7 @@ def _people_on_camera(layout, results, rid):
         people = "; ".join(f"{person['subject']}: tracks {person['tracks']}" for person in camera["people"])
         status = (
             ui.pill("kept by " + camera["accepted"].split(" ")[0], "ok") if camera["accepted"]
-            else ui.pill("in doubt", "warn") if camera["doubt"] else ui.pill("automatic")
+            else ui.pill("in doubt", "warn") if camera["doubt"] else ui.pill("named", "ok")
         )
         blocks.append(
             html.Div(
@@ -113,9 +113,8 @@ def _people_on_camera(layout, results, rid):
                     html.P(people),
                     html.Div(
                         [
-                            _button("Keep", "accept-owner", camera["file"], small=True),
-                            dcc.Input(id={"type": "review-rename", "target": camera["file"]}, placeholder="SHOWN=RIGHT, ...", className="rename"),
-                            _button("Rename", "rename-owner", camera["file"], small=True),
+                            _button("Keep as it stands", "accept-owner", camera["file"], small=True),
+                            dcc.Link("Click the people again on the Setup page", href=f"/setup?recording={rid}&camera={camera['file']}", className="button small"),
                         ],
                         className="buttons",
                     ),
@@ -135,7 +134,8 @@ def _people_on_camera(layout, results, rid):
         *blocks,
         html.Div(_button("Draw review frames", "render"), className="buttons"),
         html.Div(thumbs, className="thumbs"),
-        desc="Each box in the review frames carries the name it was given and its track id. Rename corrects who is who on one camera: P1=P3,P3=P1.",
+        desc="Each box in the review frames carries the name it was given and its track id. A wrong name is put right by clicking "
+             "the people again, at a moment where they are clear, on the Setup page.",
     )
 
 
@@ -176,7 +176,7 @@ def _model_look(config, layout, rid):
 
 def _voices(config, layout, recording):
     from macaw.extractors.audio.content.diarization import DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
-    from macaw.extractors.audio.content.speaker_id import read_voice_material, suggest_voices, suggested_people, telling_lines
+    from macaw.extractors.audio.content.speaker_id import offered_suggestion, read_voice_material, suggested_people, telling_lines
 
     rid = recording.recording_id
     voices = read_voices(config, rid)
@@ -184,7 +184,7 @@ def _voices(config, layout, recording):
         return None
     named = read_voice_owners(layout.voice_owners_path(rid))
     try:
-        suggestion = suggest_voices(config, recording) or {}
+        suggestion = offered_suggestion(config, recording) or {}
     except Exception:   # a suggestion that cannot be made leaves the choice to the person
         suggestion = {}
     suggested, why = suggestion.get("people", {}), suggested_people(suggestion) if suggestion else {}
@@ -571,7 +571,7 @@ def _coding(layout, rid: str):
 
 
 def action_command(
-    config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, renames: dict, scale: dict | None = None,
+    config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, scale: dict | None = None,
     gaze: dict | None = None,
 ) -> list[str]:
     def command(*sub, extra=()):
@@ -602,8 +602,6 @@ def action_command(
         return command("accept-offset", extra=["--device", target, *by_flag])
     if action == "accept-owner":
         return command("accept-owner", extra=["--camera", target, *by_flag])
-    if action == "rename-owner":
-        return command("accept-owner", extra=["--camera", target, "--rename", renames.get(target) or "", *by_flag])
     if action == "accept-voices":
         return command("accept-voices", extra=["--rename", ",".join(f"{label}={who}" for label, who in sorted(voices.items())), *by_flag])
     if action == "render":
@@ -700,8 +698,6 @@ def register(app, config_path: Path) -> None:
         State("review-by", "value"),
         State({"type": "voice-pick", "label": ALL}, "value"),
         State({"type": "voice-pick", "label": ALL}, "id"),
-        State({"type": "review-rename", "target": ALL}, "value"),
-        State({"type": "review-rename", "target": ALL}, "id"),
         State({"type": PICK, "key": ALL}, "value"),
         State({"type": PICK, "key": ALL}, "id"),
         State({"type": GAZE_T, "key": ALL}, "data"),
@@ -714,7 +710,7 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
         State({"type": SCALE_PERSON, "key": ALL}, "value"),
     )
-    def update(rid, _refresh, clicks, upload, filename, coding, coding_name, by, picks, pick_ids, renames, rename_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
+    def update(rid, _refresh, clicks, upload, filename, coding, coding_name, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
         trigger = ctx.triggered_id
         message = None
         if isinstance(trigger, dict) and trigger.get("type") == ACT:
@@ -731,7 +727,7 @@ def register(app, config_path: Path) -> None:
                     return no_update, ui.note("Show a frame and say whom or what someone looks at first.", "warn")
                 message = []
                 for person, value in looked.items():
-                    argv = action_command(config_path, rid, action, person, by, {}, {}, gaze={"t": gaze_t[0], "looks_at": value})
+                    argv = action_command(config_path, rid, action, person, by, {}, gaze={"t": gaze_t[0], "looks_at": value})
                     message += [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
                 return body(config_path, rid), message
             if action == "transcript-export":
@@ -741,9 +737,8 @@ def register(app, config_path: Path) -> None:
                 argv = ["macaw", "review", "-c", str(config_path), "--apply", str(review_file(config_path, rid, by, chosen))]
             else:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
-                named = {item["target"]: value for item, value in zip(rename_ids, renames)}
                 measured["at"] = float(measured["at"] or 0.0)
-                argv = action_command(config_path, rid, action, target, by, voices, named, measured)
+                argv = action_command(config_path, rid, action, target, by, voices, measured)
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         elif trigger == "review-upload" and upload:
             path = _uploaded(config_path, upload, filename or f"{rid}.eaf")

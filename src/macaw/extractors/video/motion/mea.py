@@ -34,7 +34,7 @@ class MEAExtractor(Extractor):
     version = "0.2.0"
     scale = Scale.FRAME
     group = "motion"
-    config_sections = ("motion", "segment", "video")
+    config_sections = ("motion", "segment", "video", "setup.cameras")
     requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
 
     def check_available(self) -> None:
@@ -49,27 +49,21 @@ class MEAExtractor(Extractor):
         return paths + ([offsets] if offsets.is_file() else [])
 
     def _regions(self, recording: Recording) -> dict[str, tuple[object, tuple[int, int, int, int]]]:
-        """subject -> (the video their region is drawn on, the region): their own camera, else the room's."""
-        videos = sorted((item for item in recording.media if item.kind == "video"), key=lambda item: str(item.path))
-        if not videos:
-            raise UnreadableMediaError(f"{recording.recording_id}: no video to read")
-        own = {}
-        for item in videos:
-            if item.subject_id is not None:
-                own.setdefault(item.subject_id, item)
-        shared = [item for item in videos if item.subject_id is None]
+        """subject -> (the video their region is drawn on, the region): the camera the setup reads their body from."""
+        views = recording.views("body")
+        if not views:
+            raise UnreadableMediaError(f"{recording.recording_id}: the setup reads no camera here for anyone's body")
         missing = [subject.subject_id for subject in recording.subjects if subject.roi is None]
         if missing:
             raise ConfigError(
                 f"{recording.recording_id}: motion.rois has no region for {', '.join(missing)}; draw one per "
-                "person as subject_id: [x, y, width, height] in pixels of their own camera, or of the shared "
-                "camera when they have none"
+                "person as subject_id: [x, y, width, height] in pixels of the camera their body is read from"
             )
         regions = {}
         for subject in recording.subjects:
-            video = own.get(subject.subject_id) or (shared[0] if shared else None)
+            video = views.get(subject.subject_id)
             if video is None:
-                raise ConfigError(f"{recording.recording_id}: no camera shows {subject.subject_id}")
+                raise ConfigError(f"{recording.recording_id}: the setup reads no camera for the body of {subject.subject_id}")
             regions[subject.subject_id] = (video, tuple(int(value) for value in subject.roi))
         return regions
 

@@ -118,6 +118,12 @@ class JudgementExtractor(Extractor):
             inputs += [offsets] if offsets.is_file() else []
         return inputs
 
+    def extra_key(self, recording: Recording) -> str:
+        """Shown frames come from each speaker's body camera, so the setup's choice of it decides them."""
+        if FRAMES not in set(self.settings(self.config)[1].show):
+            return ""
+        return ",".join(f"{person}={item.name}" for person, item in sorted(recording.views("body").items()))
+
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
         return backend.name, backend.model_version()
@@ -430,13 +436,13 @@ def cloud_notice(backend: LLMBackend, cfg: LLMSection) -> str | None:
 
 
 def unit_frames(config: MacawConfig, recording: Recording, units: pd.DataFrame, directory: Path) -> dict[str, list[bytes]]:
-    """Each unit's frames from the camera that films its speaker, else from the recording's main video. A moment
-    the video does not reach, as when the camera stopped before the microphones, gives no frame."""
+    """Each unit's frames from the camera the setup reads its speaker's body from, else from the recording's main
+    video. A moment the video does not reach, as when the camera stopped before the microphones, gives no frame."""
     apply_prep_timing(config, recording)
     videos = [item for item in recording.media if item.kind == "video"]
     if not videos:
         raise UnreadableMediaError(f"{recording.recording_id}: coding.llm.show has frames, but the recording has no video")
-    own = {item.subject_id: item for item in videos if item.subject_id is not None}
+    own = recording.views("body")
     main = recording.reference_media(videos)
     lengths = {}
     frames = {}

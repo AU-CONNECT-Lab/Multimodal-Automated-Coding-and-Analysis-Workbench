@@ -168,9 +168,12 @@ SAME_PLACE = 0.5
 SAME_SIZE = 2.0
 # detections either side of a break that say where the person was
 EDGE_DETECTIONS = 10
-# a choice is in doubt when someone left out is this present relative to who was chosen
+# naming is in doubt when someone nobody clicked on is this present relative to those named
 RIVAL_SHARE = 0.5
-MIN_OWNER_COVERAGE = 0.5
+# a click falls on a person whose box, widened by this share of its size, holds it
+CLICK_REACH = 0.15
+# on two people at once, it names the one with a point nearer than this share of the other's distance
+NEAREST_SHARE = 0.5
 # frames closer than this are one span when pointing a person at where to look
 SPAN_GAP_S = 1.0
 
@@ -197,10 +200,14 @@ class Chain:
 
 
 @dataclass
-class OwnerChoice:
-    tracks: list[int]
-    doubt: str | None = None
-    spans: list[tuple[float, float]] | None = None
+class Click:
+    """A person said who is where: at a moment of one camera's file, on a point of its picture."""
+
+    person: str
+    at: float
+    t: float
+    x: float
+    y: float
 
 
 @dataclass
@@ -311,116 +318,110 @@ def join_fragments(keypoints: pd.DataFrame) -> list[Chain]:
     return sorted(chains, key=lambda chain: chain.score, reverse=True)
 
 
-def choose_camera_owner(keypoints: pd.DataFrame) -> OwnerChoice:
-    """The person a per-person camera is pointed at: the most present and largest person in view."""
+def named_by_clicks(keypoints: pd.DataFrame, clicks: list[Click], frame_period_s: float) -> PeopleChoice:
+    """Who a person pointed at: each click names the chain whose body it falls on, in the frame nearest it.
+    Nothing is placed by position or presence; what a click cannot settle is said, for a person to click again."""
     chains = join_fragments(keypoints)
-    if not chains:
-        return OwnerChoice(tracks=[])
-    owner, others = chains[0], chains[1:]
-    if others and others[0].score >= RIVAL_SHARE * owner.score:
-        rival = others[0]
-        return OwnerChoice(
-            tracks=owner.tracks,
-            doubt=f"tracks {rival.tracks} are in view nearly as much as the chosen tracks {owner.tracks}",
-            spans=_spans(rival.t),
-        )
-    seen = np.unique(np.concatenate([chain.frames for chain in chains]))
-    coverage = owner.present / seen.size
-    if coverage < MIN_OWNER_COVERAGE:
-        elsewhere = np.concatenate([chain.t[~np.isin(chain.frames, owner.frames)] for chain in others])
-        return OwnerChoice(
-            tracks=owner.tracks,
-            doubt=f"the chosen tracks {owner.tracks} are in only {coverage:.0%} of the frames with anyone in them",
-            spans=_spans(elsewhere),
-        )
-    return OwnerChoice(tracks=owner.tracks)
-
-
-def choose_people(
-    keypoints: pd.DataFrame,
-    subject_ids: list[str],
-    *,
-    identity_anchors: dict[str, float] | None = None,
-    named: dict[str, list[int]] | None = None,
-    voices: dict[str, np.ndarray] | None = None,
-    references: dict[str, np.ndarray] | None = None,
-    edges: np.ndarray | None = None,
-) -> PeopleChoice:
-    """Who is who on a shared camera. The most present people go to the subjects ranked by their
-    anchors (a fraction of frame width, read as an ordering only), left to right. Without anchors,
-    each person's head motion on their own camera (references) or else their own mic (voices:
-    share of each bin between edges they were talking) is matched against head motion here, and
-    whoever that leaves goes in the configured order. Only references that all pair clearly
-    settle it; a voice is a guess a person has to check either way."""
-    from macaw.extractors.video.pose.voice_motion import head_motion, match_voices
-
-    named = {subject: list(tracks) for subject, tracks in (named or {}).items() if subject in subject_ids}
-    taken = [track for tracks in named.values() for track in tracks]
-    # people sit at different distances from a room camera, so presence ranks them, not size
-    chains = sorted(join_fragments(keypoints[~keypoints["track_id"].isin(taken)]), key=lambda chain: chain.present, reverse=True)
-    open_subjects = [subject for subject in subject_ids if subject not in named]
-    anchors = identity_anchors or {}
-    ranked = (
-        sorted(open_subjects, key=lambda subject: (anchors.get(subject, 0.0), subject_ids.index(subject)))
-        if anchors
-        else open_subjects
-    )
-    top = chains[: len(ranked)]
-    found = sorted(top, key=lambda chain: chain.x)
-    placed = dict(zip(ranked, found))
-    match = None
-    evidence = references or voices
-    # someone in view nearly as long as the people chosen may be the one a mic or camera belongs to
-    pool = sorted(
-        top + [chain for chain in chains[len(ranked):] if top and chain.present >= RIVAL_SHARE * top[-1].present],
-        key=lambda chain: chain.x,
-    )
-    if evidence and edges is not None and not anchors and len(pool) > 1:
-        motion = [head_motion(keypoints[owner_rows(keypoints, chain.tracks)], edges) for chain in pool]
-        match = match_voices({subject: evidence[subject] for subject in ranked if subject in evidence}, motion)
-        # the same head seen twice has no listener confound, so even a weak pairing beats the configured order
-        sure = dict(match.people) if references else {subject: match.people[subject] for subject in match.clear}
-        if sure:
-            placed = {subject: pool[index] for subject, index in sure.items()}
-            taken = {id(chain) for chain in placed.values()}
-            rest = [chain for chain in chains if id(chain) in {id(c) for c in pool} - taken]
-            rest = sorted(rest[: len(ranked) - len(placed)], key=lambda chain: chain.x)
-            placed.update(zip([subject for subject in ranked if subject not in placed], rest))
-            found = sorted(placed.values(), key=lambda chain: chain.x)
-    chosen = {**named, **{subject: chain.tracks for subject, chain in placed.items()}}
-    people = {subject: chosen[subject] for subject in subject_ids if subject in chosen}
-
-    doubts, spans = [], []
-    if len(found) < len(ranked):
-        doubts.append(f"found {len(found)} of the {len(ranked)} people to place")
-    settled = bool(references) and match is not None and set(placed) <= set(match.clear)
-    if len(found) > 1 and not anchors and not settled:
-        doubts.append(_who_is_who(placed, match, "head motion on their own camera" if references else "voice", pool))
-    left_out = [chain for chain in chains if id(chain) not in {id(c) for c in found}]
-    if found and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in found):
-        doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people chosen")
+    chain_of = {track: index for index, chain in enumerate(chains) for track in chain.tracks}
+    boxes = _track_boxes(keypoints)
+    people: dict[str, list[int]] = {}
+    owner: dict[int, str] = {}
+    doubts: list[str] = []
+    for click in clicks:
+        where = f"{click.person} clicked at {click.at:g} s"
+        if boxes.empty or (gap := (boxes["t"] - click.t).abs()).min() > frame_period_s:
+            doubts.append(f"nobody was detected in the frame where {where}")
+            continue
+        frame = boxes.loc[gap.idxmin(), "frame"]
+        here = boxes[boxes["frame"] == frame]
+        pad = CLICK_REACH * here["size"]
+        inside = here[(here["x0"] - pad <= click.x) & (click.x <= here["x1"] + pad) & (here["y0"] - pad <= click.y) & (click.y <= here["y1"] + pad)]
+        if inside.empty:
+            doubts.append(f"nobody was detected where {where}")
+            continue
+        track = _clicked_track(keypoints, frame, inside["track_id"].astype(int).tolist(), click)
+        if track is None:
+            doubts.append(f"{where} falls on two people; click where they do not overlap")
+            continue
+        index = chain_of[track]
+        if index in owner:
+            if owner[index] != click.person:
+                doubts.append(f"{owner[index]} and {click.person} were clicked on the same person")
+            continue
+        owner[index] = click.person
+        people.setdefault(click.person, []).extend(chains[index].tracks)
+    spans: list[tuple[float, float]] = []
+    named = [chains[index] for index in owner]
+    left_out = [chain for index, chain in enumerate(chains) if index not in owner]
+    if named and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in named):
+        doubts.append(f"tracks {left_out[0].tracks[:5]}, which nobody was clicked on, are in view nearly as much as the people named")
         spans = _spans(left_out[0].t)
     return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
 
 
-def _who_is_who(placed: dict[str, Chain], match, by: str, found: list[Chain]) -> str:
-    """Each placement with the evidence for it; a weak pairing the configured order overrode is shown next to it."""
-    paired = {
-        subject for subject, chain in placed.items()
-        if match is not None and subject in match.people and found[match.people[subject]] is chain
-    }
-    parts = []
-    for subject, chain in sorted(placed.items(), key=lambda item: item[1].x):
-        if subject in paired:
-            weak = "" if subject in match.clear else ", weak"
-            parts.append(f"{subject} at x {chain.x:.0f} by {by}, z {match.z[subject]:.1f} against {match.runner_up[subject]:.1f}{weak}")
-            continue
-        part = f"{subject} at x {chain.x:.0f} by configured order"
-        if match is not None and subject in match.people:
-            part += f", {by} weakly favours person {match.people[subject] + 1} from the left (z {match.z[subject]:.1f} against {match.runner_up[subject]:.1f})"
-        parts.append(part)
-    how = f"{by} against head motion here" if paired else "the configured subject order from left to right"
-    return f"who is who is a guess from {how} ({'; '.join(parts)}), not yet checked"
+def suggested_people(
+    keypoints: pd.DataFrame,
+    subject_ids: list[str],
+    *,
+    references: dict[str, np.ndarray] | None = None,
+    voices: dict[str, np.ndarray] | None = None,
+    edges: np.ndarray | None = None,
+) -> PeopleChoice:
+    """Who is who on a camera nobody clicked, from evidence alone: each person's head motion where they are already
+    named (references), else their talking on their own mic (voices: share of each bin between edges they were
+    talking), matched against head motion here. Nobody is placed by position or presence. Pairings with
+    references place even when weak, since the same head seen twice has no listener confound; a voice places
+    only when clear. Anything short of clear pairings for everyone is said, for a person to check."""
+    from macaw.extractors.video.pose.voice_motion import head_motion, match_voices
+
+    evidence = references or voices
+    by = "head motion where they are already named" if references else "their own microphone"
+    chains = sorted(join_fragments(keypoints), key=lambda chain: chain.present, reverse=True)
+    wanted = [subject for subject in subject_ids if evidence and subject in evidence]
+    if not wanted or edges is None or not chains:
+        return PeopleChoice(people={}, doubt="nothing to suggest who is who from: no one is named on another camera or has a microphone of their own")
+    top = chains[: len(wanted)]
+    # someone in view nearly as long as the people sought may be the one the evidence belongs to
+    pool = sorted(
+        top + [chain for chain in chains[len(wanted):] if chain.present >= RIVAL_SHARE * top[-1].present],
+        key=lambda chain: chain.x,
+    )
+    motion = [head_motion(keypoints[owner_rows(keypoints, chain.tracks)], edges) for chain in pool]
+    match = match_voices({subject: evidence[subject] for subject in wanted}, motion)
+    sure = dict(match.people) if references else {subject: match.people[subject] for subject in match.clear}
+    people = {subject: pool[index].tracks for subject, index in sure.items()}
+    parts = [
+        f"{subject} at x {pool[index].x:.0f}, z {match.z[subject]:.1f} against {match.runner_up[subject]:.1f}"
+        + ("" if subject in match.clear else ", weak")
+        for subject, index in sorted(sure.items(), key=lambda item: pool[item[1]].x)
+    ]
+    doubts = []
+    if set(sure) - set(match.clear) or len(sure) < len(subject_ids):
+        unplaced = [subject for subject in subject_ids if subject not in sure]
+        doubts.append(
+            f"suggested by {by} ({'; '.join(parts) or 'no pairing'})"
+            + (f", {', '.join(unplaced)} not placed" if unplaced else "") + "; not yet checked by a person"
+        )
+    spans: list[tuple[float, float]] = []
+    left_out = [chain for chain in chains if not any(chain.tracks == tracks for tracks in people.values())]
+    placed = [chain for chain in chains if any(chain.tracks == tracks for tracks in people.values())]
+    if placed and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in placed):
+        doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people suggested")
+        spans = _spans(left_out[0].t)
+    return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
+
+
+def _clicked_track(keypoints: pd.DataFrame, frame, candidates: list[int], click: Click) -> int | None:
+    """Of the people a click falls on, the one with a point clearly nearest it."""
+    if len(candidates) == 1:
+        return candidates[0]
+    here = keypoints[(keypoints["frame"] == frame) & keypoints["track_id"].isin(candidates) & keypoints["x"].notna()]
+    nearest = (
+        np.hypot(here["x"] - click.x, here["y"] - click.y).groupby(here["track_id"].astype(int).to_numpy()).min().sort_values()
+    )
+    if len(nearest) > 1 and nearest.iloc[0] >= NEAREST_SHARE * nearest.iloc[1]:
+        return None
+    return int(nearest.index[0])
 
 
 def owner_rows(keypoints: pd.DataFrame, tracks: list[int]) -> np.ndarray:

@@ -295,6 +295,18 @@ class TestReview:
         gate, recording, path = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
         assert not path.exists() and gate.pending(recording) is not None
 
+    def test_by_default_no_suggestion_is_made_or_shown(self, project, monkeypatch):
+        from macaw.extractors.audio.content import speaker_id
+
+        gate, recording, _ = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
+
+        def refused(config, recording):
+            raise AssertionError("a suggestion was made by default")
+
+        monkeypatch.setattr(speaker_id, "suggest_voices", refused)
+        assert "suggested" not in gate.pending(recording)
+        assert speaker_id.offered_suggestion(project.resolved(), recording) is None
+
     def test_flagged_keeps_a_complete_suggestion_and_says_so(self, project, monkeypatch):
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch)
         assert gate.pending(recording) is None
@@ -342,7 +354,7 @@ class TestReview:
         from macaw.qc.report import write_recording_report
 
         evidence = {"child": {"label": "S0", "source": "words", "n": 1, "lines": ["Mommy, look!"]}}
-        self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch, evidence)
+        self.review(project, "flagged", {"S0": "child", "S1": None}, monkeypatch, evidence)
         config = project.resolved()
         root = layout_for(config).artifacts_dir("003", SHARED_ASR)
         root.mkdir(parents=True)

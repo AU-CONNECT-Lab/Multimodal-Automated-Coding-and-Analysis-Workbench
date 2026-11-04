@@ -167,7 +167,7 @@ def _voices(config: MacawConfig, layout, recording, page: Path) -> list[dict]:
     """Each voice found on a shared microphone, what it says and its pitch, whom the suggestion and
     the person gave it to, and its clips to listen to."""
     from macaw.extractors.audio.content.diarization import NO_ONE, OTHER, DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
-    from macaw.extractors.audio.content.speaker_id import read_voice_material, suggest_voices, suggested_people, telling_lines
+    from macaw.extractors.audio.content.speaker_id import offered_suggestion, read_voice_material, suggested_people, telling_lines
 
     recording_id = recording.recording_id
     voices = read_voices(config, recording_id)
@@ -176,7 +176,7 @@ def _voices(config: MacawConfig, layout, recording, page: Path) -> list[dict]:
     named = read_voice_owners(layout.voice_owners_path(recording_id))
     lines, pitch = read_voice_material(config, recording_id)
     try:
-        suggestion = suggest_voices(config, recording)
+        suggestion = offered_suggestion(config, recording)
     except Exception:   # the page still shows the voices when a suggestion cannot be made
         suggestion = None
     suggested = suggested_people(suggestion) if suggestion else {}
@@ -255,12 +255,18 @@ def _decisions(
     if video is not None:
         rows.append(video)
     if cameras:
+        clicked = sum(1 for camera in cameras if camera["people"] and all("clicked" in person["chosen_by"] for person in camera["people"]))
+        suggested = sum(1 for camera in cameras if any(person["chosen_by"] == "suggested" for person in camera["people"]))
         kept = sum(1 for camera in cameras if camera["accepted"])
         doubt = sum(1 for camera in cameras if camera["doubt"] and not camera["accepted"])
+        parts = [f"{clicked} named by a person's clicks"]
+        parts += [f"{suggested} suggested from head motion or a microphone"] if suggested else []
+        parts += [f"{kept} kept as they stood by a person"] if kept else []
+        parts += [f"{doubt} in doubt"] if doubt else []
         rows.append({
             "what": "Who is on each camera",
-            "decided": f"{len(cameras)} camera(s): {kept} kept by a person, {len(cameras) - kept} automatic" + (f", {doubt} in doubt" if doubt else ""),
-            "by": "person" if kept == len(cameras) else "software", "href": "#Camera",
+            "decided": f"{len(cameras)} camera(s): " + ", ".join(parts),
+            "by": "software" if suggested > kept else "person", "href": "#Camera",
         })
     swaps = results.artifact("pose.keypoints", "swaps.json")
     if swaps is not None:

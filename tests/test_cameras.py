@@ -203,7 +203,7 @@ def project(tmp_path):
         put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
-    write_devices(config, cameras={"left": setup_camera(), "right": setup_camera()}, microphones=mics(["parent"]))
+    write_devices(config, cameras={"left": setup_camera(), "right": setup_camera(uses=("body",))}, microphones=mics(["parent"]))
     return config
 
 

@@ -31,7 +31,7 @@ class TestDeviceFolders:
         put(raw, "003", "front", "00001.MTS")
         put(raw, "003", "side", "00001.MTS")
         put(raw, "003", "parent_mic", "take 1.wav")
-        write_devices(project, cameras={"front": camera(["child"]), "side": camera(hears=EVERYONE)}, microphones=mics(["parent"]))
+        write_devices(project, cameras={"front": camera(["child"]), "side": camera(uses=("body",), hears=EVERYONE)}, microphones=mics(["parent"]))
         media = {item.name: item for item in built(project).media}
         assert set(media) == {"front", "side", "parent_mic"}
         assert (media["front"].subject_id, media["side"].subject_id, media["parent_mic"].subject_id) == ("child", None, "parent")

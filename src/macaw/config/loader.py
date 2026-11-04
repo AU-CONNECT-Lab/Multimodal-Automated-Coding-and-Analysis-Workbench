@@ -242,6 +242,7 @@ def resolve_config(
         if "name" in setup_data:
             raise ConfigError(f"{setup_file}: a setup is named by its file, so the file does not set name")
         merged = deep_merge(merged, {"setup": setup_data})
+        sources["setup"] = KeySource("setup", setup_file)
         sources.update({f"setup.{key}": source for key, source in setup_sources.items()})
 
     if recording_data:

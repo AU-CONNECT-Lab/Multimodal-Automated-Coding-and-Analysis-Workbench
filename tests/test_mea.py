@@ -15,6 +15,8 @@ from macaw.extractors.video.motion import mea as mea_module  # noqa: E402
 from macaw.extractors.video.motion.mea import MEAExtractor, frame_difference_energy, smooth  # noqa: E402
 from macaw.project.recording import MediaFile  # noqa: E402
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame  # noqa: E402
+from macaw.project.recording import Subject
+from setup_helpers import video_file, recording_of
 
 FPS = 10.0
 SIZE = (320, 240)
@@ -77,16 +79,11 @@ class TestSmooth:
 
 
 def media(path, subject_id=None, offset_s=0.0):
-    return MediaFile(path=path, kind="video", subject_id=subject_id, fps=FPS, offset_s=offset_s)
+    return video_file(path, (subject_id,) if subject_id else ("parent", "child"), fps=FPS, offset_s=offset_s)
 
 
 def recording(files, rois):
-    return SimpleNamespace(
-        recording_id="sub-003_ses-12mo",
-        subjects=[SimpleNamespace(subject_id=name, roi=rois.get(name)) for name in ("parent", "child")],
-        media=list(files),
-        entities=lambda: {"group_id": "003", "session_id": "12mo", "task": None, "run": None},
-    )
+    return recording_of(files, [Subject(subject_id=name, role=name, roi=rois.get(name)) for name in ("parent", "child")])
 
 
 @pytest.fixture

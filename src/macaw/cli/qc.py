@@ -14,7 +14,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.extractors.audio.content.diarization import NO_ONE, read_voices
-from macaw.extractors.audio.content.speaker_id import suggest_voices
+from macaw.extractors.audio.content.speaker_id import offered_suggestion
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
@@ -119,7 +119,7 @@ def _render(resolved, layout, recording, results, candidates, *, plain: bool = F
     )
     out_dir = layout.renders_dir(recording.recording_id)
     index = render_review(
-        recording, keypoints, sample, out_dir, read_shared=resolved.pose.read_shared, plain_dir=out_dir / PLAIN if plain else None,
+        recording, keypoints, sample, out_dir, plain_dir=out_dir / PLAIN if plain else None,
     )
     logger.info("%s: %d frame(s) rendered", recording.recording_id, len(index))
     typer.echo(str(out_dir))
@@ -153,56 +153,72 @@ def check_look(
     typer.echo(f"{recording}: {describe(summary(layout, recording))}")
 
 
+@app.command("name-people")
+def name_people(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recording: str = typer.Option(..., "--recording", "-r"),
+    camera: str = typer.Option(..., "--camera", help="The camera, as its folder is named."),
+    at: float = typer.Option(None, "--at", help="Seconds into the camera's file, from its first picture."),
+    person: list[str] = typer.Option(
+        None, "--person", help="ROLE=X,Y: where that person is in the picture, as shares of its width and height. Repeatable."
+    ),
+    clear: bool = typer.Option(False, "--clear", help="Take back every click on this camera."),
+    by: str = typer.Option(None, "--by", help="Who clicked. Default: the login name."),
+) -> None:
+    """Say who is who on a camera: at one moment of its file, where each person is in the picture. pose.keypoints
+    names whoever is there and follows them through the recording; click again at another moment where it lost someone."""
+    from macaw.extractors.video.pose.keypoints import camera_people
+    from macaw.project.names import add_clicks, clear_clicks
+
+    resolved = resolve_config(config, recording_id=recording)
+    built = build_recording(recording, resolved)
+    item = next((item for item in built.cameras() if item.name == camera), None)
+    if item is None:
+        cameras = ", ".join(item.name for item in built.cameras()) or "none"
+        raise MacawError(f"{camera} is not a camera of {recording} read for anyone; its cameras are {cameras}")
+    path = layout_for(resolved).names_path(recording)
+    if clear:
+        if at is not None or person:
+            raise MacawError("--clear takes back every click on the camera; give it alone")
+        clear_clicks(path, camera)
+        typer.echo(f"{recording}: no clicks on {camera} now; apply it with `macaw run -r {recording} -e pose.keypoints`")
+        return
+    if at is None or at < 0 or not person:
+        raise MacawError("give --at, the moment from the camera's first picture, and a --person ROLE=X,Y for each person clicked")
+    points: dict[str, tuple[float, float]] = {}
+    for given in person:
+        role, _, place = given.partition("=")
+        values = [part.strip() for part in place.split(",")]
+        try:
+            x, y = (float(value) for value in values)
+        except ValueError:
+            raise MacawError(f"--person {given}: write ROLE=X,Y with X and Y the shares of the picture's width and height") from None
+        if role not in camera_people(item):
+            raise MacawError(f"--person {given}: the setup reads {camera} for {', '.join(camera_people(item))}, not {role}")
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise MacawError(f"--person {given}: X and Y are shares of the picture, from 0 to 1")
+        if role in points:
+            raise MacawError(f"--person {role} is given twice at one moment")
+        points[role] = (x, y)
+    names = add_clicks(path, camera, at, points, by or getpass.getuser())
+    clicked = ", ".join(f"{click['person']} at {click['at']:g} s" for click in names[camera])
+    typer.echo(f"{recording}: on {camera}, {clicked}; apply it with `macaw run -r {recording} -e pose.keypoints`")
+
+
 @app.command("accept-owner")
 def accept_owner(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     media: list[str] = typer.Option(None, "--camera", help="Camera, repeatable. Default: every one waiting for a person."),
-    tracks: str = typer.Option(None, "--tracks", help="Comma-separated track ids of one person, for one --camera."),
-    subject: str = typer.Option(None, "--subject", help="Whose tracks --tracks names. Default: the camera's own subject."),
-    rename: str = typer.Option(
-        None, "--rename", help="SHOWN=RIGHT pairs, comma-separated: the person labelled SHOWN in the renders is RIGHT."
-    ),
     by: str = typer.Option(None, "--by", help="Who looked. Default: the login name."),
 ) -> None:
-    """Keep the automatic choice of who is on camera, or correct it."""
+    """Keep who is on camera as it stands, doubts and all, after looking at the review frames."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
     stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
-    recording_ids = resolve_recordings(resolved, recordings)
     wanted = set(media or ())
-
-    if tracks is not None or rename is not None:
-        if tracks is not None and rename is not None:
-            raise MacawError("give --tracks or --rename, not both")
-        if len(wanted) != 1 or len(recording_ids) != 1:
-            raise MacawError("--tracks and --rename correct one camera: give one -r and one --camera")
-        recording_id, file_name = recording_ids[0], next(iter(wanted))
-        recording = build_recording(recording_id, resolved)
-        if tracks is not None:
-            people = {_tracks_owner(recording, file_name, subject): [int(track) for track in tracks.split(",") if track.strip()]}
-        else:
-            owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
-            people = _renamed(owners.get(file_name, {}).get("people", {}), rename, recording)
-        path = layout.camera_owners_path(recording_id)
-        entries = read_owner_file(path)
-        claimed = {track for ids in people.values() for track in ids}
-        earlier = {
-            who: ids
-            for who, ids in entries.get(file_name, {}).get("people", {}).items()
-            if who not in people and not claimed & set(ids)
-        }
-        entries[file_name] = {"people": {**earlier, **people}, "by": stamp}
-        _write_json(path, entries)
-        named = "; ".join(f"{who} is tracks {_shortened(ids)}" for who, ids in people.items())
-        typer.echo(
-            f"{recording_id}: on {file_name}, {named}; apply it with "
-            f"`macaw run -r {recording_id} -e pose.kinematics`"
-        )
-        return
-
     matched = set()
-    for recording_id in recording_ids:
+    for recording_id in resolve_recordings(resolved, recordings):
         owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
         waiting = set(waiting_cameras(resolved, recording_id, every=resolved.pose.review == "always"))
         chosen = {
@@ -218,48 +234,18 @@ def accept_owner(
             entries[name] = {"people": owner["people"], "by": stamp}
         _write_json(path, entries)
         kept = "; ".join(
-            f"{name} as " + ", ".join(f"{who} tracks {_shortened(ids)}" for who, ids in owner["people"].items())
+            f"{name} as " + (", ".join(f"{who} tracks {_shortened(ids)}" for who, ids in owner["people"].items()) or "nobody named")
             for name, owner in chosen.items()
         )
         typer.echo(f"{recording_id}: kept {kept}")
     unknown = wanted - matched
     if unknown:
-        raise MacawError(f"no choice recorded for: {', '.join(sorted(unknown))}")
+        raise MacawError(f"no naming recorded for: {', '.join(sorted(unknown))}")
 
 
 def _shortened(ids: list[int], shown: int = 6) -> str:
     rest = f" and {len(ids) - shown} more" if len(ids) > shown else ""
     return ", ".join(str(track) for track in ids[:shown]) + rest
-
-
-def _tracks_owner(recording, file_name: str, subject: str | None) -> str:
-    camera = next((item for item in recording.media if item.name == file_name), None)
-    if camera is None:
-        raise MacawError(f"{recording.recording_id} has no camera {file_name}")
-    who = subject or camera.subject_id
-    if who is None:
-        raise MacawError(f"{file_name} is a shared camera: say whose tracks these are with --subject")
-    if who not in [person.subject_id for person in recording.subjects]:
-        raise MacawError(f"{who} is not a subject of {recording.recording_id}")
-    return who
-
-
-def _renamed(people: dict[str, list[int]], rename: str, recording) -> dict[str, list[int]]:
-    """The tracks shown under one name, given to the person they really are."""
-    if not people:
-        raise MacawError("no automatic choice recorded for this camera; run pose.keypoints first")
-    pairs = [pair.split("=", 1) for pair in rename.split(",") if pair.strip()]
-    if any(len(pair) != 2 for pair in pairs):
-        raise MacawError("--rename takes SHOWN=RIGHT pairs, e.g. P1=P3,P3=P1")
-    subjects = [person.subject_id for person in recording.subjects]
-    shown = [old.strip() for old, _ in pairs]
-    right = [new.strip() for _, new in pairs]
-    unknown = [name for name in shown if name not in people] + [name for name in right if name not in subjects]
-    if unknown:
-        raise MacawError(f"not a person on this camera or not a subject: {', '.join(unknown)}")
-    if len(set(right)) != len(right):
-        raise MacawError("--rename gives one person two sets of tracks")
-    return {new: people[old] for old, new in zip(shown, right)}
 
 
 def _write_json(path: Path, payload) -> None:
@@ -291,10 +277,11 @@ def accept_voices(
         if rename is not None:
             people = _named_voices(voices, rename, recording)
         else:
-            suggestion = suggest_voices(resolved, recording)
+            suggestion = offered_suggestion(resolved, recording)
             if suggestion is None:
                 raise MacawError(
-                    f"{recording_id}: no suggestion without each person's own mic or face.movement on their camera; name the voices with --rename"
+                    f"{recording_id}: no suggestion is made (text.voice_review is always, or nobody has a mic of their own or "
+                    "face.movement on a camera); name the voices with --rename"
                 )
             people = suggestion["people"]
             undecided = sorted(label for label, who in people.items() if who is None)

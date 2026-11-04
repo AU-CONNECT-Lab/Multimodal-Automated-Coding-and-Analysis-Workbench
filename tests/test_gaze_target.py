@@ -22,6 +22,7 @@ from macaw.extractors.video.gaze.target import (
 from macaw.project.recording import MediaFile
 from macaw.store.keypoints import write_keypoints
 from macaw.store.schema import ANNOTATION_SCHEMA, KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+from setup_helpers import video_file, recording_of
 
 FPS = 10.0
 FACE = {"nose": (0, 0), "left_eye": (8, -6), "right_eye": (-8, -6), "left_ear": (20, -2), "right_ear": (-20, -2),
@@ -148,17 +149,14 @@ def run(tmp_path, monkeypatch):
         monkeypatch.setattr(target_module, "_keypoints_file", lambda config, rid: stored)
         monkeypatch.setattr(target_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
-        recording = SimpleNamespace(
-            recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
-            media=list(files), entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
-        )
+        recording = recording_of(files, recording_id="r1", group_id="1", session_id=None)
         return backend, GazeTargetExtractor(SimpleNamespace(gaze=GazeSection())).run(recording, tmp_path)
 
     return build
 
 
 def video(name, subject_id=None):
-    return MediaFile(path=Path(name), kind="video", subject_id=subject_id, fps=FPS, offset_s=0.0)
+    return video_file(name, (subject_id,) if subject_id else ("parent", "child"), fps=FPS, offset_s=0.0)
 
 
 class TestExtractor:
@@ -227,10 +225,7 @@ def run_angles(tmp_path, monkeypatch):
         monkeypatch.setattr(target_module, "_face_rows_file", lambda config, rid: face)
         monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: label_file))
         monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
-        recording = SimpleNamespace(
-            recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
-            media=[video("room.mp4")], entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
-        )
+        recording = recording_of([video("room.mp4")], recording_id="r1", group_id="1", session_id=None)
         config = SimpleNamespace(gaze=GazeSection(backend="angles", seats=seats, tolerance_deg=tolerance))
         return GazeTargetExtractor(config).run(recording, tmp_path)
 
@@ -294,10 +289,7 @@ def test_seats_are_set_aside_when_people_are_measured_on_several_cameras(tmp_pat
     monkeypatch.setattr(target_module, "_face_rows_file", lambda config, rid: face)
     monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: tmp_path / "none.json"))
     monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
-    recording = SimpleNamespace(
-        recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
-        media=[video("parent.mp4", "parent"), video("child.mp4", "child")], entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
-    )
+    recording = recording_of([video("parent.mp4", "parent"), video("child.mp4", "child")], recording_id="r1", group_id="1", session_id=None)
     config = SimpleNamespace(gaze=GazeSection(backend="angles", seats=TestAngles.SEATS, tolerance_deg=20))
     result = GazeTargetExtractor(config).run(recording, tmp_path)
     assert any("measured on several" in w.message for w in result.warnings)

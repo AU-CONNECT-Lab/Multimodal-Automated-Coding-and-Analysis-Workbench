@@ -13,7 +13,7 @@ from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
 from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtractor, inside_frame
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-from macaw.project.recording import MediaFile
+from macaw.project.recording import MediaFile, Recording, Subject
 from macaw.store.schema import (
     KEYPOINT_SCHEMA,
     LONG_TABLE_SCHEMA,
@@ -25,6 +25,8 @@ from macaw.store.schema import (
 FPS = 10.0
 N_FRAMES = 20
 SWAP_AT = 10
+# the picture the fake videos have; clicks are shares of it
+PICTURE = (640, 400)
 
 
 def backend_frame(positions, *, n_frames=N_FRAMES, swap_at=None, confidence=0.9):
@@ -70,11 +72,16 @@ class FakeBackend:
         return PoseFrames(keypoints=self.frames)
 
 
-def media(name="room.mp4", *, subject_id=None, fps=FPS, offset_s=0.0, kind="video"):
+def media(name="room.mp4", *, subject_id=None, people=None, fps=FPS, offset_s=0.0, kind="video"):
+    """A camera the setup reads for these people (the subject alone, else parent and child), or a microphone."""
+    people = tuple(people) if people is not None else ((subject_id,) if subject_id else ("parent", "child"))
+    uses = {use: people for use in ("body", "face", "gaze")} if kind == "video" else {}
     return MediaFile(
         path=Path(name),
         kind=kind,
-        subject_id=subject_id,
+        subject_id=people[0] if len(people) == 1 else None,
+        device=name,
+        uses=uses,
         fps=fps,
         offset_s=offset_s,
         duration_s=N_FRAMES / FPS,
@@ -84,18 +91,15 @@ def media(name="room.mp4", *, subject_id=None, fps=FPS, offset_s=0.0, kind="vide
 @pytest.fixture
 def recording():
     def build(files, *, t_task_start=0.0, t_task_end=None, subject_ids=("parent", "child")):
-        return SimpleNamespace(
+        return Recording(
             recording_id="sub-003_ses-12mo",
-            subjects=[SimpleNamespace(subject_id=name, role=name) for name in subject_ids],
+            root=Path("."),
+            group_id="003",
+            session_id="12mo",
+            subjects=[Subject(subject_id=name, role=name) for name in subject_ids],
             media=list(files),
             t_task_start=t_task_start,
             t_task_end=t_task_end,
-            entities=lambda: {
-                "group_id": "003",
-                "session_id": "12mo",
-                "task": None,
-                "run": None,
-            },
         )
 
     return build
@@ -107,6 +111,13 @@ def fake_prep_timing(config, recording):
     return SimpleNamespace(t_origin_s=start, duration_s=end - start)
 
 
+class AnyVideo(dict):
+    """prep.video's record of every fake video: frames from its first picture, at PICTURE size."""
+
+    def get(self, key, default=None):
+        return {"first_picture_s": 0.0, "frames_start_s": 0.0, "prepared_size": list(PICTURE), "size": list(PICTURE)}
+
+
 @pytest.fixture
 def offsets(tmp_path, monkeypatch):
     path = tmp_path / "offsets.json"
@@ -115,18 +126,30 @@ def offsets(tmp_path, monkeypatch):
         "layout_for",
         lambda config, create=False: SimpleNamespace(
             offset_table_path=lambda rid: path,
-            camera_owners_path=lambda rid: tmp_path / "camera_owners.json",
+            names_path=lambda rid: tmp_path / "names.json",
             artifacts_dir=lambda rid, name: tmp_path / "artifacts" / name,
         ),
     )
+    monkeypatch.setattr(pose_module, "load_video_prep", lambda config, rid: AnyVideo())
     return path
+
+
+def clicks(tmp_path, camera, at, **people):
+    """A person's clicks at one moment of a camera, given in pixels of PICTURE."""
+    path = tmp_path / "names.json"
+    names = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    names.setdefault(camera, []).extend(
+        {"person": person, "at": at, "x": x / PICTURE[0], "y": y / PICTURE[1], "by": "ann 2026-11-03T10:00:00"}
+        for person, (x, y) in people.items()
+    )
+    path.write_text(json.dumps(names), encoding="utf-8")
 
 
 class Chain:
     """pose.detect then pose.keypoints, the way the runner chains them."""
 
-    def __init__(self, backend):
-        config = SimpleNamespace(pose=PoseSection())
+    def __init__(self, backend, **pose):
+        config = SimpleNamespace(pose=PoseSection(**pose))
         self.fake = backend
         self.detect = PoseDetectExtractor(config)
         self.identify = PoseExtractor(config)
@@ -145,15 +168,14 @@ class Chain:
 
 @pytest.fixture
 def extractor(monkeypatch, offsets):
-    def build(backend=None):
+    def build(backend=None, **pose):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
-        # no mic per person, so who is who on a shared camera falls back to the configured order
         monkeypatch.setattr(
             pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=N_FRAMES / FPS)
         )
-        return Chain(backend)
+        return Chain(backend, **pose)
 
     return build
 
@@ -161,6 +183,7 @@ def extractor(monkeypatch, offsets):
 @pytest.fixture
 def shared(extractor, recording, tmp_path):
     instance = extractor()
+    clicks(tmp_path, "room.mp4", 0.5, parent=(100.0, 200.0), child=(500.0, 200.0))
     return instance, instance.run(recording([media()]), tmp_path)
 
 
@@ -215,11 +238,16 @@ class TestSharedCamera:
     def test_a_crossover_is_reported(self, shared):
         assert any(warning.severity == "info" for warning in shared[1].warnings)
 
-    def test_who_is_who_without_anchors_is_left_for_a_person_to_check(self, shared):
+    def test_the_people_are_named_by_the_clicks(self, shared):
         owners = json.loads(shared[1].artifacts["owners"].read_text(encoding="utf-8"))
         assert owners["room.mp4"]["people"] == {"parent": [0], "child": [1]}
-        assert "not yet checked" in owners["room.mp4"]["doubt"]
-        assert any("not yet checked" in warning.message for warning in shared[1].warnings)
+        assert owners["room.mp4"]["doubt"] is None and "clicked at 0.5 s" in owners["room.mp4"]["chosen_by"]["child"]
+
+    def test_without_clicks_nobody_is_named_and_a_person_is_asked(self, extractor, recording, tmp_path):
+        result = extractor().run(recording([media()]), tmp_path)
+        assert result.keypoints.subject_id.isna().all()
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["room.mp4"]["people"] == {} and "nobody has said who is who on room.mp4" in owners["room.mp4"]["doubt"]
 
 
 class TestPerSubjectCameras:
@@ -232,7 +260,7 @@ class TestPerSubjectCameras:
     def test_one_person_is_asked_for_per_file(self, result):
         assert [call["max_people"] for call in result[0].fake.calls] == [1, 1]
 
-    def test_the_subject_comes_from_the_file_not_from_a_guess(self, result):
+    def test_the_subject_comes_from_the_setup_not_from_a_guess(self, result):
         assert set(result[1].keypoints.subject_id.dropna()) == {"parent", "child"}
 
     def test_no_repair_is_attempted(self, result):
@@ -241,40 +269,17 @@ class TestPerSubjectCameras:
         assert float(rows[rows.feature == "n_track_swaps"].value.iloc[0]) == 0.0
         assert "swaps.json" not in result[1].artifacts
 
-    def test_a_shared_camera_alongside_them_is_skipped_with_a_warning(
-        self, extractor, recording, tmp_path
-    ):
-        instance = extractor(FakeBackend(backend_frame([100.0])))
-        files = [media("a.mp4", subject_id="parent"), media("room.mp4")]
-        result = instance.run(recording(files), tmp_path)
-        assert len(instance.fake.calls) == 1
-        assert any("shared" in warning.message for warning in result.warnings)
 
 
-class TestOneViewPerPerson:
-    """A second view of the same person would put two rows on one frame and joint, numbered on
-    another file's clock."""
-
-    def test_every_shared_camera_is_read(self, extractor, recording, tmp_path):
+class TestWhichCamerasAreRead:
+    def test_every_camera_the_setup_reads_for_someone_is_read_in_its_order(self, extractor, recording, tmp_path):
         instance = extractor()
         result = instance.run(recording([media("room_b.mp4"), media("room_a.mp4")]), tmp_path)
-        assert [call["path"].name for call in instance.fake.calls] == ["room_a.mp4", "room_b.mp4"]
+        assert [call["path"].name for call in instance.fake.calls] == ["room_b.mp4", "room_a.mp4"]
         assert set(result.keypoints.video) == {"room_a.mp4", "room_b.mp4"}
 
-    def test_a_second_camera_on_one_person_is_skipped(self, extractor, recording, tmp_path):
-        instance = extractor(FakeBackend(backend_frame([100.0])))
-        files = [
-            media("a1.mp4", subject_id="parent"),
-            media("a2.mp4", subject_id="parent"),
-            media("b.mp4", subject_id="child"),
-        ]
-        result = instance.run(recording(files), tmp_path)
-        assert sorted(call["path"].name for call in instance.fake.calls) == ["a1.mp4", "b.mp4"]
-        assert not result.keypoints.duplicated(["subject_id", "frame", "joint"]).any()
-        assert any("a2.mp4" in warning.message for warning in result.warnings)
-
-    def test_the_cache_key_covers_only_what_is_read(self, extractor, recording):
-        files = [media("a.mp4", subject_id="parent"), media("room.mp4")]
+    def test_a_camera_whose_sound_alone_is_used_is_not_read_for_pictures(self, extractor, recording):
+        files = [media("a.mp4", subject_id="parent"), media("hall.mp4", people=()), media("mic.wav", kind="audio")]
         assert extractor().detect.inputs_for(recording(files)) == [Path("a.mp4")]
 
     def test_the_offset_table_is_part_of_the_cache_key(self, extractor, recording, offsets):
@@ -362,11 +367,13 @@ class TestQualityWarnings:
         frames = backend_frame([100.0, 500.0])
         frames.loc[frames.frame > 3, "x"] = None
         instance = extractor(FakeBackend(frames))
+        clicks(tmp_path, "room.mp4", 0.2, parent=(100.0, 200.0), child=(500.0, 200.0))
         result = instance.run(recording([media()]), tmp_path)
         assert any("detected in only" in warning.message for warning in result.warnings)
 
     def test_an_unmatched_track_is_reported(self, extractor, recording, tmp_path):
         instance = extractor(FakeBackend(backend_frame([100.0, 300.0, 500.0])))
+        clicks(tmp_path, "room.mp4", 0.2, parent=(100.0, 200.0), child=(500.0, 200.0))
         result = instance.run(recording([media()]), tmp_path)
         assert result.keypoints.subject_id.isna().any()
         assert any("no subject_id" in warning.message for warning in result.warnings)
@@ -403,31 +410,27 @@ class TestSeveralPeopleOnAPersonalCamera:
         instance = extractor(FakeBackend(self.FRAMES))
         return instance.run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
 
-    def test_only_the_owner_carries_the_subject(self, extractor, recording, tmp_path):
+    def test_without_a_click_nobody_is_named_and_a_person_is_asked(self, extractor, recording, tmp_path):
+        result = self.run(extractor, recording, tmp_path)
+        assert result.keypoints.subject_id.isna().all()
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert "which the setup reads for parent alone" in owners["a.mp4"]["doubt"]
+
+    def test_the_person_clicked_carries_the_subject_and_the_other_does_not(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
         keypoints = self.run(extractor, recording, tmp_path).keypoints
         assert not keypoints.dropna(subset=["subject_id"]).duplicated(["subject_id", "frame", "joint"]).any()
         assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {1}
         assert keypoints.loc[keypoints.track_id == 2, "subject_id"].isna().all()
 
-    def test_the_choice_is_written_out_for_the_review(self, extractor, recording, tmp_path):
-        result = self.run(extractor, recording, tmp_path)
-        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
-        assert owners["a.mp4"]["people"] == {"parent": [1]} and owners["a.mp4"]["doubt"] is None
-
-    def test_tracks_a_person_named_win(self, extractor, recording, tmp_path):
-        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"people": {"parent": [2]}, "by": "ann"}}))
+    def test_a_click_on_the_other_one_names_them_instead(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "a.mp4", 0.6, parent=(60.0, 200.0))
         keypoints = self.run(extractor, recording, tmp_path).keypoints
         assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {2}
 
-    def test_named_tracks_missing_from_the_output_are_a_doubt(self, extractor, recording, tmp_path):
-        (tmp_path / "camera_owners.json").write_text(json.dumps({"a.mp4": {"people": {"parent": [9]}, "by": "ann"}}))
-        result = self.run(extractor, recording, tmp_path)
-        assert any("[9]" in warning.message for warning in result.warnings)
-
-    def test_named_tracks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
-        path = tmp_path / "camera_owners.json"
-        path.write_text("{}")
-        assert path in extractor().identify.inputs_for(recording([media("a.mp4", subject_id="parent")]))
+    def test_the_clicks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
+        assert tmp_path / "names.json" in extractor().identify.inputs_for(recording([media("a.mp4", subject_id="parent")]))
 
 
 class TestJoinedFragments:
@@ -437,6 +440,7 @@ class TestJoinedFragments:
             (2, range(10, N_FRAMES), 205.0, 100.0),
             (3, range(0, N_FRAMES), 600.0, 40.0),
         )
+        clicks(tmp_path, "a.mp4", 0.2, parent=(200.0, 200.0))
         result = extractor(FakeBackend(frames)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
         rows = result.rows
         continuity = rows[(rows.feature == "track_continuity") & (rows.subject_id == "parent")]

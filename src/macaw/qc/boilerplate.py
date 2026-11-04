@@ -570,10 +570,19 @@ def _detect(config, spec, names) -> str:
 
 def _keypoints(config, spec, names) -> str:
     pose = config.pose
-    text = "Detections were linked into tracks and each track was assigned to a participant automatically"
+    text = (
+        "Detections were linked into tracks. On each camera a researcher marked each participant on a video frame, and the "
+        "tracks through the marked points were followed for the rest of the recording; a camera filming one participant "
+        "alone needed no mark while no one else was in view"
+    )
+    if pose.suggest_names:
+        text += (
+            ". Where no participant was marked, participants were matched to tracks by the correlation of head motion with "
+            "their head motion on another camera, or with the voice activity on their own microphone"
+        )
     text += {
         "always": "; every assignment was checked by a person.",
-        "flagged": "; assignments the software could not make with confidence were confirmed by a person.",
+        "flagged": "; assignments in doubt were checked by a person.",
     }.get(pose.review, ".")
     if pose.track_repair:
         text += f" Identity swaps between tracks across gaps of up to {_seconds(pose.track_repair_max_gap_s)} were repaired."

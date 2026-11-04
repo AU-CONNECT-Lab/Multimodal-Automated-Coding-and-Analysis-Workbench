@@ -13,7 +13,7 @@ from scipy.signal import savgol_filter
 from macaw.exceptions import ConfigError, SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, own_views, primary_views
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, measured_views
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -103,7 +103,7 @@ class KinematicsExtractor(Extractor):
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics",)
+    config_sections = ("kinematics", "setup.cameras")
     requires = (PoseReviewGate.name,)
 
     def check_available(self) -> None:
@@ -124,8 +124,6 @@ class KinematicsExtractor(Extractor):
         smoothing_s = self.config.kinematics.smoothing_s
         keypoints, by_subject = keypoints_by_subject(self.config, recording)
         subjects = [subject.subject_id for subject in recording.subjects]
-        own = own_views(recording)
-        shared = keypoints[~keypoints["video"].isin(set(own.values()))]
         warnings = [
             self._warning(recording, subject_id, "warn", "no keypoints for this subject")
             for subject_id in subjects
@@ -146,14 +144,13 @@ class KinematicsExtractor(Extractor):
 
         # people filmed by separate cameras do not share an image plane, so no pixel distance
         # between them means anything
-        pairs = {pair: _pair_view(shared, *pair) for pair in combinations([s for s in subjects if s in by_subject], 2)}
+        pairs = {pair: _pair_rows(keypoints, recording, *pair) for pair in combinations([s for s in subjects if s in by_subject], 2)}
         pairs = {pair: view for pair, view in pairs.items() if view is not None}
-        if own and not pairs and len(by_subject) > 1:
+        if not pairs and len(by_subject) > 1:
             warnings.append(
                 self._warning(
                     recording, None, "info",
-                    "each person has their own camera, so pairwise quantities were not computed "
-                    "(pose.read_shared measures them on a shared camera)",
+                    "no camera read for two people's bodies saw them together, so pairwise quantities were not computed",
                 )
             )
         else:
@@ -169,7 +166,7 @@ class KinematicsExtractor(Extractor):
                 )
 
         for measure in self.config.kinematics.measures:
-            pieces, notes = self._measure_rows(measure, recording, by_subject, shared, common)
+            pieces, notes = self._measure_rows(measure, recording, by_subject, keypoints, common)
             frames += pieces
             warnings += notes
 
@@ -214,7 +211,7 @@ class KinematicsExtractor(Extractor):
             )
         return specs
 
-    def _measure_rows(self, measure, recording: Recording, by_subject, shared, common):
+    def _measure_rows(self, measure, recording: Recording, by_subject, keypoints, common):
         function = None
         if measure.method not in BUILTIN_MEASURES:
             function = script_function(self.config.project.scripts_dir, measure.method)
@@ -229,10 +226,10 @@ class KinematicsExtractor(Extractor):
                     kp_a = kp_b = by_subject[a]
                 else:
                     # one image plane for both, as for every pairwise quantity
-                    view = _pair_view(shared, a, b)
+                    view = _pair_rows(keypoints, recording, a, b)
                     if view is None:
                         notes.append(self._warning(
-                            recording, a, "info", f"{measure.name}: {a} and {b} are never on one camera together"
+                            recording, a, "info", f"{measure.name}: {a} and {b} are never seen together on a camera read for both their bodies"
                         ))
                         continue
                     kp_a, kp_b = view[view["subject_id"] == a], view[view["subject_id"] == b]
@@ -281,27 +278,25 @@ def check_measures(config) -> None:
 
 
 def keypoints_by_subject(config, recording: Recording) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
-    """Everyone's keypoints, and each person's on the one view they are measured on: their own
-    camera, else the shared one that saw them most."""
+    """Everyone's keypoints, and each person's on the one view their body is measured on, as the setup says."""
     keypoints = keypoints_store.read_keypoints(_keypoints_file(config, recording.recording_id), recording_id=recording.recording_id)
     keypoints = keypoints[keypoints["subject_id"].notna()]
-    views = primary_views(keypoints, recording)
-    by_subject = {
-        subject.subject_id: keypoints[(keypoints["subject_id"] == subject.subject_id) & (keypoints["video"] == views[subject.subject_id])]
-        for subject in recording.subjects
-        if subject.subject_id in views
-    }
+    views = measured_views(keypoints, recording)
+    by_subject = {}
+    for subject in recording.subjects:
+        rows = keypoints[(keypoints["subject_id"] == subject.subject_id) & (keypoints["video"] == views.get(subject.subject_id))]
+        if not rows.empty:
+            by_subject[subject.subject_id] = rows
     return keypoints, by_subject
 
 
-def _pair_view(shared: pd.DataFrame, a: str, b: str) -> pd.DataFrame | None:
-    """The rows of the shared camera on which the two were seen together most; none if never."""
-    seen = shared[shared["subject_id"].isin([a, b]) & shared["x"].notna()]
-    together = seen.groupby(["video", "frame"], observed=True)["subject_id"].nunique()
-    together = together[together == 2].groupby(level="video").size()
-    if together.empty:
+def _pair_rows(keypoints: pd.DataFrame, recording: Recording, a: str, b: str) -> pd.DataFrame | None:
+    """The two people's rows on the camera the setup reads both bodies from; none without one, or if it saw only one."""
+    camera = recording.pair_view(a, b)
+    if camera is None:
         return None
-    return shared[shared["video"] == together.idxmax()]
+    rows = keypoints[(keypoints["video"] == camera.name) & keypoints["subject_id"].isin([a, b])]
+    return rows if rows["subject_id"].nunique() == 2 else None
 
 
 def _keypoints_file(config, recording_id: str) -> Path:

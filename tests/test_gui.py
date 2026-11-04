@@ -80,9 +80,10 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
     owners.write_text(json.dumps({"room": {"people": {"parent": [1], "child": [2]}, "chosen_by": {}, "doubt": "who is who", "spans": []}}))
     shown = text_of(review.body(project, "003"))
     assert "Who is on camera" in shown and "accept-owner" in shown and "Which file is whose" not in shown
-    argv = review.action_command(project, "003", "rename-owner", "room", "ann", {}, {"room": "parent=child,child=parent"})
-    assert argv[1] == "accept-owner" and argv[argv.index("--rename") + 1] == "parent=child,child=parent"
-    voices = review.action_command(project, "003", "accept-voices", "", "ann", {"S1": "child", "S0": "none"}, {})
+    argv = review.action_command(project, "003", "accept-owner", "room", "ann", {})
+    assert argv[1] == "accept-owner" and argv[argv.index("--camera") + 1] == "room"
+    assert "/setup?recording=003&amp;camera=room" in shown or "/setup?recording=003&camera=room" in shown
+    voices = review.action_command(project, "003", "accept-voices", "", "ann", {"S1": "child", "S0": "none"})
     assert voices[voices.index("--rename") + 1] == "S0=none,S1=child"
 
 
@@ -91,12 +92,12 @@ def test_the_review_page_measures_a_yardstick_and_saves_it(project):
     assert "Pixels to centimetres" in shown and "set-scale" in shown and "No scale yet" in shown
     assert "right only at the distance from the camera" in shown
     measured = {"video": "room", "at": 4.5, "points": [[0, 0], [30, 40]], "length": 10, "object": "table edge", "person": "child"}
-    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
+    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, measured)
     assert argv[1] == "set-scale" and argv[argv.index("-r") + 1] == "003" and argv[argv.index("--points") + 1] == "0,0,30,40"
     assert argv[argv.index("--length-cm") + 1] == "10" and argv[argv.index("--object") + 1] == "table edge"
     assert argv[argv.index("--person") + 1] == "child"
-    assert review.action_command(project, "003", "clear-scale", "", "ann", {}, {})[-1] == "--clear"
-    everyone = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, {**measured, "person": review.EVERYONE})
+    assert review.action_command(project, "003", "clear-scale", "", "ann", {})[-1] == "--clear"
+    everyone = review.action_command(project, "003", "set-scale", "", "ann", {}, {**measured, "person": review.EVERYONE})
     assert "--person" not in everyone
 
 
@@ -105,7 +106,7 @@ def test_the_review_page_labels_where_people_look_and_reports_agreement(project)
 
     shown = text_of(review.body(project, "003"))
     assert "Where people look" in shown and "at random" in shown and "label-gaze" in shown
-    argv = review.action_command(project, "003", "label-gaze", "child", "ann", {}, {}, gaze={"t": 12.5, "looks_at": "parent"})
+    argv = review.action_command(project, "003", "label-gaze", "child", "ann", {}, gaze={"t": 12.5, "looks_at": "parent"})
     assert argv[1] == "label-gaze" and argv[argv.index("--at") + 1] == "12.5" and argv[argv.index("--person") + 1] == "child"
     assert argv[argv.index("--looks-at") + 1] == "parent" and argv[argv.index("--by") + 1] == "ann"
     write_labels([GazeLabel(12.5, "child", "parent"), GazeLabel(13.0, "child", "parent")], layout_for(resolve_config(project)).gaze_labels_path("003"))
@@ -165,9 +166,9 @@ def test_a_calibration_clip_is_offered_and_measured_for_every_recording_that_nam
     shown = text_of(review.body(project, "003"))
     assert "calibration clip lab.mp4" in shown and "scale: {calibration: name}" in shown
     measured = {"video": review.CLIP + "lab.mp4", "at": 1.0, "points": [[0, 0], [0, 50]], "length": 10, "object": None, "person": None}
-    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, {}, measured)
+    argv = review.action_command(project, "003", "set-scale", "", "ann", {}, measured)
     assert argv[argv.index("--calibration") + 1] == "lab.mp4" and "-r" not in argv
-    assert review.action_command(project, "003", "clear-scale", review.CLIP + "lab.mp4", "ann", {}, {})[-2:] == ["lab.mp4", "--clear"]
+    assert review.action_command(project, "003", "clear-scale", review.CLIP + "lab.mp4", "ann", {})[-2:] == ["lab.mp4", "--clear"]
     uri, problem = review.frame_uri(project, "003", review.CLIP + "lab.mp4", 1.0)
     assert problem is None and uri.startswith("data:image/jpeg;base64,")
 
@@ -377,7 +378,7 @@ def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
 def test_the_cameras_tab_shows_only_where_two_cameras_film(project):
     assert nav_style(project, "cameras") == {"display": "none"}
     put(project.parent / "raw", "003", "side", "a.mp4")
-    write_devices(project, cameras={"room": setup_camera(), "side": setup_camera()}, microphones=mics())
+    write_devices(project, cameras={"room": setup_camera(), "side": setup_camera(uses=("body",))}, microphones=mics())
     assert nav_style(project, "cameras") is None
 
 

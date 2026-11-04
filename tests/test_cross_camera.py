@@ -10,12 +10,12 @@ import pytest
 from macaw.config.schema import PoseSection
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
-from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtractor, select_videos
+from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtractor
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-from macaw.extractors.video.pose.track_repair import choose_people
+from macaw.extractors.video.pose.track_repair import suggested_people
 from macaw.extractors.video.pose.voice_motion import bin_edges
 from macaw.store.schema import coerce_frame
-from test_pose_rows import fake_prep_timing, media, offsets, recording  # noqa: F401
+from test_pose_rows import clicks, fake_prep_timing, media, offsets, recording  # noqa: F401
 from test_voice_motion import talking, three_at_a_table
 
 RNG = np.random.default_rng(11)
@@ -23,25 +23,11 @@ FPS = 10.0
 SECONDS = 120.0
 
 
-class TestSelectVideos:
-    def test_shared_cameras_are_read_next_to_the_own_cameras_only_when_asked(self, recording):
-        files = [media("a.mp4", subject_id="parent"), media("b.mp4", subject_id="child"), media("room.mp4"), media("room2.mp4")]
-        assert [item.path.name for item in select_videos(recording(files))[0]] == ["a.mp4", "b.mp4"]
-        read, skipped = select_videos(recording(files), read_shared=True)
-        assert [item.path.name for item in read] == ["a.mp4", "b.mp4", "room.mp4", "room2.mp4"]
-        assert skipped == []
-
-    def test_every_room_camera_is_read(self, recording):
-        assert [item.path.name for item in select_videos(recording([media("room.mp4"), media("room2.mp4")]))[0]] == [
-            "room.mp4", "room2.mp4",
-        ]
-
-
 class TestReferences:
     def test_clear_matches_to_own_cameras_settle_who_is_who(self):
         moves = {"a": talking(), "b": talking(), "c": talking()}
         keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]])
-        choice = choose_people(keypoints, ["a", "b", "c"], references=moves, edges=bin_edges(0.0, 120.0))
+        choice = suggested_people(keypoints, ["a", "b", "c"], references=moves, edges=bin_edges(0.0, 120.0))
         assert choice.people == {"a": [2], "b": [3], "c": [1]}
         assert choice.doubt is None
 
@@ -50,9 +36,9 @@ class TestReferences:
         moves = {name: (rng.random(240) < 0.3).astype(float) for name in "abc"}
         keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]])
         references = {k: v + 4.0 * rng.random(v.size) for k, v in moves.items()}
-        choice = choose_people(keypoints, ["a", "b", "c"], references=references, edges=bin_edges(0.0, 120.0))
+        choice = suggested_people(keypoints, ["a", "b", "c"], references=references, edges=bin_edges(0.0, 120.0))
         assert choice.people == {"a": [2], "b": [3], "c": [1]}
-        assert "weak" in choice.doubt and "configured order" not in choice.doubt
+        assert "weak" in choice.doubt and "not yet checked by a person" in choice.doubt
 
     def test_someone_present_a_little_less_can_still_be_the_one_matched(self):
         """Two references, three people; the one they pair with is in view 70% of the time, the others always."""
@@ -60,17 +46,16 @@ class TestReferences:
         moves = {name: (rng.random(240) < 0.3).astype(float) for name in "abc"}
         keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]])
         keypoints = keypoints[~((keypoints.track_id == 3) & (keypoints.frame % 10 >= 7))]
-        choice = choose_people(keypoints, ["a", "b"], references={"a": moves["a"], "b": moves["b"]}, edges=bin_edges(0.0, 120.0))
+        choice = suggested_people(keypoints, ["a", "b"], references={"a": moves["a"], "b": moves["b"]}, edges=bin_edges(0.0, 120.0))
         assert choice.people == {"a": [2], "b": [3]}
 
     def test_too_little_time_leaves_it_to_a_person(self):
         moves = {"a": talking(), "b": talking(), "c": talking()}
         keypoints = three_at_a_table([moves["c"], moves["a"], moves["b"]], seconds=12.0)
-        choice = choose_people(
+        choice = suggested_people(
             keypoints, ["a", "b", "c"], references={k: v[:24] for k, v in moves.items()}, edges=bin_edges(0.0, 12.0)
         )
-        assert choice.people == {"a": [1], "b": [2], "c": [3]}
-        assert "configured subject order" in choice.doubt and "not yet checked" in choice.doubt
+        assert "not yet checked by a person" in choice.doubt
 
 
 def nodding(activity, x, size, track):
@@ -101,7 +86,7 @@ class PerFileBackend:
 
 @pytest.fixture
 def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
-    """The child sits left in the room, so the configured order (parent, child) left to right is wrong."""
+    """Each person on a camera of their own, and both on the room camera, the child on the left."""
     activity = {"parent": talking(n=240), "child": talking(n=240)}
     frame = lambda rows: coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
     backend = PerFileBackend({
@@ -113,8 +98,8 @@ def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
 
-    def run(read_shared):
-        config = SimpleNamespace(pose=PoseSection(read_shared=read_shared))
+    def run(suggest):
+        config = SimpleNamespace(pose=PoseSection(suggest_names=suggest))
         files = [media(name, subject_id=subject) for name, subject in
                  (("parent.mp4", "parent"), ("child.mp4", "child"), ("room.mp4", None))]
         rec = recording(files, t_task_end=SECONDS - 1 / FPS)
@@ -129,17 +114,19 @@ def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
 
 
 class TestNamingTheRoomFromOwnCameras:
-    def test_without_the_option_the_room_is_not_read(self, room_and_own):
-        found, result = room_and_own(False)
-        assert set(result.keypoints.video) == {"parent.mp4", "child.mp4"}
-        assert any("pose.read_shared" in warning.message for warning in found.warnings)
+    def test_without_the_option_the_room_waits_for_a_person_to_click(self, room_and_own):
+        _, result = room_and_own(False)
+        room = result.keypoints[result.keypoints.video == "room.mp4"]
+        assert room.subject_id.isna().all()
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert "nobody has said who is who on room.mp4" in owners["room.mp4"]["doubt"]
 
-    def test_the_room_people_are_named_by_their_own_camera_and_the_run_goes_on(self, room_and_own):
+    def test_with_it_the_room_people_are_named_by_their_own_camera_and_the_run_goes_on(self, room_and_own):
         _, result = room_and_own(True)
         room = result.keypoints[result.keypoints.video == "room.mp4"]
         assert room.groupby("subject_id")["x"].min().lt(300).to_dict() == {"child": True, "parent": False}
         owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
-        assert owners["room.mp4"]["doubt"] is None
+        assert owners["room.mp4"]["doubt"] is None and owners["room.mp4"]["chosen_by"] == {"child": "suggested", "parent": "suggested"}
 
     def test_quality_rows_come_from_each_persons_own_camera(self, room_and_own):
         _, result = room_and_own(True)
@@ -159,7 +146,8 @@ def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
     monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
-    config = SimpleNamespace(pose=PoseSection(identity_anchors={"child": 0.1, "parent": 0.9}))
+    config = SimpleNamespace(pose=PoseSection(suggest_names=True))
+    clicks(tmp_path, "room_a.mp4", 1.0, child=(100.0, 125.0), parent=(500.0, 125.0))
     rec = recording([media("room_a.mp4"), media("room_b.mp4")], t_task_end=SECONDS - 1 / FPS)
     found = PoseDetectExtractor(config).run(rec, tmp_path / "detect")
     artifacts = tmp_path / "artifacts" / PoseDetectExtractor.name
@@ -170,7 +158,7 @@ def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
 
 
 class TestTwoRoomCameras:
-    def test_the_second_camera_is_named_by_motion_against_the_first(self, two_rooms):
+    def test_the_second_camera_is_named_by_motion_against_the_one_clicked(self, two_rooms):
         left = two_rooms.keypoints[two_rooms.keypoints.x < 300].groupby("video")["subject_id"].agg(lambda s: set(s.dropna()))
         assert {video: set(who) for video, who in left.items()} == {"room_a.mp4": {"child"}, "room_b.mp4": {"parent"}}
         owners = json.loads(two_rooms.artifacts["owners"].read_text(encoding="utf-8"))

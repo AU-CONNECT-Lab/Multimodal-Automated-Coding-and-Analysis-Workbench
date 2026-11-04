@@ -39,8 +39,8 @@ setup:
   microphones: {}                    # name: {hears: [roles]}
 
 identity:
-  voice_hints: []                    # shared microphone: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
-  pitch_order: []                    # shared microphone: roles from the lowest voice to the highest, e.g. [mother, child]
+  voice_hints: []                    # shared microphone, with text.voice_review flagged or skip: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
+  pitch_order: []                    # shared microphone, with text.voice_review flagged or skip: roles from the lowest voice to the highest, e.g. [mother, child]
 
 segment:
   task_start_s: null                 # s; trims the researcher's intro. null = keep from 0
@@ -74,7 +74,7 @@ text:
   diarization: per_track             # per_track: one mic per person | pyannote: one shared mic (an audio file, else the shared camera's sound), voices found by diarization | none
   diarization_model: pyannote/speaker-diarization-community-1  # HuggingFace pipeline for pyannote; accept its terms first
   extra_voices: 0                    # voices the shared mic may hold besides the people, e.g. 1 for a researcher in the room; name them none
-  voice_review: always               # always: a person names the voices | flagged: a complete suggestion is kept | skip: the suggestion is kept, undecided voices left out
+  voice_review: always               # always: a person names the voices, and no suggestion is made | flagged: a suggestion is made and kept where complete | skip: the suggestion is kept, undecided voices left out
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
   word_timestamps: true              # needed for gesture-speech alignment and MLU
   embedding_model: null              # sentence-transformers name; null disables text embeddings
@@ -92,8 +92,7 @@ pose:
   review: flagged                    # always: every camera's people wait for a person | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
-  identity_anchors: {}               # subject_id -> x position (0-1 of frame width) on the first shared camera; without them who is who waits for a person
-  read_shared: false                 # with per-person cameras, also read the shared ones: their people are named by their own camera's head motion and give the pairwise kinematics
+  suggest_names: false               # true: on a camera nobody clicked, who is who is suggested from each person's head motion where they are named, else from their own microphone; a clear match stands, a weak one waits for a person
 
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk

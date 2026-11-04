@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
-from macaw.extractors.video.pose.keypoints import select_videos
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
 from macaw.media.probe import jumps_exactly, probe
 from macaw.project.recording import Recording
@@ -141,11 +140,11 @@ def _text(cv2, image, text, origin, scale, colour, thickness) -> None:
 
 
 def _targets(row, videos: list) -> list:
-    """The camera a moment should be seen from: the subject's own when they have one."""
+    """The cameras a moment should be seen from: those the setup reads for the subject, else every camera."""
     if row.subject_id is not None and not pd.isna(row.subject_id):
-        own = [item for item in videos if item.subject_id == row.subject_id]
-        if own:
-            return own
+        theirs = [item for item in videos if any(row.subject_id in people for people in item.uses.values())]
+        if theirs:
+            return theirs
     return videos
 
 
@@ -155,7 +154,6 @@ def render_review(
     sample: pd.DataFrame,
     out_dir: Path,
     *,
-    read_shared: bool = False,
     plain_dir: Path | None = None,
 ) -> pd.DataFrame:
     """One image per sampled moment and camera, plus an index.csv that says why each was drawn; plain_dir also keeps each frame undrawn."""
@@ -164,7 +162,7 @@ def render_review(
     out_dir.mkdir(parents=True, exist_ok=True)
     if plain_dir is not None:
         plain_dir.mkdir(parents=True, exist_ok=True)
-    videos, _ = select_videos(recording, read_shared=read_shared)
+    videos = recording.cameras()
     subjects = [subject.subject_id for subject in recording.subjects]
 
     jobs = []

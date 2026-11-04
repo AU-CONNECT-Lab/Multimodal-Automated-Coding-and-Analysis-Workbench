@@ -649,7 +649,7 @@ def check_au_agreement(recording: Recording, config: MacawConfig, results) -> Ch
 def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResult:
     """With a scale set, whether one number fits each person: how big they look at it, and how much that
     changes over the recording. No scale, nothing to check."""
-    from macaw.extractors.video.pose.keypoints import primary_views
+    from macaw.extractors.video.pose.keypoints import measured_views
     from macaw.project.scale import MEASURED, apparent_size, recording_scale, size_change, unusable
 
     rid = recording.recording_id
@@ -671,7 +671,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
     if problem:
         warnings.append(warning(None, "warn", f"{problem}; exports leave this recording in pixels"))
     roles = {subject.subject_id: subject.role or subject.subject_id for subject in recording.subjects}
-    for subject_id, view in sorted(primary_views(keypoints, recording).items()):
+    for subject_id, view in sorted(measured_views(keypoints, recording).items()):
         if scale.source == MEASURED and view != scale.video:
             continue
         cm_per_px = scale.for_role(roles.get(subject_id, subject_id))

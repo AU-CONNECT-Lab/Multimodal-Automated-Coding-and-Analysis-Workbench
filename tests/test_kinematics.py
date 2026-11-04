@@ -26,6 +26,8 @@ from macaw.extractors.video.pose.kinematics import (
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.store.keypoints import write_keypoints, write_no_keypoints
 from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, empty_frame, validate_frame
+from macaw.project.recording import Subject
+from setup_helpers import video_file, recording_of
 
 FPS = 30.0
 
@@ -284,8 +286,8 @@ class TestPosturalOpenness:
         assert postural_openness(person("a", n_frames=n, moves=gone)).isna().all()
 
 
-def video(name, subject_id=None):
-    return SimpleNamespace(path=Path(name), kind="video", subject_id=subject_id, name=name, device=name, hears=())
+def video(name, subject_id=None, people=("parent", "child")):
+    return video_file(name, (subject_id,) if subject_id else people)
 
 
 @pytest.fixture
@@ -299,12 +301,7 @@ def run(tmp_path, monkeypatch):
         monkeypatch.setattr(
             kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet"
         )
-        recording = SimpleNamespace(
-            recording_id="sub-003_ses-12mo",
-            subjects=[SimpleNamespace(subject_id=name) for name in subjects],
-            media=list(files),
-            entities=lambda: {"group_id": "003", "session_id": "12mo", "task": None, "run": None},
-        )
+        recording = recording_of(files, subjects)
         extractor = KinematicsExtractor(SimpleNamespace(kinematics=KinematicsSection()))
         return extractor.run(recording, tmp_path)
 
@@ -358,7 +355,7 @@ class TestExtractor:
         result = run(keypoints, [video("parent.mp4", "parent"), video("child.mp4", "child")])
         assert result.rows.subject_id_b.isna().all()
         assert "interpersonal_distance" not in {spec.name for spec in result.specs}
-        assert any("own camera" in warning.message for warning in result.warnings)
+        assert any("no camera read for two people's bodies" in warning.message for warning in result.warnings)
 
     def test_a_shared_camera_next_to_own_cameras_gives_the_pairs_and_only_the_pairs(self, run):
         in_room = [person(name, centre=centre, scale=0.2).assign(video="room.mp4")
@@ -371,17 +368,22 @@ class TestExtractor:
         mine = rows[rows.subject_id_b.isna()].reset_index(drop=True)
         pd.testing.assert_series_equal(mine.value, alone.value.reset_index(drop=True))
 
-    def test_two_room_cameras_measure_each_person_where_they_are_seen_most(self, run):
+    def test_with_two_room_cameras_everyone_is_measured_on_the_first_the_setup_lists(self, run):
         left = pd.concat([person("parent", n_frames=20), person("child", centre=(450.0, 220.0), n_frames=5)]).assign(video="left.mp4")
         right = pd.concat([person("parent", n_frames=8), person("child", centre=(450.0, 220.0), n_frames=20, scale=2.0)]).assign(video="right.mp4")
         rows = run(pd.concat([left, right]), [video("left.mp4"), video("right.mp4")]).rows
         hands = rows[rows.feature == "hand_distance"].groupby("subject_id").size()
-        assert hands.to_dict() == {"child": 20, "parent": 20}
-        pairs = rows[rows.feature == "interpersonal_distance"]
-        assert len(pairs) == 8
+        assert hands.to_dict() == {"child": 5, "parent": 20}
+        assert len(rows[rows.feature == "interpersonal_distance"]) == 5
+
+    def test_a_persons_own_camera_comes_before_a_room_camera_whatever_the_order(self, run):
+        own = person("child", n_frames=20).assign(video="child.mp4")
+        room = pd.concat([person("parent", n_frames=8), person("child", centre=(450.0, 220.0), n_frames=8)]).assign(video="room.mp4")
+        rows = run(pd.concat([own, room]), [video("room.mp4"), video("child.mp4", "child")]).rows
+        assert rows[rows.feature == "hand_distance"].groupby("subject_id").size().to_dict() == {"child": 20, "parent": 8}
 
     def test_a_subject_without_keypoints_is_reported(self, run):
-        result = run(person("parent"), [video("room.mp4")])
+        result = run(person("parent").assign(video="room.mp4"), [video("room.mp4")])
         assert set(result.rows.subject_id) == {"parent"}
         assert any(w.subject_id == "child" and w.severity == "warn" for w in result.warnings)
 
@@ -393,14 +395,14 @@ class TestExtractor:
 
     def test_unassigned_tracks_are_ignored(self, run):
         stray = person("parent").assign(subject_id=pd.NA)
-        result = run(pd.concat([person("parent"), person("child"), stray]), [video("room.mp4")])
+        result = run(pd.concat([person("parent"), person("child"), stray]).assign(video="room.mp4"), [video("room.mp4")])
         assert set(result.rows.subject_id.dropna()) == {"parent", "child"}
 
     def test_the_cache_key_is_the_keypoints_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: tmp_path / rid)
         extractor = KinematicsExtractor(SimpleNamespace(kinematics=KinematicsSection()))
         assert extractor.inputs_for(SimpleNamespace(recording_id="r1")) == [tmp_path / "r1"]
-        assert extractor.config_sections == ("kinematics",)
+        assert extractor.config_sections == ("kinematics", "setup.cameras")
 
 
 def measure(**fields):
@@ -498,18 +500,13 @@ class TestMeasureChecks:
 
 @pytest.fixture
 def measured(tmp_path, monkeypatch):
-    def build(measures, keypoints=None, scripts_dir=None):
+    def build(measures, keypoints=None, scripts_dir=None, files=None):
         stored = tmp_path / "keypoints"
         if keypoints is None:
             keypoints = pd.concat([person("p1", centre=PARENT), person("c1", centre=CHILD)]).assign(video="room.mp4")
         write_keypoints(keypoints, stored)
         monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet")
-        recording = SimpleNamespace(
-            recording_id="sub-003_ses-12mo",
-            subjects=[SimpleNamespace(subject_id="p1", role="parent"), SimpleNamespace(subject_id="c1", role="child")],
-            media=[video("room.mp4")],
-            entities=lambda: {"group_id": "003", "session_id": "12mo", "task": None, "run": None},
-        )
+        recording = recording_of(files or [video("room.mp4", people=("p1", "c1"))], [Subject("p1", role="parent"), Subject("c1", role="child")])
         extractor = KinematicsExtractor(measure_config(measures, scripts_dir=scripts_dir or tmp_path))
         extractor.check_available()
         return extractor.run(recording, tmp_path)
@@ -537,9 +534,10 @@ class TestMeasuresInTheRun:
 
     def test_people_on_separate_cameras_are_not_measured_against_each_other(self, measured):
         keypoints = pd.concat([person("p1", centre=PARENT), person("c1", centre=CHILD)])
-        result = measured([measure(name="apart", joints=["nose"], to_joints=["nose"])], keypoints=keypoints)
+        result = measured([measure(name="apart", joints=["nose"], to_joints=["nose"])], keypoints=keypoints,
+                          files=[video("p1.mp4", "p1"), video("c1.mp4", "c1")])
         assert "apart" not in set(result.rows.feature)
-        assert any("never on one camera together" in warning.message for warning in result.warnings)
+        assert any("never seen together on a camera read for both" in warning.message for warning in result.warnings)
 
     def test_a_script_measure_runs_from_the_scripts_folder(self, measured, tmp_path, monkeypatch):
         monkeypatch.setattr(project_scripts, "_loaded", {})

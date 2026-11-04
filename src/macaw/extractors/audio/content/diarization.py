@@ -567,14 +567,11 @@ class SpeakerReviewGate(Gate):
         voices = read_voices(self.config, rid)
         if set(voice_names(self.config, rid)) == set(voices):
             return None
-        from macaw.extractors.audio.content.speaker_id import describe_suggestion, suggest_voices
+        from macaw.extractors.audio.content.speaker_id import describe_suggestion, offered_suggestion
 
         clips = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name)
-        suggestion = suggest_voices(self.config, recording)
-        hint = (
-            f"; suggested: {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`"
-            if suggestion else "; with each person's own mic or face.movement on their camera a suggestion appears here"
-        )
+        suggestion = offered_suggestion(self.config, recording)
+        hint = f"; suggested: {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`" if suggestion else ""
         return (
             f"nobody has said which voice is whom ({', '.join(sorted(voices)) or 'none found'}): listen to the clips "
             f"in {clips}{hint}, or name them with `macaw accept-voices -r {rid} --rename LABEL=PERSON,...` "

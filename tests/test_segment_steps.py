@@ -28,6 +28,7 @@ from macaw.store.annotations import build_annotations, write_annotations
 from macaw.store.keypoints import write_keypoints
 from macaw.store.longtable import build_long_rows, concat_long_tables, write_long_table
 from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame
+from setup_helpers import mics, put, recording_of, video_file, write_setup
 
 from conftest import SAMPLE_RATE
 
@@ -36,12 +37,11 @@ RID = "003"
 
 @pytest.fixture
 def project(tmp_path):
-    raw = tmp_path / "raw" / RID
-    raw.mkdir(parents=True)
     for who in ("parent", "child"):
-        (raw / f"{RID}_{who}.wav").write_bytes(b"")
+        put(tmp_path / "raw", RID, f"{who}_mic", "a.wav")
     path = tmp_path / "project.yaml"
     scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    write_setup(path, microphones=mics())
 
     def config(*overrides):
         resolved = resolve_config(path, cli_overrides=list(overrides))
@@ -175,12 +175,11 @@ def test_detection_is_counted_over_the_frames_inside(project, monkeypatch):
     frames = np.repeat(np.arange(60), 2)
     pd.DataFrame({"frame": frames, "video": "room.mp4", "t": frames / 10.0}).to_parquet(folder / DETECTIONS_NAME, index=False)
     (folder / "backend.json").write_text("{}", encoding="utf-8")
-    video = SimpleNamespace(fps=10.0, offset_s=0.0, path=Path("room.mp4"), subject_id=None)
     monkeypatch.setattr(keypoints_module, "apply_prep_timing", lambda config, recording: None)
-    monkeypatch.setattr(PoseDetectExtractor, "_sources", lambda self, recording: ([video], []))
+    recording = recording_of([video_file("room.mp4", fps=10.0, offset_s=0.0)], recording_id=RID)
     step = PoseDetectExtractor(p.config)
-    assert values(step.summarise(p.recording, 0.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.6)
-    assert values(step.summarise(p.recording, 5.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.2)
+    assert values(step.summarise(recording, 0.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.6)
+    assert values(step.summarise(recording, 5.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.2)
 
 
 def test_blinks_are_counted_over_the_readable_time_inside(project):

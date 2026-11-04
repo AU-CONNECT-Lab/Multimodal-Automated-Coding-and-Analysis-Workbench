@@ -13,6 +13,7 @@ from macaw.extractors.video.face.au import FaceExtractor, name_faces
 from macaw.store.keypoints import write_keypoints
 from macaw.project.recording import MediaFile
 from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, validate_frame
+from setup_helpers import video_file, recording_of
 
 FPS = 10.0
 
@@ -78,10 +79,7 @@ def run(tmp_path, monkeypatch):
         monkeypatch.setattr(au_module, "_keypoints_file", lambda config, rid: stored)
         monkeypatch.setattr(au_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(au_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
-        recording = SimpleNamespace(
-            recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
-            media=list(files), entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
-        )
+        recording = recording_of(files, recording_id="r1", group_id="1", session_id=None)
         config = SimpleNamespace(face=FaceSection(landmarks=landmarks, gaze=gaze))
         return backend, FaceExtractor(config).run(recording, tmp_path)
 
@@ -89,7 +87,7 @@ def run(tmp_path, monkeypatch):
 
 
 def video(name, subject_id=None):
-    return MediaFile(path=Path(name), kind="video", subject_id=subject_id, fps=FPS, offset_s=0.0)
+    return video_file(name, (subject_id,) if subject_id else ("parent", "child"), fps=FPS, offset_s=0.0)
 
 
 class TestExtractor:

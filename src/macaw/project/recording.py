@@ -29,8 +29,9 @@ class MediaFile:
     subject_id: str | None = None      # set when this is a per-person mic or camera
     # the folder it was found in; names it everywhere, since files in two folders may share a name
     device: str = ""
-    # whose voices its sound carries, as the setup says
+    # whose voices its sound carries, and whom a camera is read for per kind of measure, as the setup says
     hears: tuple[str, ...] = ()
+    uses: dict[str, tuple[str, ...]] = field(default_factory=dict)
     sample_rate: float | None = None
     fps: float | None = None
     duration_s: float | None = None
@@ -98,6 +99,26 @@ class Recording:
     def shared_sound(self) -> list[MediaFile]:
         """Devices whose sound carries several people's voices."""
         return sorted((item for item in self.media if len(item.hears) > 1), key=lambda item: item.name)
+
+    def cameras(self) -> list[MediaFile]:
+        """The cameras read for anyone's body, face or gaze, in the setup's order."""
+        return [item for item in self.media if item.kind == "video" and any(item.uses.values())]
+
+    def views(self, use: str) -> dict[str, MediaFile]:
+        """person -> the camera read for that measure of theirs: with several, their own camera (one read for them
+        alone), else the first in the setup."""
+        found: dict[str, MediaFile] = {}
+        for own in (True, False):
+            for item in self.cameras():
+                if own and len(set().union(*item.uses.values())) != 1:
+                    continue
+                for person in item.uses.get(use, ()):
+                    found.setdefault(person, item)
+        return found
+
+    def pair_view(self, a: str, b: str) -> MediaFile | None:
+        """The first camera read for both people's bodies, where a distance between them means something."""
+        return next((item for item in self.cameras() if {a, b} <= set(item.uses.get("body", ()))), None)
 
     def media_named(self, name: str) -> MediaFile:
         for item in self.media:
@@ -252,7 +273,7 @@ def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list
     Nothing is read from file names: the folder says which device a file is, the setup whom it records."""
     media: list[MediaFile] = []
     notes: list[str] = []
-    for device in sorted(setup.devices()):
+    for device in setup.devices():
         folder = root / device
         if not folder.is_dir():
             notes.append(f"no {device} folder, so this recording has no {device}")
@@ -272,9 +293,11 @@ def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list
         if kind != "video" and device in setup.cameras:
             raise RecordingNotFoundError(f"{root.name}: {device} is a camera, but its folder holds {path.name}, which is not a video")
         people, hears = device_people(setup, device)
+        camera = setup.cameras.get(device)
+        uses = {use: tuple(getattr(camera, use)) for use in ("body", "face", "gaze")} if camera is not None else {}
         media.append(
             MediaFile(
-                path=path, kind=kind, device=device, hears=tuple(hears),
+                path=path, kind=kind, device=device, hears=tuple(hears), uses=uses,
                 subject_id=people[0] if len(people) == 1 else None,
             )
         )

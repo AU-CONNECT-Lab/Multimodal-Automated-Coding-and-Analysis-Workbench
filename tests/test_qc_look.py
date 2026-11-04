@@ -18,6 +18,7 @@ from macaw.qc.look import MISSED, ON_NO_ONE, RIGHT, TWICE, WRONG, WRONG_NAME, pr
 from macaw.qc.overlay import BASELINE, REVIEW_SCHEMA
 from macaw.project.recording import MediaFile
 from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame
+from setup_helpers import video_file, recording_of
 
 RID = "dyad01"
 NAMES = ["parent", "child"]
@@ -161,10 +162,7 @@ def drawn(tmp_path):
     from macaw.qc.overlay import render_review
 
     video = write_video(tmp_path / "room.avi")
-    recording = SimpleNamespace(
-        recording_id=RID, subjects=[SimpleNamespace(subject_id=name) for name in NAMES],
-        media=[MediaFile(path=video, kind="video", subject_id=None, fps=10.0, offset_s=0.0)],
-    )
+    recording = recording_of([video_file(video, NAMES, fps=10.0, offset_s=0.0)], NAMES, recording_id=RID)
     keypoints = pd.concat([body("parent", frame=frame) for frame in range(10)])
     moments = coerce_frame(
         pd.DataFrame([{"recording_id": RID, "subject_id": None, "check": None, "reason": BASELINE, "t": t, "score": np.nan} for t in (0.1, 0.3, 0.5, 0.7)]),

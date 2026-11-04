@@ -11,6 +11,13 @@ import pandas as pd
 from macaw.project.recording import Recording
 
 
+def offered_suggestion(config, recording: Recording) -> dict | None:
+    """A suggestion only where the project asks for one (text.voice_review flagged or skip); by default a person names the voices unprompted."""
+    if config.text.voice_review == "always":
+        return None
+    return suggest_voices(config, recording)
+
+
 def suggest_voices(config, recording: Recording) -> dict | None:
     """Which voice on the shared microphone each person is: by their own microphone's loudness where
     they have one, else by their mouth movement, and a last person left by elimination."""

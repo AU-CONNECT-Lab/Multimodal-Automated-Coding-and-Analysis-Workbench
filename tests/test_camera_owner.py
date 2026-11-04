@@ -13,16 +13,16 @@ from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.extractors.video.pose.track_repair import (
-    choose_camera_owner,
-    choose_people,
+    Click,
     join_fragments,
+    named_by_clicks,
     owner_rows,
     several_people,
     subject_column,
 )
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from setup_helpers import camera, put, write_setup
+from setup_helpers import put, write_setup
 
 FPS = 10.0
 
@@ -52,36 +52,13 @@ def table(*people):
     return frame
 
 
-class TestChoosingTheOwner:
-    def test_tracker_fragments_are_joined_and_a_passer_by_is_not(self):
-        keypoints = table(
-            person(1, range(0, 52)),
-            person(2, range(50, 100), cx=210),       # same person after a hand-over
-            person(3, range(20, 30), cx=60, size=160),  # someone walking past, nearer the lens
-        )
-        choice = choose_camera_owner(keypoints)
-        assert sorted(choice.tracks) == [1, 2]
-        assert choice.doubt is None
-
+class TestOneTrackPerFrame:
     def test_one_track_per_frame_where_fragments_overlap(self):
         keypoints = table(person(1, range(0, 52)), person(2, range(50, 100), cx=210))
         owned = keypoints[owner_rows(keypoints, [1, 2])]
         assert not owned.duplicated(["frame", "joint"]).any()
         assert owned["frame"].nunique() == 100
         assert set(owned.loc[owned["frame"] == 51, "track_id"]) == {1}
-
-    def test_someone_else_in_view_as_much_is_a_doubt(self):
-        keypoints = table(person(1, range(0, 100)), person(2, range(0, 90), cx=60))
-        choice = choose_camera_owner(keypoints)
-        assert choice.tracks == [1]
-        assert "tracks [2]" in choice.doubt
-        assert choice.spans == [(0.0, 8.9)]
-
-    def test_an_owner_rarely_in_view_is_a_doubt(self):
-        keypoints = table(person(1, range(0, 30)), person(2, range(30, 100), cx=60, size=20))
-        choice = choose_camera_owner(keypoints)
-        assert choice.tracks == [1]
-        assert "30%" in choice.doubt
 
     def test_one_person_in_view_is_not_several(self):
         assert not several_people(table(person(1, range(10)), person(2, range(10, 20))))
@@ -116,40 +93,47 @@ def room(*extra):
     )
 
 
-class TestChoosingPeople:
-    def test_anchors_place_the_people_and_leave_no_doubt(self):
-        choice = choose_people(room(), ["parent", "child"], identity_anchors={"child": 0.1, "parent": 0.9})
-        assert choice.people == {"parent": [2], "child": [1, 3]}
+def click(person, at, x, y=200.0):
+    return Click(person=person, at=at, t=at, x=x, y=y)
+
+
+class TestNamingByClicks:
+    def test_a_click_names_the_person_under_it_for_as_long_as_they_are_followed(self):
+        choice = named_by_clicks(room(), [click("child", 1.0, 100), click("parent", 1.0, 500)], 1 / FPS)
+        assert choice.people == {"child": [1, 3], "parent": [2]}
         assert choice.doubt is None
 
-    def test_without_anchors_the_configured_order_is_a_guess_to_check(self):
-        choice = choose_people(room(), ["parent", "child"])
-        assert choice.people == {"parent": [1, 3], "child": [2]}
-        assert "not yet checked" in choice.doubt and "parent at x 1" in choice.doubt
+    def test_nothing_is_placed_by_position(self):
+        assert named_by_clicks(room(), [], 1 / FPS).people == {}
 
-    def test_one_person_has_no_order_to_check(self):
-        choice = choose_people(table(person(1, range(0, 50)), person(2, range(55, 100), cx=205)), ["parent"])
-        assert choice.people == {"parent": [1, 2]} and choice.doubt is None
+    def test_a_click_on_nobody_or_at_a_moment_without_anyone_is_said(self):
+        keypoints = table(person(1, range(0, 50), cx=100))
+        nowhere = named_by_clicks(keypoints, [click("child", 1.0, 900)], 1 / FPS)
+        assert nowhere.people == {} and "nobody was detected where child clicked at 1 s" in nowhere.doubt
+        later = named_by_clicks(keypoints, [click("child", 8.0, 100)], 1 / FPS)
+        assert "nobody was detected in the frame where child clicked at 8 s" in later.doubt
 
-    def test_fewer_people_than_subjects_is_a_doubt(self):
-        choice = choose_people(table(person(1, range(100))), ["parent", "child"], identity_anchors={"parent": 0.1, "child": 0.9})
-        assert choice.people == {"parent": [1]}
-        assert "found 1 of the 2" in choice.doubt
+    def test_two_names_on_one_person_are_said(self):
+        choice = named_by_clicks(room(), [click("child", 1.0, 100), click("parent", 2.0, 102)], 1 / FPS)
+        assert choice.people == {"child": [1, 3]} and "child and parent were clicked on the same person" in choice.doubt
 
-    def test_a_third_person_in_view_as_much_is_a_doubt_with_where_to_look(self):
-        visitor = person(7, range(30, 80), cx=900)
-        choice = choose_people(room(visitor), ["parent", "child"], identity_anchors={"parent": 0.1, "child": 0.9})
-        assert choice.people == {"parent": [1, 3], "child": [2]}
-        assert "tracks [7]" in choice.doubt and choice.spans == [(3.0, 7.9)]
+    def test_a_click_where_two_people_overlap_names_the_one_clearly_nearest_or_asks_again(self):
+        keypoints = table(person(1, range(0, 20), cx=200), person(2, range(0, 20), cx=260))
+        near = named_by_clicks(keypoints, [click("child", 1.0, 160)], 1 / FPS)
+        assert near.people == {"child": [1]}
+        between = named_by_clicks(keypoints, [click("child", 1.0, 230)], 1 / FPS)
+        assert between.people == {} and "falls on two people" in between.doubt
 
-    def test_tracks_named_by_a_person_are_kept_and_the_rest_is_placed_around_them(self):
-        choice = choose_people(room(), ["parent", "child"], named={"parent": [2]})
-        assert choice.people == {"parent": [2], "child": [1, 3]}
-        assert choice.doubt is None
+    def test_a_lost_person_is_named_again_by_a_second_click(self):
+        far = table(person(1, range(0, 40), cx=100), person(5, range(60, 100), cx=700), person(2, range(0, 100), cx=400))
+        once = named_by_clicks(far, [click("child", 1.0, 100), click("parent", 1.0, 400)], 1 / FPS)
+        assert once.people["child"] == [1] and "tracks [5]" in once.doubt and once.spans == [(6.0, 9.9)]
+        twice = named_by_clicks(far, [click("child", 1.0, 100), click("parent", 1.0, 400), click("child", 7.0, 700)], 1 / FPS)
+        assert twice.people == {"child": [1, 5], "parent": [2]} and twice.doubt is None
 
     def test_each_frame_and_joint_belongs_to_one_person(self):
         keypoints = room(person(4, range(0, 100), cx=110, size=110))
-        choice = choose_people(keypoints, ["parent", "child"], identity_anchors={"parent": 0.1, "child": 0.9})
+        choice = named_by_clicks(keypoints, [click("child", 1.0, 100), click("parent", 1.0, 500)], 1 / FPS)
         keypoints["subject_id"] = subject_column(keypoints, choice.people)
         assigned = keypoints.dropna(subset=["subject_id"])
         assert not assigned.duplicated(["subject_id", "frame", "joint"]).any()
@@ -163,7 +147,11 @@ def project(tmp_path):
         put(raw, "003", device, "a.mp4")
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
-    write_setup(config, cameras={"parent_cam": camera(["parent"]), "child_cam": camera(["child"]), "room": camera()})
+    write_setup(config, cameras={
+        "parent_cam": {"body": ["parent"], "face": ["parent"]},
+        "child_cam": {"body": ["child"], "face": ["child"]},
+        "room": {"body": ["parent", "child"], "gaze": ["parent", "child"]},
+    })
 
     def owners(entries):
         resolved = resolve_config(config)
@@ -198,7 +186,7 @@ class TestReviewGate:
     def test_a_doubt_waits_and_says_what_to_run(self, project):
         project.owners({"parent_cam": owner([1], "track 2 is in view nearly as much")})
         reason = project.pending()
-        assert "parent_cam" in reason and "macaw accept-owner -r 003" in reason
+        assert "parent_cam" in reason and "macaw name-people -r 003" in reason and "macaw accept-owner -r 003" in reason
 
     def test_skip_lets_it_through_with_a_note(self, project):
         project.owners({"parent_cam": owner([1], "doubt")})
@@ -236,70 +224,45 @@ class TestAcceptOwner:
         project.owners({"parent_cam": owner([2], "doubt")})
         assert project.pending() is not None
 
-    def test_naming_tracks_records_them_for_pose_keypoints(self, project):
-        outcome = invoke(
-            "accept-owner", "-c", str(project.config), "-r", "003",
-            "--camera", "parent_cam", "--tracks", "2,7", "--by", "ann",
-        )
-        assert outcome.exit_code == 0, outcome.output
-        assert "-e pose.kinematics`" in outcome.output
-        path = layout_for(project.resolved()).camera_owners_path("003")
-        entry = json.loads(path.read_text(encoding="utf-8"))["parent_cam"]
-        assert entry["people"] == {"parent": [2, 7]} and entry["by"].startswith("ann ")
-
-    def test_tracks_need_exactly_one_camera(self, project):
-        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--tracks", "2")
-        assert outcome.exit_code != 0
-
     def test_a_file_without_a_choice_is_an_error(self, project):
         project.owners({"parent_cam": owner([1], "doubt")})
         outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--camera", "nope.mp4")
         assert outcome.exit_code != 0
 
 
-class TestCorrectingAChoice:
-    def test_rename_gives_the_tracks_shown_under_one_name_to_the_right_person(self, project):
-        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
-        outcome = invoke(
-            "accept-owner", "-c", str(project.config), "-r", "003",
-            "--camera", "room", "--rename", "parent=child,child=parent", "--by", "ann",
-        )
+class TestNamePeople:
+    def name(self, project, *args):
+        return invoke("name-people", "-c", str(project.config), "-r", "003", *args)
+
+    def test_clicks_are_kept_with_who_made_them_and_join_the_earlier_ones(self, project):
+        outcome = self.name(project, "--camera", "room", "--at", "2.5", "--person", "parent=0.25,0.4", "--person", "child=0.7,0.45", "--by", "ann")
         assert outcome.exit_code == 0, outcome.output
-        path = layout_for(project.resolved()).camera_owners_path("003")
-        entry = json.loads(path.read_text(encoding="utf-8"))["room"]
-        assert entry["people"] == {"child": [1, 3], "parent": [2]}
+        assert "on room, parent at 2.5 s, child at 2.5 s" in outcome.output and "-e pose.keypoints" in outcome.output
+        self.name(project, "--camera", "room", "--at", "9", "--person", "child=0.6,0.5")
+        clicks = json.loads(layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8"))["room"]
+        assert [(c["person"], c["at"], c["x"], c["y"]) for c in clicks] == [("parent", 2.5, 0.25, 0.4), ("child", 2.5, 0.7, 0.45), ("child", 9.0, 0.6, 0.5)]
+        assert clicks[0]["by"].startswith("ann ")
+        assert self.name(project, "--camera", "room", "--clear").exit_code == 0
+        assert not layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8").strip("{}\n ")
 
-    def test_rename_to_someone_who_is_not_a_subject_is_refused(self, project):
-        project.owners({"room": owner({"parent": [1], "child": [2]}, "doubt")})
-        outcome = invoke(
-            "accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room", "--rename", "parent=uncle",
-        )
-        assert outcome.exit_code != 0 and "uncle" in str(outcome.exception)
-
-    def test_tracks_on_a_shared_camera_need_a_subject(self, project):
-        outcome = invoke("accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room", "--tracks", "4")
-        assert outcome.exit_code != 0 and "--subject" in str(outcome.exception)
-
-    def test_a_later_correction_replaces_an_earlier_claim_on_the_same_tracks(self, project):
-        args = ["accept-owner", "-c", str(project.config), "-r", "003", "--camera", "room"]
-        invoke(*args, "--tracks", "4", "--subject", "parent")
-        invoke(*args, "--tracks", "4", "--subject", "child")
-        path = layout_for(project.resolved()).camera_owners_path("003")
-        assert json.loads(path.read_text(encoding="utf-8"))["room"]["people"] == {"child": [4]}
-
-    def test_keeping_a_shared_choice_clears_the_gate(self, project):
-        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "not yet checked")})
-        assert "--rename" in project.pending()
-        invoke("accept-owner", "-c", str(project.config), "-r", "003")
-        assert project.pending() is None
+    @pytest.mark.parametrize("args, reason", [
+        (["--camera", "nope", "--at", "1", "--person", "parent=0.1,0.1"], "not a camera of 003"),
+        (["--camera", "parent_cam", "--at", "1", "--person", "child=0.1,0.1"], "reads parent_cam for parent, not child"),
+        (["--camera", "room", "--at", "1", "--person", "parent=1.5,0.1"], "from 0 to 1"),
+        (["--camera", "room", "--at", "1", "--person", "parent=left"], "ROLE=X,Y"),
+        (["--camera", "room", "--person", "parent=0.1,0.1"], "--at"),
+    ])
+    def test_a_click_that_cannot_be_read_one_way_is_refused(self, project, args, reason):
+        outcome = self.name(project, *args)
+        assert outcome.exit_code != 0 and reason in str(outcome.exception)
 
 
 class TestReportPage:
     def test_the_page_shows_who_is_on_camera_and_what_is_in_doubt(self, project):
         from macaw.qc.report import write_recording_report
 
-        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "who is who is not yet checked")})
+        project.owners({"room": owner({"parent": [1, 3], "child": [2]}, "tracks [7], which nobody was clicked on, are in view")})
         page, summary = write_recording_report(project.resolved(), "003")
         text = page.read_text(encoding="utf-8")
-        assert "room" in text and "1, 3" in text and "who is who is not yet checked" in text
+        assert "room" in text and "1, 3" in text and "which nobody was clicked on" in text
         assert "pose.review" in summary["waiting"]

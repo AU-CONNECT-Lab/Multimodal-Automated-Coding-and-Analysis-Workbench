@@ -95,7 +95,7 @@ class GestureExtractor(Extractor):
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.gestures")
+    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras")
     requires = (PoseReviewGate.name,)
 
     @classmethod
@@ -151,7 +151,7 @@ class Gesture3DExtractor(Extractor):
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.gestures")
+    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras")
     requires = (TriangulationExtractor.name,)
 
     @classmethod

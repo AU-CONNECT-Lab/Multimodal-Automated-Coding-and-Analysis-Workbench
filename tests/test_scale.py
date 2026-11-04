@@ -31,7 +31,7 @@ from macaw.qc.boilerplate import describe, load_references, render
 from macaw.qc.checks import check_scale
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
-from setup_helpers import camera, mics, put, write_setup
+from setup_helpers import camera, mics, put, recording_of, write_setup
 
 from test_kinematics import person
 
@@ -45,7 +45,7 @@ def project(tmp_path):
         put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
-    write_setup(config, cameras={"room": camera(), "side": camera()}, microphones=mics())
+    write_setup(config, cameras={"room": camera(), "side": camera(uses=("body",))}, microphones=mics())
     return config
 
 
@@ -268,7 +268,7 @@ class TestCheck:
         return SimpleNamespace(layout=layout_for(resolve_config(project)), keypoints=lambda: keypoints)
 
     def recording(self, *people):
-        return SimpleNamespace(recording_id="003", media=[], subjects=[SimpleNamespace(subject_id=who, role=who) for who in people or ("parent",)])
+        return recording_of([], people or ("parent",), recording_id="003")
 
     def test_nose_to_shoulders_is_measured_per_frame(self):
         assert apparent_size(person("parent", n_frames=3)).tolist() == pytest.approx([60.0] * 3)

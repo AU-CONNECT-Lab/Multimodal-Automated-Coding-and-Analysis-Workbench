@@ -10,21 +10,23 @@ import pandas as pd
 from macaw.exceptions import InputNotFoundError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep
+from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
-from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, speech_activity
 from macaw.extractors.video.pose.track_repair import (
+    Click,
     PeopleChoice,
-    choose_camera_owner,
-    choose_people,
     detect_swaps,
+    named_by_clicks,
     repair_tracks,
     several_people,
     subject_column,
+    suggested_people,
     track_quality,
 )
+from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, speech_activity
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
+from macaw.project.names import read_names
 from macaw.project.recording import Recording
 from macaw.store.keypoints import read_keypoints
 from macaw.store.longtable import build_long_rows, concat_long_tables
@@ -67,41 +69,19 @@ def _warning(check: str, recording: Recording, subject_id, severity: str, messag
     )
 
 
-def _video_files(recording: Recording) -> list:
-    return [item for item in recording.media if item.kind == "video"]
+def camera_people(item) -> list[str]:
+    """Everyone a camera is read for, as the setup says."""
+    return sorted(set().union(*item.uses.values())) if item.uses else []
 
 
-def select_videos(recording: Recording, *, read_shared: bool = False) -> tuple[list, list]:
-    """(read, skipped). Per-person cameras answer the identity question by themselves, so they
-    win over shared ones, the same preference as per_track over a shared mic; read_shared adds
-    the shared cameras next to them. One camera per person: a second would only repeat them."""
-    videos = sorted(_video_files(recording), key=lambda item: str(item.path))
-    per_subject = [item for item in videos if item.subject_id is not None]
-    shared = [item for item in videos if item.subject_id is None]
-    if per_subject:
-        chosen: dict[str, object] = {}
-        for item in per_subject:
-            chosen.setdefault(item.subject_id, item)
-        read = list(chosen.values()) + (shared if read_shared else [])
-    else:
-        read = shared
-    return read, [item for item in videos if item not in read]
-
-
-def own_views(recording: Recording) -> dict[str, str]:
-    """subject -> the file name of their own camera, where they have one."""
-    return {item.subject_id: item.name for item in select_videos(recording)[0] if item.subject_id is not None}
-
-
-def primary_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, str]:
-    """subject -> the view a person is measured on: their own camera, else the shared one that saw them most."""
-    views = own_views(recording)
-    seen = keypoints[keypoints["subject_id"].notna() & keypoints["x"].notna()]
-    counts = seen.groupby(["subject_id", "video"], observed=True)["frame"].nunique()
-    for (subject, video), _ in counts.sort_values(ascending=False, kind="stable").items():
+def measured_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, str]:
+    """person -> the camera their body is measured on: the one the setup reads it from, else the first they were named on."""
+    views = {person: item.name for person, item in recording.views("body").items()}
+    order = [item.name for item in recording.cameras()]
+    named = keypoints[keypoints["subject_id"].notna()]
+    for (subject, video), _ in sorted(named.groupby(["subject_id", "video"], observed=True), key=lambda entry: order.index(entry[0][1]) if entry[0][1] in order else len(order)):
         views.setdefault(str(subject), str(video))
     return views
-
 
 
 def _frames_between(item, start: float, end: float) -> int:
@@ -138,7 +118,7 @@ class PoseDetectExtractor(Extractor):
     scale = Scale.FRAME
     group = "pose"
     config_sections = (
-        "pose.backend", "pose.model", "pose.device", "pose.min_confidence", "pose.input_size", "pose.read_shared",
+        "pose.backend", "pose.model", "pose.device", "pose.min_confidence", "pose.input_size", "setup.cameras",
         "segment", "video",
     )
     requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
@@ -154,44 +134,22 @@ class PoseDetectExtractor(Extractor):
     def check_available(self) -> None:
         self.backend().check_available()
 
-    def _sources(self, recording: Recording) -> tuple[list, list]:
-        return select_videos(recording, read_shared=self.config.pose.read_shared)
-
     def inputs_for(self, recording: Recording) -> list[Path]:
         """The offset table moves every frame on the recording clock, so it is an input too."""
-        paths = sorted(item.path for item in self._sources(recording)[0])
+        paths = sorted(item.path for item in recording.cameras())
         offsets = layout_for(self.config, create=False).offset_table_path(recording.recording_id)
         return paths + ([offsets] if offsets.is_file() else [])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.pose
-        if not _video_files(recording):
-            raise UnreadableMediaError(f"{recording.recording_id}: no video to read")
+        if not recording.cameras():
+            raise UnreadableMediaError(f"{recording.recording_id}: the setup reads no camera here for anyone's body, face or gaze")
 
         backend = self.backend()
         prep = apply_prep_timing(self.config, recording)
         start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
-        subjects = [subject.subject_id for subject in recording.subjects]
         warnings: list[QCWarning] = []
-
-        sources, skipped = self._sources(recording)
-        per_subject = any(item.subject_id is not None for item in sources)
-        if per_subject and any(item.subject_id is None for item in skipped) and not cfg.read_shared:
-            warnings.append(
-                _warning(
-                    self.name, recording, None, "info",
-                    "both per-subject and shared cameras are present; the shared ones were "
-                    "not read (pose.read_shared)",
-                )
-            )
-        repeated = [item.name for item in skipped if item.subject_id is not None]
-        if repeated:
-            warnings.append(
-                _warning(
-                    self.name, recording, None, "warn",
-                    f"only one camera per person is read; skipped {', '.join(repeated)}",
-                )
-            )
+        sources = recording.cameras()
 
         pieces: list[pd.DataFrame] = []
         n_processed = n_with_anyone = 0
@@ -206,7 +164,7 @@ class PoseDetectExtractor(Extractor):
             if stop <= first:
                 continue
             n_processed += _frames_between(item, start, end)
-            expected = 1 if item.subject_id is not None else max(len(subjects), 1)
+            expected = max(len(camera_people(item)), 1)
             frames = backend.infer(
                 item.frames_path,
                 device=cfg.device,
@@ -264,7 +222,7 @@ class PoseDetectExtractor(Extractor):
             return None
         recording = copy.deepcopy(recording)
         apply_prep_timing(self.config, recording)
-        sources = self._sources(recording)[0]
+        sources = recording.cameras()
         times = detections["t"].to_numpy(dtype=float)
         inside = detections[(times >= start_s) & (times <= end_s)]
         n_with_anyone = int(inside.groupby("video", observed=True)["frame"].nunique().sum()) if not inside.empty else 0
@@ -286,13 +244,14 @@ class PoseDetectExtractor(Extractor):
 
 @register_extractor
 class PoseExtractor(Extractor):
-    """Names the people pose.detect found: the owner of a per-person camera, who is who on a shared one."""
+    """Names the people pose.detect found, as a person clicked them; a camera the setup reads for one person alone
+    needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.8.0"
+    version = "0.9.0"
     scale = Scale.FRAME
     group = "pose"
-    config_sections = ("pose",)
+    config_sections = ("pose", "setup.cameras")
     requires = (PoseDetectExtractor.name,)
 
     def check_available(self) -> None:
@@ -300,42 +259,31 @@ class PoseExtractor(Extractor):
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         layout = layout_for(self.config, create=False)
-        named = layout.camera_owners_path(recording.recording_id)
+        named = layout.names_path(recording.recording_id)
         detections = layout.artifacts_dir(recording.recording_id, PoseDetectExtractor.name) / DETECTIONS_NAME
         inputs = [detections] + ([named] if named.is_file() else [])
-        sources = select_videos(recording, read_shared=self.config.pose.read_shared)[0]
-        shared = any(item.subject_id is None for item in sources)
-        own = any(item.subject_id is not None for item in sources)
-        if shared and not own and not self.config.pose.identity_anchors:
-            # who is who is then read off each person's mic
+        if self.config.pose.suggest_names:
+            # a suggestion may be read off each person's own mic
             prep = load_prep(self.config, recording.recording_id)
             inputs += [prep.track_path(subject) for subject in sorted(prep.tracks)]
         return inputs
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        cfg = self.config.pose
         detections, backend = load_detections(self.config, recording.recording_id)
-        self._prep = load_prep(self.config, recording.recording_id)
-        subjects = [subject.subject_id for subject in recording.subjects]
+        apply_prep_timing(self.config, recording)
+        videos = load_video_prep(self.config, recording.recording_id)
+        names = read_names(layout_for(self.config, create=False).names_path(recording.recording_id))
         warnings: list[QCWarning] = []
-        named = read_owner_file(
-            layout_for(self.config, create=False).camera_owners_path(recording.recording_id)
-        )
         owners: dict[str, dict] = {}
         pieces: list[pd.DataFrame] = []
         swaps_by_file: dict[str, list] = {}
-        sources = select_videos(recording, read_shared=cfg.read_shared)[0]
-        # people on their own cameras first, then shared cameras in order: each view is named by the
-        # head motion of the people already named on an earlier one
-        shared_done = False
-        for item in sorted(sources, key=lambda item: item.subject_id is None):
+        cameras = [item for item in recording.cameras() if not detections[detections["video"] == item.name].empty]
+        # cameras a person named first, so a suggestion elsewhere can follow the heads named there
+        cameras.sort(key=lambda item: not (names.get(item.name) or item.subject_id is not None))
+        for item in cameras:
             piece = detections[detections["video"] == item.name].reset_index(drop=True)
-            if piece.empty:
-                continue
-            piece, swaps, owner = self._identify(
-                piece, item, subjects, cfg, named.get(item.name), pieces, first_shared=not shared_done
-            )
-            shared_done = shared_done or item.subject_id is None
+            clicks = [self._click(item, videos.get(item.name), click) for click in names.get(item.name, [])]
+            piece, swaps, owner = self._identify(piece, item, clicks, names.get(item.name, []), pieces, recording)
             swaps_by_file[item.name] = swaps
             if owner is not None:
                 owners[item.name] = owner
@@ -371,75 +319,73 @@ class PoseExtractor(Extractor):
             warnings=warnings,
         )
 
-    def _identify(
-        self, piece: pd.DataFrame, item, subjects: list[str], cfg, named: dict | None, own: list[pd.DataFrame],
-        *, first_shared: bool,
-    ):
+    @staticmethod
+    def _click(item, video: dict | None, click: dict) -> Click:
+        """A click at a moment of the camera's file, from its first picture, on a share of its picture's width and
+        height, placed on the recording clock and in the pixels the keypoints are in."""
+        first = video["first_picture_s"] if video else 0.0
+        start = video["frames_start_s"] if video else 0.0
+        width, height = (video.get("prepared_size") or video["size"]) if video else (1.0, 1.0)
+        return Click(
+            person=click["person"], at=float(click["at"]), t=float(click["at"]) + first + item.offset_s - start,
+            x=float(click["x"]) * width, y=float(click["y"]) * height,
+        )
+
+    def _identify(self, piece: pd.DataFrame, item, clicks: list[Click], written: list[dict], named: list[pd.DataFrame], recording: Recording):
         """Attach subject_id. The stored track_id stays the backend's raw numbering, so a
         disputed assignment can still be traced back to what the model actually returned."""
-        if item.subject_id is not None and not several_people(piece):
-            piece["subject_id"] = item.subject_id
+        alone = item.subject_id
+        if alone is not None and not clicks and not several_people(piece):
+            piece["subject_id"] = alone
             return piece, [], None
 
-        produced = set(piece["track_id"].dropna().astype(int))
-        by_hand = {
-            subject: [track for track in tracks if track in produced]
-            for subject, tracks in (named or {}).get("people", {}).items()
-        }
         swaps: list = []
-        if item.subject_id is not None:
-            # others in view of a per-person camera stay in the table without a subject
-            identified = piece
-            if item.subject_id in by_hand:
-                choice = PeopleChoice(people={item.subject_id: by_hand[item.subject_id]})
-            else:
-                owner = choose_camera_owner(piece)
-                choice = PeopleChoice(people={item.subject_id: owner.tracks}, doubt=owner.doubt, spans=owner.spans)
-        else:
-            if cfg.track_repair:
-                swaps = detect_swaps(piece, max_gap_s=cfg.track_repair_max_gap_s)
+        identified = piece
+        if alone is None and self.config.pose.track_repair:
+            swaps = detect_swaps(piece, max_gap_s=self.config.pose.track_repair_max_gap_s)
             identified = repair_tracks(piece, swaps)
-            # anchors are drawn on the first shared camera; a later one is named against the earlier views
-            anchors = cfg.identity_anchors if first_shared else {}
-            voices = references = edges = None
-            if not anchors:
-                references, voices, edges = self._evidence(own, subjects)
-            choice = choose_people(
-                identified, subjects, identity_anchors=anchors, named=by_hand,
-                voices=voices, references=references, edges=edges,
-            )
-
-        doubts = [choice.doubt] if choice.doubt else []
-        for subject, tracks in (named or {}).get("people", {}).items():
-            missing = sorted(set(tracks) - produced)
+        if clicks:
+            period = 1.0 / item.fps if item.fps else 0.1
+            choice = named_by_clicks(identified, clicks, period)
+            missing = [person for person in camera_people(item) if person not in choice.people]
+            doubts = [choice.doubt] if choice.doubt else []
             if missing:
-                doubts.append(f"tracks {missing} named for {subject} by {named['by']} are not in this run's output")
+                doubts.append(f"{', '.join(missing)} {'was' if len(missing) == 1 else 'were'} not clicked on {item.name}")
+            choice.doubt = "; ".join(doubts) or None
+        elif self.config.pose.suggest_names:
+            references, voices, edges = self._evidence(named, camera_people(item), recording)
+            choice = suggested_people(identified, camera_people(item), references=references, voices=voices, edges=edges)
+        elif alone is not None:
+            choice = PeopleChoice(people={}, doubt=(
+                f"more than one person is in view at once on {item.name}, which the setup reads for {alone} alone: "
+                f"click {alone} on a frame of it"
+            ))
+        else:
+            choice = PeopleChoice(people={}, doubt=f"nobody has said who is who on {item.name} yet: click each person on a frame of it")
+
         piece["subject_id"] = subject_column(identified, choice.people).to_numpy()
+        by = {click["person"]: f"{click.get('by', '')} (clicked at {float(click['at']):g} s)".strip() for click in written}
         owner = {
             "people": choice.people,
-            "chosen_by": {
-                subject: named["by"] if subject in by_hand else "automatic" for subject in choice.people
-            },
-            "doubt": "; ".join(doubts) or None,
+            "chosen_by": {subject: by.get(subject, "suggested") for subject in choice.people},
+            "doubt": choice.doubt,
             "spans": choice.spans or [],
         }
         return piece, swaps, owner
 
-    def _evidence(self, own: list[pd.DataFrame], subjects: list[str]):
-        """(references, voices, edges) for who is who on a shared camera: each person's head motion
-        on their own camera, else their talking on their own mic; none without either."""
-        prep = self._prep
-        # each person from the first view they were named on, so frame numbers come from one file
+    def _evidence(self, named: list[pd.DataFrame], people: list[str], recording: Recording):
+        """(references, voices, edges) to suggest who is who from: each person's head motion on the first camera
+        they were named on when everyone sought is named somewhere, else their talking on their own mic."""
+        prep = load_prep(self.config, recording.recording_id)
+        edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         first: dict[str, pd.DataFrame] = {}
-        for piece in own:
+        for piece in named:
             for subject, group in piece[piece["subject_id"].notna()].groupby("subject_id"):
                 first.setdefault(str(subject), group)
-        tracks = {subject: prep.track_path(subject) for subject in subjects if subject in prep.tracks}
-        if len(first) > 1:
-            edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-            return {subject: head_motion(group, edges) for subject, group in first.items()}, None, edges
-        if len(tracks) > 1:
-            edges = bin_edges(prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        if people and all(person in first for person in people):
+            return {person: head_motion(first[person], edges) for person in people}, None, edges
+        tracks = {person: prep.track_path(person) for person in people if person in prep.tracks}
+        if tracks:
             return None, speech_activity(tracks, prep.t_origin_s, edges), edges
         return None, None, None
 
@@ -500,7 +446,7 @@ class PoseExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         t_start = float(keypoints["t"].min())
         t_end = float(keypoints["t"].max())
-        views = primary_views(keypoints, recording)
+        views = measured_views(keypoints, recording)
 
         frames = []
         for subject_id, group in keypoints.groupby("subject_id", dropna=True, observed=True):
@@ -610,13 +556,13 @@ def waiting_cameras(config, recording_id: str, *, every: bool) -> list[str]:
 
 @register_extractor
 class PoseReviewGate(Gate):
-    """Held where pose.keypoints was not sure whose camera it is or who is who, or on every camera with review always."""
+    """Held where nobody has said who is who on a camera, where a click did not settle it, or on every camera with review always."""
 
     name = "pose.review"
     version = "0.1.0"
     scale = Scale.RECORDING
     group = "pose"
-    config_sections = ("pose",)
+    config_sections = ("pose", "setup.cameras")
     requires = (PoseExtractor.name,)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
@@ -634,10 +580,9 @@ class PoseReviewGate(Gate):
         rid = recording.recording_id
         why = "(pose.review is always)" if self.config.pose.review == "always" else "(the warnings say why)"
         return (
-            f"who is on {', '.join(waiting)} waits for a person {why}: look at "
-            f"`macaw qc -r {rid} --render`, then `macaw accept-owner -r {rid}` keeps the choice, "
-            f"`--media FILE --rename SHOWN=RIGHT,...` corrects who is who, or "
-            f"`--media FILE --tracks N,M [--subject S]` names a person's tracks"
+            f"who is on {', '.join(waiting)} waits for a person {why}: click the people on a frame of each camera on the "
+            f"Setup page (`macaw name-people -r {rid}`), look at `macaw qc -r {rid} --render`, and "
+            f"`macaw accept-owner -r {rid}` keeps the naming as it stands"
         )
 
     def notes(self, recording: Recording) -> list[QCWarning]:
@@ -649,6 +594,6 @@ class PoseReviewGate(Gate):
                 recording_id=recording.recording_id,
                 subject_id=None,
                 severity="warn",
-                message="pose.review is skip: a doubtful choice of who is on camera was used without a person looking",
+                message="pose.review is skip: who is on camera was used as it stood, doubts and all, without a person looking",
             )
         ]

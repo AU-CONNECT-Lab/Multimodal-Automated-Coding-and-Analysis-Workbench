@@ -11,7 +11,7 @@ from macaw.extractors import get_backend, register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.face.backends import BACKEND_GROUP, resolve_backend
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, primary_views
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -59,6 +59,7 @@ class FaceExtractor(Extractor):
     group = "face"
     config_sections = (
         "face.backend", "face.model", "face.device", "face.action_units", "face.landmarks", "face.gaze", "segment", "video",
+        "setup.cameras",
     )
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
@@ -91,7 +92,7 @@ class FaceExtractor(Extractor):
         keypoints = keypoints_store.read_keypoints(
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
-        views = primary_views(keypoints, recording)
+        views = {person: item.name for person, item in recording.views("face").items()}
         by_name = {item.name: item for item in recording.media if item.kind == "video"}
         per_subject: dict[str, pd.DataFrame] = {}
         seen_frames: dict[str, int] = {}
@@ -205,7 +206,7 @@ class FaceAUCheckExtractor(FaceExtractor):
     name = "face.au_check"
     version = "0.1.0"
     scale = Scale.RECORDING
-    config_sections = ("face.backend", "face.model", "face.check_backend", "face.check_model", "face.device", "segment", "video")
+    config_sections = ("face.backend", "face.model", "face.check_backend", "face.check_model", "face.device", "segment", "video", "setup.cameras")
     requires = (FaceExtractor.name,)
 
     def check_backend(self):

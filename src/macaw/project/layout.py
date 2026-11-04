@@ -84,11 +84,11 @@ class Layout:
     def camera_setup_path(self, setup: str) -> Path:
         return self.output_dir / "calibration" / f"{setup}.toml"
 
-    # tracks a person named as a camera's owner; an input to pose.keypoints
-    def camera_owners_path(self, recording_id: str) -> Path:
-        return self.recording_dir(recording_id) / "camera_owners.json"
+    # who is who on each camera, as a person clicked it on a frame; an input to pose.keypoints
+    def names_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "names.json"
 
-    # automatic owner choices a person looked at and kept; read only by the review gate
+    # namings in doubt a person looked at and kept as they stood; read only by the review gate
     def camera_owners_accepted_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "camera_owners_accepted.json"
 
@@ -138,7 +138,7 @@ class Layout:
         """What people did by hand in a recording's folder, which no rerun gives back."""
         return [
             self.offset_table_path(recording_id),  # offsets set or accepted by hand sit beside computed ones
-            self.camera_owners_path(recording_id),
+            self.names_path(recording_id),
             self.camera_owners_accepted_path(recording_id),
             self.voice_owners_path(recording_id),
             self.gaze_labels_path(recording_id),

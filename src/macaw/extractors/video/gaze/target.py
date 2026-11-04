@@ -17,7 +17,7 @@ from macaw.extractors.video.gaze import angles
 from macaw.extractors.video.gaze.backends import BACKEND_GROUP, resolve_backend
 from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.gaze.objects import EVERY_S, GazeObjectsExtractor, load_objects, objects_file
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, primary_views
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.gaze_labels import labels_frame, read_labels
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -74,7 +74,7 @@ class GazeTargetExtractor(Extractor):
     version = "0.2.0"
     scale = Scale.FRAME
     group = "gaze"
-    config_sections = ("gaze", "segment", "video")
+    config_sections = ("gaze", "segment", "video", "setup.cameras")
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
 
@@ -119,7 +119,7 @@ class GazeTargetExtractor(Extractor):
         keypoints = keypoints_store.read_keypoints(
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
-        views = primary_views(keypoints, recording)
+        views = {person: item.name for person, item in recording.views("gaze").items()}
         by_name = {item.name: item for item in recording.media if item.kind == "video"}
         if backend.finds_points:
             points, warnings = self._points(recording, backend, keypoints, views, by_name, span)

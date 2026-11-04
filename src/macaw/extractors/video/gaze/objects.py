@@ -11,7 +11,7 @@ from macaw.exceptions import BackendNotAvailableError, ExternalToolError, Unread
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
-from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, primary_views
+from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.layout import layout_for
 from macaw.project.recording import Recording
 from macaw.store import keypoints as keypoints_store
@@ -139,7 +139,7 @@ class GazeObjectsExtractor(Extractor):
     version = "0.1.0"
     scale = Scale.FRAME
     group = "gaze"
-    config_sections = ("gaze.targets", "gaze.object_backend", "gaze.object_model", "gaze.object_score", "segment", "video")
+    config_sections = ("gaze.targets", "gaze.object_backend", "gaze.object_model", "gaze.object_score", "segment", "video", "setup.cameras")
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
 
@@ -173,7 +173,7 @@ class GazeObjectsExtractor(Extractor):
         )
         by_name = {item.name: item for item in recording.media if item.kind == "video"}
         found, warnings = [], []
-        for video in sorted(set(primary_views(keypoints, recording).values())):
+        for video in sorted({item.name for item in recording.views("gaze").values()}):
             item = by_name[video]
             fps = item.fps or 0.0
             if fps <= 0:

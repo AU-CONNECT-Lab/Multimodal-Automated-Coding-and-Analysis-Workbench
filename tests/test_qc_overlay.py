@@ -13,6 +13,7 @@ from macaw.qc.checks import CANDIDATE_SCHEMA
 from macaw.qc.overlay import BASELINE, REVIEW_SCHEMA, draw_overlay, render_review, review_sample
 from macaw.project.recording import MediaFile
 from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame, validate_frame
+from setup_helpers import video_file, recording_of
 
 RID = "sub-003_ses-12mo"
 
@@ -160,15 +161,11 @@ def write_video(path: Path, n_frames=10, fps=10.0):
 
 
 def media(path, subject_id=None, offset_s=0.0):
-    return MediaFile(path=path, kind="video", subject_id=subject_id, fps=10.0, offset_s=offset_s)
+    return video_file(path, (subject_id,) if subject_id else ("parent", "child"), fps=10.0, offset_s=offset_s)
 
 
 def recording(files):
-    return SimpleNamespace(
-        recording_id=RID,
-        subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
-        media=list(files),
-    )
+    return recording_of(files, recording_id=RID)
 
 
 def moments(rows):
