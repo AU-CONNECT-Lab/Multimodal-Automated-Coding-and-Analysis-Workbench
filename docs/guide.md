@@ -111,18 +111,23 @@ Processing steps appear under short names, for example `text.asr` for transcript
 
 {bdg-warning}`You do this`
 
-Before anything can run, the recording devices are described on the Setup page. Nothing is inferred from the names of folders or files: the description entered here is the only record of which file belongs to whom.
+Before anything can run, the participants, cameras and microphones are described on the Setup page. Nothing is inferred from the names of folders or files: the description entered here is the only record of which file belongs to whom.
+
+The card *The setup* lists the participants, cameras, microphones and things on the left, shows the room in three dimensions in the middle and the settings of the entry chosen on the right, with a top, a front and a side view below. Choose an entry in the list, or click it in any view, to see and change its settings.
 
 People
-: The roles of the participants, as set under *Project* in the settings.
+: The participants, by role. **Add** with *Person* adds a role to the project, so that every recording has that participant; a role is renamed or removed under *Project* in the settings.
 
 Cameras
-: One row per camera: the name of its folder, and for each participant whether the camera is used for their body (pose and movement), their face (facial action units, head orientation, blinks) and their gaze. A camera that films a single participant is that participant's own camera. *Voices* states whose voices the camera's own microphone carries; a camera whose sound is not to be used, for example because every participant wears a microphone, carries none.
+: Each camera carries the name of its folder in every recording. A grid states, for each participant, whether the camera is used for their body (pose and movement), their face (facial action units, head orientation, blinks) and their gaze, and whether the camera's own microphone carries their voice. A camera used for a single participant is that participant's own camera. A camera whose sound is not to be used, for example because every participant wears a microphone, carries no voice.
 
 Microphones
-: One row per microphone or sound recorder: the name of its folder and whose voices it carries. A device that carries one participant's voice alone serves as that participant's own microphone; the voices on a device that carries several participants are separated automatically and assigned to participants by the researcher (step 6).
+: Each microphone or sound recorder carries the name of its folder and states whose voices it carries. A device that carries one participant's voice alone serves as that participant's own microphone; the voices on a device that carries several participants are separated automatically and assigned to participants by the researcher (step 6).
 
-**Save the setup** checks the description and writes it to the file `setups/main.yaml` in the project folder. The table *What each recording holds* then lists, for every recording, the file found in each device folder, together with any device that is missing and any folder or file that was not read. This table should be checked before the first run.
+Things
+: Objects of interest, such as a table or a toy, which serve as targets of gaze ({ref}`gaze`) and appear in the drawings.
+
+**Add** places a new camera, microphone or thing in the room, from where it can be moved, and *Remove this camera* (or microphone, or thing) takes it out of the setup. **Save the setup** checks the whole description and writes it to the file `setups/main.yaml` in the project folder; until then the card shows *unsaved changes*. The table *What each recording holds* then lists, for every recording, the file found in each device folder, together with any device that is missing and any folder or file that was not read. This table should be checked before the first run.
 
 When the devices differed between sessions, for example after a change of camera, a second setup is started under *New setup*, and each recording made with it names it in its own settings file in the `recordings` folder of the project (here for `dyad07`, in `recordings/dyad07.yaml`):
 
@@ -134,17 +139,17 @@ setup:
 (room)=
 ### The room
 
-*The room* records where the participants, the cameras, the microphones and any things of interest, such as a table or a toy, are placed. All of it is optional, and a project runs without it; it is used to infer whom a participant looks at from their head direction ({ref}`gaze`), it yields notes on what each camera sees, and it provides a drawing of the arrangement for a publication.
+Where the participants, devices and things are is optional, and a project runs without it. It is used to infer whom a participant looks at from their head direction ({ref}`gaze`), it yields notes on what each camera sees, and it provides a drawing of the arrangement for a publication.
 
-Positions are given seen from above, across and along the room from a corner chosen as zero, with heights from the floor, in the project's unit of length: centimetres by default, metres or inches when chosen as *Length unit* under *Project* in the settings. Changing the unit there converts the lengths already entered. For each participant, enter their position, eye height and the direction they face; for each camera, its position, the height of its lens, the direction it faces, how far it is tilted down and the angle its picture spans across (often given in the camera's specifications, otherwise found as described below); for each microphone, its position and height; for each thing, its position, height and, for drawing, its width and depth. Directions are given in degrees clockwise from straight along the room as seen from above. The room's own width and length, if entered, draw its walls.
+Positions are given seen from above, across and along the room from a corner chosen as zero, with heights from the floor, in the project's unit of length: centimetres by default, metres or inches when chosen as *Length unit* under *Project* in the settings. Changing the unit there converts the lengths already entered. Each participant has a position, an eye height and the direction they face; each camera a position, the height of its lens, the direction it faces, how far it is tilted down and the angle its picture spans across (often given in the camera's specifications, otherwise found as described below); each microphone a position and a height; each thing a position, a height and, for drawing, a width and a depth. Directions are given in degrees clockwise from straight along the room as seen from above. The room's width and length, entered under *The room's walls* in the list, draw its walls. A value left blank is drawn faintly at a typical height and is not used by the analysis.
 
-The arrangement is shown as a front and a side view above and beside a top view, as in a technical drawing, together with a three-dimensional view that can be turned. Anything placed can be dragged in any of the three views as well as typed. **Save the room** writes it into the setup file. When the arrangement differed in some sessions, those recordings can change parts of it in their own settings files.
+Values can be typed in the settings of the chosen entry or set by dragging. In the three-dimensional view and the top view, an entry is dragged across the floor; in the front and side views, it is dragged across and up or down. When an entry is chosen, the ring around it turns it, the knob in front of a camera tilts it, and the arrow above it changes its height. The R key turns the chosen entry by 15°, and Delete takes it out of the room while keeping its other settings. Dragging the empty floor turns the three-dimensional view, the scroll wheel zooms any view, and **Fit** shows the whole room again. The flat views are drawn either in the style of the drawing for a paper (*Drawing*) or as views of the three-dimensional model (*Model*). A camera or microphone used for one participant alone is shown in that participant's colour. When the arrangement differed in some sessions, those recordings can change parts of it in their own settings files.
 
-Below the drawing, notes state for each placed camera which participants fall outside its picture, at what angle it sees the face of each participant whose face or gaze it is used for (a face seen from more than 90° is seen from behind), and how far each participant whose body it is used for is from it. When these distances differ, a pixel represents a different length at each participant's position, and a single scale misstates one of them ({ref}`scale`).
+Below the views, notes state for each placed camera which participants fall outside its picture, at what angle it sees the face of each participant whose face or gaze it is used for (a face seen from more than 90° is seen from behind), and how far each participant whose body it is used for is from it. When these distances differ, a pixel represents a different length at each participant's position, and a single scale misstates one of them ({ref}`scale`).
 
-*What each camera should see* draws the arrangement from where a camera stands, half transparent over a frame of the camera's own file: the floor as lines, each participant up to their eye height with a ring for the head, and the things. Adjust the camera's height, direction, tilt and picture angle with the sliders until the drawing lies on the picture, then press **Use these for the camera** and save the room.
+*From a camera*, above the three-dimensional view, shows the room from where a chosen camera stands, with its direction, tilt and picture angle, half transparent over a frame of that camera's file from a chosen recording and moment. Drag in the view to turn and tilt the camera, and scroll to change its picture angle, until the drawing lies on the picture; the camera's settings change accordingly.
 
-**Draw the room for a paper**, or `macaw draw-room`, writes a top view and a side view of the arrangement at 300 dpi as `setups/main.png`, with the participants, the cameras and what each sees, the microphones, the things and a scale bar, and no further annotation.
+**Draw for a paper**, or `macaw draw-room`, writes a top view and a side view of the saved arrangement at 300 dpi as `setups/main.png`, with the participants, the cameras and what each sees, the microphones, the things and a scale bar, and no further annotation.
 
 (naming)=
 ### Who is who on each camera
