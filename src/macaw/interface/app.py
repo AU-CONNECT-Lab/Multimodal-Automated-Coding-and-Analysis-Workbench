@@ -37,7 +37,7 @@ def create_app(config_path: Path, *, local: bool = True) -> Dash:
         assets_path_ignore=["^room$"],
         suppress_callback_exceptions=True,
     )
-    app.index_string = with_room_editor(app.index_string, app.get_asset_url)
+    app.index_string = index_page(app.index_string, app.get_asset_url)
     # a function, so reloading the page reads the project afresh
     app.layout = lambda: build_layout(config_path, local=local)
     for page in PAGES:
@@ -54,13 +54,13 @@ def create_app(config_path: Path, *, local: bool = True) -> Dash:
     return app
 
 
-def with_room_editor(index: str, asset_url) -> str:
-    """The page with the room editor's module and the import map its three.js files resolve 'three' through."""
+def index_page(index: str, asset_url) -> str:
+    """The page with the look chosen before applied as it opens, and the room editor's module with its import map for three.js."""
     imports = json.dumps({"imports": {"three": asset_url("room/three/three.module.min.js")}})
     # stamped with the file's time, so a browser does not keep an older editor
     stamp = int((Path(__file__).parent / "assets" / "room" / "editor.js").stat().st_mtime)
     editor = f'<script type="module" src="{asset_url("room/editor.js")}?m={stamp}"></script>'
-    head = f'{{%css%}}\n<script type="importmap">{imports}</script>'
+    head = f'{settings.early_look()}\n{{%css%}}\n<script type="importmap">{imports}</script>'
     return index.replace("{%css%}", head, 1).replace("{%renderer%}", "{%renderer%}\n" + editor, 1)
 
 

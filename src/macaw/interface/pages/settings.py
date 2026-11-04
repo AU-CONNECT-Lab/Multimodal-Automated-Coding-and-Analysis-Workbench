@@ -3,6 +3,7 @@ Nothing is written before the new settings pass the same check a run makes."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -39,6 +40,20 @@ THEMES = [
     {"label": "Dark", "value": "dark"},
     {"label": "Same as the system", "value": "system"},
 ]
+# kept apart from the settings' own stored values, so a page can apply them before it is drawn
+STYLE_KEY, THEME_KEY = "macaw.style", "macaw.theme"
+SET_STYLES = [item["value"] for item in STYLES[1:]]
+SET_THEMES = ["light", "dark"]
+
+
+def early_look() -> str:
+    """A script for the page's head, so a page opens in the style and light or dark chosen, not in the default first."""
+    return (
+        "<script>try { const root = document.documentElement;"
+        f" const style = localStorage.getItem('{STYLE_KEY}'); if ({json.dumps(SET_STYLES)}.includes(style)) root.dataset.style = style;"
+        f" const theme = localStorage.getItem('{THEME_KEY}'); if ({json.dumps(SET_THEMES)}.includes(theme)) root.dataset.theme = theme;"
+        " } catch (error) {}</script>"
+    )
 
 
 def _control(dotted: str, value):
@@ -187,24 +202,17 @@ def _runs_again_note(config_path: Path, text: str):
 
 
 def register(app, config_path: Path) -> None:
-    app.clientside_callback(
-        """function (theme) {
-            const root = document.documentElement;
-            if (theme === "light" || theme === "dark") { root.dataset.theme = theme; } else { delete root.dataset.theme; }
-            return theme;
-        }""",
-        Output("theme-applied", "data"),
-        Input("theme-choice", "value"),
-    )
-    app.clientside_callback(
-        """function (style) {
-            const root = document.documentElement;
-            if (style === "playroom" || style === "blueprint") { root.dataset.style = style; } else { delete root.dataset.style; }
-            return style;
-        }""",
-        Output("style-applied", "data"),
-        Input("style-choice", "value"),
-    )
+    for name, key, values in (("theme", THEME_KEY, SET_THEMES), ("style", STYLE_KEY, SET_STYLES)):
+        app.clientside_callback(
+            f"""function (chosen) {{
+                const root = document.documentElement;
+                if ({json.dumps(values)}.includes(chosen)) {{ root.dataset.{name} = chosen; }} else {{ delete root.dataset.{name}; }}
+                try {{ localStorage.setItem('{key}', chosen); }} catch (error) {{}}
+                return chosen;
+            }}""",
+            Output(f"{name}-applied", "data"),
+            Input(f"{name}-choice", "value"),
+        )
 
     @app.callback(
         Output("settings-changes", "children"),

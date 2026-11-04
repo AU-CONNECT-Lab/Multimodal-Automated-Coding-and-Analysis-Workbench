@@ -884,6 +884,33 @@ def test_the_page_loads_the_room_editor_through_an_import_map(project):
     assert 'type="module" src="/assets/room/editor.js?m=' in index and index.index("importmap") < index.index("editor.js")
 
 
+def test_a_page_opens_in_the_look_chosen_before(project):
+    import subprocess
+
+    from macaw.interface.pages import settings
+
+    app = create_app(project)
+    index = app.index_string
+    assert index.index("macaw.style") < index.index("{%css%}") and index.index("macaw.theme") < index.index("{%css%}")
+    # what the settings' callbacks store is what the head reads
+    stored = [str(item) for item in app._inline_scripts]
+    assert any("localStorage.setItem('macaw.style'" in script for script in stored)
+    assert any("localStorage.setItem('macaw.theme'" in script for script in stored)
+    node = shutil.which("node")
+    if node is None:
+        return
+    script = settings.early_look().removeprefix("<script>").removesuffix("</script>")
+    for stored_values, expected in (({"macaw.style": "blueprint", "macaw.theme": "dark"}, '{"style":"blueprint","theme":"dark"}'),
+                                    ({"macaw.style": "lab", "macaw.theme": "system"}, "{}"), ({"macaw.style": "<x>"}, "{}")):
+        program = (
+            f"const kept = {json.dumps(stored_values)}; globalThis.localStorage = {{ getItem: (key) => kept[key] ?? null }};"
+            " globalThis.document = { documentElement: { dataset: {} } };"
+            f" {script} console.log(JSON.stringify(document.documentElement.dataset));"
+        )
+        shown = subprocess.run([node, "-e", program], capture_output=True, text=True, check=True).stdout.strip()
+        assert shown == expected
+
+
 def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypatch):
     from macaw.interface.pages import settings
 
