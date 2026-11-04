@@ -421,16 +421,30 @@ def scale_figure(uri: str | None, points: list):
     return figure
 
 
-def _transcript(layout, rid):
+def _transcript(config, layout, rid, path):
+    from macaw.extractors.audio.content.asr import read_transcript
+    from macaw.qc.transcript_check import describe, read_check, still_there
+
     stamp = layout.corrected_transcript_stamp_path(rid)
     state = ui.note("The transcript in use is the one corrected by hand.", "ok") if stamp.is_file() else ui.note("The transcript in use is the recogniser's.")
+    found = read_check(layout.transcript_check_path(rid))
+    doubts = []
+    if found:
+        transcript = read_transcript(path)
+        marked, _ = still_there(found, transcript)
+        doubts.append(ui.note(describe(found, transcript), "warn" if not marked.empty else "ok"))
+        if not marked.empty:
+            rows = [[f"{row.t_start:.1f}", row.subject_id, row.text, row.why] for row in marked.itertuples(index=False)]
+            doubts.append(ui.table(["At (s)", "Who", "Words", "Why"], rows, numeric={"At (s)"}))
     return ui.card(
         "Transcript",
         state,
+        *doubts,
         html.Div(
             [
                 _button("Export to ELAN", "transcript-export"),
                 _button("Back to the recogniser's", "transcript-reset"),
+                *([_button("Ask the model for doubtful lines", "transcript-check")] if config.coding.llm.model else []),
             ],
             className="buttons",
         ),
@@ -533,7 +547,7 @@ def body(config_path: Path, rid: str | None):
         _gaze(resolve_config(config_path, recording_id=rid), layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
-        parts.append(_transcript(layout, rid))
+        parts.append(_transcript(config, layout, rid, results.artifact("text.asr", "transcript.parquet")))
     return [part for part in parts if part is not None]
 
 
@@ -598,6 +612,8 @@ def action_command(
         return command("check-look", extra=["--frame", target, "--verdict", action.removeprefix("look-"), *by_flag])
     if action == "transcript-reset":
         return ["macaw", "transcript", "reset", "-c", str(config_path), "-r", rid]
+    if action == "transcript-check":
+        return ["macaw", "transcript", "check", "-c", str(config_path), "-r", rid]
     raise ValueError(f"unknown action {action}")
 
 
@@ -725,7 +741,9 @@ def register(app, config_path: Path) -> None:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
                 measured["at"] = float(measured["at"] or 0.0)
                 argv = action_command(config_path, rid, action, target, by, voices, measured)
-            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
+            # a model asked about every frame or line takes longer than a click's command
+            slow = {"timeout_s": 3600} if action in ("look", "transcript-check") else {}
+            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent, **slow))]
         elif trigger == "review-upload" and upload:
             path = _uploaded(config_path, upload, filename or f"{rid}.eaf")
             argv = _transcript_command(config_path, rid, "transcript-import", path, by)

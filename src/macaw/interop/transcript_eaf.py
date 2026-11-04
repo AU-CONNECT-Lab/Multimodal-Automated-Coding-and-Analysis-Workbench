@@ -13,34 +13,40 @@ from macaw.project.recording import Recording
 TRANSCRIPT_TYPE = "macaw-transcript"
 # what the software left out; moving an annotation from here to a transcript tier puts it back
 DROPPED_TYPE = "macaw-dropped"
+# lines a model marked as possibly misheard, for the person correcting; never read back
+DOUBT_TYPE = "macaw-doubt"
 CORRECTED_COLUMNS = ("subject_id", "t_start", "t_end", "text")
 
 
 def export_transcript_eaf(
-    transcript: pd.DataFrame, dropped: pd.DataFrame, recording: Recording, out_path: Path
+    transcript: pd.DataFrame, dropped: pd.DataFrame, recording: Recording, out_path: Path, doubts: pd.DataFrame | None = None,
 ) -> Path:
     Eaf = _elan()
     out_path = Path(out_path)
     eaf = Eaf()
     if "default" in eaf.get_tier_names():
         eaf.remove_tier("default")
-    for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE):
+    doubts = doubts if doubts is not None else pd.DataFrame(columns=["subject_id", "t_start", "t_end", "text", "why"])
+    for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE, *([DOUBT_TYPE] if not doubts.empty else [])):
         eaf.add_linguistic_type(kind)
     _link_media(eaf, recording, out_path)
     subjects = [subject.subject_id for subject in recording.subjects]
     # a further speaker the transcript holds, such as other, keeps a tier of its own
     subjects += sorted(set(transcript["subject_id"].dropna().astype(str)) - set(subjects))
-    for kind, frame, name in ((TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped")):
+    for kind, frame, name in ((TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped"), (DOUBT_TYPE, doubts, "doubtful")):
         for subject_id in subjects:
             rows = frame[frame["subject_id"].astype(str) == subject_id]
-            if kind == DROPPED_TYPE and rows.empty:
+            if kind != TRANSCRIPT_TYPE and rows.empty:
                 continue
             tier = tier_for_subject(subject_id, name)
             eaf.add_tier(tier, ling=kind, part=subject_id)
             for row in rows.itertuples(index=False):
                 start, end = _ms(row.t_start), _ms(row.t_end)
                 if end > start:
-                    text = _text(row.text) if kind == TRANSCRIPT_TYPE else f"{_text(row.text)} [{row.reason}: {_text(row.detail)}]"
+                    text = (
+                        _text(row.text) if kind == TRANSCRIPT_TYPE else _text(row.why) if kind == DOUBT_TYPE
+                        else f"{_text(row.text)} [{row.reason}: {_text(row.detail)}]"
+                    )
                     eaf.add_annotation(tier, start, end, text)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if hasattr(eaf, "to_file"):

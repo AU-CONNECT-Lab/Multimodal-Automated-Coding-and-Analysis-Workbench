@@ -168,6 +168,9 @@ class Layout:
     def look_checks_path(self, recording_id: str) -> Path:
         return self.qc_dir(recording_id) / "look_checks.json"
 
+    def transcript_check_path(self, recording_id: str) -> Path:
+        return self.qc_dir(recording_id) / "transcript_check.json"
+
     # rendered frames are something to look at, not a result, so they stay out of output_dir
     def renders_dir(self, recording_id: str) -> Path:
         return self.work_dir / "renders" / recording_id

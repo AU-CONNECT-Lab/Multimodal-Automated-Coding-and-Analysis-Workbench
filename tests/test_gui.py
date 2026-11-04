@@ -952,3 +952,23 @@ def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypat
     assert config.setup.room.things["table"].size == (pytest.approx(23.622), pytest.approx(19.685))
     own = (recordings / "003.yaml").read_text(encoding="utf-8")
     assert "per_px: 0.0984" in own and "# measured by hand" in own
+
+
+def test_the_transcript_card_lists_the_lines_a_model_marked(project):
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, write_transcript
+    from test_transcript_correction import TRANSCRIPT
+
+    layout = layout_for(resolve_config(project))
+    directory = layout.artifacts_dir("003", ASRExtractor.name)
+    directory.mkdir(parents=True)
+    write_transcript(TRANSCRIPT, directory / TRANSCRIPT_NAME)
+    shown = text_of(review.body(project, "003"))
+    assert "Export to ELAN" in shown and "doubtful lines" not in shown
+    project.write_text(project.read_text(encoding="utf-8") + "\ncoding:\n  llm:\n    model: tiny\n", encoding="utf-8")
+    path = layout.transcript_check_path("003")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marked = [{"subject_id": "child", "t_start": 3.0, "t_end": 4.0, "text": "doggy", "why": "a word out of place"}]
+    path.write_text(json.dumps({"model": "tiny", "n_lines": 2, "lines": marked}), encoding="utf-8")
+    shown = text_of(review.body(project, "003"))
+    assert "Ask the model for doubtful lines" in shown and "1 of 2 line(s) marked by tiny" in shown and "a word out of place" in shown
+    assert review.action_command(project, "003", "transcript-check", "", "", {})[1:3] == ["transcript", "check"]

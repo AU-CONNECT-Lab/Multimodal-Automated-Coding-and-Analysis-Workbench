@@ -21,6 +21,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
+from macaw.qc.transcript_check import describe as describe_check, read_check
 from macaw.qc.checks import RecordingResults, read_candidates
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, read_transcript
 from macaw.project.room import UNIT_NAMES
@@ -295,6 +296,15 @@ def _decisions(
     elif results.artifact("text.asr", TRANSCRIPT_NAME) is not None:
         rows.append({
             "what": "Transcript", "decided": f"as recognised; to correct it, macaw transcript export -r {recording_id}",
+            "by": "software", "href": None,
+        })
+    checked = read_check(layout.transcript_check_path(recording_id))
+    if checked:
+        source = results.artifact("text.asr", TRANSCRIPT_NAME)
+        rows.append({
+            "what": "Transcript lines a model marked",
+            "decided": f"{describe_check(checked, read_transcript(source) if source is not None else None)}; "
+                       f"macaw transcript export -r {recording_id} puts them beside the transcript",
             "by": "software", "href": None,
         })
     if dropped:
