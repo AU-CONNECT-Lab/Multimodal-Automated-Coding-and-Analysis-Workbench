@@ -32,8 +32,10 @@ def _ranges(room: RoomSection, units: str):
                     zs.append(getattr(place, key))
     if not xs:
         raise ValueError("the room places nothing yet")
+    # inside walls everything is drawn, so a narrow margin is enough across; above, a camera's name needs room
     margin = geometry.to_unit(_MARGIN_CM, units)
-    return [(min(values) - margin, max(values) + margin) for values in (xs, ys)] + [(-margin / 3, max(zs) + margin)]
+    side = margin / 3 if room.size is not None else margin
+    return [(min(values) - side, max(values) + side) for values in (xs, ys)] + [(-margin / 3, max(zs) + margin)]
 
 
 def _fan_reach(room: RoomSection, name: str, place, reads: dict[str, list[str]], fallback: float) -> float:
@@ -89,7 +91,8 @@ def draw_room(
         width, depth = place.size or (thing, thing)
         x, y = place.at
         top.add_patch(Rectangle((x - width / 2, y - depth / 2), width, depth, facecolor=_THING, alpha=0.8, edgecolor=_THING_EDGE, linewidth=0.8))
-        top.text(x - width / 2 + 0.06 * width, y, name, fontsize=6.5, color=_THING_EDGE, va="center", ha="left")
+        # in a corner, where people sitting at a table's sides leave it readable
+        top.text(x - width / 2 + 0.05 * width, y - depth / 2 + 0.06 * depth, name, fontsize=6.5, color=_THING_EDGE, va="bottom", ha="left")
     for name, place in room.people.items():
         if place.at is None:
             continue
