@@ -21,6 +21,7 @@ Reviewing the output works the same way. The quality report points at the frames
 
 ### Unreleased
 - Configuration, recording discovery, a feature store, and local runs that resume where they stopped.
+- A setup that says what each camera and microphone records and for whom, a layout of the room in three views and 3D with notes on what each camera sees and a drawing for a paper, and who is who on each camera said by a click, with optional suggestions from head motion, a microphone or a model that reads pictures.
 - Alignment of separate devices by their sound, videos prepared once to one clock and one format, and a camera's own sound when there is no microphone.
 - Transcription from each person's microphone or a shared one, voices told apart and named, prosody and voice quality per turn, lexical and syntactic measures.
 - Turn structure, floor transfer and turn-taking entropy.
@@ -31,10 +32,10 @@ Reviewing the output works the same way. The quality report points at the frames
 - A model that reads pictures checking the review frames, and a person checking the model.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
-- Centimetres beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
-- 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and a page to calibrate the cameras.
+- Lengths in one unit for the project (centimetres, metres or inches) beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
+- 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and the cameras calibrated on the Setup page.
 - Body points exported per recording, in pixels and in 3D.
-- Who looks at whom and at which named things, from the picture or from where people sit, mutual gaze, and labelled frames to check it.
+- Who looks at whom and at which named things, from the picture or from where the room places people and things, mutual gaze, and labelled frames to check it.
 - Named segments of a recording, each with every recording-level measure and the turn checks worked out again as if the recording had been cut there, marked on the video in the workbench.
 
 ### 0.1.0-alpha
