@@ -21,7 +21,7 @@ Reviewing the output works the same way. The quality report points at the frames
 
 ### Unreleased
 - Configuration, recording discovery, a feature store, and local runs that resume where they stopped.
-- A setup that says what each camera and microphone records and for whom, a layout of the room in three views and 3D with notes on what each camera sees and a drawing for a paper, and who is who on each camera said by a click, with optional suggestions from head motion, a microphone or a model that reads pictures.
+- A setup that says what each camera and microphone records and for whom, edited with the room in 3D and three flat views, with notes on what each camera sees, the room seen from a camera, and a drawing for a paper, and who is who on each camera said by a click, with optional suggestions from head motion, a microphone or a model that reads pictures.
 - Alignment of separate devices by their sound, videos prepared once to one clock and one format, and a camera's own sound when there is no microphone.
 - Transcription from each person's microphone or a shared one, voices told apart and named, prosody and voice quality per turn, lexical and syntactic measures.
 - Turn structure, floor transfer and turn-taking entropy.
