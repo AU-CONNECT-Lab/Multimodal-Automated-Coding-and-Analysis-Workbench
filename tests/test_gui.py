@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import yaml
 import pandas as pd
 import pytest
 
@@ -728,3 +729,76 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-clear"))
     assert "no clicks on room now" in text_of(keep(None, 1, shown, marks, "003", "room"))
     assert "Nobody is named on room yet" in text_of(naming.saved(project, "003", "room"))
+
+
+def placed_project(project):
+    from setup_helpers import write_setup as write_devices
+
+    path = write_devices(project, cameras={"room": setup_camera()}, microphones=mics())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["room"] = {
+        "people": {"parent": {"at": [100, 200], "eyes": 115, "facing": 90}, "child": {"at": [200, 200], "eyes": 70, "facing": 270}},
+        "cameras": {"room": {"at": [150, 0], "height": 120, "facing": 0, "lens": 70}},
+        "things": {"table": {"at": [150, 200], "height": 72, "size": [60, 50]}},
+    }
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_the_room_card_lists_everyone_and_every_device_and_draws_what_is_placed(project):
+    from macaw.interface.pages import room
+
+    placed_project(project)
+    config = resolve_config(project)
+    rows = room.rows_of(config, "main")
+    assert list(rows["people"]) == ["parent", "child"] and list(rows["cameras"]) == ["room"]
+    assert list(rows["microphones"]) == ["parent_mic", "child_mic"] and rows["microphones"]["parent_mic"]["x"] is None
+    assert rows["things"]["table"] == {"x": 150, "y": 200, "height": 72, "width": 60, "depth": 50}
+    assert room.room_of(rows)["microphones"] == {"parent_mic": {}, "child_mic": {}}
+    front, side, top, preview, shapes, said = room.drawn(config, rows)
+    # things lie under people and devices, so the table is the first shape of each view
+    assert shapes["top"] == [["things", "table"], ["cameras", "room"], ["people", "parent"], ["people", "child"]]
+    assert len(front.layout.shapes) == 4 and len(preview.data) > 0
+    assert front.layout.width == top.layout.width and front.layout.height == side.layout.height
+    shown = " ".join(text_of(note) for note in said)
+    assert "parent's face is seen" in shown and "One pixel spans" in shown and "times as much at" in shown
+
+
+def test_dragging_a_shape_moves_the_item_behind_it(project):
+    from macaw.interface.pages import room
+
+    placed_project(project)
+    config = resolve_config(project)
+    rows = room.rows_of(config, "main")
+    shapes = room.drawn(config, rows)[4]
+    moved = room.dragged(rows, shapes, "top", {"shapes[2].x0": 60, "shapes[2].x1": 104, "shapes[2].y0": 228, "shapes[2].y1": 272})
+    assert (moved["people"]["parent"]["x"], moved["people"]["parent"]["y"]) == (82, 250)
+    raised = room.dragged(rows, shapes, "front", {"shapes[1].x0": 140, "shapes[1].x1": 156, "shapes[1].y0": 142, "shapes[1].y1": 158})
+    assert (raised["cameras"]["room"]["x"], raised["cameras"]["room"]["height"]) == (148, 150)
+    taller = room.dragged(rows, shapes, "side", {"shapes[0].x0": 160, "shapes[0].x1": 210, "shapes[0].y0": 10, "shapes[0].y1": 90})
+    assert (taller["things"]["table"]["y"], taller["things"]["table"]["height"]) == (185, 90)
+    assert room.dragged(rows, shapes, "top", {"autosize": True}) is None
+
+
+def test_the_room_is_saved_beside_the_devices_and_kept_when_the_devices_are_saved(project):
+    from macaw.interface.pages import room, setup
+
+    placed_project(project)
+    config = resolve_config(project)
+    rows = room.rows_of(config, "main")
+    rows["people"]["child"]["eyes"] = 80.5
+    rows = room.added(rows, "toy", ["parent", "child"])
+    rows["things"]["toy"].update(x=150, y=190, height=75)
+    path = room.save_room(project, "main", rows)
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert saved["room"]["people"]["child"]["eyes"] == 80.5 and saved["room"]["things"]["toy"] == {"at": [150, 190], "height": 75}
+    assert "parent_mic" in saved["microphones"]
+    with pytest.raises(MacawError, match="already in the room"):
+        room.added(rows, "parent", ["parent", "child"])
+    devices = setup.rows_of(resolve_config(project), "main")
+    devices["microphones"] = devices["microphones"][:1]
+    setup.save(project, "main", devices)
+    kept = resolve_config(project).setup.room
+    assert kept.things["toy"].height == 75 and kept.people["child"].eyes == 80.5
+    with pytest.raises(MacawError, match="not saved yet"):
+        room.save_room(project, "home", rows)

@@ -119,3 +119,31 @@ def _width_factor(clip: Path, config) -> float:
     streams = probe(clip).video_streams()
     aspect = streams[0].pixel_aspect if streams else None
     return float(aspect) if aspect else 1.0
+
+
+@app.command("draw-room")
+def draw_room_command(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    setup: str = typer.Option(None, "--setup", help="Which setup. Default: setup.name."),
+    out: Path = typer.Option(None, "--out", help="Where to write the PNG. Default: setups/<setup>.png."),
+) -> None:
+    """Draw the room a setup lays out, front and side above and beside a plan, at 300 dpi for a paper."""
+    import yaml
+
+    from macaw.config.schema import MacawConfig
+    from macaw.project.room_figure import draw_room
+    from macaw.qc.figures import require_matplotlib
+
+    require_matplotlib()
+    resolved = resolve_config(config)
+    name = setup or resolved.setup.name
+    path = Path(resolved.project.setups_dir) / f"{name}.yaml"
+    if not path.is_file():
+        raise MacawError(f"setup {name} is not saved yet ({path})")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    room = MacawConfig.model_validate({**resolved.model_dump(), "setup": {**data, "name": name}}).setup.room
+    try:
+        target = draw_room(room, list(resolved.project.roles), resolved.project.units, out or path.with_suffix(".png"), title=f"Setup {name}")
+    except ValueError as error:
+        raise MacawError(f"setup {name}: {error}; place people, devices or things on the Setup page first") from None
+    typer.echo(str(target))

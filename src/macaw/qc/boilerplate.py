@@ -757,6 +757,13 @@ def _movement(config, spec, names) -> str:
     )
 
 
+def room_seated(config) -> bool:
+    """Whether the room places some camera read for gaze and someone it is read for."""
+    from macaw.project.room import seats
+
+    return any(len(seats(config.setup.room, name)) > 1 for name, camera in config.setup.cameras.items() if camera.gaze)
+
+
 def _gaze(config, spec, names) -> str:
     from macaw.extractors.video.gaze.heads import HEAD_SCALE
 
@@ -773,9 +780,9 @@ def _gaze(config, spec, names) -> str:
         cfg = config.gaze
         signal = "gaze direction where the face model gave one and head pose elsewhere" if config.face.gaze else "head pose"
         where = (
-            "the seats measured for the session (each participant's position and eye height relative to the camera), "
-            "corrected by each participant's median offset on frames labelled by hand"
-        ) if cfg.seats else "frames labelled by hand"
+            "the positions of the participants, the things looked at and the camera, measured in the room and entered as a "
+            "layout of the setup, corrected by each participant's median offset on frames labelled by hand"
+        ) if room_seated(config) else "frames labelled by hand"
         return (
             f"Gaze targets were inferred from {signal}: each participant was coded as looking at the target whose direction, "
             f"taken from {where}, lay nearest their own and within {cfg.tolerance_deg:g}°; a target with three or more "

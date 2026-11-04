@@ -144,7 +144,7 @@ class GazeLLEBackend(GazeBackend):
 
 @register_backend(BACKEND_GROUP)
 class AnglesBackend(GazeBackend):
-    """No model of its own: reads face.au's head and eye angles against gaze.seats and the frames a person labelled."""
+    """No model of its own: reads face.au's head and eye angles against where the setup's room places people and things and the frames a person labelled."""
 
     name = "angles"
     version = "1.0"

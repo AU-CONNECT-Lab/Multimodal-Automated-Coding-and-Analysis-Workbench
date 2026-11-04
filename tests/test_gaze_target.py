@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from macaw.config.schema import GazeSection
+from macaw.config.schema import GazeSection, RoomSection
+from macaw.extractors.video.gaze import angles
+from macaw.project.room import seats as room_seats
 from macaw.extractors.video.gaze import target as target_module
 from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.gaze.target import (
@@ -208,7 +210,7 @@ class TestNameObjects:
 def run_angles(tmp_path, monkeypatch):
     from macaw.store.longtable import build_long_rows, write_long_table
 
-    def build(angles_by_subject, *, seats, labels=(), tolerance=15.0):
+    def build(angles_by_subject, *, room, labels=(), tolerance=15.0):
         stored = tmp_path / "pose.keypoints.parquet"
         write_keypoints(keypoints({"parent": (400, 100), "child": (100, 100)}), stored)
         rows = pd.concat([
@@ -226,17 +228,21 @@ def run_angles(tmp_path, monkeypatch):
         monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: label_file))
         monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
         recording = recording_of([video("room.mp4")], recording_id="r1", group_id="1", session_id=None)
-        config = SimpleNamespace(gaze=GazeSection(backend="angles", seats=seats, tolerance_deg=tolerance))
+        config = SimpleNamespace(gaze=GazeSection(backend="angles", tolerance_deg=tolerance), setup=SimpleNamespace(room=RoomSection(**room)))
         return GazeTargetExtractor(config).run(recording, tmp_path)
 
     return build
 
 
 class TestAngles:
-    SEATS = {"camera": [0, 0, 100], "parent": [-100, 100, 100], "child": [100, 100, 100]}
+    # the camera level at eye height, the parent on its left and the child on its right, both a metre ahead
+    ROOM = {
+        "cameras": {"room.mp4": {"at": [0, 0], "height": 100, "facing": 0}},
+        "people": {"parent": {"at": [-100, 100], "eyes": 100}, "child": {"at": [100, 100], "eyes": 100}},
+    }
 
-    def test_seats_name_whom_each_looks_at(self, run_angles):
-        result = run_angles({"parent": [-90.0] * 6 + [0.0] * 4, "child": [90.0] * 10}, seats=self.SEATS)
+    def test_the_room_names_whom_each_looks_at(self, run_angles):
+        result = run_angles({"parent": [-90.0] * 6 + [0.0] * 4, "child": [90.0] * 10}, room=self.ROOM)
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert {spec.name for spec in result.specs} == set(result.rows.feature)
         share = result.rows[result.rows.feature == "looks_at_share"].set_index("subject_id")["value"]
@@ -245,14 +251,33 @@ class TestAngles:
         assert off.iloc[0] == pytest.approx(0.0) and off.iloc[-1] == pytest.approx(90.0)
         assert "gaze_x" not in set(result.rows.feature)
 
-    def test_labelled_frames_name_a_thing_and_no_seats_and_no_labels_warn(self, run_angles):
+    def test_labelled_frames_name_a_thing_and_no_room_and_no_labels_warn(self, run_angles):
         labels = [(t / FPS, "child", "bottle") for t in range(3)]
-        result = run_angles({"parent": [0.0] * 10, "child": [40.0] * 10}, seats={}, labels=labels)
+        result = run_angles({"parent": [0.0] * 10, "child": [40.0] * 10}, room={}, labels=labels)
         child = result.annotations[result.annotations.subject_id == "child"]
         assert child.label.tolist() == ["bottle"]
-        assert any(w.subject_id == "parent" and "neither gaze.seats" in w.message for w in result.warnings)
+        assert any(w.subject_id == "parent" and "neither the room laid out in the setup" in w.message for w in result.warnings)
 
-    def test_seats_without_labelled_frames_can_be_keyed(self, tmp_path, monkeypatch):
+    def test_a_thing_the_room_places_is_looked_at_without_labelled_frames(self, run_angles):
+        # half a metre nearer the camera than the people, between them: 63 degrees to each one's side
+        room = {**self.ROOM, "things": {"toy": {"at": [0, 50], "height": 100}}}
+        result = run_angles({"parent": [-63.4] * 10, "child": [63.4] * 10}, room=room)
+        named = result.annotations.groupby("subject_id")["label"].agg(list).to_dict()
+        assert named == {"child": ["toy"], "parent": ["toy"]}
+
+    def test_a_camera_turned_and_tilted_puts_the_people_where_it_sees_them(self, run_angles):
+        """The same people seen by a camera at the parent's right shoulder, looking down at the child."""
+        room = {
+            "cameras": {"room.mp4": {"at": [0, 0], "height": 200, "facing": 45, "tilt": 30}},
+            "people": {"parent": {"at": [0, 100], "eyes": 100}, "child": {"at": [100, 0], "eyes": 100}},
+        }
+        expected = angles.expected_directions("parent", ["child"], room_seats(RoomSection(**room), "room.mp4"), pd.DataFrame())
+        yaw = expected["child"][0]
+        result = run_angles({"parent": [yaw] * 10, "child": [0.0] * 10}, room=room)
+        assert result.annotations[result.annotations.subject_id == "parent"].label.tolist() == ["child"]
+        assert abs(yaw) > 30
+
+    def test_the_room_without_labelled_frames_can_be_keyed(self, tmp_path, monkeypatch):
         from macaw.store.cache import hash_inputs
 
         labels = tmp_path / "gaze_labels.json"
@@ -261,7 +286,7 @@ class TestAngles:
         monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: labels))
         for name in ("pose.parquet", "face.parquet"):
             (tmp_path / name).write_bytes(b"rows")
-        step = GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(backend="angles", seats=self.SEATS, tolerance_deg=20)))
+        step = GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(backend="angles", tolerance_deg=20), setup=SimpleNamespace(room=RoomSection(**self.ROOM))))
         before = hash_inputs(step.inputs_for(SimpleNamespace(recording_id="r1")))
         labels.write_text("[]", encoding="utf-8")
         assert hash_inputs(step.inputs_for(SimpleNamespace(recording_id="r1"))) != before
@@ -273,15 +298,16 @@ class TestAngles:
             GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(backend="angles"))).check_available()
 
 
-def test_seats_are_set_aside_when_people_are_measured_on_several_cameras(tmp_path, monkeypatch):
+def test_people_measured_on_cameras_of_their_own_are_each_seen_from_theirs(tmp_path, monkeypatch):
+    """Each camera faces its person across the table; the other person is on that camera's left in both."""
     from macaw.store.longtable import build_long_rows, write_long_table
 
     stored = tmp_path / "pose.keypoints.parquet"
     write_keypoints(pd.concat([keypoints({"parent": (100, 100)}, video="parent.mp4"), keypoints({"child": (100, 100)}, video="child.mp4")]), stored)
     rows = pd.concat([
-        build_long_rows(values=pd.DataFrame({"t_start": np.arange(10) / FPS, "face_yaw_deg": 0.0, "face_pitch_deg": 0.0}),
+        build_long_rows(values=pd.DataFrame({"t_start": np.arange(10) / FPS, "face_yaw_deg": yaw, "face_pitch_deg": 0.0}),
                         recording_id="r1", source="face.au", scale="frame", subject_id=subject)
-        for subject in ("parent", "child")
+        for subject, yaw in (("parent", 90.0), ("child", 90.0))
     ])
     face = tmp_path / "face.au.parquet"
     write_long_table(rows, face)
@@ -290,7 +316,10 @@ def test_seats_are_set_aside_when_people_are_measured_on_several_cameras(tmp_pat
     monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: tmp_path / "none.json"))
     monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
     recording = recording_of([video("parent.mp4", "parent"), video("child.mp4", "child")], recording_id="r1", group_id="1", session_id=None)
-    config = SimpleNamespace(gaze=GazeSection(backend="angles", seats=TestAngles.SEATS, tolerance_deg=20))
+    room = RoomSection(
+        cameras={"parent.mp4": {"at": [0, 200], "height": 100, "facing": 180}, "child.mp4": {"at": [100, 0], "height": 100, "facing": 0}},
+        people={"parent": {"at": [0, 100], "eyes": 100}, "child": {"at": [100, 100], "eyes": 100}},
+    )
+    config = SimpleNamespace(gaze=GazeSection(backend="angles", tolerance_deg=20), setup=SimpleNamespace(room=room))
     result = GazeTargetExtractor(config).run(recording, tmp_path)
-    assert any("measured on several" in w.message for w in result.warnings)
-    assert "looks_at" not in set(result.rows.feature)
+    assert {who: set(group.label) for who, group in result.annotations.groupby("subject_id")} == {"child": {"parent"}, "parent": {"child"}}

@@ -18,6 +18,7 @@ project:
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
   n_subjects: 2                      # people per recording; N-person is supported, 2 is tested
   roles: [parent, child]             # role labels; length must equal n_subjects
+  units: cm                          # cm | in; every length entered or shown: the room, the yardstick, the board, measures converted from pixels or in 3D
   excluded_recordings: []            # recording ids skipped by every command
 
 align:
@@ -37,6 +38,7 @@ setup:
   name: main                         # which file in project.setups_dir; a recording can name another in its own file
   cameras: {}                        # name: {body: [roles], face: [roles], gaze: [roles], hears: [roles]}
   microphones: {}                    # name: {hears: [roles]}
+  room: {}                           # where things are, in project.units, seen from above with x across and y along the room: {people: {role: {at: [x, y], eyes: h, facing: deg}}, cameras: {name: {at, height, facing, tilt, lens}}, microphones: {name: {at, height}}, things: {name: {at, height, size: [w, d]}}}
 
 identity:
   voice_hints: []                    # shared microphone, with text.voice_review flagged or skip: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
@@ -138,7 +140,7 @@ face:
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend
 
 gaze:
-  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture, fetched through torch.hub on first use | angles: from face.au's head and eye angles against gaze.seats or labelled frames, for people looked at outside the picture
+  backend: gazelle                   # gazelle: Gaze-LLE finds the point each person looks at in the picture, fetched through torch.hub on first use | angles: from face.au's head and eye angles against where the setup's room places people and things, or labelled frames, for people looked at outside the picture
   model: null                        # gazelle: gazelle_dinov2_vitl14_inout_childplay (default; tuned on children playing with adults) | gazelle_dinov2_vitb14_inout_childplay (smaller and faster) | gazelle_dinov2_vitl14_inout | gazelle_dinov2_vitb14_inout
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the model takes at once
@@ -146,7 +148,6 @@ gaze:
   object_backend: grounding_dino     # grounding_dino: finds things by name, five times a second (Apache-2.0)
   object_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
   object_score: 0.35                 # 0-1; lower finds more things and more that are not there
-  seats: {}                          # backend angles: each role's place and the camera's seen from above, [x, depth, eye height] in one unit, x to the camera's right and depth straight ahead of it, e.g. {camera: [0, 0, 110], parent: [-50, 120, 115], child: [30, 140, 85]}
   tolerance_deg: null                # deg; backend angles: a look within this of the direction to someone is a look at them; no default, as it depends on how far apart the people sit
   min_look_s: 0.2                    # s; a look shorter than this joins the one before it (the first look, the one after), so a flicker of a frame or two is not counted as a look; 0 keeps every frame as read
 

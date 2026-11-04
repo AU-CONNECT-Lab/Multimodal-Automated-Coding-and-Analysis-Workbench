@@ -15,7 +15,7 @@ from macaw.config.schema import DEVICE_NAME, MacawConfig, SetupSection
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
-from macaw.interface.pages import naming
+from macaw.interface.pages import naming, room
 from macaw.project.recording import build_recording
 from macaw.project.setup import setup_path, write_setup
 
@@ -52,6 +52,7 @@ def layout(config_path: Path):
             ),
             html.Div(id="setup-message"),
             html.Div(id="setup-form"),
+            room.card(config),
             naming.card(config),
             ui.card(
                 "What each recording holds",
@@ -143,10 +144,19 @@ def checked_setup(config, name: str, rows: dict[str, list[dict]]) -> SetupSectio
     twice = sorted({device for device in named if named.count(device) > 1})
     if twice:
         raise MacawError(f"two devices are called {', '.join(twice)}; each has a folder of its own")
+    path = Path(config.project.setups_dir) / f"{name}.yaml"
+    saved = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
     data = {
         "name": name,
         "cameras": {row["name"]: {use: row[use] for use in KINDS["cameras"]} for row in rows["cameras"]},
         "microphones": {row["name"]: {"hears": row["hears"]} for row in rows["microphones"]},
+    }
+    room_saved = saved.get("room") if isinstance(saved, dict) and isinstance(saved.get("room"), dict) else {}
+    # a device taken out of the setup leaves the room with it
+    data["room"] = {
+        **room_saved,
+        "cameras": {device: place for device, place in (room_saved.get("cameras") or {}).items() if device in data["cameras"]},
+        "microphones": {device: place for device, place in (room_saved.get("microphones") or {}).items() if device in data["microphones"]},
     }
     try:
         return MacawConfig.model_validate({**config.model_dump(), "setup": data}).setup
@@ -184,6 +194,7 @@ def holdings(config_path: Path):
 
 def register(app, config_path: Path) -> None:
     naming.register(app, config_path)
+    room.register(app, config_path)
 
     @app.callback(
         Output("setup-form", "children"),

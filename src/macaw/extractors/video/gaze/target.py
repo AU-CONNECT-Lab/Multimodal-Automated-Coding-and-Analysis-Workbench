@@ -19,6 +19,7 @@ from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.gaze.objects import EVERY_S, GazeObjectsExtractor, load_objects, objects_file
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.gaze_labels import labels_frame, read_labels
+from macaw.project.room import seats as room_seats
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -49,8 +50,8 @@ _DISTANCE_SPECS = {
         None, "mean",
     ),
     "gaze_off_deg": (
-        "Angle between where subject_id looks (their eyes' gaze where read, else their head) and where the seats or "
-        "labelled frames put subject_id_b; 0 straight at them.",
+        "Angle between where subject_id looks (their eyes' gaze where read, else their head) and where the room laid out "
+        "in the setup or labelled frames put subject_id_b; 0 straight at them.",
         "deg", "mean",
     ),
 }
@@ -71,10 +72,10 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "gaze"
-    config_sections = ("gaze", "segment", "video", "setup.cameras")
+    config_sections = ("gaze", "segment", "video", "setup.cameras", "setup.room")
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
 
@@ -182,29 +183,23 @@ class GazeTargetExtractor(Extractor):
         labels = labels_frame(read_labels(layout_for(self.config, create=False).gaze_labels_path(rid)))
         roles = [subject.subject_id for subject in recording.subjects]
         points, warnings = [], []
-        seats = cfg.seats
-        if seats and len({views.get(str(subject)) for subject in measured["subject_id"].unique()}) > 1:
-            seats = {}
-            warnings.append(
-                self._warning(
-                    recording, None, "warn",
-                    "gaze.seats describe one camera, and these people are measured on several, so only labelled frames say where anyone is",
-                )
-            )
+        room = self.config.setup.room
         for subject, mine in measured.groupby("subject_id", sort=True):
             subject = str(subject)
             item = by_name.get(views.get(subject, ""))
             if item is None or not item.fps:
                 continue
+            # seen from the camera that reads this person's face, wherever the room places it
+            seats = room_seats(room, item.name)
             labelled = angles.labelled_directions(measured, labels, 1.0 / item.fps)
-            named_things = sorted(set(labels.loc[labels["subject"] == subject, "target"]) - set(roles) - {ELSEWHERE})
+            named_things = sorted((set(labels.loc[labels["subject"] == subject, "target"]) | set(room.things)) - set(roles) - {ELSEWHERE})
             expected = angles.expected_directions(subject, [role for role in roles if role != subject] + named_things, seats, labelled)
             if not expected:
                 warnings.append(
                     self._warning(
                         recording, subject, "warn",
-                        f"neither gaze.seats nor {angles.MIN_LABELS} or more labelled frames say where anyone is for this person, "
-                        "so whom they look at is not read",
+                        f"neither the room laid out in the setup (with {item.name} and this person placed) nor {angles.MIN_LABELS} or "
+                        "more labelled frames say where anyone is for this person, so whom they look at is not read",
                     )
                 )
                 continue
@@ -313,7 +308,7 @@ class GazeTargetExtractor(Extractor):
             params = {"model": cfg.model or getattr(backend, "default_model", None), "in_frame_cut": IN_FRAME_CUT}
         else:
             rule = f"1 while subject_id looks within {cfg.tolerance_deg:g} deg of subject_id_b, nearer them than anyone else, else 0."
-            params = {"tolerance_deg": cfg.tolerance_deg, "seats": {name: list(place) for name, place in cfg.seats.items()}}
+            params = {"tolerance_deg": cfg.tolerance_deg, "room": self.config.setup.room.model_dump(mode="json", exclude_none=True)}
         if cfg.min_look_s > 0:
             rule += f" A look at anyone or anything lasting less than {cfg.min_look_s:g} s joins the look before it."
         params["min_look_s"] = cfg.min_look_s
@@ -458,7 +453,7 @@ def label_runs(frame: pd.DataFrame, column: str) -> pd.DataFrame:
 
 def _sources(expected: dict, labelled: pd.DataFrame, subject: str) -> list[tuple[str, str]]:
     counts = labelled.loc[labelled["subject"] == subject, "target"].value_counts() if not labelled.empty else pd.Series(dtype=int)
-    return [(name, "labelled frames" if counts.get(name, 0) >= angles.MIN_LABELS else "seats") for name in expected]
+    return [(name, "labelled frames" if counts.get(name, 0) >= angles.MIN_LABELS else "the room") for name in expected]
 
 
 def _frame_span(item, span: tuple[float, float]) -> tuple[int, int]:

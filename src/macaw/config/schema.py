@@ -35,6 +35,8 @@ class ProjectSection(_Section):
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
+    # every length a person enters or reads; results keep pixels and metres and are converted where shown
+    units: Literal["cm", "in"] = "cm"
 
     @model_validator(mode="after")
     def _one_role_per_person(self) -> "ProjectSection":
@@ -99,12 +101,61 @@ class MicrophoneDevice(_Section):
     hears: list[str] = Field(min_length=1)
 
 
+Place = tuple[float, float]
+
+
+class PlacedPerson(_Section):
+    # across and along the room seen from above, in project units; eye height above the floor
+    at: Place | None = None
+    eyes: float | None = Field(default=None, gt=0)
+    # degrees clockwise from straight along the room, seen from above
+    facing: float | None = None
+
+
+class PlacedCamera(_Section):
+    at: Place | None = None
+    height: float | None = Field(default=None, ge=0)
+    facing: float | None = None
+    # degrees below level, and the picture's width as an angle
+    tilt: float = Field(default=0.0, ge=-90, le=90)
+    lens: float | None = Field(default=None, gt=0, lt=180)
+
+
+class PlacedMicrophone(_Section):
+    at: Place | None = None
+    height: float | None = Field(default=None, ge=0)
+
+
+class PlacedThing(_Section):
+    at: Place | None = None
+    # its top, which is where a look at it is aimed; width and depth for drawing it
+    height: float | None = Field(default=None, ge=0)
+    size: Place | None = None
+
+
+class RoomSection(_Section):
+    """Where people, devices and things are, in project units; anything may be left out."""
+
+    people: dict[str, PlacedPerson] = Field(default_factory=dict)
+    cameras: dict[str, PlacedCamera] = Field(default_factory=dict)
+    microphones: dict[str, PlacedMicrophone] = Field(default_factory=dict)
+    things: dict[str, PlacedThing] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _thing_names(self) -> "RoomSection":
+        bad = sorted(name for name in self.things if not re.fullmatch(DEVICE_NAME, name) or name in ("camera", "elsewhere", "off_screen", "unsure"))
+        if bad:
+            raise ValueError(f"{', '.join(bad)}: a thing's name takes letters, digits, - and _, and is not camera, elsewhere, off_screen or unsure")
+        return self
+
+
 class SetupSection(_Section):
-    """What each device folder in a recording holds; read from setups/<name>.yaml."""
+    """What each device folder in a recording holds, and where things are in the room; read from setups/<name>.yaml."""
 
     name: str = Field(default="main", pattern=DEVICE_NAME)
     cameras: dict[str, CameraDevice] = Field(default_factory=dict)
     microphones: dict[str, MicrophoneDevice] = Field(default_factory=dict)
+    room: RoomSection = Field(default_factory=RoomSection)
 
     @model_validator(mode="after")
     def _devices(self) -> "SetupSection":
@@ -139,6 +190,13 @@ class SetupSection(_Section):
             if twice:
                 person, names = sorted(twice.items())[0]
                 raise ValueError(f"{' and '.join(sorted(names))} are both read for {person}'s {use}; say it of one of them")
+        for kind, known in (("cameras", self.cameras), ("microphones", self.microphones)):
+            unknown = sorted(set(getattr(self.room, kind)) - set(known))
+            if unknown:
+                raise ValueError(f"the room places {', '.join(unknown)}, which is not one of the setup's {kind}")
+        clash = sorted(set(self.room.things) & set(self.devices()))
+        if clash:
+            raise ValueError(f"{', '.join(clash)} is both a device and a thing in the room; give each its own name")
         return self
 
     def devices(self) -> dict[str, CameraDevice | MicrophoneDevice]:
@@ -333,7 +391,6 @@ class GazeSection(_Section):
     object_backend: str = "grounding_dino"
     object_model: str | None = None
     object_score: float = Field(default=0.35, gt=0, lt=1)
-    seats: dict[str, tuple[float, float, float]] = Field(default_factory=dict)
     tolerance_deg: float | None = Field(default=None, gt=0, lt=180)
     min_look_s: float = Field(default=0.2, ge=0)
 
@@ -344,8 +401,6 @@ class GazeSection(_Section):
         clash = sorted(set(self.targets) & {"elsewhere", "off_screen", "unsure", "camera"})
         if clash:
             raise ValueError(f"gaze.targets cannot use {', '.join(clash)}, which MACAW already uses")
-        if self.seats and "camera" not in self.seats:
-            raise ValueError("gaze.seats needs the camera's place too, as camera: [x, depth, eye height]")
         return self
 
 
@@ -558,9 +613,12 @@ class MacawConfig(_Section):
             raise ValueError(
                 f"scale.cm_per_px_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
-        unknown = sorted(set(self.gaze.seats) - set(self.project.roles) - {"camera"})
+        unknown = sorted(set(self.setup.room.people) - set(self.project.roles))
         if unknown:
-            raise ValueError(f"gaze.seats names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})")
+            raise ValueError(f"setup {self.setup.name} places {', '.join(unknown)} in the room, which project.roles does not have ({', '.join(self.project.roles)})")
+        clash = sorted(set(self.setup.room.things) & set(self.project.roles))
+        if clash:
+            raise ValueError(f"{', '.join(clash)} is both a role and a thing in the room; give the thing another name")
         clash = sorted(set(self.gaze.targets) & set(self.project.roles))
         if clash:
             raise ValueError(f"gaze.targets names {', '.join(clash)}, which are roles; people are looked for anyway")

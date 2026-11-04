@@ -273,9 +273,13 @@ def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats(
     assert "less than" not in every_frame and "Each run of frames with the same target" in every_frame
     plain, used = render(describe(manifest(spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitb14_inout", in_frame_cut=0.5)), config()), load_references())
     assert "tafasca2023" not in used and "liu2024" not in used
-    seats = {"camera": [0, 0, 100], "parent": [-50, 100, 110]}
-    text, used = render(describe(manifest(spec("gaze.target", "looks_at", "angles", "1.0")), config(project={"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["parent", "child"]}, gaze={"backend": "angles", "seats": seats, "tolerance_deg": 20})), load_references())
-    assert "head pose" in text and "within 20°" in text and "seats" in text and not used
+    room = {"cameras": {"front": {"at": [0, 0], "height": 100, "facing": 0}}, "people": {"parent": {"at": [-50, 100], "eyes": 110}}}
+    setup = {"cameras": {"front": {"gaze": ["parent", "child"]}}, "room": room}
+    angled = manifest(spec("gaze.target", "looks_at", "angles", "1.0"))
+    text, used = render(describe(angled, config(setup=setup, gaze={"backend": "angles", "tolerance_deg": 20})), load_references())
+    assert "head pose" in text and "within 20°" in text and "measured in the room" in text and not used
+    text, _ = render(describe(angled, config(setup={**setup, "room": {}}, gaze={"backend": "angles", "tolerance_deg": 20})), load_references())
+    assert "measured in the room" not in text and "frames labelled by hand" in text
 
 
 def test_name_suggestions_are_described_only_when_set_and_the_picture_model_only_when_described():
