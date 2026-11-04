@@ -70,7 +70,9 @@ class TestTheSetupFile:
             cameras={"front": {"body": ["parent"]}},
             room={"people": {"parent": {"at": [1, 2]}, "child": {}}, "cameras": {"front": {"tilt": 0}}},
         )
-        assert setup_content(setup)["room"] == {"people": {"parent": {"at": [1.0, 2.0]}}}
+        assert setup_content(setup)["room"] == {"people": {"parent": {"at": [1, 2]}}}
+        walled = SetupSection(cameras={"front": {"body": ["parent"]}}, room={"size": [400.0, 350.5]})
+        assert setup_content(walled)["room"] == {"size": [400, 350.5]}
         assert "room" not in setup_content(SetupSection(cameras={"front": {"body": ["parent"]}}))
 
     def test_the_room_places_only_the_setups_devices_and_the_projects_people(self):
@@ -103,6 +105,7 @@ def test_the_room_is_drawn_for_a_paper_at_300_dpi(tmp_path):
     assert refused.exit_code != 0 and "places nothing yet" in str(refused.exception)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["room"] = {
+        "size": [400, 350],
         "people": {"parent": {"at": [100, 200], "eyes": 115, "facing": 90}, "child": {"at": [200, 200], "eyes": 70}},
         "cameras": {"front": {"at": [150, 0], "height": 120, "facing": 0, "tilt": 10, "lens": 70}},
         "things": {"table": {"at": [150, 200], "height": 72, "size": [60, 50]}},

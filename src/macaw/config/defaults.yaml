@@ -38,7 +38,7 @@ setup:
   name: main                         # which file in project.setups_dir; a recording can name another in its own file
   cameras: {}                        # name: {body: [roles], face: [roles], gaze: [roles], hears: [roles]}
   microphones: {}                    # name: {hears: [roles]}
-  room: {}                           # where things are, in project.units, seen from above with x across and y along the room: {people: {role: {at: [x, y], eyes: h, facing: deg}}, cameras: {name: {at, height, facing, tilt, lens}}, microphones: {name: {at, height}}, things: {name: {at, height, size: [w, d]}}}
+  room: {}                           # where things are, in project.units, seen from above with x across and y along the room: {size: [across, along] of the walls from the zero corner, people: {role: {at: [x, y], eyes: h, facing: deg}}, cameras: {name: {at, height, facing, tilt, lens}}, microphones: {name: {at, height}}, things: {name: {at, height, size: [w, d]}}}
 
 identity:
   voice_hints: []                    # shared microphone, with text.voice_review flagged or skip: [{says: <pattern>, role: <role>}], a voice saying it is likely that role

@@ -754,7 +754,9 @@ def test_the_room_card_lists_everyone_and_every_device_and_draws_what_is_placed(
     assert list(rows["people"]) == ["parent", "child"] and list(rows["cameras"]) == ["room"]
     assert list(rows["microphones"]) == ["parent_mic", "child_mic"] and rows["microphones"]["parent_mic"]["x"] is None
     assert rows["things"]["table"] == {"x": 150, "y": 200, "height": 72, "width": 60, "depth": 50}
-    assert room.room_of(rows)["microphones"] == {"parent_mic": {}, "child_mic": {}}
+    assert room.room_of(rows)["microphones"] == {"parent_mic": {}, "child_mic": {}} and "size" not in room.room_of(rows)
+    rows["walls"]["room"].update(width=400, length=350)
+    assert room.room_of(rows)["size"] == [400, 350] and "Walls" in text_of(room.panel(rows, "cm"))
     front, side, top, preview, shapes, said = room.drawn(config, rows)
     # things lie under people and devices, so the table is the first shape of each view
     assert shapes["top"] == [["things", "table"], ["cameras", "room"], ["people", "parent"], ["people", "child"]]

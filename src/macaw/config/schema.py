@@ -136,6 +136,8 @@ class PlacedThing(_Section):
 class RoomSection(_Section):
     """Where people, devices and things are, in project units; anything may be left out."""
 
+    # the walls, across and along from the zero corner
+    size: Place | None = None
     people: dict[str, PlacedPerson] = Field(default_factory=dict)
     cameras: dict[str, PlacedCamera] = Field(default_factory=dict)
     microphones: dict[str, PlacedMicrophone] = Field(default_factory=dict)

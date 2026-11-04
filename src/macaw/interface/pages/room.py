@@ -22,7 +22,9 @@ from macaw.project.setup import write_setup
 
 NUM, ADD, REMOVE = "room-num", "room-add", "room-remove"
 KINDS = ("people", "cameras", "microphones", "things")
+WALLS = "walls"
 FIELDS = {
+    WALLS: ("width", "length"),
     "people": ("x", "y", "eyes", "facing"),
     "cameras": ("x", "y", "height", "facing", "tilt", "lens"),
     "microphones": ("x", "y", "height"),
@@ -30,10 +32,10 @@ FIELDS = {
 }
 HEADS = {
     "x": "Across", "y": "Along", "eyes": "Eye height", "height": "Height", "facing": "Facing (°)", "tilt": "Tilt down (°)",
-    "lens": "Lens angle (°)", "width": "Width", "depth": "Depth",
+    "lens": "Lens angle (°)", "width": "Width", "depth": "Depth", "length": "Length",
 }
 ANGLES = {"facing", "tilt", "lens"}
-NOUN = {"people": "Person", "cameras": "Camera", "microphones": "Microphone", "things": "Thing"}
+NOUN = {WALLS: "Walls", "people": "Person", "cameras": "Camera", "microphones": "Microphone", "things": "Thing"}
 # sizes drawn, in centimetres, turned into the project's unit
 _BODY_CM, _HEAD_CM, _DEVICE_CM, _THING_CM = 22.0, 11.0, 8.0, 20.0
 _ROOM_CM = (400.0, 300.0, 250.0)
@@ -86,7 +88,8 @@ def rows_of(config, name: str) -> dict[str, dict[str, dict]]:
         "microphones": list(data.get("microphones") or {}),
         "things": list((room.get("things") or {})),
     }
-    rows: dict[str, dict[str, dict]] = {}
+    size = room.get("size") or [None, None]
+    rows: dict[str, dict[str, dict]] = {WALLS: {"room": {"width": size[0], "length": size[1]}}}
     for kind in KINDS:
         rows[kind] = {}
         for item in names[kind]:
@@ -107,7 +110,12 @@ def rows_of(config, name: str) -> dict[str, dict[str, dict]]:
 def room_of(rows: dict[str, dict[str, dict]]) -> dict:
     """The room section the rows describe, leaving out what is blank."""
     room: dict = {}
+    walls = rows.get(WALLS, {}).get("room", {})
+    if walls.get("width") is not None and walls.get("length") is not None:
+        room["size"] = [float(walls["width"]), float(walls["length"])]
     for kind, items in rows.items():
+        if kind == WALLS:
+            continue
         placed = {}
         for name, row in items.items():
             entry = {}
@@ -124,7 +132,7 @@ def room_of(rows: dict[str, dict[str, dict]]) -> dict:
 
 
 def rows_from(values: list, ids: list[dict]) -> dict[str, dict[str, dict]]:
-    rows: dict[str, dict[str, dict]] = {kind: {} for kind in KINDS}
+    rows: dict[str, dict[str, dict]] = {kind: {} for kind in (WALLS, *KINDS)}
     for value, identity in zip(values, ids):
         row = rows[identity["kind"]].setdefault(identity["name"], _blank(identity["kind"]))
         row[identity["field"]] = None if value in (None, "") else float(value)
@@ -133,8 +141,8 @@ def rows_from(values: list, ids: list[dict]) -> dict[str, dict[str, dict]]:
 
 def panel(rows: dict[str, dict[str, dict]], units: str):
     cards = []
-    for kind in KINDS:
-        if not rows[kind]:
+    for kind in (WALLS, *KINDS):
+        if not rows.get(kind):
             continue
         heads = [NOUN[kind], *[f"{HEADS[field]}{'' if field in ANGLES else f' ({units})'}" for field in FIELDS[kind]]]
         body = [
@@ -156,6 +164,9 @@ def panel(rows: dict[str, dict[str, dict]], units: str):
 def _extent(room: RoomSection, units: str) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     """Ranges across, along and up that hold everything placed, with a margin, or an empty room."""
     xs, ys, zs = [0.0], [0.0], [0.0]
+    if room.size is not None:
+        xs.append(room.size[0])
+        ys.append(room.size[1])
     for kind in KINDS:
         for place in getattr(room, kind).values():
             if place.at is not None:
@@ -275,9 +286,16 @@ def figures(room: RoomSection, roles: list[str], units: str) -> tuple[go.Figure,
                                       fillcolor=colour, opacity=0.35, editable=True, name=name), item, (x, place.height), name)
                     add("side", dict(type="rect", x0=y - depth / 2, x1=y + depth / 2, y0=0, y1=place.height, line={"color": colour, "width": 2},
                                      fillcolor=colour, opacity=0.35, editable=True, name=name), item, (y, place.height), name)
+    if room.size is not None:
+        # lines, not shapes, so the walls cannot be dragged
+        width, length = room.size
+        lines["top"].append(((0, width, width, 0, 0), (0, 0, length, length, 0), "#8b8b90"))
+        lines["front"] += [((at, at), (0, up[1]), "#8b8b90") for at in (0, width)]
+        lines["side"] += [((at, at), (0, up[1]), "#8b8b90") for at in (0, length)]
     for view, figure in (("front", front), ("side", side), ("top", top)):
         for (xs, ys, colour) in lines[view]:
-            figure.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines", line={"color": colour, "width": 1.5, "dash": "dot"}, hoverinfo="skip"))
+            wall = colour == "#8b8b90"
+            figure.add_trace(go.Scatter(x=list(xs), y=list(ys), mode="lines", line={"color": colour, "width": 2 if wall else 1.5, "dash": None if wall else "dot"}, hoverinfo="skip"))
         if labels[view]:
             figure.add_trace(go.Scatter(
                 x=[at[0] for at, _ in labels[view]], y=[at[1] for at, _ in labels[view]], text=[text for _, text in labels[view]],
