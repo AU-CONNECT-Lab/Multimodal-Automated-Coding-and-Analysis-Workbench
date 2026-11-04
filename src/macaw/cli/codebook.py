@@ -107,6 +107,8 @@ def draft(
     note = out.with_name(f"{out.stem}.draft.md")
     note.write_text(draft_text(made, aim, backend.model_version(), len(lines)), encoding="utf-8")
     counts = made.units["code"].value_counts()
+    if len(made.proposed) > 1:
+        typer.echo(f"the model proposed {made.proposed[0]} codes and merged them into {', then '.join(map(str, made.proposed[1:]))}")
     for definition in made.codebook.codes:
         typer.echo(f"{definition.code}: {int(counts.get(definition.code, 0))} of {len(made.units)} units")
     typer.echo(f"{sum(made.left_out.values())} unit(s) in no code\n\n{out}\n{note}\n{OWN_WORDS}")

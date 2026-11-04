@@ -205,6 +205,41 @@ class TestDraft:
         text = draft_text(made, "what parents ask", "tiny@abc", 1)
         assert "## asks_something (2 units)" in text and "- greets (1)" in text and "1 unit(s) got no description" in text
 
+    def test_too_many_codes_are_merged_on_request_and_kept_to_the_largest_if_still_too_many(self, monkeypatch):
+        from macaw.coding.llm import draft as draft_module
+
+        units = pd.DataFrame({"id": [f"d{i}" for i in range(1, 7)], "speaker": "A", "before": "", "text": [f"line {i}" for i in range(1, 7)]})
+        labels = ["asks", "asks", "wonders", "tells", "says", "hums"]
+
+        def answer(merging):
+            def respond(system, user):
+                if "Units:" in user:
+                    found = re.findall(r"^id d(\d+) ", user, re.MULTILINE)
+                    return {"labels": [{"id": f"d{i}", "label": labels[int(i) - 1]} for i in found]}
+                if "Descriptions:" in user:
+                    return {"codes": [{"code": label, "description": label, "labels": [label]} for label in dict.fromkeys(labels)]
+                            + [{"code": "empty", "description": "holds nothing", "labels": []}]}
+                return merging
+            return respond
+
+        monkeypatch.setattr(draft_module, "MAX_CODES", 3)
+        model = Model(answer({"codes": [
+            {"code": "question", "description": "Asks.", "merges": ["asks", "wonders"]},
+            {"code": "statement", "description": "Tells.", "merges": ["tells", "says"]},
+        ]}))
+        made = draft_codebook(model, "acts", units, name="acts", unit="utterance", batch_size=6)
+        merge_system, merge_user = model.requests[-1]
+        assert "Below are 5 codes" in merge_system and "- asks (2): asks" in merge_user and "empty" not in merge_user
+        # hums, placed nowhere by the merge, stays as it was
+        assert [code.code for code in made.codebook.codes] == ["question", "statement", "hums"] and made.proposed == [6, 3]
+        assert "first proposed 6 codes" in draft_text(made, "acts", "tiny@abc", 1)
+
+        stubborn = Model(answer({"codes": [{"code": label, "description": label, "merges": [label]} for label in dict.fromkeys(labels)]}))
+        made = draft_codebook(stubborn, "acts", units, name="acts", unit="utterance", batch_size=6)
+        assert made.proposed == [6, 5, 5] and len(stubborn.requests) == 4
+        assert [code.code for code in made.codebook.codes][0] == "asks" and len(made.codebook.codes) == 3
+        assert sum(made.left_out.values()) == 2 and "descriptions of the others are under Left out" in draft_text(made, "acts", "tiny@abc", 1)
+
     def test_the_command_writes_the_draft_and_a_note(self, project, monkeypatch):
         monkeypatch.setattr(command, "resolve_llm_backend", lambda cfg: Model(described))
         out = project.parent / "first.yaml"

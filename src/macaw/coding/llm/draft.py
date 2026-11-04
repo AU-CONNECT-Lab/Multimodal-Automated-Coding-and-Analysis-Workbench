@@ -16,6 +16,8 @@ from macaw.coding.llm.parsing import answer_object
 N_UNITS = 200
 MAX_CODES = 12
 EXAMPLES = 3
+# requests to merge codes when the model gives more than MAX_CODES
+MERGE_TRIES = 2
 
 
 @dataclass
@@ -24,6 +26,7 @@ class Draft:
     units: pd.DataFrame                                   # the sample, with each unit's description and code
     gathered: dict[str, list[str]] = field(default_factory=dict)   # code -> the descriptions it gathers
     left_out: dict[str, int] = field(default_factory=dict)         # description -> units, gathered into no code
+    proposed: list[int] = field(default_factory=list)              # how many codes each gathering or merging answer held
 
 
 def sample_units(lines: dict[str, pd.DataFrame], n: int, rng: np.random.Generator) -> pd.DataFrame:
@@ -70,6 +73,58 @@ def gather_prompt(aim: str, counts: pd.Series) -> tuple[str, str]:
     return system, "\n".join(["Descriptions:", *(f"- {label} ({n})" for label, n in counts.items())])
 
 
+def merge_prompt(aim: str, codes: list[dict], counts: pd.Series) -> tuple[str, str]:
+    system = "\n".join([
+        "You help researchers build a coding scheme from what speakers did in recorded conversations.",
+        f"What the codes are for: {aim.strip()}",
+        f"Below are {len(codes)} codes, each with how many units it holds; at most {MAX_CODES} are wanted. Merge codes that "
+        f"do the same thing so that no more than {MAX_CODES} remain, each code below going into exactly one.",
+        'Answer with one JSON object and nothing else: {"codes": [{"code": "<short name, lowercase with underscores>", '
+        '"description": "<one or two sentences>", "criteria": ["<what must hold>"], '
+        '"boundary_cases": ["<how to tell it from the nearest code>"], "merges": ["<codes it takes, as written below>"]}]}.',
+    ])
+    lines = [f"- {code['code']} ({_size(code, counts)}): {code['description']}" for code in codes]
+    return system, "\n".join(["Codes:", *lines])
+
+
+def _size(code: dict, counts: pd.Series) -> int:
+    return int(counts.reindex(code["labels"]).fillna(0).sum())
+
+
+def _codes(items, labels_of) -> list[dict]:
+    """The codes an answer gives, named and cleaned; a description given to two codes stays with the first."""
+    claimed: set[str] = set()
+    out: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        code = _code_name(item.get("code"))
+        if not code or code in RESERVED_LABELS or any(known["code"] == code for known in out):
+            continue
+        mine = [label for label in dict.fromkeys(labels_of(item)) if label not in claimed]
+        claimed.update(mine)
+        out.append({
+            "code": code, "description": str(item.get("description") or "").strip(), "labels": mine,
+            "criteria": [str(text).strip() for text in item.get("criteria") or [] if str(text).strip()],
+            "boundary_cases": [str(text).strip() for text in item.get("boundary_cases") or [] if str(text).strip()],
+        })
+    return out
+
+
+def _merged(backend: LLMBackend, aim: str, codes: list[dict], counts: pd.Series, seed) -> list[dict]:
+    """The codes merged as the model says; a code it places nowhere stays as it was."""
+    before = {code["code"]: code for code in codes}
+    answer = answer_object(backend.complete(*merge_prompt(aim, codes, counts), seed=seed).text)
+
+    def labels_of(item):
+        return [label for old in map(_code_name, item.get("merges") or []) if old in before for label in before[old]["labels"]]
+
+    merged = [code for code in _codes(answer.get("codes"), labels_of) if code["labels"]]
+    placed = {label for code in merged for label in code["labels"]}
+    names = {code["code"] for code in merged}
+    return merged + [code for code in codes if not set(code["labels"]) & placed and code["code"] not in names]
+
+
 def _plain(text) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
 
@@ -99,30 +154,31 @@ def draft_codebook(
     units = units.assign(description=describe_units(backend, aim, units, batch_size=batch_size, seed=request_seed))
     counts = units.loc[units["description"] != "", "description"].value_counts()
     answer = answer_object(backend.complete(*gather_prompt(aim, counts), seed=request_seed).text) if not counts.empty else {}
+    codes = _codes(answer.get("codes"), lambda item: [label for label in map(_plain, item.get("labels") or []) if label in counts.index])
+    proposed = [len(codes)]
+    for _ in range(MERGE_TRIES):
+        if len(codes) <= MAX_CODES:
+            break
+        codes = _merged(backend, aim, [code for code in codes if code["labels"]], counts, request_seed)
+        proposed.append(len(codes))
+    # still too many: the codes holding the most units stay, the others' descriptions are left out
+    if len(codes) > MAX_CODES:
+        codes = sorted(codes, key=lambda code: -_size(code, counts))[:MAX_CODES]
 
     claimed: dict[str, str] = {}
     definitions, gathered = [], {}
-    for item in answer.get("codes") or []:
-        if not isinstance(item, dict):
-            continue
-        code = _code_name(item.get("code"))
-        if not code or code in gathered or code in RESERVED_LABELS:
-            continue
-        # a description given to two codes stays with the first
-        mine = [label for label in map(_plain, item.get("labels") or []) if label in counts.index and label not in claimed]
-        claimed.update(dict.fromkeys(mine, code))
-        gathered[code] = mine
-        members = units[units["description"].isin(mine)]
+    for code in codes:
+        claimed.update(dict.fromkeys(code["labels"], code["code"]))
+        gathered[code["code"]] = code["labels"]
+        members = units[units["description"].isin(code["labels"])]
         picked = members.iloc[np.sort(rng.choice(len(members), size=min(EXAMPLES, len(members)), replace=False))] if len(members) else members
         definitions.append(CodeDefinition(
-            code=code, description=str(item.get("description") or "").strip(),
-            criteria=[str(text).strip() for text in item.get("criteria") or [] if str(text).strip()],
-            boundary_cases=[str(text).strip() for text in item.get("boundary_cases") or [] if str(text).strip()],
+            code=code["code"], description=code["description"], criteria=code["criteria"], boundary_cases=code["boundary_cases"],
             positive_examples=list(dict.fromkeys(picked["text"].astype(str).str.strip())),
         ))
     units = units.assign(code=[claimed.get(description) for description in units["description"]])
     left_out = {label: int(n) for label, n in counts.items() if label not in claimed}
-    return Draft(Codebook(name=name, unit=unit, codes=definitions), units, gathered, left_out)
+    return Draft(Codebook(name=name, unit=unit, codes=definitions), units, gathered, left_out, proposed)
 
 
 def draft_text(draft: Draft, aim: str, model: str, recordings: int) -> str:
@@ -134,6 +190,14 @@ def draft_text(draft: Draft, aim: str, model: str, recordings: int) -> str:
         "Choosing, merging and defining the codes is left to you. The examples are participants' own words from the "
         "transcripts; check them before sharing the codebook.", "",
     ]
+    if len(draft.proposed) > 1:
+        rounds = ", then ".join(str(n) for n in draft.proposed[1:])
+        capped = draft.proposed[-1] > MAX_CODES
+        lines += [
+            f"The model first proposed {draft.proposed[0]} codes, more than the {MAX_CODES} asked for, and merged them into {rounds} "
+            f"when asked{f'; the {MAX_CODES} holding the most units are kept, and the descriptions of the others are under Left out' if capped else ''}.",
+            "",
+        ]
     counts = units["description"].value_counts()
     for definition in draft.codebook.codes:
         mine = draft.gathered.get(definition.code, [])
