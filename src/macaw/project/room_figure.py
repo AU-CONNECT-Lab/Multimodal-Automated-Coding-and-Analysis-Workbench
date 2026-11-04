@@ -47,6 +47,14 @@ def _fan_reach(room: RoomSection, name: str, place, reads: dict[str, list[str]],
     return 1.3 * max(found) if found else fallback
 
 
+def name_beside(at, facing: float | None, gap: float) -> tuple[np.ndarray, str, str]:
+    """Where a name too long for its circle goes, and how it is aligned: behind the person, clear of the facing arrow."""
+    away = -geometry.heading(facing)[:2] if facing is not None else np.array([1.0, 0.0])
+    ha = "left" if away[0] > 0.38 else "right" if away[0] < -0.38 else "center"
+    va = "bottom" if away[1] > 0.38 else "top" if away[1] < -0.38 else "center"
+    return np.asarray(at, dtype=float) + gap * away, ha, va
+
+
 def draw_room(
     room: RoomSection, roles: list[str], units: str, path: Path, *, reads: dict[str, list[str]] | None = None,
 ) -> Path:
@@ -103,7 +111,8 @@ def draw_room(
         if size >= 4.5:
             top.text(*place.at, name, fontsize=size, ha="center", va="center", color=_INK, zorder=4)
         else:
-            top.text(place.at[0] + 1.2 * person, place.at[1], name, fontsize=6, ha="left", va="center", color=_INK, zorder=4)
+            at, ha, va = name_beside(place.at, place.facing, 1.2 * person)
+            top.text(*at, name, fontsize=6, ha=ha, va=va, color=_INK, zorder=4)
         if place.facing is not None:
             facing = geometry.heading(place.facing)[:2]
             arrow_from(top, np.asarray(place.at) + 1.15 * person * facing, facing, arrow, _INK)

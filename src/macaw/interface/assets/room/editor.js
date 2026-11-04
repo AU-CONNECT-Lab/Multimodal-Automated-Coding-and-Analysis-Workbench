@@ -868,11 +868,17 @@ function drawPaper(view) {
       if (!placed(entry)) continue;
       const [x, y] = project(entry.x, entry.y);
       node('circle', { cx: x, cy: y, r: radius, class: marked('person', 'people', name), ...grab('people', name) }, layer.people);
-      const fits = (2 * radius * 0.85) / (0.6 * Math.max(name.length, 1));
-      if (fits >= 9) node('text', { x, y, class: 'name inside', 'font-size': Math.min(13, fits) }, layer.words, name);
-      else node('text', { x: x + radius + 4, y, class: 'name beside' }, layer.words, name);
       const facing = rad(entry.facing || 0);
       const direction = [Math.sin(facing), -Math.cos(facing)];
+      const fits = (2 * radius * 0.85) / (0.6 * Math.max(name.length, 1));
+      if (fits >= 9) node('text', { x, y, class: 'name inside', 'font-size': Math.min(13, fits) }, layer.words, name);
+      else {
+        // behind the person, so the facing arrow stays clear
+        const away = entry.facing != null ? [-direction[0], -direction[1]] : [1, 0];
+        const anchor = away[0] > 0.38 ? 'start' : away[0] < -0.38 ? 'end' : 'middle';
+        const baseline = away[1] > 0.38 ? 'hanging' : away[1] < -0.38 ? 'auto' : 'middle';
+        node('text', { x: x + away[0] * (radius + 4), y: y + away[1] * (radius + 4), class: 'name beside', style: `text-anchor:${anchor};dominant-baseline:${baseline}` }, layer.words, name);
+      }
       const start = [x + direction[0] * radius * 1.15, y + direction[1] * radius * 1.15];
       const tip = entry.facing != null ? arrowMark(layer.people, start, direction, size(PAPER_CM.arrow, 12), 'arrow') : [start[0] + direction[0] * 14, start[1] + direction[1] * 14];
       if (picked('people', name)) node('circle', { cx: tip[0], cy: tip[1], r: 6.5, class: entry.facing == null ? 'knob unset' : 'knob', ...grab('people', name, 'turn') }, layer.knobs);

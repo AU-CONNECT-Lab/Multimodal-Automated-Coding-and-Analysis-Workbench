@@ -124,3 +124,16 @@ def test_the_room_is_drawn_for_a_paper_at_300_dpi(tmp_path):
     at = png.index(b"pHYs") + 4
     assert int.from_bytes(png[at:at + 4], "big") == 11811
     assert imread(drawn).shape[1] >= 1500
+
+
+def test_a_name_too_long_for_its_circle_sits_behind_the_person():
+    from macaw.project.room_figure import name_beside
+
+    # facing the right, the arrow points right, so the name ends left of the circle
+    at, ha, va = name_beside([100, 200], 90, 30)
+    assert at[0] == pytest.approx(70) and at[1] == pytest.approx(200) and (ha, va) == ("right", "center")
+    at, ha, va = name_beside([100, 200], 180, 30)
+    assert at[1] == pytest.approx(230) and (ha, va) == ("center", "bottom")
+    # no facing, no arrow: to the right as before
+    at, ha, va = name_beside([100, 200], None, 30)
+    assert at[0] == pytest.approx(130) and (ha, va) == ("left", "center")
