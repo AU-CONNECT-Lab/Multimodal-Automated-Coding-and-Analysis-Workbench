@@ -78,13 +78,13 @@ macaw gui
 
 The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window.
 
-The workbench has seven pages, an eighth for projects with several cameras, and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
+The workbench has seven pages and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
 Overview
 : The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
 
 Setup
-: The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, whose voices each device carries, and who is who on each camera ({ref}`step 3 <setup>`).
+: The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, whose voices each device carries, where everyone and everything is in the room, and who is who on each camera ({ref}`step 3 <setup>`). Projects with several cameras filming the same participants also calibrate them here for three-dimensional measures ({ref}`three-d`).
 
 Run
 : Selecting recordings and steps, starting a run and following its progress.
@@ -100,9 +100,6 @@ Segments
 
 Results
 : The quality-control report and every measure plotted over time.
-
-Cameras
-: Shown only when two or more cameras film the same participants. Used to calibrate them for three-dimensional measures ({ref}`three-d`).
 
 Settings (gear icon)
 : All settings of the project.
@@ -133,6 +130,21 @@ When the devices differed between sessions, for example after a change of camera
 setup:
   name: home_visits
 ```
+
+(room)=
+### The room
+
+*The room* records where the participants, the cameras, the microphones and any things of interest, such as a table or a toy, are placed. All of it is optional, and a project runs without it; it is used to infer whom a participant looks at from their head direction ({ref}`gaze`), it yields notes on what each camera sees, and it provides a drawing of the arrangement for a publication.
+
+Positions are given seen from above, across and along the room from a corner chosen as zero, with heights from the floor, in the project's unit of length: centimetres by default, metres or inches when chosen as *Length unit* under *Project* in the settings. Changing the unit there converts the lengths already entered. For each participant, enter their position, eye height and the direction they face; for each camera, its position, the height of its lens, the direction it faces, how far it is tilted down and the angle its picture spans across (often given in the camera's specifications, otherwise found as described below); for each microphone, its position and height; for each thing, its position, height and, for drawing, its width and depth. Directions are given in degrees clockwise from straight along the room as seen from above. The room's own width and length, if entered, draw its walls.
+
+The arrangement is shown as a front and a side view above and beside a top view, as in a technical drawing, together with a three-dimensional view that can be turned. Anything placed can be dragged in any of the three views as well as typed. **Save the room** writes it into the setup file. When the arrangement differed in some sessions, those recordings can change parts of it in their own settings files.
+
+Below the drawing, notes state for each placed camera which participants fall outside its picture, at what angle it sees the face of each participant whose face or gaze it is used for (a face seen from more than 90° is seen from behind), and how far each participant whose body it is used for is from it. When these distances differ, a pixel represents a different length at each participant's position, and a single scale misstates one of them ({ref}`scale`).
+
+*What each camera should see* draws the arrangement from where a camera stands, half transparent over a frame of the camera's own file: the floor as lines, each participant up to their eye height with a ring for the head, and the things. Adjust the camera's height, direction, tilt and picture angle with the sliders until the drawing lies on the picture, then press **Use these for the camera** and save the room.
+
+**Draw the room for a paper**, or `macaw draw-room`, writes a top view and a side view of the arrangement at 300 dpi as `setups/main.png`, with the participants, the cameras and what each sees, the microphones, the things and a scale bar, and no further annotation.
 
 (naming)=
 ### Who is who on each camera
@@ -246,7 +258,7 @@ The units the language model was uncertain about, together with a random sample 
 
 Once an item is resolved, press **Run** again; the recording continues from where it paused. Every decision is stored with who made it and when, and is listed in the quality-control report.
 
-How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*What a model saw on the review frames*, *Pixels to centimetres*, *Where people look*, *Your coding*) belong to optional features.
+How often each check asks is set under *Checks by a person*; the labels above are the defaults. The remaining cards on the Review page (*What a model saw on the review frames*, *Pixels to centimetres* (or to the unit chosen), *Where people look*, *Your coding*) belong to optional features.
 
 (results)=
 ## 7. Inspect the results
@@ -272,7 +284,7 @@ When a result looks wrong, adjust the relevant setting and run again. Only the s
 Run one of the following commands in the project folder. Each reports where it saved its files.
 
 `macaw export`
-: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. For recordings with a pixel scale, measures in pixels are also given in centimetres ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`).
+: One table (CSV) containing every measure for every participant over time. `--rmd` adds an R Markdown file that loads it. Measures in metres, and measures in pixels for recordings with a pixel scale, are also given in the project's unit of length ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`).
 
 `macaw export -f sequence`
 : For each participant, whether they are speaking at each second, for sequence analysis.

@@ -203,7 +203,7 @@ The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse 
 For each participant in each frame, MACAW estimates the point in the picture they look at, and from it whom they look at, which named object, somewhere else in the picture, or something outside it. The estimate is made from the participant's head and the whole scene, so it also works when a face is partly turned away. The first run downloads a model of about 1.3 GB.
 
 :::{important}
-Whom a participant looks at can be determined only when the person looked at is visible in the same picture, so this requires a camera that shows everyone involved. A camera that films one participant alone yields where in the picture they look, not at whom; for that case see *Seat positions instead of the picture* below. The estimate reflects head and eye orientation as visible in the video and is not a substitute for an eye tracker: it distinguishes the other person's face from the table or the toys, but not one toy from the one beside it.
+Whom a participant looks at can be determined only when the person looked at is visible in the same picture, so this requires a camera that shows everyone involved. A camera that films one participant alone yields where in the picture they look, not at whom; for that case see *Positions in the room instead of the picture* below. The estimate reflects head and eye orientation as visible in the video and is not a substitute for an eye tracker: it distinguishes the other person's face from the table or the toys, but not one toy from the one beside it.
 :::
 
 Objects to be distinguished are named in plain English under *Things people look at* in the *Tools* group, for example `bottle, book, toy car`. The quality-control report warns when a name is rarely found; another word for the same object often works better. When objects are detected that are not there, raise the detection threshold (`gaze.object_score`, 0.35 by default); when objects that are there are missed, lower it.
@@ -214,23 +214,19 @@ For each pair of participants the results give, at every moment, whether one loo
 
 On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; **A frame at random** selects the next frame. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not.
 
-### Seat positions instead of the picture
+### Positions in the room instead of the picture
 
-When the person looked at is often outside the picture, for example a parent seated beside the camera that films the child, whom a participant looks at can be inferred from the direction of their head (and, with eye direction enabled, their eyes), provided the seat positions are known. Give the positions of the participants and the camera as seen from above, and the height of their eyes, all in one unit (centimetres, for example), with the camera at the origin and the first axis pointing to the camera's right:
+When the person looked at is often outside the picture, for example a parent seated beside the camera that films the child, whom a participant looks at can be inferred from the direction of their head (and, with eye direction enabled, their eyes), provided their positions are known. Enter the room on the Setup page ({ref}`room`): the position and eye height of each participant, and the position, height, direction and tilt of the camera used for each participant's gaze. Things placed in the room with a height, such as a toy on the table, become targets too. Then set:
 
 ```yaml
 gaze:
   backend: angles
-  seats:
-    camera: [0, 0, 110]
-    parent: [-50, 120, 115]
-    child: [30, 140, 85]
   tolerance_deg: 20
 face:
   gaze: true                 # use eye direction as well as head direction
 ```
 
-A look within `tolerance_deg` of the direction to a person counts as a look at that person. There is no default, as the appropriate value depends on how far apart the participants sit. The method assumes that participants remain in their seats and that the camera is level; a recording with a different arrangement gets its own seats in its recording file (for example `recordings/dyad03.yaml`). Head angles estimated from a single camera carry a bias of their own, so labelling frames as described above is recommended: MACAW then corrects each participant's offset from the labelled frames, and once a participant has three or more labelled frames looking at a target, it takes that target's direction from the frames rather than from the seats. Labelled frames alone, without seats, are also sufficient, and can name objects that stay in place, such as a toy on the table.
+A look within `tolerance_deg` of the direction to a person or thing counts as a look at it. There is no default, as the appropriate value depends on how far apart the participants sit. Each participant's directions are taken as seen from the camera used for their gaze, so participants filmed by cameras of their own are read as well. The method assumes that participants remain at their positions; a recording with a different arrangement changes the room in its own settings file. Head angles estimated from a single camera carry a bias of their own, so labelling frames as described above is recommended: MACAW then corrects each participant's offset from the labelled frames, and once a participant has three or more labelled frames looking at a target, it takes that target's direction from the frames rather than from the room. Labelled frames alone, without the room, are also sufficient.
 
 (voice-hints)=
 ## Assigning voices on a shared microphone
@@ -371,24 +367,24 @@ Gesture space is measured in the picture, so it follows the body only while the 
 
 Tracking jitter adds slightly to every speed and area, most to small, slow movements. These values are therefore best compared between participants and conditions measured in the same way rather than read as absolute sizes.
 
-With several calibrated cameras ({ref}`three-d`), the same measures are also computed in three dimensions once two further thresholds are set, in metres per second. As in the picture, there is no default, and the three-dimensional wrist speeds in the results help to choose them:
+With several calibrated cameras ({ref}`three-d`), the same measures are also computed in three dimensions once two further thresholds are set, in the project's unit of length per second. As in the picture, there is no default, and the three-dimensional wrist speeds in the exported table help to choose them (here in centimetres per second):
 
 ```yaml
 kinematics:
   gestures:
-    still_speed_3d: 0.05
-    peak_prominence_3d: 0.1
+    still_speed_3d: 5
+    peak_prominence_3d: 10
 ```
 
 In three dimensions, area, height and gesture space are taken in the participant's own frontal plane, defined by their hips and shoulders, so they hold whichever way the participant faces.
 
 (scale)=
-## Centimetres instead of pixels
+## Lengths instead of pixels
 
-Distances, speeds and areas from the video are measured in pixels. They can additionally be given in centimetres, subject to one condition.
+Distances, speeds and areas from the video are measured in pixels. They can additionally be given in the project's unit of length (centimetres, metres or inches, chosen as *Length unit* in the settings), subject to one condition.
 
 :::{important}
-A pixel scale is valid only at the distance from the camera at which it was measured. An object twice as far away appears half as large, so a scale measured at the parent's seat makes a child seated further back appear smaller than they are. Measure an object at each participant's position and state whose position it was; each participant then receives their own scale. A measure between two participants, such as the distance between them, is given in centimetres only when both share the same scale.
+A pixel scale is valid only at the distance from the camera at which it was measured. An object twice as far away appears half as large, so a scale measured at the parent's seat makes a child seated further back appear smaller than they are. Measure an object at each participant's position and state whose position it was; each participant then receives their own scale. A measure between two participants, such as the distance between them, is converted only when both share the same scale. When the room is laid out on the Setup page, its notes give each participant's distance from the camera ({ref}`room`).
 :::
 
 There are three ways to obtain a scale:
@@ -400,13 +396,13 @@ Measurement in the recording itself
 : When an object of known length is visible in the recording, measure it there. A recording's own measurement takes precedence over a calibration clip.
 
 A known value
-: `scale: {cm_per_px: 0.11}` for everyone, or `scale: {cm_per_px_by_role: {child: 0.12, parent: 0.09}}` for each participant's position. A value written this way takes precedence over any measurement.
+: `scale: {per_px: 0.11}` for everyone, or `scale: {per_px_by_role: {child: 0.12, parent: 0.09}}` for each participant's position, in the project's unit per pixel. A value written this way takes precedence over any measurement.
 
-To measure, open *Pixels to centimetres* on the Review page, choose the recording's video or a calibration clip, show a frame, click the two ends of the object, enter its length, state whose position it was, and press **Save this measurement**. Measuring two or three times is recommended; the spread of the measurements shows how precise the clicks are.
+To measure, open *Pixels to centimetres* (or to the unit chosen) on the Review page, choose the recording's video or a calibration clip, show a frame, click the two ends of the object, enter its length, state whose position it was, and press **Save this measurement**. Measuring two or three times is recommended; the spread of the measurements shows how precise the clicks are.
 
-The results remain in pixels. `macaw export` adds every pixel measure a second time in centimetres, with `_cm` appended to its name, and writes a file beside the table with each recording's scale for each participant.
+The results remain in pixels. `macaw export` adds every pixel measure a second time in the project's unit, with `_cm`, `_m` or `_in` appended to its name, and writes a file beside the table with each recording's scale for each participant.
 
-The quality-control report gives each participant's nose-to-shoulder length in centimetres at their scale (a value far from a plausible one indicates that the participant sat nearer or further than the object), and flags a participant whose apparent size changes by more than 10% during the recording, which indicates movement toward or away from the camera. The check compares stretches of 30 seconds, which suits seated participants. When participants walk about, shorten the stretches to about 5 seconds; brief bending over is then flagged as well:
+The quality-control report gives each participant's nose-to-shoulder length in the project's unit at their scale (a value far from a plausible one indicates that the participant sat nearer or further than the object), and flags a participant whose apparent size changes by more than 10% during the recording, which indicates movement toward or away from the camera. The check compares stretches of 30 seconds, which suits seated participants. When participants walk about, shorten the stretches to about 5 seconds; brief bending over is then flagged as well:
 
 ```yaml
 scale:
@@ -429,26 +425,25 @@ Four conditions must be met:
 Placing participants in three dimensions has been validated on simulated cameras and on a public four-camera recording of an adult and a toddler, against that recording's own reconstruction. Finding the cameras from a board has been validated on simulated cameras only.
 :::
 
-The *Cameras* page of the workbench covers every step below. It appears once a recording has two or more videos, or once a camera setup exists in the `calibration` folder.
+The section *Cameras for three dimensions* at the end of the Setup page covers every step below. It appears once the setup has two or more cameras, or once a calibration exists in the `calibration` folder.
 
 ### 1. Print the board
 
-*Draw the board* on the Cameras page (or `macaw calibration-board`) writes a ChArUco board, a chessboard with small markers in its white squares, as an image in the `calibration` folder. Print it at 100%, mount it flat on a rigid backing such as foam board, and measure one square with a ruler. Enter that length on the page and press **Save the square**. The default board fills an A2 sheet. For A3, set smaller squares and markers before drawing the board, then draw it with `macaw calibration-board --paper A3`:
+*Draw the board* in that section (or `macaw calibration-board`) writes a ChArUco board, a chessboard with small markers in its white squares, as an image in the `calibration` folder. Print it at 100%, mount it flat on a rigid backing such as foam board, and measure one square with a ruler. Enter that length, in the project's unit, and press **Save the square**. The default board fills an A2 sheet. For A3, set smaller squares before drawing the board (here in centimetres; the markers keep their share of the square), then draw it with `macaw calibration-board --paper A3`:
 
 ```yaml
 pose3d:
   board:
-    square_mm: 50
-    marker_mm: 37
+    square: 5
 ```
 
 ### 2. Film the board before the session
 
-With the cameras in their final positions, clap once in view of all cameras, then move the board slowly through the space where the participants will sit, tilting it toward and away from the cameras, for about a minute. Keep it in view of at least two cameras at a time and close enough to fill a good part of the picture. Place each camera's clip in a folder named like that camera's device folder in the recordings, inside a folder for the setup such as `calibration/lab`: the clip of the camera whose recordings sit in `front` goes in `calibration/lab/front`.
+With the cameras in their final positions, clap once in view of all cameras, then move the board slowly through the space where the participants will sit, tilting it toward and away from the cameras, for about a minute. Keep it in view of at least two cameras at a time and close enough to fill a good part of the picture. Place each camera's clip in a folder named like that camera's device folder in the recordings, inside a folder for the calibration such as `calibration/lab`: the clip of the camera whose recordings sit in `front` goes in `calibration/lab/front`.
 
 ### 3. Find the cameras
 
-Select the setup on the Cameras page and press **Find the cameras** (or run `macaw calibrate-cameras lab`). This takes a few minutes and reports, for each camera, how far the board's corners fall from where the camera saw them (below 1 to 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, drawn in three dimensions. The page also indicates when a clip or the board size has changed since, so that the cameras need to be found again. Then press **Use for this project**. When some sessions used another setup, name it in those recordings' own files:
+Select the calibration in that section and press **Find the cameras** (or run `macaw calibrate-cameras lab`). This takes a few minutes and reports, for each camera, how far the board's corners fall from where the camera saw them (below 1 to 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, drawn in three dimensions. The page also indicates when a clip or the board size has changed since, so that the cameras need to be found again. Then press **Use for this project**. When some sessions used another calibration, name it in those recordings' own files:
 
 ```yaml
 pose3d:
@@ -459,7 +454,7 @@ A lab that has calibrated its cameras with Anipose can place its `calibration.to
 
 ### 4. Run and inspect
 
-Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in metres, with `_3d` appended to their names: wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
+Run as usual. Each participant must be named on every camera that films them, by clicking them on each camera ({ref}`step 3 <naming>`), or by clicking them on one camera and letting MACAW suggest them on the others from their head motion ({ref}`suggest-names`). The results gain measures in metres, with `_3d` appended to their names (exports give them in the project's unit as well, see {ref}`scale`): wrist speed, acceleration and jerk, the distance between the hands, the distances between participants' shoulder midpoints and between their heads, the angle between the direction of a participant's head and the direction to the other participant's head (0 when the head points straight at them; this is head direction, not gaze), gesture kinematics when the three-dimensional thresholds are set ({ref}`gestures`), and custom body measures ({ref}`measures`). A custom measure defined by a function of one's own is computed in three dimensions only when `in_3d: true` is added to it; the function then also receives the columns `<joint>_z`, with every position in metres.
 
 On the Results page, *In 3D* shows every participant's skeleton and the cameras; drag to rotate the view and move the slider to step through the recording. The quality-control report states, for each participant, how often they were placed in three dimensions and how well the cameras agree on them, and warns when a bone keeps changing length, which indicates misplaced keypoints.
 
