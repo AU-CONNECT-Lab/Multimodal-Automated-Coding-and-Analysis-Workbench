@@ -73,6 +73,10 @@ class TestVoiceQuality:
         assert b["cpps_db"] < a["cpps_db"]
         assert b["shimmer_local"] > a["shimmer_local"]
 
+    def test_twice_the_amplitude_is_six_decibels_louder(self):
+        quiet, loud = report(0.25 * glide(1.0, 150.0, 150.0)), report(0.5 * glide(1.0, 150.0, 150.0))
+        assert loud["turn_intensity_db"] - quiet["turn_intensity_db"] == pytest.approx(20 * np.log10(2), abs=0.05)
+
     def test_silence_and_a_sliver_measure_nothing(self):
         for audio in (np.zeros(RATE), glide(0.02, 150.0, 150.0)):
             values = report(audio)

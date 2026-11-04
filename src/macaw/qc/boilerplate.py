@@ -22,7 +22,7 @@ BIB_NAME = "references.bib"
 
 # extractors in the order a reader meets them; anything else (plugins) follows
 ORDER = (
-    "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
+    "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "face.au", "face.au_check", "face.movement",
     "gaze.target",
@@ -324,10 +324,18 @@ def _voice_report(config, spec, names) -> str:
         f"For every turn, a voice report was computed with Praat{f' {praat}' if praat else ''} through Parselmouth "
         f"{spec.backend_version} [boersma_praat; jadoul2018]: pitch mean, median, standard deviation, minimum, maximum, "
         "interquartile range, range in semitones and least-squares slope in semitones per second; the voiced fraction; "
+        "the mean intensity, averaged as energy; "
         "five jitter measures (local, local absolute, RAP, PPQ5, DDP) and six shimmer measures (local, local dB, APQ3, "
         "APQ5, APQ11, DDA) with Praat's standard settings (periods 0.1 to 20 ms, period factor 1.3, amplitude factor "
         "1.6); the mean harmonics-to-noise ratio; and smoothed cepstral peak prominence [hillenbrand1996] with a "
         "least-squares straight trend line."
+    )
+
+
+def _turn_pairs(config, spec, names) -> str:
+    return (
+        "At each change of speaker, these turn measures and the speech rate (words per second) of the turn handed over "
+        "were set beside those of the turn that took the floor, so that convergence between speakers can be measured."
     )
 
 
@@ -867,6 +875,7 @@ _WRITERS = {
     "prep.video": _video,
     "prosody.frame": _frame,
     "prosody.voice_report": _voice_report,
+    "prosody.turn_pairs": _turn_pairs,
     "prosody.standard_sets": _standard_sets,
     "text.diarize": _diarize,
     "text.asr": _asr,

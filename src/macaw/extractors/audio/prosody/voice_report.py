@@ -58,6 +58,7 @@ _SPECS = {
         True,
     ),
     "turn_voiced_fraction": ("Share of the turn's frames that carried pitch.", None, True),
+    "turn_intensity_db": ("Mean intensity over the turn, averaged as energy. Only differences within one microphone are meaningful.", "dB", False),
     "jitter_local": ("Mean absolute difference of consecutive periods over the mean period.", None, True),
     "jitter_local_abs_s": ("Mean absolute difference of consecutive periods.", "s", True),
     "jitter_rap": ("Relative average perturbation: each period against the mean of it and its two neighbours.", None, True),
@@ -92,7 +93,7 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
@@ -199,6 +200,12 @@ def voice_report(audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float
     f0 = np.asarray(pitch.selected_array["frequency"], dtype=float)
     times = np.asarray(pitch.xs())
     report.update(pitch_statistics(f0, times))
+    try:
+        intensity = call(sound.to_intensity(minimum_pitch=f0_min, time_step=step_s), "Get mean", 0, 0, "energy")
+        # Praat floors digital silence at -300 dB
+        report["turn_intensity_db"] = intensity if intensity is not None and intensity > -300 else np.nan
+    except parselmouth.PraatError:
+        pass
     if report["turn_voiced_fraction"] == 0:
         return report
 
@@ -225,7 +232,7 @@ def pitch_statistics(f0: np.ndarray, times: np.ndarray) -> dict[str, float]:
     """f0 in Hz with 0 or NaN for unvoiced frames."""
     f0 = np.asarray(f0, dtype=float)
     voiced = np.isfinite(f0) & (f0 > 0)
-    stats = {name: np.nan for name in _SPECS if name.startswith("turn_")}
+    stats = {name: np.nan for name in _SPECS if name.startswith("turn_f0")}
     stats["turn_voiced_fraction"] = float(voiced.mean()) if f0.size else np.nan
     if not voiced.any():
         return stats
