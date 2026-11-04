@@ -107,6 +107,20 @@ Each version runs as a step of its own, so changing one recodes only that one. W
 
 A model asked twice does not always give the same code, so two versions can differ by chance alone. `macaw agreement --tier speech_acts --samples` treats each of the model's repeated answers as a separate coder; the resulting agreement shows how consistent the model is with itself. A difference between versions smaller than this is not interpretable. This requires more than one answer per unit.
 
+### Refining or drafting a codebook
+
+The model set under *Coding* can also propose a codebook, which the researcher reads and edits before any coding uses it. Neither command below changes the codebook in use or any coding.
+
+`macaw codebook refine codebook_refined.yaml`, or **Suggest a clearer codebook** on the Agreement page, takes the units in which a person's codes and the model's differ, together with some on which they agree, and asks the model to rewrite the description, criteria and borderline cases of each code concerned so that a coder reading only the codebook would code those units as the person did. The model also picks examples among these units, which are added in the participants' own words. When several people coded the tier, `--coder` names the person whose codes are followed. When nobody has coded it, the units on which the model's repeated answers were split are used instead. A code without such units is left unchanged. The proposed codebook keeps the name of the one in use and is written to a new file, beside `codebook_refined.changes.md`, which lists for each code what changed and the units that prompted it.
+
+Whether the revision helps is tested by coding with it as a version, `coding.judges: {refined: {codebook: codebook_refined.yaml}}`, and comparing both versions with the person's coding. Agreement on the units the revision was made from overstates its benefit, so the comparison is made on other recordings: refine with `-r` on some recordings (on the Agreement page, those selected under *Recordings*) and compare on the rest.
+
+`macaw codebook draft first.yaml --aim "how parents guide their child's play"` drafts a codebook when none exists. The model describes in a few words what each of 200 units drawn at random does, with the stated aim in mind (`--units` changes the number), and then groups these descriptions into codes, each with a description, criteria, borderline cases and examples. `first.draft.md` lists the descriptions each code gathers and those that fit no code. The draft is a starting point: selecting, merging and defining the final codes remains the researcher's work.
+
+:::{important}
+Examples in a proposed or drafted codebook are participants' own words from the transcripts. Check them before the codebook is shared or published.
+:::
+
 (own-coding)=
 ## Human coding and inter-rater agreement
 

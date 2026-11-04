@@ -257,6 +257,8 @@ MACAW separates the voices. Read what each voice says, listen to its clips, and 
 
 **Export to ELAN** writes the transcript as an ELAN file. Words, boundaries and speakers can be corrected in ELAN, and the corrected file is read back with **Import a corrected transcript (.eaf)**. Speech the recogniser omitted is placed on a tier of its own so that it can be restored. **Back to the recogniser's** returns to the automatic transcript at any time.
 
+With a language model set under *Coding* ({ref}`coding`), **Ask the model for doubtful lines**, or `macaw transcript check -r dyad01`, has it read the transcript and list the lines that look misheard or invented, such as a phrase repeated many times or many words in a fraction of a second, each with a short reason. The transcript itself is not changed. The ELAN export places these lines on tiers of their own, so that they can be checked against the recording while correcting. The model reads the text only and does not hear the recording: it misses errors that read naturally and may mark lines that are correct, so the list directs attention but does not replace listening.
+
 ### Speech acts
 
 {bdg-secondary-line}`with language-model coding only`
