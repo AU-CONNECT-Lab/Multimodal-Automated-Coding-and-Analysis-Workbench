@@ -358,6 +358,8 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .room-main.looking { background: #000; }
 .room-flat-bar { margin-top: 1.1rem; }
 .room-paper { position: absolute; inset: 0; display: none; user-select: none; }
+/* a halo of the page's colour, so a name stays readable where a line or a body runs under it */
+.room-paper text { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
 .room-paper .wall { fill: none; stroke: var(--ink); stroke-width: 1.6; }
 .room-paper .floor { stroke: var(--ink); stroke-width: 1.4; }
 .room-paper .fan { fill: rgba(74, 114, 212, 0.17); stroke: none; }

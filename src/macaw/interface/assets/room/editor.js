@@ -589,7 +589,7 @@ function fitFlats(force) {
   // one scale for all three, so a length is as long in each
   S.flatScale = Math.min(...flats.map((view) => {
     const frame = flatFrame(view.name, box);
-    return Math.min(view.width / frame.across, view.height / frame.up) * 0.9;
+    return Math.min(view.width * 0.95 / frame.across, (view.height - 2 * labelBand(view)) / frame.up);
   }));
   for (const view of flats) {
     const frame = flatFrame(view.name, box);
@@ -615,7 +615,7 @@ function fitPlan(view) {
   const frame = flatFrame('top', box);
   const [x, y, z] = frame.middle;
   const distance = Math.max(box.x1 - box.x0, box.y1 - box.y0, box.top) * 20;
-  view.scale = Math.min(view.width / frame.across, view.height / frame.up) * 0.9;
+  view.scale = Math.min(view.width * 0.95 / frame.across, (view.height - 2 * labelBand(view)) / frame.up);
   view.camera.position.set(x, y, distance);
   view.controls.target.set(x, y, z);
   view.camera.near = distance / 100;
@@ -624,6 +624,13 @@ function fitPlan(view) {
   view.camera.lookAt(x, y, z);
   keepScale(view);
   view.controls.update();
+}
+
+// the height kept clear above and below the drawing for the view's title, axes and scale bar, so no line runs under them
+function labelBand(view) {
+  const above = [view.title, view.el.querySelector('.room-axes')].filter(Boolean).map((part) => part.offsetTop + part.offsetHeight);
+  const below = view.bar && view.bar.offsetHeight ? view.height - view.bar.offsetTop : 0;
+  return Math.max(0, ...above, below) + 6;
 }
 
 function keepScale(view) {
