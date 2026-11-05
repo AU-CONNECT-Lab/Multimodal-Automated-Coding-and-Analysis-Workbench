@@ -80,6 +80,13 @@ The first command creates a project folder containing a settings file (`project.
 
 The workbench has seven pages and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 
+```{figure} screens/overview.png
+:width: 100%
+:alt: The Overview page: four tiles with the number of recordings, the participants, the task time and the share of work up to date, a list of what to do next, and a grid with a square for each recording and step.
+
+The Overview page of a project with six recordings. One recording failed at the first step, one waits for the researcher to check an offset, and one has a changed input file.
+```
+
 Overview
 : The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
 
@@ -114,6 +121,13 @@ Processing steps appear under short names, for example `text.asr` for transcript
 Before anything can run, the participants, cameras and microphones are described on the Setup page. Nothing is inferred from the names of folders or files: the description entered here is the only record of which file belongs to whom.
 
 The card *The setup* lists the participants, cameras, microphones and things on the left, shows the room in three dimensions in the middle and the settings of the entry chosen on the right, with a top, a front and a side view below. Choose an entry in the list, or click it in any view, to see and change its settings.
+
+```{figure} screens/setup.png
+:width: 100%
+:alt: The Setup page: a list of the participants, cameras and things on the left, and a room in three dimensions with a parent, a child, a table and two cameras whose fields of view are drawn.
+
+The card *The setup*, with two participants at a table and two cameras, each with its field of view.
+```
 
 People
 : The participants, by role. **Add** with *Person* adds a role to the project, so that every recording has that participant; a role is renamed or removed under *Project* in the settings.
@@ -170,6 +184,13 @@ From the command line, the same is done with `macaw name-people -r dyad01 --came
 
 The settings most studies adjust are arranged as a form in six groups. All other settings can be edited as text in the *project.yaml* box below the form; a setting the file leaves out takes its default, and `macaw config show` lists every setting with the value in effect. On saving, MACAW validates the settings and lists the finished results that the change would make out of date.
 
+```{figure} screens/settings.png
+:width: 100%
+:alt: The settings page: links to its groups, the Project group as a form with a short note under each field, and on the right the choices kept in the browser and the programs found on the computer.
+
+The settings page. The links at the top lead to each group of settings.
+```
+
 Project
 : Location of the recordings, the number of participants per recording and their roles. *Task starts at* and *Task ends at*, in seconds, restrict the analysis to the task period, for example to exclude the experimenter's instructions.
 
@@ -213,6 +234,13 @@ coding:
 
 On the Run page, select the recordings and the steps, then press **Run**. Steps that a selected step depends on are included automatically. The **Run** button at the end of a step's row runs that step alone, with its prerequisites, for the selected recordings. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Processing a single recording first is a quick way to confirm that the setup works.
 
+```{figure} screens/run.png
+:width: 100%
+:alt: The Run page: the recordings as ticked chips, and the steps in the order they run, each with the count of its tasks in every state and a Run button of its own.
+
+The Run page. Each step shows how many of its tasks are in each state.
+```
+
 The status of each step is shown as follows:
 
 | Status | Meaning |
@@ -231,6 +259,13 @@ The window may be closed at any time. The next run resumes where the previous on
 {bdg-warning}`You do this`
 
 Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items. Enter a name under *Your name* first: each decision is stored with it, and the browser keeps it for later sessions.
+
+```{figure} screens/review.png
+:width: 100%
+:alt: The Review page for one recording: the check that waits, and the offset between its two cameras with the confidence, a Keep button and the figure to inspect.
+
+The Review page of a recording whose two cameras could not be aligned with confidence.
+```
 
 ### Offsets between files
 
