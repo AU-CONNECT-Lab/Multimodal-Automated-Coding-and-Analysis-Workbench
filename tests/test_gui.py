@@ -340,7 +340,7 @@ def test_the_overview_counts_what_there_is_and_what_waits(project):
     tiles = text_of(overview.tiles(resolve_config(project), found))
     assert "parent, child" in tiles and "known once prep.media has run" in tiles and "0 of" in tiles
     items = text_of(overview.next_up(found))
-    assert "wait for a person" in items and '"/review"' in items
+    assert "1 check waits for a person" in items and '"/review"' in items
     grid = text_of(overview.grid(found))
     assert "cell held" in grid and "003, prep.media: waiting for a person" in grid
 

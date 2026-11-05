@@ -286,6 +286,7 @@ textarea.yaml:focus { outline: none; border-color: var(--ink); }
 .status-list li:last-child { border-bottom: none; }
 .status-list .what { flex: 1; min-width: 0; }
 .status-list .value { color: var(--muted); font-size: 0.82rem; word-break: break-all; display: block; }
+.status-list .value code { word-break: normal; white-space: nowrap; }
 .sticky { position: sticky; top: 8.5rem; }
 
 /* review details */

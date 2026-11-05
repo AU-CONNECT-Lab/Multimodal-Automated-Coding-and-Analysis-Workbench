@@ -129,10 +129,10 @@ def next_up(found: Standing) -> list:
         n_checks = sum(len(gates) for gates in found.waiting.values())
         detail = "; ".join(f"{rid}: {', '.join(name for name, _ in gates)}" for rid, gates in list(found.waiting.items())[:4])
         more = len(found.waiting) - 4
-        items.append(_item("warn", f"{n_checks} check{'s' if n_checks != 1 else ''} wait for a person",
+        items.append(_item("warn", f"{n_checks} check{'s wait' if n_checks != 1 else ' waits'} for a person",
                            detail + (f"; and {more} more recordings" if more > 0 else ""), REVIEW_PATH, "Review"))
     if found.units_waiting:
-        items.append(_item("warn", f"{found.units_waiting} coded unit{'s' if found.units_waiting != 1 else ''} wait for review",
+        items.append(_item("warn", f"{found.units_waiting} coded unit{'s wait' if found.units_waiting != 1 else ' waits'} for review",
                            None, REVIEW_PATH, "Review"))
     tasks = [found.grid[rid, step] for rid in found.recordings for step in found.steps]
     if tasks and all(state == "new" for state in tasks):
