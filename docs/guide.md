@@ -124,7 +124,7 @@ The card *The setup* lists the participants, cameras, microphones and things on 
 
 ```{figure} screens/setup.png
 :width: 100%
-:alt: The Setup page: a list of the participants, cameras and things on the left, and a room in three dimensions with a parent, a child, a table and two cameras whose fields of view are drawn.
+:alt: The setup card: a list of the participants, cameras and things on the left, a room in three dimensions with a parent, a child, a table and two cameras whose fields of view are drawn, and a top, a front and a side view below.
 
 The card *The setup*, with two participants at a table and two cameras, each with its field of view.
 ```

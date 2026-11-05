@@ -4,7 +4,7 @@
 
 MACAW derives time-resolved measures of voice, language, turn-taking, body movement, facial behaviour and gaze from audio and video recordings of dyadic and small-group interaction, and combines them in a single data set for statistical analysis. Decisions that software cannot make reliably, such as which voice belongs to which participant, are referred to the researcher, and every decision is recorded.
 
-![The workbench's Setup page, with two participants at a table and the field of view of each camera in a room drawn in three dimensions](docs/screens/setup.png)
+![The setup card of the workbench: two participants at a table and two cameras with their fields of view, in three dimensions above and in a top, a front and a side view below](docs/screens/setup.png)
 
 ## Scope
 
