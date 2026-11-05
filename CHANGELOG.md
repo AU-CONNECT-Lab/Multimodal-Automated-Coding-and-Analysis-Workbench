@@ -55,6 +55,7 @@
 - The language model proposes a clearer codebook from the units a person and the model coded differently (macaw codebook refine, or the Agreement page), drafts a first one from the transcripts (macaw codebook draft), and marks transcript lines that look misheard for a person to check (macaw transcript check, or the Review page), never changing the codebook in use or the transcript.
 - The Methods text says for how many recordings a transcript corrected by hand replaced the recognised one.
 - Joint attention to a named object with who led and how long the other took to follow, each turn's voice measures set beside the previous speaker's at a change of speaker, lexical overlap with the previous turn, time a measure spends below a value the study sets, body orientation toward the other person in 3D, and guide examples for rMEA, SUSY and response rates within a window.
+- The workbench asks for the reviewer's name instead of taking the login name, keeps imports on the cards they belong to, counts the speech acts decided, links the sections of its long pages and shows short settings notes; the README and the guide show screenshots of it.
 
 ### Removed
 - `macaw export --rmd` and the R Markdown starter it wrote beside the export.
