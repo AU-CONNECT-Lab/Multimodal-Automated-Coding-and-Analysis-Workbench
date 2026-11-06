@@ -16,7 +16,7 @@ from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.interop.transcript_eaf import export_transcript_eaf, read_transcript_eaf
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.qc.transcript_check import read_check, still_there
+from macaw.qc.transcript_check import KINDS, read_check, still_there
 from macaw.store import _io
 
 app = typer.Typer(help="Correct a transcript by hand in ELAN.")
@@ -48,7 +48,7 @@ def export(
         f"save, then `macaw transcript import -r {recording} {out.name}`"
     )
     if not doubts.empty:
-        typer.echo(f"{len(doubts)} line(s) the model marked as possibly misheard are on the doubtful tiers, with why")
+        typer.echo(f"{len(doubts)} line(s) the model marked as possibly misheard or cut off are on the doubtful tiers, with why")
 
 
 @app.command("import")
@@ -79,8 +79,8 @@ def check(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recording: str = typer.Option(..., "--recording", "-r"),
 ) -> None:
-    """Have the model in coding.llm mark lines that look misheard or made up, to check against the recording. The
-    transcript is not changed; the lines go on tiers of their own in the ELAN export."""
+    """Have the model in coding.llm mark lines that look misheard, made up or cut off, to check against the recording.
+    The transcript is not changed; the lines go on tiers of their own in the ELAN export."""
     from macaw.coding.llm.backends import resolve_llm_backend
     from macaw.qc.transcript_check import check_transcript, describe
 
@@ -101,7 +101,7 @@ def check(
     )
     typer.echo(f"{recording}: {describe(found)}")
     for line in found["lines"]:
-        typer.echo(f"  {line['t_start']:.1f} s {line['subject_id']}: {line['text']}  ({line['why']})")
+        typer.echo(f"  {line['t_start']:.1f} s {line['subject_id']}: {line['text']}  ({KINDS[line['kind']]}: {line['why']})")
     if found["lines"]:
         typer.echo(f"to correct them in ELAN: macaw transcript export -r {recording}")
 

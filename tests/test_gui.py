@@ -1033,8 +1033,8 @@ def test_the_transcript_card_lists_the_lines_a_model_marked(project):
     project.write_text(project.read_text(encoding="utf-8") + "\ncoding:\n  llm:\n    model: tiny\n", encoding="utf-8")
     path = layout.transcript_check_path("003")
     path.parent.mkdir(parents=True, exist_ok=True)
-    marked = [{"subject_id": "child", "t_start": 3.0, "t_end": 4.0, "text": "doggy", "why": "a word out of place"}]
+    marked = [{"subject_id": "child", "t_start": 3.0, "t_end": 4.0, "text": "doggy", "kind": "cut", "why": "a word out of place"}]
     path.write_text(json.dumps({"model": "tiny", "n_lines": 2, "lines": marked}), encoding="utf-8")
     shown = text_of(review.body(project, "003"))
-    assert "Ask the model for doubtful lines" in shown and "1 of 2 line(s) marked by tiny" in shown and "a word out of place" in shown
+    assert "Ask the model for doubtful lines" in shown and "1 of 2 line(s) marked by tiny: 1 cut off" in shown and "a word out of place" in shown
     assert review.action_command(project, "003", "transcript-check", "", "", {})[1:3] == ["transcript", "check"]

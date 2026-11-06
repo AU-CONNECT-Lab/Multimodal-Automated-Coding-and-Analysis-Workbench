@@ -422,7 +422,7 @@ def scale_figure(uri: str | None, points: list):
 
 def _transcript(config, layout, rid, path):
     from macaw.extractors.audio.content.asr import read_transcript
-    from macaw.qc.transcript_check import describe, read_check, still_there
+    from macaw.qc.transcript_check import KINDS, describe, read_check, still_there
 
     stamp = layout.corrected_transcript_stamp_path(rid)
     state = ui.note("The transcript in use is the one corrected by hand.", "ok") if stamp.is_file() else ui.note("The transcript in use is the recogniser's.")
@@ -433,8 +433,8 @@ def _transcript(config, layout, rid, path):
         marked, _ = still_there(found, transcript)
         doubts.append(ui.note(describe(found, transcript), "warn" if not marked.empty else "ok"))
         if not marked.empty:
-            rows = [[f"{row.t_start:.1f}", row.subject_id, row.text, row.why] for row in marked.itertuples(index=False)]
-            doubts.append(ui.table(["At (s)", "Who", "Words", "Why"], rows, numeric={"At (s)"}))
+            rows = [[f"{row.t_start:.1f}", row.subject_id, row.text, KINDS[row.kind], row.why] for row in marked.itertuples(index=False)]
+            doubts.append(ui.table(["At (s)", "Who", "Words", "Kind", "Why"], rows, numeric={"At (s)"}))
     return ui.card(
         "Transcript",
         state,

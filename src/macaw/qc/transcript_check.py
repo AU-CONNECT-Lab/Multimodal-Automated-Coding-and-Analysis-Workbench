@@ -1,5 +1,5 @@
-"""A language model reads the transcript and marks lines that look misheard or made up, for a person to check
-against the recording. The transcript itself is never changed here."""
+"""A language model reads the transcript and marks lines that look misheard, made up or cut off, for a person to
+check against the recording. The transcript itself is never changed here."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from macaw.coding.llm.parsing import answer_object
 from macaw.extractors.audio.content.diarization import OTHER
 
 CONTEXT_LINES = 5
+# each kind of mark and how it reads; a kind the model makes up counts as the first
+KINDS = {"misheard": "possibly misheard", "cut": "cut off"}
+COLUMNS = ["subject_id", "t_start", "t_end", "text", "kind", "why"]
 
 
 def _letter(index: int) -> str:
@@ -44,9 +47,11 @@ def check_prompt(batch: pd.DataFrame, context: pd.DataFrame) -> tuple[str, str]:
           if (pd.concat([context, batch])["speaker"] == OTHER).any() else []),
         "A recogniser can mishear words, giving a line that makes little sense where it stands, or write words nobody said, "
         "such as a phrase repeated over and over, a sign-off like 'thanks for watching', or many words in a very short time. "
-        "Mark only such lines. Do not mark a line for being casual, ungrammatical, unfinished or a young child's speech.",
-        'Answer with one JSON object and nothing else: {"lines": [{"id": "<line id>", "why": "<a few words>"}]}, '
-        "listing only the lines you mark; an empty list when there are none.",
+        "Mark such a line as misheard. A recogniser can also cut what someone said into pieces, leaving a word or two that "
+        "only make sense with the line before or after; mark such a piece as cut. "
+        "Mark nothing else: not a line for being casual or ungrammatical, and not a young child's speech.",
+        'Answer with one JSON object and nothing else: {"lines": [{"id": "<line id>", "kind": "misheard" or "cut", '
+        '"why": "<a few words>"}]}, listing only the lines you mark; an empty list when there are none.',
     ]
     user = []
     if not context.empty:
@@ -61,8 +66,8 @@ def _line(row) -> str:
 
 
 def check_lines(backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, seed: int | None = None) -> pd.DataFrame:
-    """The lines the model marked, each with why; an id it made up is ignored."""
-    marked: dict[str, str] = {}
+    """The lines the model marked, each with its kind and why; an id it made up is ignored."""
+    marked: dict[str, tuple[str, str]] = {}
     for start in range(0, len(lines), batch_size):
         batch = lines.iloc[start : start + batch_size]
         context = lines.iloc[max(0, start - CONTEXT_LINES) : start]
@@ -70,9 +75,12 @@ def check_lines(backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, se
         ids = set(batch["id"])
         for item in answer.get("lines") or []:
             if isinstance(item, dict) and str(item.get("id", "")).strip() in ids:
-                marked[str(item["id"]).strip()] = str(item.get("why") or "").strip()
+                kind = str(item.get("kind") or "").strip().lower()
+                marked[str(item["id"]).strip()] = (kind if kind in KINDS else next(iter(KINDS)), str(item.get("why") or "").strip())
     found = lines[lines["id"].isin(marked)]
-    return found.assign(why=[marked[line_id] for line_id in found["id"]])[["subject_id", "t_start", "t_end", "text", "why"]]
+    return found.assign(
+        kind=[marked[line_id][0] for line_id in found["id"]], why=[marked[line_id][1] for line_id in found["id"]],
+    )[COLUMNS]
 
 
 def check_transcript(
@@ -95,7 +103,7 @@ def read_check(path) -> dict:
 
 def still_there(found: dict, transcript: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """The marked lines the transcript still has as they were, and how many it no longer has, after a correction."""
-    marked = pd.DataFrame(found.get("lines") or [], columns=["subject_id", "t_start", "t_end", "text", "why"])
+    marked = pd.DataFrame(found.get("lines") or [], columns=COLUMNS)
     if marked.empty:
         return marked, 0
     now = {(str(row.subject_id), round(float(row.t_start), 3), str(row.text).strip()) for row in transcript.itertuples(index=False)}
@@ -104,7 +112,11 @@ def still_there(found: dict, transcript: pd.DataFrame) -> tuple[pd.DataFrame, in
 
 
 def describe(found: dict, transcript: pd.DataFrame | None = None) -> str:
-    text = f"{len(found.get('lines') or [])} of {found.get('n_lines', 0)} line(s) marked by {found.get('model')} as possibly misheard"
+    lines = found.get("lines") or []
+    text = f"{len(lines)} of {found.get('n_lines', 0)} line(s) marked by {found.get('model')}"
+    if lines:
+        counts = {kind: sum(1 for line in lines if line.get("kind") == kind) for kind in KINDS}
+        text += ": " + ", ".join(f"{count} {KINDS[kind]}" for kind, count in counts.items() if count)
     if transcript is not None:
         _, gone = still_there(found, transcript)
         text += f"; {gone} of them changed since" if gone else ""

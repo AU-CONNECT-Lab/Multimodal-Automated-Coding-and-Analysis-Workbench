@@ -9,11 +9,12 @@ import pandas as pd
 from macaw.exceptions import EafError, InputNotFoundError
 from macaw.interop.eaf import _elan, _link_media, _ms, _text, tier_for_subject
 from macaw.project.recording import Recording
+from macaw.qc.transcript_check import KINDS
 
 TRANSCRIPT_TYPE = "macaw-transcript"
 # what the software left out; moving an annotation from here to a transcript tier puts it back
 DROPPED_TYPE = "macaw-dropped"
-# lines a model marked as possibly misheard, for the person correcting; never read back
+# lines a model marked as possibly misheard or cut off, for the person correcting; never read back
 DOUBT_TYPE = "macaw-doubt"
 CORRECTED_COLUMNS = ("subject_id", "t_start", "t_end", "text")
 
@@ -26,7 +27,7 @@ def export_transcript_eaf(
     eaf = Eaf()
     if "default" in eaf.get_tier_names():
         eaf.remove_tier("default")
-    doubts = doubts if doubts is not None else pd.DataFrame(columns=["subject_id", "t_start", "t_end", "text", "why"])
+    doubts = doubts if doubts is not None else pd.DataFrame(columns=["subject_id", "t_start", "t_end", "text", "kind", "why"])
     for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE, *([DOUBT_TYPE] if not doubts.empty else [])):
         eaf.add_linguistic_type(kind)
     _link_media(eaf, recording, out_path)
@@ -44,7 +45,7 @@ def export_transcript_eaf(
                 start, end = _ms(row.t_start), _ms(row.t_end)
                 if end > start:
                     text = (
-                        _text(row.text) if kind == TRANSCRIPT_TYPE else _text(row.why) if kind == DOUBT_TYPE
+                        _text(row.text) if kind == TRANSCRIPT_TYPE else f"{KINDS[row.kind]}: {_text(row.why)}" if kind == DOUBT_TYPE
                         else f"{_text(row.text)} [{row.reason}: {_text(row.detail)}]"
                     )
                     eaf.add_annotation(tier, start, end, text)
