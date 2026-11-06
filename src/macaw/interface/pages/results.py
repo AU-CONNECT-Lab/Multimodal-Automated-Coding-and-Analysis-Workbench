@@ -147,7 +147,7 @@ def _shown_value(value) -> str:
 
 
 def points_3d(config_path: Path, rid: str):
-    """The recording's triangulated points, or None before pose.triangulate has run."""
+    """The recording's points in 3D, or None before the step that places them has run."""
     from macaw.extractors.video.pose.triangulate import points_file
     from macaw.store.keypoints import read_keypoints
 
@@ -177,13 +177,14 @@ def _shown(xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def view_3d(config_path: Path, rid: str, at_s: float, points=None):
     from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, read_setup
+    from macaw.extractors.video.pose.depth import depth_cameras
     from macaw.extractors.video.pose.skeleton import SKELETON_EDGES
     from macaw.extractors.video.pose.triangulate import calibration_path
 
     config = resolve_config(config_path)
     points = points_3d(config_path, rid) if points is None else points
     if points is None or points.empty:
-        return html.P("No 3D for this recording: it needs pose3d.calibration and the pose.triangulate step.", className="none")
+        return html.P("No 3D for this recording: it needs calibrated cameras (pose3d.calibration) or a camera that records depth.", className="none")
     try:
         setup = read_setup(calibration_path(config), config.pose3d.units)
     except Exception:   # the cameras are context; the people still show without them, in the file's own axes
@@ -207,6 +208,13 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
         x, y, z = place(np.vstack([camera.position() for camera in setup.cameras]) * UNITS_TO_METRES[setup.units])
         figure.add_trace(go.Scatter3d(
             x=x, y=y, z=z, mode="markers+text", text=[camera.name for camera in setup.cameras], textposition="top center",
+            marker={"size": 5, "symbol": "diamond", "color": "#8b8b90"}, name="cameras",
+        ))
+    elif depth_cameras(config):
+        # points from a depth camera are in its colour camera's frame, which stands at the origin
+        x, y, z = place(np.zeros((1, 3)))
+        figure.add_trace(go.Scatter3d(
+            x=x, y=y, z=z, mode="markers+text", text=[", ".join(depth_cameras(config))], textposition="top center",
             marker={"size": 5, "symbol": "diamond", "color": "#8b8b90"}, name="cameras",
         ))
     axis = {"gridcolor": "rgba(128,128,128,0.25)", "zerolinecolor": "rgba(128,128,128,0.4)", "backgroundcolor": "rgba(0,0,0,0)"}

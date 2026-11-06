@@ -39,6 +39,7 @@ class MediaFile:
     drift_ppm: float | None = None
     offset_confidence: float | None = None
     prepared_video: Path | None = None  # prep.video's re-encoded copy
+    depth: bool = False                 # a camera that also records depth
 
     @property
     def name(self) -> str:
@@ -298,7 +299,7 @@ def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list
         media.append(
             MediaFile(
                 path=path, kind=kind, device=device, hears=tuple(hears), uses=uses,
-                subject_id=people[0] if len(people) == 1 else None,
+                subject_id=people[0] if len(people) == 1 else None, depth=bool(camera is not None and camera.depth),
             )
         )
     for path in sorted(root.iterdir()):

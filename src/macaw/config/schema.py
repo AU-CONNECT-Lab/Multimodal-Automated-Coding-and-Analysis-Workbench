@@ -93,6 +93,8 @@ class CameraDevice(_Section):
     gaze: list[str] = Field(default_factory=list)
     # whose voices the camera's own sound carries; empty leaves its sound to alignment only
     hears: list[str] = Field(default_factory=list)
+    # the camera also records how far each pixel is, in a depth folder beside its video; bodies on it are placed in 3D
+    depth: bool = False
 
     def people(self) -> list[str]:
         return sorted(set(self.body) | set(self.face) | set(self.gaze))

@@ -24,7 +24,7 @@ from macaw.extractors.video.pose.kinematics import (
     velocity,
 )
 from macaw.extractors.video.pose.skeleton import JOINT_SET
-from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joints, _step, points_file
+from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joints, _step, points_file, three_d_step
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -153,11 +153,14 @@ class Gesture3DExtractor(Extractor):
     group = "pose"
     phase = Phase.DERIVE
     config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras", "project.units")
-    requires = (TriangulationExtractor.name,)
+
+    @classmethod
+    def dependencies(cls, config) -> tuple[str, ...]:
+        return (three_d_step(config) or TriangulationExtractor.name,)
 
     @classmethod
     def wanted_by_default(cls, config) -> bool:
-        return config.kinematics.gestures.tier is not None and config.pose3d.calibration is not None
+        return config.kinematics.gestures.tier is not None and three_d_step(config) is not None
 
     def check_available(self) -> None:
         return None

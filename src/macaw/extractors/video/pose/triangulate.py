@@ -61,8 +61,19 @@ def calibration_path(config, name: str | None = None) -> Path:
     return layout_for(config, create=False).camera_setup_path(name) if source.is_dir() else source
 
 
+DEPTH_STEP = "pose.depth"
+
+
+def three_d_step(config) -> str | None:
+    """The step placing people in 3D in this project: from a depth camera, or from calibrated cameras; None without."""
+    if any(camera.depth for camera in config.setup.cameras.values()):
+        return DEPTH_STEP
+    return TriangulationExtractor.name if config.pose3d.calibration is not None else None
+
+
 def points_file(config, recording_id: str) -> Path:
-    return layout_for(config, create=False).keypoints_path(recording_id) / f"{TriangulationExtractor.name}.parquet"
+    step = three_d_step(config) or TriangulationExtractor.name
+    return layout_for(config, create=False).keypoints_path(recording_id) / f"{step}.parquet"
 
 
 @register_extractor
@@ -294,11 +305,14 @@ class Kinematics3DExtractor(Extractor):
     group = "pose"
     phase = Phase.DERIVE
     config_sections = ("kinematics.smoothing_s", "kinematics.measures")
-    requires = (TriangulationExtractor.name,)
+
+    @classmethod
+    def dependencies(cls, config) -> tuple[str, ...]:
+        return (three_d_step(config) or TriangulationExtractor.name,)
 
     @classmethod
     def wanted_by_default(cls, config) -> bool:
-        return config.pose3d.calibration is not None
+        return three_d_step(config) is not None
 
     def check_available(self) -> None:
         taken = {*_SUBJECT_SPECS, *_PAIR_SPECS} | {measure.name for measure in self.config.kinematics.measures}

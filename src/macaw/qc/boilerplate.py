@@ -690,7 +690,33 @@ def _gestures_3d(config, spec, names) -> str:
     )
 
 
+def _placed_3d(config) -> str:
+    from macaw.extractors.video.pose.depth import depth_cameras
+    from macaw.extractors.video.pose.triangulate import DEPTH_STEP, three_d_step
+
+    if three_d_step(config) == DEPTH_STEP:
+        cameras = ", ".join(depth_cameras(config))
+        return (
+            f"Each person's keypoints were placed in 3D from the depth camera their body was filmed by ({cameras}): the depth "
+            "image was carried into the colour camera's view with the camera's own calibration, and each keypoint was placed "
+            "on the nearest surface within a few pixels of it, along the line of sight through it. The points therefore lie on "
+            "the body's surface facing the camera rather than at the joint centres."
+        )
+    return _triangulated(config)
+
+
 def _kinematics_3d(config, spec, names) -> str:
+    return _placed_3d(config) + (
+        f" In 3D, wrist speed, acceleration and jerk were estimated with a {_seconds(config.kinematics.smoothing_s)} "
+        "Savitzky-Golay filter [savitzky1964], together with the distance between the wrists, between two people's shoulder "
+        "midpoints and between the midpoints of their ears, the angle between where a person's head points, from the "
+        "midpoint of the ears to the nose, and the direction to the other person's head, and the angle between where their "
+        "chest faces, square to the shoulder line and to the spine from the hip midpoint, and the direction to the other "
+        "person's shoulder midpoint."
+    ) + _measures_3d(config)
+
+
+def _triangulated(config) -> str:
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
 
@@ -714,13 +740,8 @@ def _kinematics_3d(config, spec, names) -> str:
         f"Each person's keypoints were placed in 3D from the {cameras}calibrated cameras that saw them by weighted linear "
         f"triangulation of the undistorted points [hartley2003], leaving a camera out of a point while its view missed the "
         f"others' by more than {pose3d.max_reprojection_px:g} px; no point was placed where the remaining views still "
-        f"missed each other by more, or where it fell behind a camera. {calibrated} In 3D, wrist speed, acceleration and jerk "
-        f"were estimated with a {_seconds(config.kinematics.smoothing_s)} Savitzky-Golay filter [savitzky1964], together "
-        "with the distance between the wrists, between two people's shoulder midpoints and between the midpoints of their "
-        "ears, the angle between where a person's head points, from the midpoint of the ears to the nose, and the "
-        "direction to the other person's head, and the angle between where their chest faces, square to the shoulder line "
-        "and to the spine from the hip midpoint, and the direction to the other person's shoulder midpoint."
-    ) + _measures_3d(config)
+        f"missed each other by more, or where it fell behind a camera. {calibrated}"
+    )
 
 
 def _measures_3d(config) -> str:
