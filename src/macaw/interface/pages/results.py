@@ -177,18 +177,21 @@ def _shown(xyz: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def view_3d(config_path: Path, rid: str, at_s: float, points=None):
     from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, read_setup
-    from macaw.extractors.video.pose.depth import depth_cameras
     from macaw.extractors.video.pose.skeleton import SKELETON_EDGES
     from macaw.extractors.video.pose.triangulate import calibration_path
 
     config = resolve_config(config_path)
     points = points_3d(config_path, rid) if points is None else points
     if points is None or points.empty:
-        return html.P("No 3D for this recording: it needs calibrated cameras (pose3d.calibration) or a camera that records depth.", className="none")
+        return html.P("No 3D for this recording: it needs calibrated cameras, a camera that records depth, or pose3d.one_camera.", className="none")
     try:
         setup = read_setup(calibration_path(config), config.pose3d.units)
     except Exception:   # the cameras are context; the people still show without them, in the file's own axes
         setup = None
+    # people placed from different cameras are each in their own camera's frame, so one view shows one camera's
+    cameras = sorted(set(points["video"].astype(str)) - {"3d"}) if "video" in points.columns else []
+    if cameras:
+        points = points[points["video"].astype(str) == cameras[0]]
     units = config.project.units
     per = CM_PER_METRE / CM_PER_UNIT[units]
     place = (lambda xyz: _shown(in_first_camera(setup, xyz) * per)) if setup else (lambda xyz: _shown(np.asarray(xyz) * per))
@@ -210,11 +213,11 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
             x=x, y=y, z=z, mode="markers+text", text=[camera.name for camera in setup.cameras], textposition="top center",
             marker={"size": 5, "symbol": "diamond", "color": "#8b8b90"}, name="cameras",
         ))
-    elif depth_cameras(config):
-        # points from a depth camera are in its colour camera's frame, which stands at the origin
+    elif cameras:
+        # points from one camera are in that camera's frame, which stands at the origin
         x, y, z = place(np.zeros((1, 3)))
         figure.add_trace(go.Scatter3d(
-            x=x, y=y, z=z, mode="markers+text", text=[", ".join(depth_cameras(config))], textposition="top center",
+            x=x, y=y, z=z, mode="markers+text", text=[cameras[0]], textposition="top center",
             marker={"size": 5, "symbol": "diamond", "color": "#8b8b90"}, name="cameras",
         ))
     axis = {"gridcolor": "rgba(128,128,128,0.25)", "zerolinecolor": "rgba(128,128,128,0.4)", "backgroundcolor": "rgba(0,0,0,0)"}
@@ -228,7 +231,10 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
         },
         uirevision=rid,
     )
-    return dcc.Graph(figure=figure, config={"displaylogo": False})
+    graph = dcc.Graph(figure=figure, config={"displaylogo": False})
+    if len(cameras) > 1:
+        return html.Div([html.P(f"People placed from {cameras[0]}; those placed from {', '.join(cameras[1:])} are each in their own camera's frame.", className="hint"), graph])
+    return graph
 
 
 def axes_3d(units: str, axis: dict) -> dict:

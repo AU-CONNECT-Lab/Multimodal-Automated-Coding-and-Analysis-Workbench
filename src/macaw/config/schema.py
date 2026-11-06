@@ -33,6 +33,8 @@ class ProjectSection(_Section):
     calibration_dir: Path = Path("calibration")
     # named parts of recordings that the summaries are worked out again over; no file, no segments
     segments: Path = Path("segments.csv")
+    # people's standing heights, for 3D from one camera; no file, no heights
+    heights: Path = Path("heights.csv")
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
@@ -391,6 +393,10 @@ class Pose3DSection(_Section):
     max_reprojection_px: float = Field(default=15.0, gt=0)
     # board clips are read at this interval
     board_every_s: float = Field(default=0.2, gt=0)
+    # 3D from each person's own camera by a body model: multihmr, or a runner script in project.scripts_dir; none without
+    one_camera: str | None = None
+    # the body model reads every nth frame of the video
+    one_camera_every: int = Field(default=1, ge=1)
 
 
 class FaceSection(_Section):

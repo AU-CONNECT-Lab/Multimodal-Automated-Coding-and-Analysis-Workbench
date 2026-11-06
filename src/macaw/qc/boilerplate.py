@@ -692,17 +692,41 @@ def _gestures_3d(config, spec, names) -> str:
 
 def _placed_3d(config) -> str:
     from macaw.extractors.video.pose.depth import depth_cameras
-    from macaw.extractors.video.pose.triangulate import DEPTH_STEP, three_d_step
+    from macaw.extractors.video.pose.triangulate import DEPTH_STEP, ONE_CAMERA_STEP, three_d_step
 
+    if three_d_step(config) == ONE_CAMERA_STEP:
+        return _one_camera(config)
     if three_d_step(config) == DEPTH_STEP:
         cameras = ", ".join(depth_cameras(config))
         return (
             f"Each person's keypoints were placed in 3D from the depth camera their body was filmed by ({cameras}): the depth "
             "image was carried into the colour camera's view with the camera's own calibration, and each keypoint was placed "
             "on the nearest surface within a few pixels of it, along the line of sight through it. The points therefore lie on "
-            "the body's surface facing the camera rather than at the joint centres."
+            "the body's surface facing the camera rather than at the joint centres. Measures between two people were taken only for "
+            "people placed from the same camera."
         )
     return _triangulated(config)
+
+
+def _one_camera(config) -> str:
+    from macaw.extractors.video.pose.one_camera import BUILT_IN
+    from macaw.project.heights import read_heights
+
+    model = (
+        "Multi-HMR [baradel2024] fitting the Anny body model [bregier2025]" if config.pose3d.one_camera == BUILT_IN
+        else f"a body model run by the study's own script {config.pose3d.one_camera}"
+    )
+    sized = (
+        "People whose standing height the study gave were then scaled to it, about the camera; the others kept the size of the "
+        "body fitted to them." if read_heights(config) else "Each person kept the size of the body fitted to them."
+    )
+    return (
+        f"Each person's keypoints were placed in 3D from the one camera their body was filmed by, with {model} to every person "
+        "in each frame; the fitted body whose keypoints lay nearest a person's in the picture gave theirs, in that camera's frame. "
+        f"One camera does not fix how large a person is, so distance from the camera rests on the fitted body's size. {sized} "
+        "A body's size fitted from the picture alone is too large for a small child, who is then placed too far away. Measures "
+        "between two people were taken only for people placed from the same camera."
+    )
 
 
 def _kinematics_3d(config, spec, names) -> str:

@@ -62,13 +62,33 @@ def calibration_path(config, name: str | None = None) -> Path:
 
 
 DEPTH_STEP = "pose.depth"
+ONE_CAMERA_STEP = "pose.one_camera"
 
 
 def three_d_step(config) -> str | None:
-    """The step placing people in 3D in this project: from a depth camera, or from calibrated cameras; None without."""
-    if any(camera.depth for camera in config.setup.cameras.values()):
-        return DEPTH_STEP
-    return TriangulationExtractor.name if config.pose3d.calibration is not None else None
+    """The step placing people in 3D in this project: from calibrated cameras, a depth camera, or a body model on one
+    camera; None without. Two ways at once is refused."""
+    ways = {
+        TriangulationExtractor.name: config.pose3d.calibration is not None,
+        DEPTH_STEP: any(camera.depth for camera in config.setup.cameras.values()),
+        ONE_CAMERA_STEP: config.pose3d.one_camera is not None,
+    }
+    chosen = [step for step, on in ways.items() if on]
+    if len(chosen) > 1:
+        said = {TriangulationExtractor.name: "pose3d.calibration", DEPTH_STEP: "a camera with depth: true", ONE_CAMERA_STEP: "pose3d.one_camera"}
+        raise ConfigError(f"3D comes one way per project; this one sets {' and '.join(said[step] for step in chosen)}: keep one")
+    return chosen[0] if chosen else None
+
+
+def frame_of(points: pd.DataFrame) -> str:
+    """Which frame a person's 3D points are in: "3d", the room, for calibrated cameras, else the camera they were placed
+    from; two people are measured against each other only in one frame."""
+    found = points["video"].astype(str).unique() if "video" in points.columns else []
+    return str(found[0]) if len(found) == 1 else ""
+
+
+def apart(people: dict, a: str, b: str) -> bool:
+    return not frame_of(people[a]) or frame_of(people[a]) != frame_of(people[b])
 
 
 def points_file(config, recording_id: str) -> Path:
@@ -341,7 +361,15 @@ class Kinematics3DExtractor(Extractor):
             build_long_rows(values=subject_values_3d(own, smoothing_s), scale=Scale.FRAME, subject_id=subject_id, **common)
             for subject_id, own in people.items()
         ]
+        warnings = []
         for a, b in permutations(sorted(people), 2):
+            if apart(people, a, b):
+                if a < b:
+                    warnings.append(QCWarning(
+                        check=self.name, recording_id=recording.recording_id, subject_id=None, severity="info",
+                        message=f"{a} and {b} are placed from different cameras, whose frames do not meet, so nothing between them is measured in 3D",
+                    ))
+                continue
             values = pair_values_3d(people[a], people[b], symmetric=a < b)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common))
         coded = []
@@ -352,11 +380,12 @@ class Kinematics3DExtractor(Extractor):
         rows = concat_long_tables(frames)
         return ExtractorResult(
             rows=rows, specs=self._specs(set(rows["feature"]) if not rows.empty else set(), smoothing_s), annotations=joined_annotations(coded),
+            warnings=warnings,
         )
 
     def _measure_rows(self, measure, recording: Recording, people: dict[str, pd.DataFrame], common: dict) -> tuple[list, list]:
         function = None if measure.method in BUILTIN_MEASURES else script_function(self.config.project.scripts_dir, measure.method)
-        # unlike in the picture, two people placed in the room can always be measured against each other
+        # unlike in the picture, two people placed in one frame can always be measured against each other
         placed = [subject for subject in recording.subjects if subject.subject_id in people]
         rows, stretches = [], []
         for a in [subject.subject_id for subject in placed if subject.role == measure.person]:
@@ -364,6 +393,8 @@ class Kinematics3DExtractor(Extractor):
                 subject.subject_id for subject in placed if subject.role == measure.to_person and subject.subject_id != a
             ]
             for b in others:
+                if b != a and apart(people, a, b):
+                    continue
                 values = measure_values_3d(measure, people[a], people[b], smoothing_s=self.config.kinematics.smoothing_s, function=function)
                 rows.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common))
                 if measure.below_3d is not None:

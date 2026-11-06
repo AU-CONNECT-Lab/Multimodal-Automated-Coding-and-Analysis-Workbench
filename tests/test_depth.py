@@ -129,7 +129,7 @@ def test_the_steps_place_each_body_point_from_the_depth_beside_the_video(depth_p
     write_keypoints(pd.DataFrame(rows), _keypoints_file(config, "003").parent)
     result = DepthPoseExtractor(config).run(recording, tmp_path / "work")
     placed = result.keypoints
-    assert set(placed["frame"]) == {0, 1, 2} and (placed["video"] == "3d").all() and (placed["units"] == "metre").all()
+    assert set(placed["frame"]) == {0, 1, 2} and (placed["video"] == "kinect").all() and (placed["units"] == "metre").all()
     first = placed[placed["frame"] == 0].set_index("joint").loc[["nose", "left_shoulder", "right_wrist"], ["x", "y", "z"]].to_numpy()
     assert np.abs(first - JOINTS).max() < 0.01
     # frame 2's depth lacks its left half, where the right wrist is; frame 3 has no depth image at all

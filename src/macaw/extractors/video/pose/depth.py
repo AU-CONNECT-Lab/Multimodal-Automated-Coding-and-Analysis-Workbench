@@ -260,12 +260,11 @@ class DepthPoseExtractor(Extractor):
         return bool(depth_cameras(config))
 
     def check_available(self) -> None:
+        from macaw.extractors.video.pose.triangulate import three_d_step
+
         if not depth_cameras(self.config):
             raise ConfigError("pose.depth needs a camera that records depth: set depth: true for it in the setup")
-        if self.config.pose3d.calibration is not None:
-            raise ConfigError(
-                "3D comes either from a depth camera or from calibrated cameras: drop pose3d.calibration, or depth: true from the setup"
-            )
+        three_d_step(self.config)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         from macaw.extractors.video.pose.kinematics import _keypoints_file
@@ -274,7 +273,7 @@ class DepthPoseExtractor(Extractor):
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         from macaw.extractors.video.pose.kinematics import _keypoints_file
-        from macaw.extractors.video.pose.triangulate import VIDEO_3D, bone_spread
+        from macaw.extractors.video.pose.triangulate import bone_spread
 
         rid = recording.recording_id
         keypoints = keypoints_store.read_keypoints(_keypoints_file(self.config, rid), recording_id=rid)
@@ -291,11 +290,12 @@ class DepthPoseExtractor(Extractor):
             if own.empty:
                 continue
             lens = read_lens(prepared[camera] / LENS_FILE)
-            placed = self._place(own, Surfaces(lens), prepared[camera], videos.get(camera, {}), lens)
+            # points from one camera are in that camera's frame, which the video column names
+            placed = self._place(own, Surfaces(lens), prepared[camera], videos.get(camera, {}), lens).assign(video=camera)
             pieces.append(placed)
             for joint, group in placed.groupby("joint"):
                 quality.append({"subject_id": person, "camera": camera, "joint": joint, "seen": len(group), "placed": int(group["z"].notna().sum())})
-        points = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=["subject_id", "frame", "t", "joint", "x", "y", "z", "confidence"])
+        points = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=["subject_id", "video", "frame", "t", "joint", "x", "y", "z", "confidence"])
         quality = pd.DataFrame(quality, columns=["subject_id", "camera", "joint", "seen", "placed"])
         for person, own in quality.groupby("subject_id"):
             share = own["placed"].sum() / max(own["seen"].sum(), 1)
@@ -316,7 +316,7 @@ class DepthPoseExtractor(Extractor):
         quality.to_csv(directory / QUALITY_NAME, index=False)
         rows = coerce_frame(
             points.dropna(subset=["z"]).assign(
-                recording_id=rid, source=self.name, video=VIDEO_3D, track_id=pd.NA, units=_UNITS_METRE, metric_scale_valid=True,
+                recording_id=rid, source=self.name, track_id=pd.NA, units=_UNITS_METRE, metric_scale_valid=True,
             ),
             KEYPOINT_SCHEMA, "keypoints",
         )

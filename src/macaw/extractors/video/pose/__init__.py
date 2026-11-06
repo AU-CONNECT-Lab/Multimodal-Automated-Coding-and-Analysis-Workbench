@@ -3,8 +3,9 @@ from macaw.extractors.video.pose.kinematics import KinematicsExtractor
 from macaw.extractors.video.pose.gestures import Gesture3DExtractor, GestureExtractor
 from macaw.extractors.video.pose.triangulate import Kinematics3DExtractor, TriangulationExtractor
 from macaw.extractors.video.pose.depth import DepthPoseExtractor, DepthPrepExtractor
+from macaw.extractors.video.pose.one_camera import MeshExtractor, OneCameraExtractor
 
 __all__ = [
     "PoseDetectExtractor", "PoseExtractor", "KinematicsExtractor", "GestureExtractor", "TriangulationExtractor", "Kinematics3DExtractor",
-    "Gesture3DExtractor", "DepthPrepExtractor", "DepthPoseExtractor",
+    "Gesture3DExtractor", "DepthPrepExtractor", "DepthPoseExtractor", "MeshExtractor", "OneCameraExtractor",
 ]

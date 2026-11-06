@@ -11,6 +11,7 @@ project:
   scripts_dir: scripts               # your own .py files: measure functions, extractors, backends
   calibration_dir: calibration       # clips filmed before recording: an object of known length, a board per camera setup
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
+  heights: heights.csv               # table of people's standing heights (recording, person, height) for 3D from one camera
   n_subjects: 2                      # people per recording; tested with 2
   roles: [parent, child]             # role labels; length must equal n_subjects
   units: cm                          # cm | m | in, for every length entered or shown
@@ -121,6 +122,8 @@ pose3d:                              # 3D from two or more cameras that see the 
     dictionary: 5X5_100              # 4X4_50 | 4X4_100 | 5X5_50 | 5X5_100 | 6X6_50 | 6X6_250
   max_reprojection_px: 15            # px; a camera whose view of a point misses the others' by more is left out of that point, and two that miss each other by more place none
   board_every_s: 0.2                 # s; board clips are read at this interval
+  one_camera: null                   # multihmr | a runner script in scripts_dir: 3D from each person's own camera by a body model
+  one_camera_every: 1                # the body model reads every nth frame
 
 face:
   backend: pyfeat                    # pyfeat (most weights non-commercial) | mediapipe (no action units) | openface

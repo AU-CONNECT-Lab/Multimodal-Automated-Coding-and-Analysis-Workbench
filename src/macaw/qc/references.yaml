@@ -280,3 +280,17 @@ liu2024:
   publisher: Springer
   doi: 10.1007/978-3-031-72970-6_3
   year: 2024
+baradel2024:
+  type: inproceedings
+  author: "Baradel, Fabien and Armando, Matthieu and Galaaoui, Salma and Brégier, Romain and Weinzaepfel, Philippe and Rogez, Grégory and Lucas, Thomas"
+  title: "Multi-HMR: Multi-person whole-body human mesh recovery in a single shot"
+  booktitle: "Computer Vision, ECCV 2024"
+  publisher: Springer
+  doi: 10.1007/978-3-031-73337-6_12
+  year: 2024
+bregier2025:
+  type: misc
+  author: "Brégier, Romain and Fiche, Guénolé and Bravo-Sánchez, Laura and Lucas, Thomas and Armando, Matthieu and Weinzaepfel, Philippe and Rogez, Grégory and Baradel, Fabien"
+  title: "Human mesh modeling for Anny body"
+  howpublished: arXiv:2511.03589
+  year: 2025

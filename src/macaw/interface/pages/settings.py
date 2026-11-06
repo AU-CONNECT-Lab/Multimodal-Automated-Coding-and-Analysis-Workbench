@@ -26,6 +26,8 @@ ENVIRONMENT = (
     ("MACAW_FFMPEG", "ffmpeg, which reads and cuts the media", "ffmpeg", False),
     ("MACAW_OPENFACE", "OpenFace's folder, for face.backend openface", "FaceLandmarkVidMulti", False),
     ("MACAW_YOLO", "the yolo program, for pose.backend yolo", "yolo", False),
+    ("MACAW_MULTIHMR_PYTHON", "the python of the environment the body model is installed in, for pose3d.one_camera", None, False),
+    ("MACAW_MULTIHMR", "the folder of the Multi-HMR code, for pose3d.one_camera multihmr", None, False),
     ("MACAW_FACE_MODEL", "face_landmarker.task, for face.backend mediapipe", None, False),
     ("MACAW_POSE_MODEL", "pose_landmarker task file, for pose.backend mediapipe", None, False),
     ("OPENAI_API_KEY", "for coding.llm.provider openai", None, True),

@@ -207,7 +207,7 @@ def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None
     """One csv per recording of the points as the measures read them, and one of the points in 3D."""
     from macaw.extractors.video.pose.keypoints import PoseExtractor
     from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-    from macaw.extractors.video.pose.triangulate import DEPTH_STEP, TriangulationExtractor
+    from macaw.extractors.video.pose.triangulate import DEPTH_STEP, ONE_CAMERA_STEP, TriangulationExtractor
     from macaw.store.keypoints import read_keypoints, to_wide
 
     directory = out or (layout.output_dir / "exports" / "skeleton")
@@ -217,8 +217,8 @@ def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None
         if not (folder / f"{PoseExtractor.name}.parquet").is_file():
             logger.info("no body points yet for %s", recording_id)
             continue
-        # a project places people in 3D one way or the other, so at most one of the last two is there
-        for step, suffix in ((PoseExtractor.name, ""), (TriangulationExtractor.name, "_3d"), (DEPTH_STEP, "_3d")):
+        # a project places people in 3D one way, so at most one of the last three is there
+        for step, suffix in ((PoseExtractor.name, ""), *((name, "_3d") for name in (TriangulationExtractor.name, DEPTH_STEP, ONE_CAMERA_STEP))):
             path = folder / f"{step}.parquet"
             if not path.is_file():
                 continue

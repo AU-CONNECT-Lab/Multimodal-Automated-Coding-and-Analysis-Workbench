@@ -604,6 +604,34 @@ A camera's own recording is turned into this layout by `macaw depth-import`, whi
 
 The step `prep.depth` stores the depth images once on the prepared video's frames, and `pose.depth` places each keypoint the colour video finds: the depth image is carried into the colour camera's view, and the keypoint is placed on the nearest surface within a few pixels of it, along the camera's line of sight through it. Two conditions follow from this. The points lie on the surface of the body facing the camera, a few centimetres in front of the joint centres, which leaves distances between participants and movement much as they are but shortens a limb seen end on. A keypoint hidden behind something nearer the camera, such as a table edge or a raised hand, is placed on that object. The quality-control report states, for each participant, the share of keypoints that found a depth, and warns when a bone keeps changing length, which points to such frames.
 
+(one-camera)=
+## Three-dimensional pose from one camera
+
+Without calibrated cameras or a depth camera, a body model fitted to each person in the picture can place them in three dimensions from the one camera that films their body. MACAW runs Multi-HMR with the Anny body model, which covers every age, in an environment of its own, and keeps for each person the fitted body whose keypoints match theirs.
+
+:::{note}
+This has been checked on a public recording of an adult and a toddler and on one of three adults, filmed by single cameras and compared with those recordings' own reconstruction.
+:::
+
+One camera does not show how large a person is: a small person near the camera and a large one further away look the same. The fitted body's size therefore sets how far each person is from the camera and from the others. For adults this holds well; a small child is given too large a body and is placed too far away, so distances to them are wrong by far more than the distances themselves. Directions, such as where a person's chest faces relative to the other person, depend much less on size. Giving each person's standing height in a table `heights.csv` beside `project.yaml` sets their size to it:
+
+```text
+recording,person,height
+dyad01,parent,165
+dyad01,child,98
+```
+
+The heights are in the project's unit. People without a height keep the size fitted to them, and the quality-control report and the Methods text say so. Giving the camera's lens angle in the setup's room (step 3) also helps: otherwise the model estimates it, and a wide-angle camera then places everyone too far away. Each person is placed in the frame of the camera that films their body, so two people are measured against each other only when one camera films both.
+
+To set it up, create a separate Python environment for the model, with PyTorch for the graphics card, and in it run `pip install anny smplx roma einops pillow opencv-python trimesh pyrender "numpy<2"`. Download the Multi-HMR code with `git clone https://github.com/naver/multi-hmr`, and its checkpoint `multiHMR_672_L_anny.pt` from the Multi-HMR page into the code's `models/multiHMR` folder; its licence permits non-commercial use only. Then set two environment variables, `MACAW_MULTIHMR_PYTHON` to that environment's `python`, and `MACAW_MULTIHMR` to the code's folder, and in the project:
+
+```yaml
+pose3d:
+  one_camera: multihmr
+```
+
+The step `pose.mesh` runs the model over the video of each camera that films someone's body, and `pose.one_camera` places the named people, so naming people again does not run the model again. `pose3d.one_camera_every: 2` reads every second frame, for speed. Another model can be used by writing a script for it into the project's `scripts` folder and naming that script under `pose3d.one_camera`: it is called with a file describing the job and writes, for each person found in each frame, the 17 body keypoints in the camera's frame in metres, the same keypoints in the video's pixels, and the standing height of the fitted body; the job file and these arrays are described at the top of MACAW's own script for Multi-HMR, `macaw/extractors/video/pose/one_camera_runner.py`. The script's work must sit under `if __name__ == "__main__":`, since the scripts folder is also read for measure functions.
+
 (model-look)=
 ## A model checks the review frames
 
