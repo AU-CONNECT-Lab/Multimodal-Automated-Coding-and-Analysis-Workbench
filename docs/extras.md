@@ -574,7 +574,7 @@ On the Results page, *In 3D* shows every participant's skeleton and the cameras;
 A depth camera, such as an Orbbec Femto, an Azure Kinect or a RealSense, records alongside its colour video how far each of its pixels is. With one, MACAW places each participant's keypoints in three dimensions from that single camera, in metres in the colour camera's frame, and the measures of the previous section follow from them.
 
 :::{note}
-Placing participants from a depth camera has been checked on simulated depth images. Importing a RealSense recording has been checked on the maker's sample recording; importing an Azure Kinect or Orbbec recording has not yet been run on a real recording.
+Placing participants from a depth camera has been checked on simulated depth images and on a public recording of an adult and a toddler by two depth cameras, against that recording's own reconstruction. Importing a RealSense recording has been checked on the maker's sample recording; importing an Azure Kinect or Orbbec recording has not yet been run on a real recording.
 :::
 
 In the setup, mark the camera as recording depth:
