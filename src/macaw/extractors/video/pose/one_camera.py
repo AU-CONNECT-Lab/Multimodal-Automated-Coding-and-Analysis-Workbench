@@ -70,10 +70,10 @@ class MeshExtractor(Extractor):
     """Every person a body model finds in each frame of the cameras bodies are measured on, before anyone is named."""
 
     name = "pose.mesh"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
-    config_sections = ("pose3d.one_camera", "pose3d.one_camera_every", "setup.cameras", "video")
+    config_sections = ("pose3d.one_camera", "pose3d.one_camera_every", "pose3d.one_camera_threshold", "setup.cameras", "video")
     requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
     resource_profile = "gpu_standard"
 
@@ -114,6 +114,7 @@ class MeshExtractor(Extractor):
             job.write_text(json.dumps({
                 "video": str(frames), "out": str(out), "code": os.environ.get(CODE_ENV_VAR, ""), "checkpoint": None,
                 "fov_deg": self._fov(camera), "every": self.config.pose3d.one_camera_every,
+                "threshold": self.config.pose3d.one_camera_threshold,
             }), encoding="utf-8")
             run_runner(_python(), runner_path(self.config), job)
             artifacts[out.name] = out

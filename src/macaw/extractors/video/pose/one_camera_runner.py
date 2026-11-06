@@ -1,11 +1,12 @@
 """Runs Multi-HMR with the Anny body model over one video, in the environment it is installed in, for pose.mesh.
 
 Called as `python one_camera_runner.py job.json`; the job gives video, out, code (the Multi-HMR folder), checkpoint
-(or null for the one under code/models/multiHMR), fov_deg (or null to let the model estimate it) and every (a frame
-step). It writes out as an .npz with, per person found in a frame: frame, points (17 COCO keypoints in the camera's
-frame, metres, x right, y down, z ahead), pixels (the same keypoints in the video's pixels), height (the standing
-height of the body the model fitted, metres) and focal (the focal length used, in the video's pixels). A runner for
-another model writes the same arrays. It imports nothing from MACAW, which need not be installed beside it."""
+(or null for the one under code/models/multiHMR), fov_deg (or null to let the model estimate it), every (a frame
+step) and threshold (the detection score a person needs). It writes out as an .npz with, per person found in a frame:
+frame, points (17 COCO keypoints in the camera's frame, metres, x right, y down, z ahead), pixels (the same keypoints
+in the video's pixels), height (the standing height of the body the model fitted, metres) and focal (the focal length
+used, in the video's pixels). A runner for another model writes the same arrays. It imports nothing from MACAW, which
+need not be installed beside it."""
 
 import json
 import sys
@@ -18,7 +19,7 @@ COCO17 = [
     "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle",
 ]
 CHECKPOINT = "multiHMR_672_L_anny"
-NMS_KERNEL, DET_THRESHOLD = 3, 0.3
+NMS_KERNEL = 3
 
 
 def main() -> None:
@@ -68,7 +69,7 @@ def main() -> None:
             focal = image.width / 2 / np.tan(np.radians(job["fov_deg"]) / 2) * scale
             K = torch.tensor([[[focal, 0, size / 2], [0, focal, size / 2], [0, 0, 1]]], dtype=torch.float32, device=device)
         with torch.no_grad(), torch.autocast(device, enabled=device == "cuda"):
-            people = model(x, is_training=False, nms_kernel_size=NMS_KERNEL, det_thresh=DET_THRESHOLD, K=K)
+            people = model(x, is_training=False, nms_kernel_size=NMS_KERNEL, det_thresh=float(job["threshold"]), K=K)
         # with nobody found the model hands back ({}, []) instead of a list of people
         if isinstance(people, tuple):
             people = people[1]

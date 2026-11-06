@@ -397,6 +397,8 @@ class Pose3DSection(_Section):
     one_camera: str | None = None
     # the body model reads every nth frame of the video
     one_camera_every: int = Field(default=1, ge=1)
+    # how sure the body model must be that a person is there; lower finds more people, small children especially
+    one_camera_threshold: float = Field(default=0.1, gt=0, lt=1)
 
 
 class FaceSection(_Section):

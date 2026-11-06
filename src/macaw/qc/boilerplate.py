@@ -716,6 +716,8 @@ def _one_camera(config) -> str:
         "Multi-HMR [baradel2024] fitting the Anny body model [bregier2025]" if config.pose3d.one_camera == BUILT_IN
         else f"a body model run by the study's own script {config.pose3d.one_camera}"
     )
+    if config.pose3d.one_camera == BUILT_IN:
+        model += f" (detection threshold {config.pose3d.one_camera_threshold:g})"
     sized = (
         "People whose standing height the study gave were then scaled to it, about the camera; the others kept the size of the "
         "body fitted to them." if read_heights(config) else "Each person kept the size of the body fitted to them."

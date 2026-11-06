@@ -118,6 +118,8 @@ def test_the_steps_place_each_named_person_from_the_body_fitted_to_them(one_came
     mesh = MeshExtractor(config).run(recording, layout.artifacts_dir("003", MeshExtractor.name))
     written = read_mesh(layout.artifacts_dir("003", MeshExtractor.name) / mesh_file("room"))
     assert len(written["frame"]) == 8 and "the model estimated the picture's angle itself" in mesh.warnings[0].message
+    job = json.loads((layout.artifacts_dir("003", MeshExtractor.name) / "room.job.json").read_text(encoding="utf-8"))
+    assert job["threshold"] == 0.1 and job["every"] == 1
     rows = []
     for person, figure in FIGURES.items():
         seen = pixels(figure)
@@ -201,3 +203,6 @@ def test_the_methods_say_how_size_was_set(one_camera_project):
     text = _placed_3d(config)
     assert "a body model run by the study's own script fake_runner.py" in text and "scaled to it" in text
     assert "too large for a small child" in text and "only for people placed from the same camera" in text
+    assert "detection threshold" not in text
+    built_in = config.model_copy(update={"pose3d": config.pose3d.model_copy(update={"one_camera": "multihmr", "one_camera_threshold": 0.2})})
+    assert "fitting the Anny body model [bregier2025] (detection threshold 0.2) to every person" in _placed_3d(built_in)

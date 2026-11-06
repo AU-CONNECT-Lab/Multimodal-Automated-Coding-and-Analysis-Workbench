@@ -124,6 +124,7 @@ pose3d:                              # 3D from two or more cameras that see the 
   board_every_s: 0.2                 # s; board clips are read at this interval
   one_camera: null                   # multihmr | a runner script in scripts_dir: 3D from each person's own camera by a body model
   one_camera_every: 1                # the body model reads every nth frame
+  one_camera_threshold: 0.1          # how sure the body model must be that a person is there; lower finds more, small children especially
 
 face:
   backend: pyfeat                    # pyfeat (most weights non-commercial) | mediapipe (no action units) | openface
