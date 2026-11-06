@@ -396,15 +396,18 @@ def _derivative(kp: pd.DataFrame, joint: str, order: int, smoothing_s: float) ->
     return pd.Series(np.hypot(fitted[:, 0], fitted[:, 1]), index=points.index)
 
 
-def _smoothed_derivative(values: np.ndarray, frames: np.ndarray, step: float, smoothing_s: float, order: int) -> np.ndarray:
-    """Per column; no fit spans a missing frame, so a gap never turns into an apparent jump."""
+def _smoothed_derivative(
+    values: np.ndarray, frames: np.ndarray, step: float, smoothing_s: float, order: int, stride: int = 1,
+) -> np.ndarray:
+    """Per column, on frames stride apart; no fit spans a missing one, so a gap never turns into an apparent jump."""
     out = np.full(values.shape, np.nan)
     if not step > 0:
         return out
+    step = step * stride
     window = _window_frames(smoothing_s, step)
     valid = ~np.isnan(values).any(axis=1)
     starts = np.ones(len(frames), dtype=bool)
-    starts[1:] = (np.diff(frames) != 1) | (valid[1:] != valid[:-1])
+    starts[1:] = (np.diff(frames) != stride) | (valid[1:] != valid[:-1])
     run_id = np.cumsum(starts)
     for run in np.unique(run_id[valid]):
         index = np.flatnonzero(run_id == run)

@@ -24,7 +24,7 @@ from macaw.extractors.video.pose.kinematics import (
     velocity,
 )
 from macaw.extractors.video.pose.skeleton import JOINT_SET
-from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joints, _step, points_file, three_d_step
+from macaw.extractors.video.pose.triangulate import TriangulationExtractor, _joints, _step, frame_stride, points_file, three_d_step
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -148,11 +148,11 @@ class GestureExtractor(Extractor):
 @register_extractor
 class Gesture3DExtractor(Extractor):
     name = "pose.gestures3d"
-    version = "0.2.0"
+    version = "0.2.1"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras", "project.units")
+    config_sections = ("kinematics.smoothing_s", "kinematics.gestures", "setup.cameras", "project.units", "pose3d.one_camera_every")
 
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:
@@ -189,7 +189,7 @@ class Gesture3DExtractor(Extractor):
             if placed is None:
                 warnings.append(_warning(self.name, recording, str(subject_id), f"{len(own)} gesture(s) coded but this person was never placed in 3D"))
                 continue
-            times, sides, body = room_tracks(placed, self.config.kinematics.smoothing_s)
+            times, sides, body = room_tracks(placed, self.config.kinematics.smoothing_s, frame_stride(self.config))
             values = measure_gestures(
                 times, sides, body, own, still_speed=cfg.still_speed_3d * to_metres, peak_prominence=cfg.peak_prominence_3d * to_metres,
                 both_hands=cfg.holds == "both_hands",
@@ -261,7 +261,7 @@ def measure_gestures(
     return pd.DataFrame(rows)
 
 
-def room_tracks(points: pd.DataFrame, smoothing_s: float) -> tuple[np.ndarray, dict, pd.DataFrame]:
+def room_tracks(points: pd.DataFrame, smoothing_s: float, stride: int = 1) -> tuple[np.ndarray, dict, pd.DataFrame]:
     """As GestureExtractor._tracks, from a person's points in the room: speeds in 3D, positions in their frontal plane."""
     frames, times, found = _joints(points)
     step = _step(frames, times.to_numpy(dtype=float))
@@ -269,7 +269,7 @@ def room_tracks(points: pd.DataFrame, smoothing_s: float) -> tuple[np.ndarray, d
     body = frontal_plane(found, frames)
 
     def speed(joint: str) -> np.ndarray:
-        return np.linalg.norm(_smoothed_derivative(found.get(joint, missing), frames, step, smoothing_s, 1), axis=1)
+        return np.linalg.norm(_smoothed_derivative(found.get(joint, missing), frames, step, smoothing_s, 1, stride), axis=1)
 
     sides = {side: (speed(f"{side}_wrist"), speed(f"{side}_elbow"), _xy(body, f"{side}_wrist")) for side in SIDES}
     return times.to_numpy(dtype=float), sides, body

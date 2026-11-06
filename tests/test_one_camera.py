@@ -165,6 +165,25 @@ def test_how_often_someone_was_placed_counts_only_the_frames_the_model_read(one_
     assert said[0].message == "placed in 3D in 100% of the frames they were seen in, counting the one frame in 2 the body model read"
 
 
+def test_speeds_in_3d_are_taken_over_the_frames_the_model_read(one_camera_project):
+    from macaw.extractors.video.pose.triangulate import frame_stride, subject_values_3d
+
+    config, _, _ = one_camera_project
+    assert frame_stride(config) == 1
+    config = config.model_copy(update={"pose3d": config.pose3d.model_copy(update={"one_camera_every": 3})})
+    assert frame_stride(config) == 3
+    # the left wrist moves 1 m/s along x at 30 fps, placed on one frame in three
+    frames = np.arange(0, 91, 3)
+    points = pd.DataFrame([
+        {"frame": frame, "t": frame / 30, "joint": joint, "x": frame / 30 if joint == "left_wrist" else 0.0, "y": 0.0, "z": 2.0}
+        for frame in frames for joint in ("left_wrist", "right_wrist")
+    ])
+    speed = subject_values_3d(points, 0.25, frame_stride(config))["left_wrist_speed_3d"]
+    assert np.allclose(speed, 1.0)
+    # read as if the frames were consecutive, every one of them is a gap
+    assert subject_values_3d(points, 0.25)["left_wrist_speed_3d"].isna().all()
+
+
 def test_people_placed_from_different_cameras_are_not_measured_against_each_other():
     from macaw.extractors.video.pose.triangulate import apart, frame_of
 

@@ -80,6 +80,11 @@ def three_d_step(config) -> str | None:
     return chosen[0] if chosen else None
 
 
+def frame_stride(config) -> int:
+    """Frames between two on which the 3D step places people: the body model on one camera may read every nth."""
+    return config.pose3d.one_camera_every if three_d_step(config) == ONE_CAMERA_STEP else 1
+
+
 def frame_of(points: pd.DataFrame) -> str:
     """Which frame a person's 3D points are in: "3d", the room, for calibrated cameras, else the camera they were placed
     from; two people are measured against each other only in one frame."""
@@ -320,11 +325,11 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.4.0"
+    version = "0.4.1"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.measures")
+    config_sections = ("kinematics.smoothing_s", "kinematics.measures", "pose3d.one_camera_every")
 
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:
@@ -358,7 +363,7 @@ class Kinematics3DExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         people = {str(subject_id): own for subject_id, own in points.groupby("subject_id", observed=True)}
         frames = [
-            build_long_rows(values=subject_values_3d(own, smoothing_s), scale=Scale.FRAME, subject_id=subject_id, **common)
+            build_long_rows(values=subject_values_3d(own, smoothing_s, frame_stride(self.config)), scale=Scale.FRAME, subject_id=subject_id, **common)
             for subject_id, own in people.items()
         ]
         warnings = []
@@ -395,7 +400,10 @@ class Kinematics3DExtractor(Extractor):
             for b in others:
                 if b != a and apart(people, a, b):
                     continue
-                values = measure_values_3d(measure, people[a], people[b], smoothing_s=self.config.kinematics.smoothing_s, function=function)
+                values = measure_values_3d(
+                    measure, people[a], people[b], smoothing_s=self.config.kinematics.smoothing_s, function=function,
+                    stride=frame_stride(self.config),
+                )
                 rows.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common))
                 if measure.below_3d is not None:
                     feature = f"{measure.name}_3d"
@@ -451,7 +459,7 @@ def _step(frames: np.ndarray, times: np.ndarray) -> float:
     return float(np.median(np.diff(times) / np.diff(frames))) if len(frames) > 1 else 0.0
 
 
-def subject_values_3d(points: pd.DataFrame, smoothing_s: float) -> pd.DataFrame:
+def subject_values_3d(points: pd.DataFrame, smoothing_s: float, stride: int = 1) -> pd.DataFrame:
     frames, times, found = _joints(points)
     values = pd.DataFrame({"t_start": times.to_numpy(dtype=float)})
     if "left_wrist" in found and "right_wrist" in found:
@@ -461,7 +469,7 @@ def subject_values_3d(points: pd.DataFrame, smoothing_s: float) -> pd.DataFrame:
         if wrist not in found:
             continue
         for name, order in _DERIVATIVES:
-            fitted = _smoothed_derivative(found[wrist], frames, step, smoothing_s, order)
+            fitted = _smoothed_derivative(found[wrist], frames, step, smoothing_s, order, stride)
             values[f"{wrist}_{name}_3d"] = np.linalg.norm(fitted, axis=1)
     return values
 
@@ -507,7 +515,9 @@ def _angle(one: np.ndarray, other: np.ndarray) -> np.ndarray:
     return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
 
 
-def measure_values_3d(measure, points_a: pd.DataFrame, points_b: pd.DataFrame, *, smoothing_s: float, function=None) -> pd.DataFrame:
+def measure_values_3d(
+    measure, points_a: pd.DataFrame, points_b: pd.DataFrame, *, smoothing_s: float, function=None, stride: int = 1,
+) -> pd.DataFrame:
     """A project measure on the frames both people were placed on; function stands in for a script method."""
     frames_a, times_a, found_a = _joints(points_a)
     frames_b, _, found_b = _joints(points_b)
@@ -527,7 +537,7 @@ def measure_values_3d(measure, points_a: pd.DataFrame, points_b: pd.DataFrame, *
         targets = np.stack([_at(b, joint, len(frames)) for joint in measure.to_joints], axis=1)[:, None, :, :]
         values = np.fmin.reduce(np.linalg.norm(ends - targets, axis=-1).reshape(len(frames), -1), axis=1)
         if measure.method == "approach_speed":
-            values = -_smoothed_derivative(values[:, None], frames, _step(frames, times), smoothing_s, 1)[:, 0]
+            values = -_smoothed_derivative(values[:, None], frames, _step(frames, times), smoothing_s, 1, stride)[:, 0]
     if measure.per_body_size:
         values = values / _shoulder_width(found_a)
     return pd.DataFrame({"t_start": times, f"{measure.name}_3d": values})
