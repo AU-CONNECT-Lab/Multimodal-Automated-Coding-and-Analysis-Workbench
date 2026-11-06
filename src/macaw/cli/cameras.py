@@ -115,10 +115,15 @@ def calibration_floor(
     calibration: str = typer.Argument(..., help="Folder in project.calibration_dir holding the board clips."),
     at: float = typer.Option(..., "--at", help="Second of the board clips, on the first camera's clock, at which the board lay flat."),
     on: str = typer.Option("floor", "--on", help="floor, or the thing of the room the board lay on, such as table."),
+    corner: tuple[float, float] = typer.Option(
+        None, "--corner", help="Where the board's marked corner lay, across and along in the room, in project.units; for example 1.5 1.5 with the page in the zero corner.",
+    ),
+    toward: float = typer.Option(90.0, "--toward", help="With --corner: where the board's arrow pointed, in degrees clockwise from +y as a camera's facing; 90 is along +x."),
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
 ) -> None:
-    """Say when the board lay flat in a calibration's board clips, on the floor or on a thing of the room; placing the
-    cameras in the room then takes which way is up and how high they are from it."""
+    """Say when the board lay flat in a calibration's board clips, on the floor or on a thing of the room, and where if
+    known; placing the cameras in the room then takes which way is up and how high they are from it, and with --corner
+    also where they stand and which way they face."""
     from macaw.extractors.video.pose.board import make_board
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
@@ -140,7 +145,9 @@ def calibration_floor(
         typer.echo(f"{camera.name}: {f'board found, {count} corners' if count else 'board not found'}")
     if floor is None:
         raise MacawError(f"no camera finds the board at {at:g} s; choose a moment when it lies flat and still in view of a camera")
-    typer.echo(str(write_floor(folder, at, on)))
+    if corner is not None:
+        typer.echo(f"the marked corner at {corner[0]:g}, {corner[1]:g} {resolved.project.units}, the arrow toward {toward % 360:g}°")
+    typer.echo(str(write_floor(folder, at, on, corner, toward if corner is not None else None)))
 
 
 @app.command("place-cameras")

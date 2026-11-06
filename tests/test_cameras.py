@@ -282,6 +282,26 @@ def test_the_board_prints_at_its_size(project):
     assert too_small.exit_code != 0 and "does not fit on A3" in said(too_small)
 
 
+def test_the_marked_corner_lies_where_the_caption_says():
+    cv2 = pytest.importorskip("cv2")
+    from macaw.config.schema import BoardSection
+    from macaw.extractors.video.pose.board import PAGE_MARGIN_MM, PRINT_DPI, board_page, corners_on, make_board
+
+    size = BoardSection().in_mm("cm")
+    page = board_page(size, "A2")
+    shrink = 4
+    small = cv2.resize(page, (page.shape[1] // shrink, page.shape[0] // shrink), interpolation=cv2.INTER_AREA)
+    board = make_board(size)
+    sighting = corners_on(cv2.cvtColor(small, cv2.COLOR_GRAY2BGR), board)
+    assert sighting is not None and len(sighting.ids) == (size.squares_x - 1) * (size.squares_y - 1)
+    per_px = 25.4 / PRINT_DPI * shrink
+    # the inner corner nearest the marked one is a square in from it, toward the page's middle
+    nearest = list(sighting.ids).index((size.squares_y - 2) * (size.squares_x - 1))
+    across, up = sighting.corners[nearest].ravel() * per_px
+    assert across == pytest.approx(PAGE_MARGIN_MM + size.square_mm, abs=1.0)
+    assert page.shape[0] * 25.4 / PRINT_DPI - up == pytest.approx(PAGE_MARGIN_MM + size.square_mm, abs=1.0)
+
+
 def person(head, facing, frames, *, wrist_speed=0.0, fps=30.0, hips=False):
     """Joints in mm: a seated upper body whose nose points along facing; the left forearm swings about the
     elbow at wrist_speed metres per second, so no bone changes length. hips adds them 700 mm below the head."""

@@ -54,6 +54,16 @@ def floor_on(on: str, height: float) -> Floor:
     return Floor(TURN.inv().apply([0.0, 0.0, 1.0]), middle, on, {"front": 24})
 
 
+def laid_at(place, toward, on="floor", height=0.0) -> Floor:
+    """The board lying flat with its marked corner at place and its arrow toward a facing, as a person would say."""
+    floor = floor_on(on, height)
+    heading = np.radians(toward)
+    floor.corner = TURN.inv().apply((np.array([*place, height]) - SHIFT) / 0.1)
+    floor.arrow = TURN.inv().apply([np.sin(heading), np.cos(heading), 0.0])
+    floor.place, floor.toward = place, toward
+    return floor
+
+
 def close_to_truth(placing, names=TRUTH, length=1.0, angle=0.5):
     for name in names:
         x, y, height, facing, tilt, _ = TRUTH[name]
@@ -128,6 +138,25 @@ def test_with_the_board_flat_a_wrong_height_stands_alone():
     wrong = [(check["who"], check["what"]) for check in placing.checks if not check["agrees"]]
     assert wrong == [("side", "height")]
     close_to_truth(placing, names=("front", "corner", "back"))
+
+
+def test_where_the_board_lay_places_every_camera_with_nothing_measured():
+    placing = place_cameras(calibrated(), room_with({}), "cm", laid_at((40.0, 30.0), 90.0))
+    assert placing.tied and not placing.missing
+    close_to_truth(placing)
+    assert {check["what"] for check in placing.checks} >= {"corner across", "corner along", "arrow toward"}
+    assert all(check["agrees"] for check in placing.checks)
+
+
+def test_a_board_said_to_lie_elsewhere_than_the_tape_says_does_not_agree():
+    room = room_with({"front": ("at",), "side": ("at",)})
+    placing = place_cameras(calibrated(), room, "cm", laid_at((40.0, 30.0), 90.0))
+    close_to_truth(placing)
+    assert all(check["agrees"] for check in placing.checks)
+    floor = laid_at((40.0, 30.0), 90.0)
+    floor.place = (40.0, 60.0)
+    wrong = place_cameras(calibrated(), room, "cm", floor)
+    assert any(not check["agrees"] for check in wrong.checks)
 
 
 def test_a_camera_turned_about_its_line_of_sight_is_said():
@@ -211,6 +240,9 @@ def test_the_board_lying_flat_is_found_in_the_board_clips(tmp_path):
     assert floor is not None and set(floor.seen_by) == {"left", "right"} and min(floor.seen_by.values()) >= 6
     assert np.degrees(np.arccos(np.dot(floor.up, [0.0, -1.0, 0.0]))) < 1.0
     assert np.linalg.norm(floor.middle - MIDDLE) < 10.0
+    # the marked corner is the printed board's lower left, its arrow along the lower edge
+    assert np.linalg.norm(floor.corner - (MIDDLE + [-262.5, 0.0, -187.5])) < 10.0
+    assert np.degrees(np.arccos(np.dot(floor.arrow, [1.0, 0.0, 0.0]))) < 1.0
     assert find_floor(setup, clips, board, 5.0, "floor", normalise=False) is None
 
 
@@ -268,6 +300,29 @@ def test_the_commands_take_the_floor_and_place_the_cameras(calibrated_project):
     assert room["left"]["lens"] == pytest.approx(np.degrees(2 * np.arctan(320 / 600)), abs=0.1) and room["left"]["calibration"] == "lab"
 
 
+def test_where_the_board_lay_is_enough_to_place_the_cameras(calibrated_project):
+    import yaml
+    from typer.testing import CliRunner
+
+    from macaw.cli.main import app
+
+    setup_file = calibrated_project.parent / "setups" / "main.yaml"
+    data = yaml.safe_load(setup_file.read_text(encoding="utf-8"))
+    data["room"] = {"cameras": {"left": {}, "right": {}}}
+    setup_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    runner = CliRunner()
+    # the marked corner lies 3.75 cm across and 131.25 cm along from the left camera's foot
+    said = runner.invoke(app, ["calibration-floor", "lab", "--at", "0.5", "--corner", "103.75", "181.25", "--toward", "90", "-c", str(calibrated_project)])
+    assert said.exit_code == 0, said.output + str(said.exception)
+    assert "the marked corner at 103.75, 181.25 cm, the arrow toward 90°" in said.output
+    placed = runner.invoke(app, ["place-cameras", "-c", str(calibrated_project)])
+    assert placed.exit_code == 0 and "Placed left, right from the calibration lab." in placed.output, placed.output
+    room = yaml.safe_load(setup_file.read_text(encoding="utf-8"))["room"]["cameras"]
+    assert room["left"]["at"] == pytest.approx([100, 50], abs=1) and room["left"]["height"] == pytest.approx(120, abs=1)
+    assert room["right"]["at"] == pytest.approx([170, 70], abs=1)
+    assert room["left"]["facing"] == pytest.approx(LEFT_FACING, abs=0.5)
+
+
 def test_no_camera_seeing_the_board_is_said(calibrated_project):
     from typer.testing import CliRunner
 
@@ -286,8 +341,14 @@ def test_the_setup_page_shows_saves_and_uses_the_board_lying_flat(calibrated_pro
     shown = text_of(cameras.floor_view(calibrated_project, "lab", 0.5))
     assert "left: board found" in shown and "right: board found" in shown
     assert "Saved: the board lay on the floor at 0.5 s" in text_of(cameras.save_floor(calibrated_project, "lab", 0.5, "floor"))
-    length, at, things, on, saved = cameras.floor_tools(calibrated_project, "lab", "main")
+    length, at, things, on, x, y, toward, saved = cameras.floor_tools(calibrated_project, "lab", "main")
     assert length == pytest.approx(1.0) and at == 0.5 and things == ["floor"] and "saved: 0.5 s, on floor" in text_of(saved)
+    assert (x, y, toward) == (None, None, 90)
+    assert "Give both numbers" in text_of(cameras.save_floor(calibrated_project, "lab", 0.5, "floor", 103.75, None, 90))
+    laid = text_of(cameras.save_floor(calibrated_project, "lab", 0.5, "floor", 103.75, 181.25, 90))
+    assert "its marked corner at 103.75, 181.25 and its arrow toward 90" in laid and "--corner 103.75 181.25 --toward 90" in laid
+    assert cameras.floor_tools(calibrated_project, "lab", "main")[4:7] == (103.75, 181.25, 90.0)
+    cameras.save_floor(calibrated_project, "lab", 0.5, "floor")
     model = room.model_of(resolve_config(calibrated_project), "main")
     after, message = room.from_calibration(calibrated_project, model)
     assert "Placed left, right from the calibration lab." in text_of(message)

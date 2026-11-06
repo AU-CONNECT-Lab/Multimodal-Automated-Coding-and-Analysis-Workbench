@@ -103,12 +103,15 @@ def section(config_path: Path):
                         html.Div(dcc.Slider(0, 60, 0.1, value=0, id="cameras-floor-at", marks=None, updatemode="mouseup",
                                             tooltip={"placement": "bottom", "always_visible": True}), className="floor-slider"),
                         ui.field("On", dcc.Dropdown(["floor"], "floor", id="cameras-floor-on", clearable=False, className="picker")),
+                        ui.field(f"Marked corner across ({config.project.units})", dcc.Input(id="cameras-floor-x", type="number", step="any")),
+                        ui.field(f"Marked corner along ({config.project.units})", dcc.Input(id="cameras-floor-y", type="number", step="any")),
+                        ui.field("Arrow toward (°)", dcc.Input(id="cameras-floor-toward", type="number", value=90, step="any")),
                     ],
                     className="toolbar",
                 ),
                 dcc.Loading(html.Div(id="cameras-floor-view")),
                 html.Div(id="cameras-floor-result"),
-                desc="Drag to when the board lay flat; the room takes the floor from it.",
+                desc="Drag to when the board lay flat; where its marked corner lay, if known, places the cameras without measuring them.",
                 actions=[ui.button("Save the moment", "cameras-floor-save")],
             ),
             ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state")),
@@ -272,8 +275,8 @@ def floor_things(config, setup_name: str | None) -> list[str]:
     return ["floor", *(name for name, thing in things.items() if (thing or {}).get("height") is not None)]
 
 
-def floor_tools(config_path: Path, name: str | None, setup_name: str | None) -> tuple[float, float, list[str], str, list]:
-    """The slider's length and place, what the board may lie on and what it lay on, and the moment saved so far."""
+def floor_tools(config_path: Path, name: str | None, setup_name: str | None) -> tuple:
+    """The slider's length and place, what the board may lie on and what it lay on, where it lay, and the moment saved so far."""
     from macaw.extractors.video.pose.board import clip_seconds
     from macaw.project.placing import floor_said
 
@@ -281,14 +284,17 @@ def floor_tools(config_path: Path, name: str | None, setup_name: str | None) -> 
     things = floor_things(config, setup_name)
     folder = Path(config.project.calibration_dir) / name if name else None
     if folder is None or not folder.is_dir():
-        return 60.0, 0.0, things, "floor", []
+        return 60.0, 0.0, things, "floor", None, None, 90, []
     offsets = _offsets(config, name)
     length = max([clip_seconds(clip) + offsets.get(camera, 0.0) for camera, clip in _clips(folder).items()] or [60.0])
     said = floor_said(folder)
     if said is None:
-        return round(length, 1), 0.0, things, "floor", []
+        return round(length, 1), 0.0, things, "floor", None, None, 90, []
     on = said["on"] if said["on"] in things else "floor"
-    return round(length, 1), said["at_s"], things, on, [ui.pill(f"saved: {said['at_s']:g} s, on {said['on']}", "ok")]
+    corner = said["corner"] or (None, None)
+    where = f", marked corner at {corner[0]:g}, {corner[1]:g}, arrow toward {said['toward']:g}°" if said["corner"] else ""
+    pill = ui.pill(f"saved: {said['at_s']:g} s, on {said['on']}{where}", "ok")
+    return round(length, 1), said["at_s"], things, on, *corner, said["toward"] if said["corner"] else 90, [pill]
 
 
 def floor_view(config_path: Path, name: str | None, at) -> list:
@@ -316,7 +322,7 @@ def floor_view(config_path: Path, name: str | None, at) -> list:
     return [html.Div(figures, className="thumbs")]
 
 
-def save_floor(config_path: Path, name: str | None, at, on: str):
+def save_floor(config_path: Path, name: str | None, at, on: str, x=None, y=None, toward=None):
     from macaw.extractors.video.pose.board import make_board
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.project.placing import find_floor, write_floor
@@ -333,11 +339,17 @@ def save_floor(config_path: Path, name: str | None, at, on: str):
     board = make_board(config.pose3d.board.in_mm(config.project.units))
     if find_floor(setup, _clips(folder), board, at, on, normalise=config.video.normalise) is None:
         return ui.note("No camera finds the board at this moment; choose one where it lies flat and still in view.", "warn")
-    write_floor(folder, at, on)
-    argv = cli_bridge.build_command(["calibration-floor", name, "--at", f"{at:g}", "--on", on], config_path=config_path)
+    if (x is None) != (y is None):
+        return ui.note("Give both numbers of the marked corner, or neither.", "warn")
+    corner = (float(x), float(y)) if x is not None else None
+    toward = float(toward) if toward is not None else 90.0
+    write_floor(folder, at, on, corner, toward if corner is not None else None)
+    where = ["--corner", f"{corner[0]:g}", f"{corner[1]:g}", "--toward", f"{toward:g}"] if corner is not None else []
+    argv = cli_bridge.build_command(["calibration-floor", name, "--at", f"{at:g}", "--on", on, *where], config_path=config_path)
     surface = "the floor" if on == "floor" else on
+    placed = f", its marked corner at {corner[0]:g}, {corner[1]:g} and its arrow toward {toward % 360:g}°" if corner is not None else ""
     return [
-        ui.note(f"Saved: the board lay on {surface} at {at:g} s. From the calibration on the setup now uses it.", "ok"),
+        ui.note(f"Saved: the board lay on {surface} at {at:g} s{placed}. From the calibration on the setup now uses it.", "ok"),
         html.Span("The same in a terminal", className="hint"), ui.command(argv),
     ]
 
@@ -429,14 +441,15 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("cameras-floor-at", "max"), Output("cameras-floor-at", "value"), Output("cameras-floor-on", "options"),
-        Output("cameras-floor-on", "value"), Output("cameras-floor-result", "children"),
+        Output("cameras-floor-on", "value"), Output("cameras-floor-x", "value"), Output("cameras-floor-y", "value"),
+        Output("cameras-floor-toward", "value"), Output("cameras-floor-result", "children"),
         Input("cameras-setup", "value"), Input("setup-pick", "value"),
     )
     def floor_choices(name, setup_name):
         try:
             return floor_tools(config_path, name, setup_name)
         except MacawError as error:
-            return no_update, no_update, no_update, no_update, ui.note(str(error), "bad")
+            return *(no_update,) * 7, ui.note(str(error), "bad")
 
     @app.callback(Output("cameras-floor-view", "children"), Input("cameras-floor-at", "value"), State("cameras-setup", "value"))
     def floor_frames(at, name):
@@ -448,13 +461,14 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output("cameras-floor-result", "children", allow_duplicate=True),
         Input("cameras-floor-save", "n_clicks"), State("cameras-setup", "value"), State("cameras-floor-at", "value"), State("cameras-floor-on", "value"),
+        State("cameras-floor-x", "value"), State("cameras-floor-y", "value"), State("cameras-floor-toward", "value"),
         prevent_initial_call=True,
     )
-    def floor_save(clicks, name, at, on):
+    def floor_save(clicks, name, at, on, x, y, toward):
         if not clicks:
             return no_update
         try:
-            return save_floor(config_path, name, at, on)
+            return save_floor(config_path, name, at, on, x, y, toward)
         except MacawError as error:
             return ui.note(str(error), "bad")
 

@@ -20,7 +20,8 @@ from macaw.extractors.video.pose.cameras import Camera, CameraSetup, through_len
 # landscape, in millimetres
 PAPERS_MM = {"A4": (297, 210), "A3": (420, 297), "A2": (594, 420), "A1": (841, 594)}
 PRINT_DPI = 300
-_PAGE_MARGIN_MM = 10
+# also how far the board's marked corner is from the page's left and bottom edges
+PAGE_MARGIN_MM = 15
 _CAPTION_MM = 12
 # fewer corners than this make a board pose that a slight error tips over
 _MIN_CORNERS = 6
@@ -86,11 +87,12 @@ def describe_board(board_cfg) -> str:
 def fits_on(board_cfg, paper: str) -> bool:
     page_w, page_h = PAPERS_MM[paper]
     board_w, board_h = board_cfg.squares_x * board_cfg.square_mm, board_cfg.squares_y * board_cfg.square_mm
-    return board_w + 2 * _PAGE_MARGIN_MM <= page_w and board_h + 2 * _PAGE_MARGIN_MM + _CAPTION_MM <= page_h
+    return board_w + 2 * PAGE_MARGIN_MM <= page_w and board_h + 2 * PAGE_MARGIN_MM + _CAPTION_MM <= page_h
 
 
 def board_page(board_cfg, paper: str) -> np.ndarray:
-    """The board at its true size on a page, to print at PRINT_DPI and 100%."""
+    """The board at its true size in the page's lower left corner, with an arrow from its marked corner along its
+    lower edge, to print at PRINT_DPI and 100%."""
     cv2 = _cv2()
     page_w, page_h = PAPERS_MM[paper]
     board_w, board_h = board_cfg.squares_x * board_cfg.square_mm, board_cfg.squares_y * board_cfg.square_mm
@@ -102,14 +104,22 @@ def board_page(board_cfg, paper: str) -> np.ndarray:
     per_mm = PRINT_DPI / 25.4
     page = np.full((round(page_h * per_mm), round(page_w * per_mm)), 255, np.uint8)
     image = make_board(board_cfg).generateImage((round(board_w * per_mm), round(board_h * per_mm)), marginSize=0, borderBits=1)
-    top, left = round(_PAGE_MARGIN_MM * per_mm), round((page_w - board_w) / 2 * per_mm)
-    page[top : top + image.shape[0], left : left + image.shape[1]] = image
+    left = round(PAGE_MARGIN_MM * per_mm)
+    bottom = page.shape[0] - round(PAGE_MARGIN_MM * per_mm)
+    page[bottom - image.shape[0] : bottom, left : left + image.shape[1]] = image
     caption = (
         f"ChArUco {board_cfg.squares_x} x {board_cfg.squares_y}, squares {board_cfg.square_mm:g} mm, markers "
-        f"{board_cfg.marker_mm:g} mm, {board_cfg.dictionary}. Print at 100%, measure one square and set pose3d.board.square."
+        f"{board_cfg.marker_mm:g} mm, {board_cfg.dictionary}. Print at 100%, measure one square and set pose3d.board.square. "
+        f"The arrow starts at the board's marked corner, {PAGE_MARGIN_MM} mm from the left and bottom edges of the page."
     )
-    baseline = top + image.shape[0] + round(_CAPTION_MM * 0.6 * per_mm)
-    cv2.putText(page, caption, (left, baseline), cv2.FONT_HERSHEY_SIMPLEX, per_mm * 0.12, 0, max(1, round(per_mm * 0.15)), cv2.LINE_AA)
+    baseline = bottom - image.shape[0] - round(_CAPTION_MM * 0.4 * per_mm)
+    thickness = max(1, round(per_mm * 0.15))
+    cv2.putText(page, caption, (left, baseline), cv2.FONT_HERSHEY_SIMPLEX, per_mm * 0.12, 0, thickness, cv2.LINE_AA)
+    # in the margin under the board, clear of its squares
+    below = bottom + round(PAGE_MARGIN_MM * 0.5 * per_mm)
+    length = min(80.0, board_w / 3)
+    cv2.line(page, (left, bottom + round(2 * per_mm)), (left, below + round(2 * per_mm)), 0, thickness * 2, cv2.LINE_AA)
+    cv2.arrowedLine(page, (left, below), (left + round(length * per_mm), below), 0, thickness * 2, cv2.LINE_AA, tipLength=4.0 / length)
     return page
 
 
@@ -231,8 +241,16 @@ def clip_seconds(path: Path) -> float:
         capture.release()
 
 
-def board_in_frame(camera: Camera, sighting: Sighting, board, units: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """The direction the board's face points and its middle, in the calibration's frame and units, from one camera's view."""
+@dataclass
+class BoardPlace:
+    up: np.ndarray        # the way the board's face points
+    middle: np.ndarray
+    corner: np.ndarray    # the marked corner, where the arrow on the page starts
+    arrow: np.ndarray     # along the board's lower edge, away from the marked corner
+
+
+def board_in_frame(camera: Camera, sighting: Sighting, board, units: str) -> BoardPlace | None:
+    """Where the board lies, in the calibration's frame and units, from one camera's view."""
     cv2 = _cv2()
     corners_3d = np.asarray(board.getChessboardCorners(), dtype=float)
     ok, rvec, tvec = cv2.solvePnP(corners_3d[sighting.ids], sighting.corners, camera.matrix, camera.distortions)
@@ -241,11 +259,17 @@ def board_in_frame(camera: Camera, sighting: Sighting, board, units: str) -> tup
     from macaw.extractors.video.pose.cameras import UNITS_TO_METRES
 
     turn = Rotation.from_rotvec(rvec.ravel())
-    # the board is drawn in millimetres
+    # the board is drawn in millimetres, from its upper left corner with y down the page
     per_mm = 0.001 / UNITS_TO_METRES[units]
-    middle = (turn.apply(corners_3d.mean(axis=0)) + tvec.ravel()) * per_mm
+    columns, rows = board.getChessboardSize()
+    marked = np.array([0.0, rows * board.getSquareLength(), 0.0])
     to_camera = Rotation.from_rotvec(camera.rotation)
-    return to_camera.inv().apply(turn.apply([0.0, 0.0, 1.0])), to_camera.inv().apply(middle - camera.translation)
+
+    def placed(point):
+        return to_camera.inv().apply((turn.apply(point) + tvec.ravel()) * per_mm - camera.translation)
+
+    face, along = (to_camera.inv() * turn).apply([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
+    return BoardPlace(face, placed(corners_3d.mean(axis=0)), placed(marked), along)
 
 
 def calibrate(clips: list[CameraClip], board, *, units: str = "mm", fix_k3: bool = True) -> Fit:

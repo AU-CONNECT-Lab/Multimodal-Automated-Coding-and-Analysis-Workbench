@@ -21,6 +21,10 @@ FLOOR_FILE = "floor.yaml"
 # how closely a person measures, in centimetres and degrees; the board lying flat is far closer
 _LENGTH_CM, _ANGLE_DEG = 2.0, 3.0
 _FLOOR_CM, _FLOOR_DEG = 0.5, 0.5
+# laying the board's marked corner on a point and its edge along a wall
+_BOARD_CM, _BOARD_DEG = 1.0, 1.0
+# beside the cameras in the fit's state; a device name cannot hold a colon
+_BOARD, _CORNER = ":board", ":corner"
 # a given number further than this from where everything else puts it does not agree
 _OFF_CM, _OFF_DEG = 10.0, 5.0
 # a camera turned about its line of sight by more than this is still drawn level in the room
@@ -37,6 +41,10 @@ class Floor:
     middle: np.ndarray        # the board's middle, in the calibration's frame and units
     on: str                   # "floor", or a thing of the room the board lay on
     seen_by: dict[str, int]   # camera -> corners found
+    corner: np.ndarray | None = None     # the board's marked corner, in the calibration's frame and units
+    arrow: np.ndarray | None = None      # unit, along the board's edge from the marked corner
+    place: tuple[float, float] | None = None   # where a person said the marked corner lay, in the room
+    toward: float | None = None                # and where the arrow pointed, as a camera's facing
 
 
 @dataclass
@@ -130,7 +138,9 @@ def place_cameras(setup: CameraSetup, room: RoomSection, units: str, floor: Floo
     def state(rotation: Rotation, shift: np.ndarray) -> dict:
         placed = {name: (scale * rotation.apply(where) + shift, rotation.apply(right), rotation.apply(ahead)) for name, (where, right, ahead, _) in axes.items()}
         if floor is not None:
-            placed["board"] = (scale * rotation.apply(floor.middle) + shift, rotation.apply(floor.up))
+            placed[_BOARD] = (scale * rotation.apply(floor.middle) + shift, rotation.apply(floor.up))
+            if _laid(floor):
+                placed[_CORNER] = (scale * rotation.apply(floor.corner) + shift, rotation.apply(floor.arrow))
         return placed
 
     def residuals(rotation: Rotation, shift: np.ndarray) -> np.ndarray:
@@ -208,12 +218,26 @@ def _terms(room: RoomSection, axes: dict, floor: Floor | None, per_cm: float) ->
             terms.append(_Term(name, "level", 0.0, angle, True, lambda s, n=name: angles_of(s[n][1], s[n][2])[2]))
     if floor is not None:
         # against up rather than level, so a room upside down is as far off as can be
-        terms.append(_Term("board", "flat across", 0.0, _FLOOR_DEG, True, lambda s: float(np.degrees(np.arctan2(s["board"][1][0], s["board"][1][2])))))
-        terms.append(_Term("board", "flat along", 0.0, _FLOOR_DEG, True, lambda s: float(np.degrees(np.arctan2(s["board"][1][1], s["board"][1][2])))))
+        terms.append(_Term("board", "flat across", 0.0, _FLOOR_DEG, True, lambda s: float(np.degrees(np.arctan2(s[_BOARD][1][0], s[_BOARD][1][2])))))
+        terms.append(_Term("board", "flat along", 0.0, _FLOOR_DEG, True, lambda s: float(np.degrees(np.arctan2(s[_BOARD][1][1], s[_BOARD][1][2])))))
         height = _surface(room, floor)
         if height is not None:
-            terms.append(_Term("board", f"on {floor.on}", height, _FLOOR_CM * per_cm, False, lambda s: float(s["board"][0][2])))
+            terms.append(_Term("board", f"on {floor.on}", height, _FLOOR_CM * per_cm, False, lambda s: float(s[_BOARD][0][2])))
+        if _laid(floor):
+            corner = _BOARD_CM * per_cm
+            terms.append(_Term("board", "corner across", floor.place[0], corner, False, lambda s: float(s[_CORNER][0][0])))
+            terms.append(_Term("board", "corner along", floor.place[1], corner, False, lambda s: float(s[_CORNER][0][1])))
+            terms.append(_Term("board", "arrow toward", floor.toward, _BOARD_DEG, True, lambda s: _heading(s[_CORNER][1])))
     return terms
+
+
+def _laid(floor: Floor | None) -> bool:
+    return floor is not None and floor.place is not None and floor.toward is not None and floor.corner is not None
+
+
+def _heading(direction: np.ndarray) -> float:
+    """A direction's facing on the floor, clockwise from +y as a camera's."""
+    return float(np.degrees(np.arctan2(direction[0], direction[1])) % 360.0)
 
 
 def _surface(room: RoomSection, floor: Floor | None) -> float | None:
@@ -238,6 +262,8 @@ def _starts(room: RoomSection, axes: dict, floor: Floor | None, scale: float, su
     if floor is not None:
         level = _minimal_turn(floor.up, np.array([0.0, 0.0, 1.0]))
         starts += [heading * level for heading in headings]
+        if _laid(floor):
+            starts.append(Rotation.from_euler("z", _heading(level.apply(floor.arrow)) - floor.toward, degrees=True) * level)
     measured = [name for name in axes if room.cameras[name].at is not None and room.cameras[name].height is not None]
     if len(measured) >= 3:
         room_points = np.array([[*room.cameras[name].at, room.cameras[name].height] for name in measured], dtype=float)
@@ -254,6 +280,8 @@ def _starts(room: RoomSection, axes: dict, floor: Floor | None, scale: float, su
 def _start_shift(turn: Rotation, room: RoomSection, axes: dict, floor: Floor | None, scale: float, surface: float | None) -> np.ndarray:
     shift = np.zeros(3)
     across = [np.asarray(room.cameras[name].at, float) - (scale * turn.apply(axes[name][0]))[:2] for name in axes if room.cameras[name].at is not None]
+    if _laid(floor):
+        across.append(np.asarray(floor.place, float) - (scale * turn.apply(floor.corner))[:2])
     if across:
         shift[:2] = np.mean(across, axis=0)
     heights = [room.cameras[name].height - (scale * turn.apply(axes[name][0]))[2] for name in axes if room.cameras[name].height is not None]
@@ -284,23 +312,34 @@ def _missing(residuals: Callable[[np.ndarray], np.ndarray], count: int) -> list[
 
 
 _UP = "which way is up and how high the cameras are: film the board lying flat, or give one camera's height and tilt, or three cameras' places and heights"
-_ON_FLOOR = "where the cameras stand on the floor and which way they face: give two cameras' places, or one camera's place and facing"
+_ON_FLOOR = (
+    "where the cameras stand on the floor and which way they face: say where the flat board's marked corner lay and where its arrow "
+    "pointed, or give two cameras' places, or one camera's place and facing"
+)
 
 
 def floor_said(folder: Path) -> dict | None:
-    """The moment of a calibration's board clips at which the board lay flat, and on what, as a person said it."""
+    """The moment of a calibration's board clips at which the board lay flat, on what, and where if known, as a person said it."""
     path = Path(folder) / FLOOR_FILE
     if not path.is_file():
         return None
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if data.get("at_s") is None:
         return None
-    return {"at_s": float(data["at_s"]), "on": str(data.get("on") or "floor")}
+    corner = data.get("corner")
+    return {
+        "at_s": float(data["at_s"]), "on": str(data.get("on") or "floor"),
+        "corner": (float(corner[0]), float(corner[1])) if corner else None,
+        "toward": float(data["toward"]) if corner and data.get("toward") is not None else None,
+    }
 
 
-def write_floor(folder: Path, at_s: float, on: str) -> Path:
+def write_floor(folder: Path, at_s: float, on: str, corner: tuple[float, float] | None = None, toward: float | None = None) -> Path:
     path = Path(folder) / FLOOR_FILE
-    path.write_text(yaml.safe_dump({"at_s": round(float(at_s), 3), "on": on}, sort_keys=False), encoding="utf-8")
+    said = {"at_s": round(float(at_s), 3), "on": on}
+    if corner is not None:
+        said.update(corner=[float(corner[0]), float(corner[1])], toward=float(toward if toward is not None else 90.0) % 360.0)
+    path.write_text(yaml.safe_dump(said, sort_keys=False), encoding="utf-8")
     return path
 
 
@@ -309,7 +348,7 @@ def find_floor(setup: CameraSetup, clips: dict[str, Path], board, at_s: float, o
     from macaw.extractors.video.pose.board import board_in_frame, corners_on, frame_at, width_factor
 
     offsets = setup.metadata.get("offsets_s", {}) or {}
-    seen, ups, middles = {}, [], []
+    seen, places = {}, []
     for camera in setup.cameras:
         clip = clips.get(camera.name)
         if clip is None:
@@ -318,18 +357,17 @@ def find_floor(setup: CameraSetup, clips: dict[str, Path], board, at_s: float, o
         sighting = corners_on(frame, board) if frame is not None else None
         seen[camera.name] = 0 if sighting is None else len(sighting.ids)
         placed = board_in_frame(camera, sighting, board, setup.units) if sighting is not None else None
-        if placed is None:
-            continue
-        up, middle = placed
-        # the side the cameras see is up
-        if np.dot(up, camera.position() - middle) < 0:
-            up = -up
-        ups.append(up)
-        middles.append(middle)
-    if not ups:
+        if placed is not None:
+            places.append((placed, camera))
+    if not places:
         return None
-    up = np.mean(ups, axis=0)
-    return Floor(up / np.linalg.norm(up), np.mean(middles, axis=0), on, seen)
+    # the side the cameras see is up
+    up = np.mean([place.up if np.dot(place.up, camera.position() - place.middle) > 0 else -place.up for place, camera in places], axis=0)
+    arrow = np.mean([place.arrow for place, _ in places], axis=0)
+    return Floor(
+        up / np.linalg.norm(up), np.mean([place.middle for place, _ in places], axis=0), on, seen,
+        np.mean([place.corner for place, _ in places], axis=0), arrow / np.linalg.norm(arrow),
+    )
 
 
 def floor_of(config, calibration: str, setup: CameraSetup) -> tuple[Floor | None, str | None]:
@@ -348,6 +386,7 @@ def floor_of(config, calibration: str, setup: CameraSetup) -> tuple[Floor | None
         return None, str(error)
     if floor is None:
         return None, f"no camera finds the board at {said['at_s']:g} s of the board clips, where it was said to lie flat"
+    floor.place, floor.toward = said["corner"], said["toward"]
     return floor, None
 
 
