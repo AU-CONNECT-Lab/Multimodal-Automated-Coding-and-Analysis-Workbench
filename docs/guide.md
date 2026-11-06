@@ -271,7 +271,9 @@ The Review page of a recording whose two cameras could not be aligned with confi
 
 {bdg-secondary-line}`only when uncertain`
 
-Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file, then keep the estimated offset or enter one by hand.
+Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file and play the clip, then keep the estimated offset or enter one by hand.
+
+The clip shows ten seconds from the start, the middle and the end of the recording, with every camera side by side, a waveform for each sound and all the sound mixed together. A file that is out of step sounds doubled or echoed, and the peaks of its waveform fall beside those of the others. For a camera without sound the clip is the only check: compare a clap or the movement of the lips with what is heard. The clip is made again whenever an offset is set by hand.
 
 A device whose clock runs at a slightly different rate also drifts away from the others over a long recording. When the offset of successive segments moves along a straight line by more than 20 ms across the recording, MACAW corrects the drift along that line, resampling the file's sound and rescaling its frame times, and holds the file here; the figure shows the segment offsets and the line. An offset entered by hand is applied as it is, without drift correction.
 

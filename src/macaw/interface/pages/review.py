@@ -22,6 +22,7 @@ from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame
 from macaw.qc.checks import RecordingResults
 from macaw.qc.look import RIGHT, describe, read_checks, read_look, summary, to_check, verdict
 from macaw.store.annotations import read_annotations
+from macaw.qc.align_clip import clip_path
 from macaw.qc.report import _alignment, _cameras, _waiting
 
 LABEL = "Review"
@@ -86,11 +87,17 @@ def _offsets(config, layout, rid):
         for row in rows
     ]
     figures = sorted((layout.renders_dir(rid) / "align").glob("*.png"))
+    clip = clip_path(layout, rid)
+    # the clip is remade under the same name when an offset changes, so its address carries its time
+    player = html.Video(
+        src=f"{file_url(clip)}?v={int(clip.stat().st_mtime)}", controls=True, preload="metadata", className="player",
+    ) if clip.is_file() else None
     return ui.card(
         "Offsets between files",
         ui.table(["File", "Offset (s)", "Confidence", "Segments agreeing", "Status", ""], table_rows, numeric={"Offset (s)", "Confidence"}),
+        player,
         html.Div([html.A(html.Img(src=file_url(path)), href=file_url(path), target="_blank") for path in figures], className="figures"),
-        desc="Look at a file's figure before keeping its offset; set one by hand with macaw set-offset.",
+        desc="Play the clip, where a file out of step sounds doubled, and look at its figure before keeping its offset.",
     )
 
 

@@ -90,6 +90,7 @@ table.flat td.message { max-width: 90ch; }
 .thumbs img { width: 100%; height: auto; display: block; border: 1px solid var(--rule-soft); }
 .thumbs figcaption { font-size: 0.78rem; color: var(--muted); margin-top: 0.3rem; }
 .figures img { max-width: 100%; height: auto; display: block; margin: 0.5rem 0 1.5rem; border: 1px solid var(--rule-soft); }
+.player { display: block; width: 100%; max-width: 960px; margin: 0.5rem 0 1.5rem; background: #000; border-radius: 6px; }
 
 @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } main { padding: 1.25rem 1rem 3rem; } }
 @media print { #topbar { display: none; } }

@@ -251,7 +251,7 @@ class AlignReviewGate(Gate):
         if not flagged:
             return None
         return (
-            f"{len(flagged)} device(s) to look at: {'; '.join(flagged)}. The figures are in "
+            f"{len(flagged)} device(s) to look at: {'; '.join(flagged)}. The figures and a clip to play are in "
             f"{layout.renders_dir(rid) / 'align'}; keep them with `macaw accept-offset -r {rid}` "
             "or change one with `macaw set-offset`"
         )

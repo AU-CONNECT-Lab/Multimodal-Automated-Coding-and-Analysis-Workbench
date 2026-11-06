@@ -106,6 +106,13 @@ def _media(config: MacawConfig, recording) -> list[dict]:
     return rows
 
 
+def _alignment_clip(layout, recording_id: str, page: Path) -> str | None:
+    from macaw.qc.align_clip import clip_path
+
+    clip = clip_path(layout, recording_id)
+    return _href(clip, page) if clip.is_file() else None
+
+
 def _alignment(config: MacawConfig, layout, recording_id: str, page: Path) -> tuple[list[dict], list[dict]]:
     path = layout.offset_table_path(recording_id)
     if not path.is_file():
@@ -696,6 +703,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "counts": counts,
         "alignment": alignment,
         "alignment_figures": alignment_figures,
+        "alignment_clip": _alignment_clip(layout, recording_id, page),
         "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames),
         "cameras": cameras,
         "voices": voices,

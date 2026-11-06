@@ -29,6 +29,7 @@ from macaw.media.align import (
 from macaw.media.probe import probe
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from macaw.qc.align_clip import alignment_clip, clip_path
 
 app = typer.Typer()
 logger = get_logger("align")
@@ -75,6 +76,7 @@ def align(
         typer.echo(f"  table {path}")
         if any(figures.glob("*.png")):
             typer.echo(f"  figures {figures}")
+        _clip(recording, results, infos, clip_path(layout, recording_id), resolved.video.encoder)
         if cfg.review != "skip" and any(needs_person(result, cfg) for result in results):
             typer.echo(
                 f"  files waiting for a person hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
@@ -116,6 +118,7 @@ def set_offset(
     results = [result for result in results if result.target != media] + [entry]
     write_offset_table(results, path)
     typer.echo(f"{recording}: {media} set to {offset:+.3f} s against {reference}")
+    _clip(built, results, None, clip_path(layout, recording), resolved.video.encoder)
 
 
 @app.command("accept-offset")
@@ -152,6 +155,17 @@ def accept_offset(
     unknown = wanted - matched
     if unknown:
         raise MacawError(f"not in any offset table: {', '.join(sorted(unknown))}")
+
+
+def _clip(recording, results, infos: dict | None, dest: Path, encoder: str) -> None:
+    """A clip that cannot be made is said and never stops the command."""
+    try:
+        made = alignment_clip(recording, results, infos if infos is not None else _probe_all(recording), dest, encoder)
+    except MacawError as error:
+        typer.echo(f"  no clip: {error}")
+        return
+    if made is not None:
+        typer.echo(f"  clip {made} (start, middle and end, all sound mixed: a file out of step sounds doubled)")
 
 
 def _probe_all(recording) -> dict:

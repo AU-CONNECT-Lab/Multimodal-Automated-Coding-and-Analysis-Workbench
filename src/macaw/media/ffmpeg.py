@@ -17,10 +17,10 @@ _BASE = ["-hide_banner", "-loglevel", "error", "-y"]
 SEEK_MARGIN_S = 1.0
 
 
-def run_ffmpeg(args: list[str]) -> str:
+def run_ffmpeg(args: list[str], cwd: Path | None = None) -> str:
     """Raises ExternalToolError with ffmpeg's stderr attached on non-zero exit."""
     command = [require_ffmpeg(), *_BASE, *args]
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
         raise ExternalToolError(f"ffmpeg failed: {' '.join(args)}\n{result.stderr.strip()}")
     return result.stderr

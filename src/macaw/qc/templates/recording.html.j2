@@ -55,6 +55,10 @@
   {%- endfor %}
   </tbody>
 </table>
+{% if alignment_clip %}
+<p class="desc">Start, middle and end of the recording with every camera and all the sound mixed: a file out of step sounds doubled or echoed, and its waveform's peaks fall beside the others'.</p>
+<video class="player" controls preload="metadata" src="{{ alignment_clip }}"></video>
+{% endif %}
 {% if alignment_figures %}
 <details>
   <summary>Alignment figures <span class="hint">peak against its rival, the two loudness curves, and the offset of each segment</span></summary>
