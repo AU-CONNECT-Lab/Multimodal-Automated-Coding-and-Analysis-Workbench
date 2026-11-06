@@ -47,9 +47,9 @@ def check_prompt(batch: pd.DataFrame, context: pd.DataFrame) -> tuple[str, str]:
           if (pd.concat([context, batch])["speaker"] == OTHER).any() else []),
         "A recogniser can mishear words, giving a line that makes little sense where it stands, or write words nobody said, "
         "such as a phrase repeated over and over, a sign-off like 'thanks for watching', or many words in a very short time. "
-        "Mark such a line as misheard. A recogniser can also cut what someone said into pieces, leaving a word or two that "
-        "only make sense with the line before or after; mark such a piece as cut. "
-        "Mark nothing else: not a line for being casual or ungrammatical, and not a young child's speech.",
+        "Mark only such lines. Do not mark a line for being casual, ungrammatical, unfinished or a young child's speech. "
+        "Give each line you mark a kind: misheard when its words make little sense where they stand or nobody said them; "
+        "cut when it is only a word or two that seem cut off from what the speaker said before or after.",
         'Answer with one JSON object and nothing else: {"lines": [{"id": "<line id>", "kind": "misheard" or "cut", '
         '"why": "<a few words>"}]}, listing only the lines you mark; an empty list when there are none.',
     ]
