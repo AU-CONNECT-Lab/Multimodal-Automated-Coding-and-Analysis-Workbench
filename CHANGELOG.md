@@ -56,7 +56,7 @@
 - The Methods text says for how many recordings a transcript corrected by hand replaced the recognised one.
 - Joint attention to a named object with who led and how long the other took to follow, each turn's voice measures set beside the previous speaker's at a change of speaker, lexical overlap with the previous turn, time a measure spends below a value the study sets, body orientation toward the other person in 3D, and guide examples for rMEA, SUSY and response rates within a window.
 - The workbench asks for the reviewer's name instead of taking the login name, keeps imports on the cards they belong to, counts the speech acts decided, links the sections of its long pages and shows short settings notes; the README and the guide show screenshots of it.
-- 3D from a depth camera (`depth: true` in the setup, `macaw depth-import` for RealSense, Azure Kinect and Orbbec recordings); cameras placed from where the flat board lay alone; the transcript check tells misheard lines from cut-off pieces; checks on speech and tracking within each segment.
+- 3D from a depth camera (`depth: true` in the setup, `macaw depth-import` for RealSense, Azure Kinect and Orbbec recordings) or, as an option, from one camera by a body model, with people's heights from `heights.csv`; cameras placed from where the flat board lay alone; the transcript check tells misheard lines from cut-off pieces; checks on speech and tracking within each segment.
 
 ### Removed
 - `macaw export --rmd` and the R Markdown starter it wrote beside the export.

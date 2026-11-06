@@ -35,6 +35,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - Lengths in one unit for the project (centimetres, metres or inches) beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
 - 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and the cameras calibrated on the Setup page and placed in its room from the calibration.
 - 3D from a depth camera: a RealSense, Azure Kinect or Orbbec Femto recording imported with the maker's own alignment, or depth images beside any video, each person's points placed on the depth in metres, with the same 3D measures.
+- 3D from one ordinary camera, as an option: a body model that covers every age fitted to each person, run in its own environment, and set to each person's stated height.
 - Body points exported per recording, in pixels and in 3D.
 - Who looks at whom and at which named things, from the picture or from where the room places people and things, mutual gaze, joint attention with who led, and labelled frames to check it.
 - Paired values for convergence between speakers (each turn's voice measures beside the previous speaker's, lexical overlap with the previous turn), time spent below a threshold the study sets, and body orientation toward the other person in 3D.
@@ -47,4 +48,3 @@ Reviewing the output works the same way. The quality report points at the frames
 ## Milestones
 
 - A language-model observation pass before coding.
-- 3D from a single ordinary camera, with a body model that covers every age; the storage schema reserves room for it.
