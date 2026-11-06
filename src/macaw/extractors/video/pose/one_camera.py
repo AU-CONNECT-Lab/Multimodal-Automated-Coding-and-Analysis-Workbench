@@ -163,11 +163,11 @@ class OneCameraExtractor(Extractor):
     """Each named person's body points in 3D from the body model fitted to them on the camera their body is measured on."""
 
     name = "pose.one_camera"
-    version = "0.1.0"
+    version = "0.1.1"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("pose3d.one_camera", "project.units", "setup.cameras")
+    config_sections = ("pose3d.one_camera", "pose3d.one_camera_every", "project.units", "setup.cameras")
     requires = ("pose.review", MeshExtractor.name)
 
     @classmethod
@@ -221,8 +221,10 @@ class OneCameraExtractor(Extractor):
                     body = here[which]
                     seen = np.isfinite(pixels[person]).all(axis=1)
                     placed[person].append((frame, mesh["points"][body], seen, float(mesh["height"][body])))
+            # the model reads every nth frame, so only those count toward how often someone was placed
+            read = own[own["frame"] % self.config.pose3d.one_camera_every == 0]
             for person in people:
-                seen_frames = int(own.loc[own["subject_id"] == person, "frame"].nunique())
+                seen_frames = int(read.loc[read["subject_id"] == person, "frame"].nunique())
                 rows, warning = self._person(rid, person, placed[person], seen_frames, heights.get((rid, person)), own)
                 warnings += warning
                 if rows is not None:
@@ -269,8 +271,10 @@ class OneCameraExtractor(Extractor):
             warnings.append(self._warning(
                 rid, person, "info", f"set to the stated height, {stated_m:.2f} m, from the fitted body's {model_m:.2f} m (scaled by {scale:.2f})",
             ))
+        every = self.config.pose3d.one_camera_every
+        read = f", counting the one frame in {every} the body model read" if every > 1 else ""
         warnings.append(self._warning(
-            rid, person, "warn" if share < _FEW_PLACED else "info", f"placed in 3D in {share:.0%} of the frames they were seen in",
+            rid, person, "warn" if share < _FEW_PLACED else "info", f"placed in 3D in {share:.0%} of the frames they were seen in{read}",
         ))
         times = own.groupby("frame")["t"].first()
         confidence = own.set_index(["subject_id", "frame", "joint"])["confidence"]

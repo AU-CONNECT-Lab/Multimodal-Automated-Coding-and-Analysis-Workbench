@@ -61,6 +61,31 @@ def test_a_point_on_the_body_is_placed_at_the_body_not_the_wall_behind():
     # where the depth camera saw nothing there is no place
     hole = surfaces.place(surfaces.nearest(np.zeros((DEPTH_SIZE[1], DEPTH_SIZE[0]), np.uint16)), pixels_of(JOINTS))
     assert np.isnan(hole).all()
+    # a point off the picture, as a pose model may guess for a hidden joint, has no depth either
+    off = surfaces.place(surfaces.nearest(depth_image()), np.array([[-200.0, 240.0], [-1.0, 10.0], [320.0, -50.0], [700.0, 240.0]]))
+    assert np.isnan(off).all()
+
+
+def aligned_image() -> np.ndarray:
+    """The body and the wall as depth already carried into the colour picture, in millimetres along its axis."""
+    grid = np.stack(np.meshgrid(np.arange(COLOUR.size[0], dtype=float), np.arange(COLOUR.size[1], dtype=float)), axis=-1).reshape(-1, 2)
+    normal = COLOUR.undistort(grid)
+    body = (np.abs(normal * BODY_Z) <= BODY_HALF).all(axis=1)
+    return np.where(body, BODY_Z, WALL_Z).reshape(COLOUR.size[1], COLOUR.size[0]) * 1000.0
+
+
+def test_depth_already_carried_into_the_colour_picture_is_read_as_it_is():
+    from macaw.extractors.video.pose.depth import aligned
+
+    same = DepthLens(COLOUR, COLOUR, 0.001)
+    surfaces = Surfaces(same)
+    assert aligned(same) and not aligned(lens()) and surfaces.cell == 1
+    image = aligned_image().astype(np.uint16)
+    assert np.abs(surfaces.place(surfaces.nearest(image), pixels_of(JOINTS)) - JOINTS).max() < 0.01
+    # the right wrist sits near x 215 in the colour picture
+    image[:, :260] = 0
+    placed = surfaces.place(surfaces.nearest(image), pixels_of(JOINTS))
+    assert np.isnan(placed[2]).all() and np.isfinite(placed[:2]).all()
 
 
 def test_the_lens_file_reads_back_what_was_written(tmp_path):
@@ -137,6 +162,19 @@ def test_the_steps_place_each_body_point_from_the_depth_beside_the_video(depth_p
     said = {w.subject_id: w.message for w in result.warnings}
     assert said["parent"] == "placed in 3D for 67% of the body points seen; the rest had no depth around them"
     assert "child" not in said
+
+
+def test_large_depth_images_are_stored_a_few_at_a_time(depth_project, monkeypatch):
+    pytest.importorskip("cv2")
+    from macaw.extractors.video.pose import depth
+
+    config, layout, recording = depth_project
+    monkeypatch.setattr(depth, "_CHUNK_BYTES", 2 * DEPTH_SIZE[0] * DEPTH_SIZE[1] * 2)
+    DepthPrepExtractor(config).run(recording, layout.artifacts_dir("003", "prep.depth"))
+    folder = depth.prepared_depth(config, "003")["kinect"]
+    assert len(list(folder.glob("*.npz"))) == 2
+    read = list(depth.depth_frames(folder))
+    assert [frame for frame, _ in read] == [0, 1, 2] and read[0][1].shape == (DEPTH_SIZE[1], DEPTH_SIZE[0])
 
 
 def test_the_3d_measures_follow_the_depth_camera(depth_project):

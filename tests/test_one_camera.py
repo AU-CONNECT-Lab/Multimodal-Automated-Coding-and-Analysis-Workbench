@@ -143,6 +143,28 @@ def test_the_steps_place_each_named_person_from_the_body_fitted_to_them(one_came
     assert "placed in 3D in 100% of the frames they were seen in" in said["child"]
 
 
+def test_how_often_someone_was_placed_counts_only_the_frames_the_model_read(one_camera_project, tmp_path):
+    from macaw.extractors.video.pose.kinematics import _keypoints_file
+    from macaw.store.keypoints import write_keypoints
+
+    config, layout, recording = one_camera_project
+    config = config.model_copy(update={"pose3d": config.pose3d.model_copy(update={"one_camera_every": 2})})
+    MeshExtractor(config).run(recording, layout.artifacts_dir("003", MeshExtractor.name))
+    seen = pixels(FIGURES["child"])
+    rows = [
+        {"recording_id": "003", "subject_id": "child", "source": "pose.keypoints", "video": "room", "frame": frame, "t": frame / 10,
+         "joint": joint, "x": seen[index, 0], "y": seen[index, 1], "z": np.nan, "confidence": 0.9, "track_id": 1, "units": "pixel",
+         "metric_scale_valid": None}
+        for frame in range(4) for index, joint in enumerate(STANDARD_JOINTS)
+    ]
+    write_keypoints(pd.DataFrame(rows), _keypoints_file(config, "003").parent)
+    result = OneCameraExtractor(config).run(recording, tmp_path / "work")
+    assert set(result.keypoints["frame"]) == {0, 2}
+    said = [w for w in result.warnings if w.subject_id == "child" and w.message.startswith("placed in 3D")]
+    assert said[0].severity == "info"
+    assert said[0].message == "placed in 3D in 100% of the frames they were seen in, counting the one frame in 2 the body model read"
+
+
 def test_people_placed_from_different_cameras_are_not_measured_against_each_other():
     from macaw.extractors.video.pose.triangulate import apart, frame_of
 

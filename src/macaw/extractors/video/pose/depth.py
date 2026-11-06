@@ -28,6 +28,7 @@ LENS_FILE = "depth.yaml"
 INFO_NAME = "depth.json"
 QUALITY_NAME = "depth.csv"
 _CHUNK = 300                    # depth frames per stored file
+_CHUNK_BYTES = 256 * 2**20      # and at most this much, for depth carried into a large colour picture
 _UNITS_METRE = "metre"
 # around a body point, cells this far behind the nearest one are the background, not the body
 _SURFACE_M = 0.3
@@ -105,6 +106,10 @@ class Surfaces:
 
     def __init__(self, lens: DepthLens):
         self.lens = lens
+        self.aligned = aligned(lens)
+        if self.aligned:
+            self.cell, self.shape = 1, (lens.colour.size[1], lens.colour.size[0])
+            return
         width, height = lens.depth.size
         grid = np.stack(np.meshgrid(np.arange(width, dtype=float), np.arange(height, dtype=float)), axis=-1).reshape(-1, 2)
         self.rays = lens.depth.undistort(grid)
@@ -116,6 +121,8 @@ class Surfaces:
 
     def nearest(self, image: np.ndarray) -> np.ndarray:
         """Per cell of the colour picture, how far the nearest surface is along the colour camera's axis; inf where none."""
+        if self.aligned:
+            return np.where(image > 0, image * self.lens.unit_m, np.inf)
         values = image.reshape(-1).astype(float)
         found = values > 0
         z = values[found] * self.lens.unit_m
@@ -137,6 +144,8 @@ class Surfaces:
             if not (np.isfinite(row) and np.isfinite(col)):
                 continue
             row, col = int(row), int(col)
+            if not (0 <= row < self.shape[0] and 0 <= col < self.shape[1]):
+                continue
             window = nearest[max(row - 1, 0) : row + 2, max(col - 1, 0) : col + 2]
             window = window[np.isfinite(window)]
             if window.size == 0:
@@ -145,6 +154,16 @@ class Surfaces:
             normal = self.lens.colour.undistort(pixels[index])
             out[index] = [normal[0] * z, normal[1] * z, z]
         return out
+
+
+def aligned(lens: DepthLens) -> bool:
+    """Whether the depth images were already carried into the colour picture, pixel for pixel."""
+    depth, colour = lens.depth, lens.colour
+    return (
+        tuple(depth.size) == tuple(colour.size) and np.allclose(depth.matrix, colour.matrix)
+        and len(depth.distortions) == len(colour.distortions) and np.allclose(depth.distortions, colour.distortions)
+        and np.allclose(depth.rotation, 0.0) and np.allclose(depth.translation, 0.0)
+    )
 
 
 def frame_pairs(video: dict, n_images: int) -> dict[int, int]:
@@ -208,12 +227,17 @@ class DepthPrepExtractor(Extractor):
             out = workspace / f"{camera}.depth"
             out.mkdir(parents=True, exist_ok=True)
             frames = sorted(pairs)
-            for start in range(0, len(frames), _CHUNK):
-                chunk = frames[start : start + _CHUNK]
-                stack = np.stack([read_png(images[pairs[frame]]) for frame in chunk])
-                if stack.shape[1:] != (lens.depth.size[1], lens.depth.size[0]):
-                    raise MacawError(f"{camera}: the depth images are {stack.shape[2]} x {stack.shape[1]}, but {LENS_FILE} says {lens.depth.size[0]} x {lens.depth.size[1]}")
-                np.savez_compressed(out / f"{start // _CHUNK:05d}.npz", frames=np.asarray(chunk), depth=stack)
+            shape = (lens.depth.size[1], lens.depth.size[0])
+            step = max(1, min(_CHUNK, _CHUNK_BYTES // (2 * shape[0] * shape[1])))
+            for number, start in enumerate(range(0, len(frames), step)):
+                chunk = frames[start : start + step]
+                stack = np.empty((len(chunk), *shape), np.uint16)
+                for index, frame in enumerate(chunk):
+                    image = read_png(images[pairs[frame]])
+                    if image.shape != shape:
+                        raise MacawError(f"{camera}: the depth images are {image.shape[1]} x {image.shape[0]}, but {LENS_FILE} says {shape[1]} x {shape[0]}")
+                    stack[index] = image
+                np.savez_compressed(out / f"{number:05d}.npz", frames=np.asarray(chunk), depth=stack)
             write_lens(lens, out / LENS_FILE)
             info[camera] = {"folder": out.name, "images": len(images), "frames": len(frames)}
             if len(frames) < len(images):
@@ -248,7 +272,7 @@ class DepthPoseExtractor(Extractor):
     """Each person's body points in 3D from the depth camera their body is measured on."""
 
     name = "pose.depth"
-    version = "0.1.0"
+    version = "0.1.1"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
