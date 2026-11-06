@@ -80,10 +80,10 @@ def write_lens(lens: DepthLens, path: Path) -> Path:
 
 
 def _five(values) -> np.ndarray:
-    out = np.zeros(5)
-    if values is not None:
-        given = np.asarray(values, float).ravel()[:5]
-        out[: len(given)] = given
+    """k1 k2 p1 p2 k3, or eight with a rational lens's k4 k5 k6, as OpenCV orders them."""
+    given = np.asarray(values if values is not None else [], float).ravel()[:8]
+    out = np.zeros(8 if len(given) > 5 else 5)
+    out[: len(given)] = given
     return out
 
 

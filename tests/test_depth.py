@@ -155,3 +155,81 @@ def test_the_methods_say_the_points_come_from_the_depth_camera_and_lie_on_the_su
     config, _, _ = depth_project
     text = _placed_3d(config)
     assert "from the depth camera their body was filmed by (kinect)" in text and "on the body's surface facing the camera" in text
+
+
+def test_a_rational_lens_projects_as_opencv_does_and_reads_back():
+    cv2 = pytest.importorskip("cv2")
+    matrix = np.array([[900.0, 0, 640], [0, 900.0, 360], [0, 0, 1]])
+    eight = np.array([0.4, -0.1, 0.001, -0.002, 0.02, 0.7, -0.05, 0.01])
+    camera = Camera("kinect", (1280, 720), matrix, eight, np.zeros(3), np.zeros(3))
+    points = np.random.default_rng(1).uniform([-0.6, -0.4, 1.5], [0.6, 0.4, 3.0], size=(50, 3))
+    theirs, _ = cv2.projectPoints(points, np.zeros(3), np.zeros(3), matrix, eight)
+    mine = camera.distort(points[:, :2] / points[:, 2:3])
+    assert np.abs(mine - theirs.reshape(-1, 2)).max() < 1e-6
+    assert np.abs(camera.undistort(mine) - points[:, :2] / points[:, 2:3]).max() < 1e-6
+
+
+def test_an_imported_recording_keeps_one_depth_image_per_frame_even_where_frames_were_lost(tmp_path):
+    pytest.importorskip("cv2")
+    from macaw.extractors.video.pose.board import _cv2
+    from macaw.media.depth_import import Shot, Source, write_folder
+
+    picture = np.zeros((48, 64, 3), np.uint8)
+    times = [0.0, 0.1, 0.3, 0.3, 0.4]   # 0.2 s is lost; 0.3 s comes twice
+    shots = (Shot(t, picture + i, np.full((48, 64), 1000 + i, np.uint16)) for i, t in enumerate(times))
+    source = Source(COLOUR, 0.001, 10.0, shots, [])
+    done = write_folder(source, tmp_path / "cam.mp4", tmp_path)
+    assert (done["frames"], done["repeated"], done["size"]) == (5, 1, (64, 48))
+    read = [_cv2().imread(str(tmp_path / f"{index:06d}.png"), -1) for index in range(5)]
+    assert [int(image.max()) for image in read] == [1000, 1001, 0, 1002, 1004]
+    lens = read_lens(tmp_path / LENS_FILE)
+    assert lens.colour.size == (64, 48) and np.allclose(lens.depth.matrix, COLOUR.matrix) and np.allclose(lens.depth.rotation, 0)
+
+
+def test_a_kinect_recording_is_read_through_the_makers_library(monkeypatch, tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    import sys
+    import types
+
+    from macaw.media import depth_import
+
+    class ImageFormat:
+        COLOR_MJPG, COLOR_NV12, COLOR_YUY2, COLOR_BGRA32 = range(4)
+
+    picture = np.zeros((48, 64, 3), np.uint8)
+    picture[:, :, 2] = 200          # red, in OpenCV's order
+    encoded = cv2.imencode(".jpg", picture)[1]
+
+    class Capture:
+        def __init__(self, index):
+            self.color, self.depth = encoded, np.ones((10, 10), np.uint16)
+            self.transformed_depth = np.full((48, 64), 900 + index, np.uint16)
+            self.color_timestamp_usec = index * 33_333
+
+    class Playback:
+        def __init__(self, path):
+            self.left = 3
+            self.calibration = types.SimpleNamespace(
+                get_camera_matrix=lambda kind: COLOUR.matrix, get_distortion_coefficients=lambda kind: np.arange(8) / 100,
+            )
+            self.configuration = {"color_format": ImageFormat.COLOR_MJPG, "camera_fps": 2}
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+        def get_next_capture(self):
+            if not self.left:
+                raise EOFError
+            self.left -= 1
+            return Capture(2 - self.left)
+
+    fake = types.SimpleNamespace(PyK4APlayback=Playback, CalibrationType=types.SimpleNamespace(COLOR=1), ImageFormat=ImageFormat)
+    monkeypatch.setitem(sys.modules, "pyk4a", fake)
+    done = depth_import.import_recording(tmp_path / "session.mkv", tmp_path / "kinect")
+    assert (done["frames"], done["fps"], done["size"]) == (3, 30.0, (64, 48))
+    assert int(cv2.imread(str(tmp_path / "kinect" / "depth" / "000002.png"), -1).max()) == 902
+    lens = read_lens(tmp_path / "kinect" / "depth" / LENS_FILE)
+    assert len(lens.colour.distortions) == 8

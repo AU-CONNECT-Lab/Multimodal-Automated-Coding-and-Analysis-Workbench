@@ -574,7 +574,7 @@ On the Results page, *In 3D* shows every participant's skeleton and the cameras;
 A depth camera, such as an Orbbec Femto, an Azure Kinect or a RealSense, records alongside its colour video how far each of its pixels is. With one, MACAW places each participant's keypoints in three dimensions from that single camera, in metres in the colour camera's frame, and the measures of the previous section follow from them.
 
 :::{note}
-Placing participants from a depth camera has been checked on simulated depth images only.
+Placing participants from a depth camera has been checked on simulated depth images. Importing a RealSense recording has been checked on the maker's sample recording; importing an Azure Kinect or Orbbec recording has not yet been run on a real recording.
 :::
 
 In the setup, mark the camera as recording depth:
@@ -600,7 +600,7 @@ colour_distortions: [0.02, -0.02, 0, 0, 0]
 unit_mm: 1                              # a stored value of 1 is this many millimetres
 ```
 
-The figures come from the camera's own calibration, which its recording software saves. When the depth images are already aligned with the colour picture, the two lenses are the same and the rotation and translation are left at none. The depth images must follow the colour video's frames one for one, at a constant frame rate. A camera that records depth cannot be combined with `pose3d.calibration` in the same project.
+A camera's own recording is turned into this layout by `macaw depth-import`, which leaves the alignment of depth and colour to the camera maker's library: `macaw depth-import session.bag raw/dyad01/realsense` for a RealSense recording, with `pip install pyrealsense2`, and `macaw depth-import session.mkv raw/dyad01/kinect` for an Azure Kinect or Orbbec Femto recording, with the maker's SDK installed and then `pip install pyk4a`. It writes the colour video and the depth images aligned with it, at the recording's frame rate; a frame missing from the recording repeats the picture before it with no depth. Laid out by hand, the figures of `depth.yaml` come from the camera's own calibration, which its recording software saves. When the depth images are already aligned with the colour picture, the two lenses are the same and the rotation and translation are left at none. The depth images must follow the colour video's frames one for one, at a constant frame rate. A camera that records depth cannot be combined with `pose3d.calibration` in the same project.
 
 The step `prep.depth` stores the depth images once on the prepared video's frames, and `pose.depth` places each keypoint the colour video finds: the depth image is carried into the colour camera's view, and the keypoint is placed on the nearest surface within a few pixels of it, along the camera's line of sight through it. Two conditions follow from this. The points lie on the surface of the body facing the camera, a few centimetres in front of the joint centres, which leaves distances between participants and movement much as they are but shortens a limb seen end on. A keypoint hidden behind something nearer the camera, such as a table edge or a raised hand, is placed on that object. The quality-control report states, for each participant, the share of keypoints that found a depth, and warns when a bone keeps changing length, which points to such frames.
 

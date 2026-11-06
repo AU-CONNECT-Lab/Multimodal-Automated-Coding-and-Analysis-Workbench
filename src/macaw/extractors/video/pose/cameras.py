@@ -27,7 +27,7 @@ class Camera:
     name: str
     size: tuple[int, int]          # width, height in pixels
     matrix: np.ndarray             # 3 x 3: focal lengths and the picture's centre, in pixels
-    distortions: np.ndarray        # k1, k2, p1, p2, k3
+    distortions: np.ndarray        # k1, k2, p1, p2, k3, and for a rational lens k4, k5, k6, as OpenCV orders them
     rotation: np.ndarray           # axis-angle, room to camera
     translation: np.ndarray        # room to camera, in the setup's units
 
@@ -46,14 +46,14 @@ class Camera:
 
     def undistort(self, pixels: np.ndarray) -> np.ndarray:
         """Pixels (..., 2) to normalised image coordinates, inverting the lens by fixed-point iteration."""
-        k1, k2, p1, p2, k3 = self.distortions
+        p1, p2 = self.distortions[2], self.distortions[3]
         (fx, skew, cx), (_, fy, cy) = self.matrix[0], self.matrix[1]
         y0 = (pixels[..., 1] - cy) / fy
         x0 = (pixels[..., 0] - cx - skew * y0) / fx
         x, y = x0.copy(), y0.copy()
         for _ in range(_UNDISTORT_ITERATIONS):
             r2 = x * x + y * y
-            radial = 1.0 + k1 * r2 + k2 * r2**2 + k3 * r2**3
+            radial = _radial(self.distortions, r2)
             x = (x0 - 2.0 * p1 * x * y - p2 * (r2 + 2.0 * x * x)) / radial
             y = (y0 - p1 * (r2 + 2.0 * y * y) - 2.0 * p2 * x * y) / radial
         return np.stack([x, y], axis=-1)
@@ -66,15 +66,24 @@ class Camera:
 def through_lens(normal: np.ndarray, matrix: np.ndarray, distortions: np.ndarray) -> np.ndarray:
     """Normalised image coordinates (..., 2) to pixels; matrix (..., 3, 3) and distortions (..., 5) broadcast
     against the points, so each point may have its own camera."""
-    k1, k2, p1, p2, k3 = (distortions[..., index] for index in range(5))
+    p1, p2 = distortions[..., 2], distortions[..., 3]
     x, y = normal[..., 0], normal[..., 1]
     r2 = x * x + y * y
-    radial = 1.0 + k1 * r2 + k2 * r2**2 + k3 * r2**3
+    radial = _radial(distortions, r2)
     xd = x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
     yd = y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
     return np.stack(
         [matrix[..., 0, 0] * xd + matrix[..., 0, 1] * yd + matrix[..., 0, 2], matrix[..., 1, 1] * yd + matrix[..., 1, 2]], axis=-1
     )
+
+
+def _radial(distortions: np.ndarray, r2):
+    """The radial factor of a five-coefficient lens, or of a rational one with k4 to k6 dividing."""
+    k1, k2, k3 = distortions[..., 0], distortions[..., 1], distortions[..., 4]
+    radial = 1.0 + k1 * r2 + k2 * r2**2 + k3 * r2**3
+    if distortions.shape[-1] >= 8:
+        radial = radial / (1.0 + distortions[..., 5] * r2 + distortions[..., 6] * r2**2 + distortions[..., 7] * r2**3)
+    return radial
 
 
 @dataclass
