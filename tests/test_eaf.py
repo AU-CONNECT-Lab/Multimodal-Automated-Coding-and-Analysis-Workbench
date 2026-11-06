@@ -210,6 +210,17 @@ class TestExportOptions:
         )
         assert "praise" in path.read_text(encoding="utf-8")
 
+    def test_a_vocabulary_names_the_language_of_its_entries(self, make_annotations, recording, tmp_path):
+        """ELAN takes a vocabulary's languages from its descriptions; without one it cannot open the file."""
+        import xml.etree.ElementTree as ET
+
+        frame = make_annotations([{"t_start": 0.0, "t_end": 1.0}])
+        path = export_eaf(frame, recording, tmp_path / "a.eaf", controlled_vocabulary={"speech_act": ["praise", "directive"]})
+        vocabulary = ET.parse(path).getroot().find("CONTROLLED_VOCABULARY")
+        described = {element.get("LANG_REF") for element in vocabulary.findall("DESCRIPTION")}
+        used = {element.get("LANG_REF") for element in vocabulary.iter("CVE_VALUE")}
+        assert used and used <= described
+
 
 class TestImport:
     def test_the_recording_id_comes_from_the_argument(self, make_annotations, recording, tmp_path):

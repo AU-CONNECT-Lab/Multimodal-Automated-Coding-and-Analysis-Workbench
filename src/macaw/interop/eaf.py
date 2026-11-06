@@ -99,6 +99,8 @@ def _attach_vocabulary(eaf, linguistic_type: str, cv_id: str, labels: list[str])
         # does not already know; "und" is ISO 639-3 for undetermined
         eaf.add_language(CV_LANGUAGE, CV_LANGUAGE_DEF, "undetermined")
         eaf.add_controlled_vocabulary(cv_id)
+        # ELAN learns a vocabulary's languages from its descriptions and fails to open the file without one
+        eaf.add_cv_description(cv_id, CV_LANGUAGE)
         for index, label in enumerate(labels):
             eaf.add_cv_entry(cv_id, f"cveid{index}", [(str(label), CV_LANGUAGE, "")])
         eaf.linguistic_types[linguistic_type]["CONTROLLED_VOCABULARY_REF"] = cv_id
