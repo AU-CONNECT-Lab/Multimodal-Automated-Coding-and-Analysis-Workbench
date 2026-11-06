@@ -201,7 +201,7 @@ Times are in seconds from the start of the recording's main video (with several 
 A segment is summarised as if the recording had been cut at its edges. An utterance, turn, code, look or blink that crosses an edge counts only with its part inside, a word belongs to the segment in which its middle falls, and turns, pauses and floor transfers are formed again from what remains, so a pause across an edge belongs to neither segment. Rates are per minute of the segment. Values scaled to a participant's level over the whole recording, such as relative pitch, keep that reference. A short segment rests on few turns and events, so measures from short segments call for caution.
 :::
 
-The quality report's checks on turns are made again within each segment, with the same thresholds as for the whole recording: too few turns, floor transfers, or turn pairs for the entropies; a participant who never takes a turn or never takes the floor; one participant holding most of it; and heavy overlap. Their warnings are listed under the segment. The other checks concern the whole recording.
+Several of the quality report's checks are made again within each segment, with the same thresholds as for the whole recording: on turns, too few turns, floor transfers, or turn pairs for the entropies, a participant who never takes a turn or never takes the floor, one participant holding most of it, and heavy overlap; on speech, a participant with nothing transcribed, low recogniser confidence, or too few voiced frames; on tracking, a participant detected in too few frames, lost and found again too often, or not detected at all. Their warnings are listed under the segment. The other checks concern the whole recording.
 
 ### Segments and the analysed part
 

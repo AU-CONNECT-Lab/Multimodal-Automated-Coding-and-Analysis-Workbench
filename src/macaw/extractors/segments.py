@@ -28,7 +28,7 @@ def summarising_steps() -> list[str]:
 @register_extractor
 class SegmentSummaryExtractor(Extractor):
     name = SUMMARY_STEP
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "segments"
     phase = Phase.DERIVE

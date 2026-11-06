@@ -621,9 +621,15 @@ class ASRExtractor(Extractor):
             )
         return warnings
 
-    def _quality_warnings(self, recording: Recording, utterances, prep) -> list[QCWarning]:
+    def _low_confidence(self) -> float | None:
+        # read off the backend's class, so checking a segment later needs no recogniser installed
+        from macaw.extractors import get_backend
+
+        return get_backend(BACKEND_GROUP, self.config.text.asr_backend).low_confidence
+
+    def _quality_warnings(self, recording: Recording, utterances, prep, span=None, where: str = "") -> list[QCWarning]:
         warnings = []
-        span = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+        span = span or (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
 
         for subject in recording.subjects:
             if subject.subject_id not in prep.tracks and not self._shared():
@@ -636,14 +642,14 @@ class ASRExtractor(Extractor):
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
                         severity="warn",
-                        message="No speech was transcribed for them.",
+                        message=f"No speech was transcribed for them{where}.",
                         t_start=span[0],
                         t_end=span[1],
                     )
                 )
                 continue
             confidence = float(mine["confidence"].mean())
-            threshold = self.backend().low_confidence
+            threshold = self._low_confidence()
             if threshold is not None and math.isfinite(confidence) and confidence < threshold:
                 warnings.append(
                     QCWarning(
@@ -652,7 +658,7 @@ class ASRExtractor(Extractor):
                         subject_id=subject.subject_id,
                         severity="warn",
                         message=(
-                            f"Mean recogniser confidence is {confidence:.2f}. The transcript "
+                            f"Mean recogniser confidence is {confidence:.2f}{where}. The transcript "
                             "is unlikely to be usable as text, though the timings may still be."
                         ),
                         t_start=span[0],
@@ -660,7 +666,7 @@ class ASRExtractor(Extractor):
                     )
                 )
 
-        languages = {str(value) for value in utterances["language"].dropna().unique()}
+        languages = {str(value) for value in utterances["language"].dropna().unique()} if not where else set()
         if len(languages) > 1:
             warnings.append(
                 QCWarning(
@@ -685,6 +691,13 @@ class ASRExtractor(Extractor):
             return None
         utterances = transcript_between(self.config, recording.recording_id, start_s, end_s, others=True)
         return self._summary(recording, utterances, (start_s, end_s))
+
+    def segment_warnings(self, recording: Recording, segment) -> list[QCWarning]:
+        if not transcript_saved(self.config, recording.recording_id):
+            return []
+        utterances = transcript_between(self.config, recording.recording_id, segment.start_s, segment.end_s, others=True)
+        prep = load_prep(self.config, recording.recording_id)
+        return self._quality_warnings(recording, utterances, prep, (segment.start_s, segment.end_s), f" in segment {segment.name}")
 
     def _events(self, recording: Recording, utterances: pd.DataFrame) -> pd.DataFrame:
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())

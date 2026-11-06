@@ -23,6 +23,7 @@ from macaw.extractors.video.pose.keypoints import DETECTIONS_NAME, SWAPS_NAME, P
 from macaw.extractors.video.pose.track_repair import STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.annotations import build_annotations, write_annotations
 from macaw.store.keypoints import write_keypoints
@@ -139,6 +140,13 @@ def test_pitch_is_summarised_over_the_frames_inside(project, write_wav):
     assert part[("voiced_fraction", "parent", None)] == pytest.approx(49 / 150)
     assert part[("f0_median_hz", "parent", None)] == pytest.approx(275.0)
 
+    # under the same floor as the whole recording: the parent is voiced in the first second only
+    late = step.segment_warnings(p.recording, Segment("late", 11.2, 12.0))
+    assert [(w.check, w.subject_id) for w in late] == [("voiced_fraction", "parent"), ("voiced_fraction", "child")]
+    assert late[0].message.startswith("Only 0.0% of frames are voiced in segment late, below the expected 10.0%")
+    assert (late[0].t_start, late[0].t_end) == (11.2, 12.0)
+    assert [w.subject_id for w in step.segment_warnings(p.recording, Segment("early", 10.0, 11.0))] == ["child"]
+
 
 def _keypoints(frames, seen):
     rows = [
@@ -166,6 +174,21 @@ def test_tracking_is_summarised_over_the_frames_inside(project):
     part = values(step.summarise(p.recording, 0.0, 5.0))
     assert part[("n_track_swaps", None, None)] == 1
     assert part[("detection_rate", "parent", None)] == pytest.approx(40 / 50)
+
+
+def test_a_person_lost_within_a_segment_is_warned_about(project):
+    p = project()
+    keypoints = _keypoints(range(100), set(range(40)) | set(range(60, 100)))
+    write_keypoints(keypoints, p.layout.keypoints_path(RID))
+    recording = recording_of([video_file("room.mp4")], recording_id=RID)
+    step = PoseExtractor(p.config)
+    lost = step.segment_warnings(recording, Segment("gap", 4.0, 6.0))
+    said = {(w.subject_id, w.message) for w in lost}
+    # the same floor as for the whole recording; the child's body was never found on this camera
+    assert ("parent", "detected in only 0% of frames in segment gap") in said
+    assert ("child", "not detected at all in segment gap") in said
+    assert all((w.check, w.t_start, w.t_end) == (PoseExtractor.name, 4.0, 6.0) for w in lost)
+    assert [w.subject_id for w in step.segment_warnings(recording, Segment("seen", 0.0, 4.0))] == ["child"]
 
 
 def test_detection_is_counted_over_the_frames_inside(project, monkeypatch):

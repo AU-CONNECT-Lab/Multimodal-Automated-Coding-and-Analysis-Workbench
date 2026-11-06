@@ -158,7 +158,8 @@ def saved(project):
     folder = layout.artifacts_dir(RID, TurnStructureExtractor.name)
     folder.mkdir(parents=True)
     _io.write_file(turns, folder / TURNS_NAME, TURN_SCHEMA, "turns")
-    prep = PrepInfo(recording_id=RID, t_origin_s=0.0, duration_s=30.0, sample_rate=16000)
+    prep = PrepInfo(recording_id=RID, t_origin_s=0.0, duration_s=30.0, sample_rate=16000,
+                    tracks={"parent": "parent.wav", "child": "child.wav"})
     folder = layout.artifacts_dir(RID, MediaPrepExtractor.name)
     folder.mkdir(parents=True)
     (folder / PREP_INFO_NAME).write_text(json.dumps(prep.to_dict()), encoding="utf-8")
@@ -276,6 +277,18 @@ def test_the_turn_checks_are_made_again_within_each_segment(saved, project, tmp_
         + EntropyExtractor(config)._sample_warnings(saved.recording, saved.turns, transitions, (0.0, 30.0), "the task window")
     )
     assert own and {(w.check, w.subject_id) for w in warnings if w.details.get("segment") == "all"} == {(w.check, w.subject_id) for w in own}
+
+
+def test_someone_with_no_speech_in_a_segment_is_warned_about(saved, project, tmp_path):
+    _table(project, "recording,segment,start_s,end_s\n003,all,0,30\n003,late,16,30\n")
+    for step in (ASRExtractor.name, MediaPrepExtractor.name):
+        _stamp(saved.layout, step)
+    config = project.config()
+    warnings = SegmentSummaryExtractor(config).run(build_recording(RID, config), tmp_path).warnings
+    # only the child speaks after 16 s; over the whole window both do
+    assert [(w.check, w.subject_id, w.details["segment"]) for w in warnings] == [("asr_no_speech", "parent", "late")]
+    assert warnings[0].message == "No speech was transcribed for them in segment late."
+    assert (warnings[0].t_start, warnings[0].t_end) == (16.0, 30.0)
 
 
 def test_the_report_lists_the_warnings_under_their_segment(saved, project, tmp_path):

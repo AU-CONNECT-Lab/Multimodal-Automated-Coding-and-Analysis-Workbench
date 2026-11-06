@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -471,6 +472,22 @@ class PoseExtractor(Extractor):
         swaps = {name: [event for event in found if start_s <= event["t"] < end_s] for name, found in events.items()}
         return self._rows(recording, keypoints, swaps, [])
 
+    def segment_warnings(self, recording: Recording, segment) -> list[QCWarning]:
+        path = layout_for(self.config, create=False).keypoints_path(recording.recording_id) / f"{self.name}.parquet"
+        if not path.is_file():
+            return []
+        keypoints = read_keypoints(path, t_range=(segment.start_s, segment.end_s))
+        where = f" in segment {segment.name}"
+        warnings: list[QCWarning] = []
+        seen = set()
+        if not keypoints.empty:
+            for subject_id, detection_rate, quality in self._people(recording, keypoints):
+                seen.add(subject_id)
+                self._quality_warnings(recording, subject_id, detection_rate, quality, warnings, where)
+        for person in sorted(set(recording.views("body")) - seen):
+            warnings.append(self._warning(recording, person, "warn", f"not detected at all{where}"))
+        return [replace(warning, t_start=segment.start_s, t_end=segment.end_s) for warning in warnings]
+
     def _owner_warning(self, recording: Recording, file_name: str, owner: dict) -> QCWarning:
         spans = ", ".join(f"{start:.1f}-{end:.1f} s" for start, end in owner["spans"][:5])
         where = f" (look at {spans})" if spans else ""
@@ -515,16 +532,9 @@ class PoseExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
         t_start = float(keypoints["t"].min())
         t_end = float(keypoints["t"].max())
-        views = measured_views(keypoints, recording)
 
         frames = []
-        for subject_id, group in keypoints.groupby("subject_id", dropna=True, observed=True):
-            group = group[group["video"] == views[str(subject_id)]]
-            n_frames = int(keypoints.loc[keypoints["video"] == views[str(subject_id)], "frame"].nunique())
-            # one person may be several tracker ids joined together; their gaps are what count
-            quality = track_quality(group.assign(track_id=0))
-            seen = int(group.loc[group["x"].notna(), "frame"].nunique())
-            detection_rate = seen / n_frames if n_frames else float("nan")
+        for subject_id, detection_rate, quality in self._people(recording, keypoints):
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(
@@ -538,11 +548,11 @@ class PoseExtractor(Extractor):
                         }
                     ),
                     scale=Scale.RECORDING,
-                    subject_id=str(subject_id),
+                    subject_id=subject_id,
                     **common,
                 )
             )
-            self._quality_warnings(recording, str(subject_id), detection_rate, quality, warnings)
+            self._quality_warnings(recording, subject_id, detection_rate, quality, warnings)
 
         n_swaps = sum(len(events) for events in swaps_by_file.values())
         frames.append(
@@ -571,21 +581,24 @@ class PoseExtractor(Extractor):
             )
         return concat_long_tables(frames)
 
-    def _quality_warnings(self, recording, subject_id, detection_rate, quality, warnings) -> None:
+    def _people(self, recording: Recording, keypoints: pd.DataFrame):
+        """Each named person's detection rate and track quality on the camera their body is measured on."""
+        views = measured_views(keypoints, recording)
+        for subject_id, group in keypoints.groupby("subject_id", dropna=True, observed=True):
+            group = group[group["video"] == views[str(subject_id)]]
+            n_frames = int(keypoints.loc[keypoints["video"] == views[str(subject_id)], "frame"].nunique())
+            # one person may be several tracker ids joined together; their gaps are what count
+            quality = track_quality(group.assign(track_id=0))
+            seen = int(group.loc[group["x"].notna(), "frame"].nunique())
+            yield str(subject_id), (seen / n_frames if n_frames else float("nan")), quality
+
+    def _quality_warnings(self, recording, subject_id, detection_rate, quality, warnings, where: str = "") -> None:
         if detection_rate == detection_rate and detection_rate < _LOW_DETECTION_RATE:
-            warnings.append(
-                self._warning(
-                    recording, subject_id, "warn",
-                    f"detected in only {detection_rate:.0%} of frames",
-                )
-            )
+            warnings.append(self._warning(recording, subject_id, "warn", f"detected in only {detection_rate:.0%} of frames{where}"))
         continuity = float(quality["continuity"].min()) if not quality.empty else float("nan")
         if continuity == continuity and continuity < _LOW_CONTINUITY:
             warnings.append(
-                self._warning(
-                    recording, subject_id, "warn",
-                    f"track continuity is {continuity:.2f}; the track disappears and returns",
-                )
+                self._warning(recording, subject_id, "warn", f"track continuity is {continuity:.2f}{where}; the track disappears and returns")
             )
 
     def _warning(self, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:

@@ -154,7 +154,7 @@ class TestLowConfidence:
 
     def warnings(self, low_confidence):
         extractor = ASRExtractor(SimpleNamespace(text=SimpleNamespace()))
-        extractor.backend = lambda: SimpleNamespace(low_confidence=low_confidence)
+        extractor._low_confidence = lambda: low_confidence
         recording = SimpleNamespace(recording_id="r", subjects=[SimpleNamespace(subject_id="parent")])
         prep = SimpleNamespace(t_origin_s=0.0, duration_s=60.0, tracks={"parent": "parent.wav"})
         utterances = pd.DataFrame([{"subject_id": "parent", "confidence": 0.41, "language": "en"}])

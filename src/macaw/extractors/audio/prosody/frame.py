@@ -150,32 +150,9 @@ class FrameProsodyExtractor(Extractor):
             )
 
             fraction = float(np.mean(np.isfinite(voiced))) if voiced.size else 0.0
-            frames.append(
-                self._summary(recording, subject.subject_id, voiced, voiced.size, (prep.t_origin_s, prep.t_origin_s + prep.duration_s))
-            )
-
-            if fraction < cfg.min_voiced_fraction:
-                likely = (
-                    "They may say little on their own, their voice may be named wrong (macaw accept-voices), "
-                    "or the pitch range may be wrong."
-                    if spans is not None
-                    else "The track may be silent, mis-attributed, or the pitch range may be wrong."
-                )
-                warnings.append(
-                    QCWarning(
-                        check="voiced_fraction",
-                        recording_id=recording.recording_id,
-                        subject_id=subject.subject_id,
-                        severity="warn",
-                        message=(
-                            f"Only {fraction:.1%} of frames are voiced, below the expected "
-                            f"{cfg.min_voiced_fraction:.1%}. {likely}"
-                        ),
-                        t_start=prep.t_origin_s,
-                        t_end=prep.t_origin_s + prep.duration_s,
-                        details={"f0_min_hz": f0_min, "f0_max_hz": f0_max},
-                    )
-                )
+            window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+            frames.append(self._summary(recording, subject.subject_id, voiced, voiced.size, window))
+            warnings += self._voiced_warning(recording, subject, fraction, spans is not None, window)
 
         return ExtractorResult(
             rows=concat_long_tables(frames),
@@ -184,13 +161,31 @@ class FrameProsodyExtractor(Extractor):
         )
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        between = self._between(recording, start_s, end_s)
+        if between is None:
+            return None
+        return concat_long_tables([
+            self._summary(recording, subject_id, voiced, n_frames, (start_s, end_s)) for subject_id, (voiced, n_frames, _) in between.items()
+        ])
+
+    def segment_warnings(self, recording: Recording, segment) -> list[QCWarning]:
+        between = self._between(recording, segment.start_s, segment.end_s) or {}
+        subjects = {subject.subject_id: subject for subject in recording.subjects}
+        warnings = []
+        for subject_id, (voiced, n_frames, shared) in between.items():
+            fraction = float(np.isfinite(voiced).sum()) / n_frames if n_frames else 0.0
+            warnings += self._voiced_warning(recording, subjects[subject_id], fraction, shared, (segment.start_s, segment.end_s), f" in segment {segment.name}")
+        return warnings
+
+    def _between(self, recording: Recording, start_s: float, end_s: float) -> dict | None:
+        """subject -> (the voiced frames' pitch from start_s to end_s, the frames there, whether the track is shared); None before a run."""
         path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
         if not path.is_file():
             return None
         prep = load_prep(self.config, recording.recording_id)
         pitch = read_long_table(path, features=["f0_hz"], scale=Scale.FRAME)
-        frames = []
-        for subject_id, (track, _) in voice_sources(self.config, recording, prep).items():
+        found = {}
+        for subject_id, (track, spans) in voice_sources(self.config, recording, prep).items():
             with wave.open(str(track), "rb") as audio:
                 grid = prep.t_origin_s + frame_times(audio.getnframes(), audio.getframerate(), self.config.prosody.frame_step_s)
             # the grid's last frame sits at the very end of the track, so a segment that reaches the end takes it too
@@ -198,8 +193,25 @@ class FrameProsodyExtractor(Extractor):
             mine = pitch[pitch["subject_id"] == subject_id]
             times = mine["t_start"].to_numpy(dtype=float)
             voiced = mine["value"].to_numpy(dtype=float)[(times >= start_s) & (times < high)]
-            frames.append(self._summary(recording, subject_id, voiced, int(((grid >= start_s) & (grid < high)).sum()), (start_s, end_s)))
-        return concat_long_tables(frames)
+            found[subject_id] = (voiced, int(((grid >= start_s) & (grid < high)).sum()), spans is not None)
+        return found
+
+    def _voiced_warning(self, recording: Recording, subject: Subject, fraction: float, shared: bool, window, where: str = "") -> list[QCWarning]:
+        cfg = self.config.prosody
+        if fraction >= cfg.min_voiced_fraction:
+            return []
+        f0_min, f0_max = f0_range(cfg, subject)
+        likely = (
+            "They may say little on their own, their voice may be named wrong (macaw accept-voices), or the pitch range may be wrong."
+            if shared else "The track may be silent, mis-attributed, or the pitch range may be wrong."
+        )
+        return [
+            QCWarning(
+                check="voiced_fraction", recording_id=recording.recording_id, subject_id=subject.subject_id, severity="warn",
+                message=f"Only {fraction:.1%} of frames are voiced{where}, below the expected {cfg.min_voiced_fraction:.1%}. {likely}",
+                t_start=window[0], t_end=window[1], details={"f0_min_hz": f0_min, "f0_max_hz": f0_max},
+            )
+        ]
 
     def _summary(self, recording: Recording, subject_id: str, voiced: np.ndarray, n_frames: int, window: tuple[float, float]) -> pd.DataFrame:
         """voiced holds the pitch of every frame, NaN where there was none, or of the voiced frames alone out of n_frames."""
