@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from macaw.exceptions import ConfigError, UnreadableMediaError
@@ -18,12 +19,13 @@ from macaw.media.align import (
     apply_alignment,
     describe_agreement,
     describe_drift,
+    drift_corrected,
     drift_flagged,
     low_confidence,
     needs_person,
     read_offset_table,
 )
-from macaw.media.ffmpeg import HDR_TRANSFERS, has_filter, normalise_video, run_ffmpeg
+from macaw.media.ffmpeg import HDR_TRANSFERS, decode_audio, has_filter, normalise_video, run_ffmpeg
 from macaw.media.probe import frame_rate, is_variable_rate, probe
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -115,28 +117,33 @@ def apply_prep_timing(config, recording: Recording) -> PrepInfo:
             continue
         item.duration_s = entry["duration_s"]
         item.sample_rate = entry["sample_rate"]
-        item.fps = entry["fps"]
         item.offset_s = entry["offset_s"]
+        item.clock_scale = entry["clock_scale"]
         item.drift_ppm = entry["drift_ppm"]
         item.offset_confidence = entry["offset_confidence"]
+        fps = entry["fps"]
         video = videos.get(item.name)
         if video is not None:
-            item.fps = video["fps"]
+            fps = video["fps"]
             # from here on offset_s places frame 0 of the file the video steps read
-            item.offset_s += video["frames_start_s"]
+            item.offset_s += video["frames_start_s"] * item.clock_scale
             item.prepared_video = video["path"]
+        # frames counted on the recording clock, so a corrected drift reaches every video step
+        item.fps = fps / item.clock_scale if fps else fps
     return prep
 
 
 def _extract_track(
-    src: Path, dest: Path, *, start_s: float, duration_s: float, sample_rate: int
+    src: Path, dest: Path, *, start_s: float, duration_s: float, sample_rate: int, clock_scale: float = 1.0
 ) -> Path:
-    """Cut one media file down to the task window on the recording clock.
+    """Cut one media file down to the task window on the recording clock; start_s is on the file's own clock.
 
     A negative start means the source begins after the window opens, so the front is padded
     with silence: sample 0 of every prepared track has to be the same instant."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if clock_scale != 1.0:
+        return _stretched_track(src, dest, start_s=start_s, duration_s=duration_s, sample_rate=sample_rate, clock_scale=clock_scale)
 
     # counted in samples from the first one decoded, the clock alignment measured on; seeking
     # with -ss lands elsewhere when a file's sound and pictures start at different times
@@ -160,17 +167,31 @@ def _extract_track(
     return dest
 
 
+def _stretched_track(
+    src: Path, dest: Path, *, start_s: float, duration_s: float, sample_rate: int, clock_scale: float
+) -> Path:
+    """_extract_track for a file whose clock runs at another rate: resampled so each of its seconds spans clock_scale."""
+    import soxr
+    from scipy.io import wavfile
+
+    own = decode_audio(src, sample_rate=sample_rate).astype("float32")
+    stretched = soxr.resample(own, sample_rate, sample_rate * clock_scale, quality="VHQ")
+    first, length = int(round(start_s * clock_scale * sample_rate)), int(round(duration_s * sample_rate))
+    track = np.zeros(length, dtype="float32")
+    lo, hi = max(first, 0), min(first + length, stretched.size)
+    if hi > lo:
+        track[lo - first : hi - first] = stretched[lo:hi]
+    wavfile.write(dest, sample_rate, (np.clip(track, -1.0, 1.0) * 32767).astype("int16"))
+    return dest
+
+
 def _window(recording: Recording) -> tuple[float, float]:
     """The task window on the recording clock, defaulting to everything that was recorded."""
     start = recording.t_task_start if recording.t_task_start is not None else 0.0
     if recording.t_task_end is not None:
         end = recording.t_task_end
     else:
-        ends = [
-            (item.duration_s or 0.0) + item.offset_s
-            for item in recording.media
-            if item.duration_s is not None
-        ]
+        ends = [item.span_s + item.offset_s for item in recording.media if item.duration_s is not None]
         if not ends:
             raise UnreadableMediaError(f"{recording.recording_id}: no media duration to work from")
         end = max(ends)
@@ -239,7 +260,7 @@ class AlignReviewGate(Gate):
 @register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
@@ -294,8 +315,8 @@ class MediaPrepExtractor(Extractor):
                 continue
             name = f"{SHARED_TRACK_PREFIX}{item.name}.wav"
             _extract_track(
-                item.path, workspace / name, start_s=start - item.offset_s, duration_s=duration,
-                sample_rate=PREP_SAMPLE_RATE,
+                item.path, workspace / name, start_s=item.own_time(start), duration_s=duration,
+                sample_rate=PREP_SAMPLE_RATE, clock_scale=item.clock_scale,
             )
             artifacts[name] = workspace / name
             shared_tracks[item.name] = name
@@ -327,10 +348,10 @@ class MediaPrepExtractor(Extractor):
             _extract_track(
                 track.path,
                 workspace / name,
-                # recording time start maps to start - offset_s on this file's own clock
-                start_s=start - track.offset_s,
+                start_s=track.own_time(start),
                 duration_s=duration,
                 sample_rate=PREP_SAMPLE_RATE,
+                clock_scale=track.clock_scale,
             )
             artifacts[name] = workspace / name
             tracks[subject.subject_id] = name
@@ -388,15 +409,15 @@ class MediaPrepExtractor(Extractor):
             return
 
         results = read_offset_table(table)
-        apply_alignment(recording, results, recut=False)
+        apply_alignment(recording, results)
 
-        def warn(check: str, item, message: str, **details) -> None:
+        def warn(check: str, item, message: str, severity: str = "warn", **details) -> None:
             warnings.append(
                 QCWarning(
                     check=check,
                     recording_id=recording.recording_id,
                     subject_id=item.subject_id,
-                    severity="warn",
+                    severity=severity,
                     message=message,
                     details=details,
                 )
@@ -422,11 +443,18 @@ class MediaPrepExtractor(Extractor):
                     f"and {describe_agreement(result)}",
                     offset_s=result.offset_s, agreement=result.agreement,
                 )
-            if drift_flagged(result):
+            if drift_corrected(result):
                 warn(
                     "clock_drift", item,
-                    f"{item.name} has {describe_drift(result)}; drift is not corrected, so the offset is "
-                    "off by that much at the far end",
+                    f"{item.name} has {describe_drift(result)}: its clock is stretched along the line fitted to the "
+                    "segment offsets, its sound resampled and its frame times rescaled; the alignment figure shows the fit",
+                    "info", clock_scale=item.clock_scale,
+                )
+            elif drift_flagged(result):
+                warn(
+                    "clock_drift", item,
+                    f"{item.name} has {describe_drift(result)}, not corrected in this offset table; "
+                    f"`macaw align -r {recording.recording_id}` again corrects it",
                 )
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
@@ -704,6 +732,7 @@ def _media_entry(item) -> dict:
         "sample_rate": item.sample_rate,
         "fps": item.fps,
         "offset_s": item.offset_s,
+        "clock_scale": item.clock_scale,
         "drift_ppm": item.drift_ppm,
         "offset_confidence": item.offset_confidence,
     }

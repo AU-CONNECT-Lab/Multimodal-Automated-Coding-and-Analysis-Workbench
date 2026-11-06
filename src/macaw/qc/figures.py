@@ -19,6 +19,7 @@ from macaw.media.align import (
     AlignResult,
     describe_agreement,
     describe_drift,
+    drift_corrected,
     envelope,
     envelope_correlation,
     fine_pieces,
@@ -152,8 +153,12 @@ def _segments(axes, result: AlignResult, cfg: AlignSection) -> None:
     title = describe_agreement(result)
     sharp = confidence >= cfg.min_confidence
     if result.drift_ppm is not None and sharp.sum() >= 2:
-        slope, intercept = np.polyfit(t[sharp], offsets[sharp], 1)
-        axes.plot(t, (slope * t + intercept - result.offset_s) * 1000, color="C1", lw=1, label="drift fit")
+        if result.drift_intercept_s is not None:
+            slope, intercept = result.drift_ppm * 1e-6, result.drift_intercept_s
+        else:
+            slope, intercept = np.polyfit(t[sharp], offsets[sharp], 1)
+        label = "drift fit, corrected along it" if drift_corrected(result) else "drift fit"
+        axes.plot(t, (slope * t + intercept - result.offset_s) * 1000, color="C1", lw=1, label=label)
         title += f"; {describe_drift(result)}"
     axes.set(xlabel="recording time (s)", ylabel="segment offset minus offset (ms)", title=title)
     _legend(axes)

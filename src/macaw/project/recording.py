@@ -36,6 +36,7 @@ class MediaFile:
     fps: float | None = None
     duration_s: float | None = None
     offset_s: float = 0.0              # seconds to add to this file's clock to reach recording time
+    clock_scale: float = 1.0           # recording seconds per second of this file's clock, once drift is corrected
     drift_ppm: float | None = None
     offset_confidence: float | None = None
     prepared_video: Path | None = None  # prep.video's re-encoded copy
@@ -49,6 +50,15 @@ class MediaFile:
     def frames_path(self) -> Path:
         """The file video steps decode frames from."""
         return self.prepared_video or self.path
+
+    def own_time(self, t: float) -> float:
+        """Where recording time t falls on this file's own clock."""
+        return (t - self.offset_s) / self.clock_scale
+
+    @property
+    def span_s(self) -> float | None:
+        """How long the file lasts in recording time."""
+        return None if self.duration_s is None else self.duration_s * self.clock_scale
 
 
 @dataclass

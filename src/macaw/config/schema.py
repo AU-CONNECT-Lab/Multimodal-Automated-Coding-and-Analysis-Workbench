@@ -60,7 +60,6 @@ class AlignSection(_Section):
     drift_check: bool = True
     drift_segment_s: float = 60.0
     max_drift_ppm: float = 200.0
-    apply: Literal["offset_table", "recut"] = "offset_table"
     review: Literal["always", "flagged", "skip"] = "flagged"
 
 

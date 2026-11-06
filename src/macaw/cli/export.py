@@ -10,6 +10,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interop.eaf import export_eaf
+from macaw.media.align import apply_offset_table
 from macaw.logging_setup import get_logger
 from macaw.project.layout import layout_for
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
@@ -196,7 +197,7 @@ def _export_eaf(resolved, layout, recording_ids: list[str], out: Path | None) ->
         target = directory / f"{recording_id}.eaf"
         export_eaf(
             frame,
-            build_recording(recording_id, resolved),
+            apply_offset_table(build_recording(recording_id, resolved), layout.offset_table_path(recording_id)),
             target,
             controlled_vocabulary=vocabulary,
         )

@@ -65,16 +65,37 @@ def transcripts_corrected(config) -> tuple[int, int]:
     return corrected, transcribed
 
 
+def drift_corrected_files(config) -> tuple[int, int, int]:
+    """(files whose drift was corrected, recordings they are in, recordings with an offset table)."""
+    from macaw.execution.runner import resolve_recordings
+    from macaw.media.align import drift_corrected, read_offset_table
+    from macaw.project.layout import layout_for
+
+    layout = layout_for(config, create=False)
+    files = recordings = aligned = 0
+    for rid in resolve_recordings(config, None):
+        path = layout.offset_table_path(rid)
+        if not path.is_file():
+            continue
+        aligned += 1
+        found = sum(drift_corrected(result) for result in read_offset_table(path))
+        files += found
+        recordings += found > 0
+    return files, recordings, aligned
+
+
 def load_references() -> dict[str, dict]:
     return yaml.safe_load(files("macaw.qc").joinpath("references.yaml").read_text(encoding="utf-8"))
 
 
 def write_methods(
     manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
-    corrected: tuple[int, int] | None = None,
+    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None,
 ) -> tuple[Path, Path]:
     references = load_references()
-    text, used = render(describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected), references)
+    text, used = render(
+        describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected, drifted=drifted), references
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
     methods.write_text(text, encoding="utf-8")
@@ -85,9 +106,10 @@ def write_methods(
 
 def describe(
     manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
-    corrected: tuple[int, int] | None = None,
+    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None,
 ) -> dict[str, list[str]]:
-    """scaled and corrected are what recordings_scaled and transcripts_corrected give; looked is qc.look.project_summary's."""
+    """scaled, corrected and drifted are what recordings_scaled, transcripts_corrected and drift_corrected_files give;
+    looked is qc.look.project_summary's."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
         by_extractor.setdefault(spec.extractor, []).append(spec)
@@ -101,6 +123,8 @@ def describe(
             continue
         if name == "text.asr" and corrected and corrected[0]:
             text += " " + _corrected(*corrected)
+        if name == "prep.media" and drifted and drifted[0] and config.align.method == "gcc_phat":
+            text += " " + _drifted(*drifted)
         sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
@@ -151,6 +175,19 @@ def _corrected(corrected: int, transcribed: int) -> str:
     return (
         f"For {which}, the recognised transcript was then corrected by hand, and the corrected transcript, which times "
         "each utterance but not each word, replaced it in every step that followed."
+    )
+
+
+def _drifted(files: int, recordings: int, aligned: int) -> str:
+    from macaw.media.align import AGREEMENT_TOLERANCE_S
+
+    which = "each recording" if recordings == aligned else f"{recordings} of the {aligned} recordings"
+    many = "file" if files == 1 else "files"
+    return (
+        f"Where a file's segment offsets moved along a straight line (r² of at least 0.5) by more than "
+        f"{AGREEMENT_TOLERANCE_S * 1000:g} ms over its overlap with the reference ({_count(files)} {many}, in {which}), "
+        "its clock was rescaled along that line: its audio was resampled with the SoX resampler and its video frame "
+        "times were rescaled to match."
     )
 
 

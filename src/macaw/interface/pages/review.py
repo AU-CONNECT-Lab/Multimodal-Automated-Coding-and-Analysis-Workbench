@@ -364,7 +364,7 @@ def random_time(config_path: Path, rid: str, video: str) -> float:
         start, length = prep.t_origin_s, prep.duration_s
     except Exception:   # before prep.media only the file's own length is known
         item = next(item for item in recording.media if item.name == video)
-        start, length = item.offset_s, item.duration_s or 0.0
+        start, length = item.offset_s, item.span_s or 0.0
     return round(start + float(np.random.default_rng().uniform(0, max(length, 0.0))), 2)
 
 
@@ -395,7 +395,7 @@ def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str
         return None, "Run prep.video first: people are measured on its copy of the video, and the two ends must be clicked on the same picture."
     dest = layout_for(config, create=False).work_dir / "gui" / "scale" / f"{rid}_{Path(video).stem}.jpg"
     try:
-        extract_frame(item.frames_path, at_s - item.offset_s, dest)
+        extract_frame(item.frames_path, item.own_time(at_s), dest)
     except Exception as error:
         return None, f"No frame at {at_s:g} s: {error}"
     return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None

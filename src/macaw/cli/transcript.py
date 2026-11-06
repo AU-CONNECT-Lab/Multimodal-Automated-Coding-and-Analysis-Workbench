@@ -14,6 +14,7 @@ from macaw.exceptions import InputNotFoundError, MacawError
 from macaw.extractors.audio.content.asr import DROPPED_NAME, DROPPED_SCHEMA, TRANSCRIPT_NAME, ASRExtractor, read_transcript
 from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.interop.transcript_eaf import export_transcript_eaf, read_transcript_eaf
+from macaw.media.align import apply_offset_table
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.transcript_check import KINDS, read_check, still_there
@@ -42,7 +43,8 @@ def export(
     )
     out = out or layout.output_dir / "exports" / f"{recording}_transcript.eaf"
     doubts, _ = still_there(read_check(layout.transcript_check_path(recording)), transcript)
-    export_transcript_eaf(transcript, dropped, build_recording(recording, resolved), out, doubts=doubts)
+    media = apply_offset_table(build_recording(recording, resolved), layout.offset_table_path(recording))
+    export_transcript_eaf(transcript, dropped, media, out, doubts=doubts)
     typer.echo(
         f"{out}\ncorrect the transcript tiers in ELAN (move an annotation from a dropped tier to put it back), "
         f"save, then `macaw transcript import -r {recording} {out.name}`"

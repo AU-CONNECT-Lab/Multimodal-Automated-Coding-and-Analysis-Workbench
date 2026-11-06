@@ -65,6 +65,7 @@ def tier_for_subject(subject_id: str, kind: str) -> str:
 
 
 def _link_media(eaf, recording: Recording, out_path: Path) -> None:
+    """Each file with its offset as ELAN's time origin, the moment in the file at annotation time 0."""
     for item in recording.media:
         path = Path(item.path)
         try:
@@ -74,7 +75,18 @@ def _link_media(eaf, recording: Recording, out_path: Path) -> None:
         mimetype = _MIME.get(
             path.suffix.lower(), "video/mp4" if item.kind == "video" else "audio/x-wav"
         )
-        eaf.add_linked_file(path.absolute().as_uri(), relpath=relative, mimetype=mimetype)
+        origin = _ms(-item.offset_s)
+        eaf.add_linked_file(path.absolute().as_uri(), relpath=relative, mimetype=mimetype, time_origin=origin if origin > 0 else None)
+        if origin < 0:
+            logger.warning(
+                "%s starts %.3f s after the recording's time 0 and is linked without an offset, so in ELAN it plays "
+                "%.3f s early", item.name, item.offset_s, item.offset_s,
+            )
+        if item.clock_scale != 1.0 and item.span_s:
+            logger.warning(
+                "%s's clock was corrected for drift, which ELAN does not do: there it is up to %.0f ms off by its end",
+                item.name, abs(item.clock_scale - 1.0) * item.duration_s * 1000,
+            )
 
 
 def _attach_vocabulary(eaf, linguistic_type: str, cv_id: str, labels: list[str]) -> None:

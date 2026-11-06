@@ -51,6 +51,7 @@ class AlignResult:
     overlap_s: float | None = None   # how long the two files overlap at offset_s
     drift_ppm: float | None = None
     drift_r2: float | None = None
+    drift_intercept_s: float | None = None  # the drift line's offset at the reference's first sample
     # (midpoint_s, offset_s, confidence) per sounding segment
     segment_offsets: list[tuple[float, float, float]] | None = None
     method: str = GCC_PHAT
@@ -189,8 +190,29 @@ def align_signals(
         # blunt segments only add scatter to the slope
         sharp = [segment for segment in segments if segment[2] >= cfg.min_confidence]
         if len(sharp) >= MIN_SEGMENTS:
-            result.drift_ppm, result.drift_r2 = estimate_drift(sharp)
+            result.drift_ppm, result.drift_r2, result.drift_intercept_s = estimate_drift(sharp)
+            if drift_flagged(result):
+                _refine_drift(reference, target, cfg, result)
     return result
+
+
+def _refine_drift(reference: np.ndarray, target: np.ndarray, cfg: AlignSection, result: AlignResult) -> None:
+    """A segment's peak smears by the drift within it; measured again on the target played at the fitted rate, it is sharp."""
+    import soxr
+
+    scale = 1.0 / (1.0 - result.drift_ppm * 1e-6)
+    steady = soxr.resample(target.astype(np.float32), SAMPLE_RATE, SAMPLE_RATE * scale, quality="VHQ")
+    segments = segment_offsets(
+        reference, steady, SAMPLE_RATE, offset_s=result.drift_intercept_s * scale, segment_s=cfg.drift_segment_s,
+        max_residual_s=FINE_WINDOW_S,
+    )
+    sharp = [segment for segment in segments if segment[2] >= cfg.min_confidence]
+    if len(sharp) < MIN_SEGMENTS:
+        return
+    rest_ppm, _, intercept = estimate_drift(sharp)
+    # the two rates compose: own time x scale / (1 - rest) is recording time less intercept / (1 - rest)
+    result.drift_ppm = (1.0 - (1.0 - rest_ppm * 1e-6) / scale) * 1e6
+    result.drift_intercept_s = intercept / scale
 
 
 def agreement(segments: list[tuple[float, float, float]] | None, offset_s: float) -> float | None:
@@ -204,11 +226,25 @@ def drift_flagged(result: AlignResult) -> bool:
     return drift_is_real(result.drift_ppm, result.drift_r2, result.overlap_s, AGREEMENT_TOLERANCE_S)
 
 
+def drift_corrected(result: AlignResult) -> bool:
+    """Flagged drift is corrected along the fitted line; a hand-set offset is taken as it is."""
+    return result.method == GCC_PHAT and result.drift_intercept_s is not None and drift_flagged(result)
+
+
+def clock_map(result: AlignResult) -> tuple[float, float]:
+    """(offset_s, clock_scale) with recording time = offset_s + the file's own time x clock_scale."""
+    if not drift_corrected(result):
+        return result.offset_s, 1.0
+    # the fit is offset = intercept + slope x reference time, and offset = reference time - own time
+    scale = 1.0 / (1.0 - result.drift_ppm * 1e-6)
+    return result.drift_intercept_s * scale, scale
+
+
 def describe_drift(result: AlignResult) -> str:
     text = f"drift {result.drift_ppm:+.1f} ppm (r2 {result.drift_r2:.2f})"
     if result.overlap_s:
         text += f", {drift_walk_s(result.drift_ppm, result.overlap_s) * 1000:.0f} ms over {result.overlap_s:.0f} s"
-    return text
+    return text + (", corrected" if drift_corrected(result) else "")
 
 
 def describe_agreement(result: AlignResult) -> str:
@@ -234,7 +270,7 @@ def review_reason(result: AlignResult, cfg: AlignSection) -> str | None:
     if low_confidence(result, cfg):
         return "low confidence"
     if drift_flagged(result):
-        return "drift"
+        return "drift, corrected along the fitted line" if drift_corrected(result) else "drift"
     return None
 
 
@@ -360,26 +396,19 @@ def read_offset_table(path: Path) -> list[AlignResult]:
     return results
 
 
-def apply_alignment(
-    recording: Recording, results: list[AlignResult], *, recut: bool = False
-) -> Recording:
-    """Default is to record the offset and let readers add it; recut re-encodes instead.
-    Devices are matched by name, so a table made on another machine still applies."""
+def apply_alignment(recording: Recording, results: list[AlignResult]) -> Recording:
+    """Readers add each file's offset and scale; devices are matched by name, so a table made on another machine still applies."""
     by_name = {result.target: result for result in results}
     for item in recording.media:
         result = by_name.get(item.name)
         if result is None:
             continue
-        item.offset_s = result.offset_s
+        item.offset_s, item.clock_scale = clock_map(result)
         item.drift_ppm = result.drift_ppm
         item.offset_confidence = result.confidence
-
-    if recut:
-        from macaw.media.ffmpeg import apply_offset
-
-        for item in recording.media:
-            if item.offset_s:
-                dest = item.path.parent / f"{item.path.stem}_aligned{item.path.suffix}"
-                item.path = apply_offset(item.path, dest, offset_s=item.offset_s)
-                item.offset_s = 0.0
     return recording
+
+
+def apply_offset_table(recording: Recording, path: Path) -> Recording:
+    """The offsets `macaw align` found, for readers of the original files; nothing changes without a table."""
+    return apply_alignment(recording, read_offset_table(path)) if Path(path).is_file() else recording

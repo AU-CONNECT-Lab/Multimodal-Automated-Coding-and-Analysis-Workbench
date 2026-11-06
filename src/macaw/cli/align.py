@@ -38,13 +38,10 @@ logger = get_logger("align")
 def align(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    recut: bool = typer.Option(False, "--recut", help="Physically re-encode instead of storing offsets."),
     drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check"),
     set_: list[str] = typer.Option(None, "--set"),
 ) -> None:
     """Estimate inter-source offsets by cross-correlation and draw each pair for review."""
-    if recut:
-        raise MacawError("--recut is not supported yet; offsets are stored and added when files are read")
     overrides = list(set_ or ())
     if not drift_check:
         overrides.append("align.drift_check=false")

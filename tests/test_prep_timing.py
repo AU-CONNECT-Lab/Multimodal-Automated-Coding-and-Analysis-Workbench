@@ -13,7 +13,7 @@ from macaw.project.recording import MediaFile
 def entry(name, *, fps=None, offset_s=0.0, duration_s=60.0):
     return {
         "path": f"/somewhere/else/{name}", "name": name, "kind": "video", "subject_id": None,
-        "duration_s": duration_s, "sample_rate": None, "fps": fps, "offset_s": offset_s,
+        "duration_s": duration_s, "sample_rate": None, "fps": fps, "offset_s": offset_s, "clock_scale": 1.0,
         "drift_ppm": None, "offset_confidence": 0.9,
     }
 

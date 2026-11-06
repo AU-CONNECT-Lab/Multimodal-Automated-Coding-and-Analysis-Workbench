@@ -333,7 +333,7 @@ class PoseExtractor(Extractor):
         start = video["frames_start_s"] if video else 0.0
         width, height = (video.get("prepared_size") or video["size"]) if video else (1.0, 1.0)
         return Click(
-            person=click["person"], at=float(click["at"]), t=float(click["at"]) + first + item.offset_s - start,
+            person=click["person"], at=float(click["at"]), t=item.offset_s + (float(click["at"]) + first - start) * item.clock_scale,
             x=float(click["x"]) * width, y=float(click["y"]) * height,
         )
 

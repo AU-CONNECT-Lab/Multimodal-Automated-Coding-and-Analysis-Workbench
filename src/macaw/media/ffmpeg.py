@@ -83,39 +83,6 @@ def cut(
     return dest
 
 
-def apply_offset(src: Path, dest: Path, *, offset_s: float) -> Path:
-    """Shift the whole file onto the recording clock by rewriting its timestamps."""
-    dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(
-        ["-itsoffset", f"{offset_s:.6f}", "-i", str(src), "-c", "copy", str(dest)]
-    )
-    return dest
-
-
-def resample_for_drift(src: Path, dest: Path, *, drift_ppm: float) -> Path:
-    """Stretch or squeeze audio so a recorder running fast lines up again. Audio only: the
-    video track is passed through, since drift correction of frames needs a recode."""
-    dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    factor = 1.0 / (1.0 + drift_ppm / 1e6)
-    from macaw.media.probe import probe
-
-    info = probe(src)
-    audio = info.audio_streams()
-    if not audio:
-        raise UnreadableMediaError(f"{src} has no audio to resample")
-    rate = int(audio[0].sample_rate or 48000)
-    run_ffmpeg(
-        [
-            "-i", str(src),
-            "-filter:a", f"asetrate={rate * factor:.6f},aresample={rate}",
-            str(dest),
-        ]
-    )
-    return dest
-
-
 _FPS_COUNTS = re.compile(r"(\d+) frames in, (\d+) frames out; (\d+) frames dropped, (\d+) frames duplicated")
 _ENCODERS = {
     "libx264": lambda quality: ["-c:v", "libx264", "-preset", "fast", "-crf", str(quality)],

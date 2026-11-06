@@ -273,6 +273,8 @@ The Review page of a recording whose two cameras could not be aligned with confi
 
 Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file, then keep the estimated offset or enter one by hand.
 
+A device whose clock runs at a slightly different rate also drifts away from the others over a long recording. When the offset of successive segments moves along a straight line by more than 20 ms across the recording, MACAW corrects the drift along that line, resampling the file's sound and rescaling its frame times, and holds the file here; the figure shows the segment offsets and the line. An offset entered by hand is applied as it is, without drift correction.
+
 ### Who is on camera
 
 {bdg-secondary-line}`only when uncertain`
@@ -339,7 +341,7 @@ Run one of the following commands in the project folder. Each reports where it s
 : For each participant, whether they are speaking at each second, for sequence analysis.
 
 `macaw export -f eaf`
-: One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`).
+: One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`). A linked file that began before the reference device is placed by its offset; one that began after it is linked without an offset and plays early in ELAN, and a drift correction is not carried into ELAN. The export names any such file.
 
 `macaw export -f skeleton`
 : Each participant's body keypoints frame by frame, one CSV per recording, in pixels with the detector's confidence for each point. With several calibrated cameras ({ref}`three-d`), a second file gives the points in metres.

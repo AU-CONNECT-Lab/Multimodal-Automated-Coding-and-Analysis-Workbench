@@ -98,6 +98,8 @@ def _media(config: MacawConfig, recording) -> list[dict]:
             detail.append(f"{item.duration_s:.0f} s")
         if item.offset_s:
             detail.append(f"starts at {item.offset_s:+.3f} s")
+        if item.clock_scale != 1.0:
+            detail.append(f"clock stretched {(item.clock_scale - 1.0) * 1e6:+.1f} ppm")
         rows.append(
             {"name": item.name, "owner": item.subject_id or f"shared {item.kind}", "detail": ", ".join(detail)}
         )

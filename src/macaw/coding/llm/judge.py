@@ -452,7 +452,7 @@ def unit_frames(config: MacawConfig, recording: Recording, units: pd.DataFrame, 
             lengths[item.frames_path] = video_length(item.frames_path)
         pictures = []
         for index, share in enumerate(FRAME_AT):
-            at = row.t_start + share * (row.t_end - row.t_start) - item.offset_s
+            at = item.own_time(row.t_start + share * (row.t_end - row.t_start))
             if 0 <= at < lengths[item.frames_path]:
                 dest = extract_frame(item.frames_path, at, directory / f"{row.unit_id}_{index}.jpg", long_side=FRAME_LONG_SIDE)
                 pictures.append(dest.read_bytes())

@@ -61,10 +61,10 @@ def has_sound(piece: np.ndarray, sample_rate: float, loud: float) -> bool:
     return float((frames > loud * 10 ** (-SOUNDING_DB / 20)).mean()) >= MIN_SOUNDING_FRACTION
 
 
-def estimate_drift(offsets: list[tuple[float, ...]]) -> tuple[float, float]:
-    """Linear fit; returns (drift_ppm, r_squared). High r2 with nonzero slope means real drift."""
+def estimate_drift(offsets: list[tuple[float, ...]]) -> tuple[float, float, float]:
+    """Linear fit; returns (drift_ppm, r_squared, offset_s at the reference's first sample)."""
     if len(offsets) < MIN_SEGMENTS:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     midpoints = np.array([point[0] for point in offsets], dtype=float)
     measured = np.array([point[1] for point in offsets], dtype=float)
@@ -75,13 +75,13 @@ def estimate_drift(offsets: list[tuple[float, ...]]) -> tuple[float, float]:
     residual = float(np.sum((measured - predicted) ** 2))
     r_squared = 1.0 - residual / total if total > 0 else 0.0
     # slope is seconds of offset per second elapsed, which is parts per million x 1e-6
-    return float(slope * 1e6), float(r_squared)
+    return float(slope * 1e6), float(r_squared), float(intercept)
 
 
 def drift_is_real(
     drift_ppm: float | None, r_squared: float | None, overlap_s: float | None, tolerance_s: float
 ) -> bool:
-    """A credible slope that walks the offset further than tolerance_s over the file; drift is not corrected."""
+    """A credible slope that walks the offset further than tolerance_s over the file."""
     if drift_ppm is None or r_squared is None or overlap_s is None:
         return False
     return r_squared >= 0.5 and drift_walk_s(drift_ppm, overlap_s) > tolerance_s
