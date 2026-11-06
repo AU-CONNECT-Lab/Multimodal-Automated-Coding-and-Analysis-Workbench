@@ -247,6 +247,20 @@ class TestRunnerGates:
         assert blocked == {"rec1:gate", "rec1:after"}
 
 
+class TestGateNotes:
+    def test_a_gate_that_now_waits_loses_what_it_said_when_it_last_cleared(self, tmp_path):
+        from macaw.execution.runner import GateWait, record_gate_notes
+        from macaw.extractors.base import QCWarning
+        from macaw.project.layout import make_layout
+
+        layout = make_layout(tmp_path / "out", tmp_path / "work")
+        skipped = QCWarning(check="gate", recording_id="rec1", subject_id=None, severity="info", message="kept without a look")
+        record_gate_notes(layout, {("rec1", "gate"): [skipped]}, [])
+        assert layout.warnings_path("rec1", "gate").is_file()
+        record_gate_notes(layout, {}, [GateWait(recording_id="rec1", gate="gate", message="look at it")])
+        assert not layout.warnings_path("rec1", "gate").exists()
+
+
 class TestRunCommand:
     def test_a_dry_run_names_what_waits_and_leaves_it_out(self, project):
         outcome = CliRunner().invoke(app, ["run", "-c", str(project.config), "-e", "prep.media", "--dry-run"])

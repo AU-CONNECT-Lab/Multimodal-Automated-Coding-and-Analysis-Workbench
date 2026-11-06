@@ -344,8 +344,7 @@ def _run(
             database = JobDB(layout.job_db_path)
             database.initialise()
             fetched = _fetch_models(config_path, layout, order, gates, recording_ids, already, execution_id)
-        for (recording_id, gate), gate_notes in notes.items():
-            _write_warnings(layout, recording_id, gate, gate_notes)
+        record_gate_notes(layout, notes, waiting)
         if not specs:
             break
 
@@ -610,6 +609,14 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         # shutil.move, not os.replace: the workspace sits in scratch_dir, which on a cluster
         # is a different filesystem from output_dir and a rename across those fails
         shutil.move(str(source), str(destination))
+
+
+def record_gate_notes(layout, notes: dict[tuple[str, str], list[QCWarning]], waiting: list[GateWait]) -> None:
+    """What each cleared gate says; a gate that waits has decided nothing, so what it said when it last cleared goes."""
+    for (recording_id, gate), gate_notes in notes.items():
+        _write_warnings(layout, recording_id, gate, gate_notes)
+    for wait in waiting:
+        layout.warnings_path(wait.recording_id, wait.gate).unlink(missing_ok=True)
 
 
 def _write_warnings(layout, recording_id: str, extractor: str, warnings: list[QCWarning]) -> None:
