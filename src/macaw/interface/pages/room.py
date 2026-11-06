@@ -20,6 +20,7 @@ from macaw.project import room as geometry
 from macaw.project.setup import write_setup
 
 PICK, FIELD, USE, RENAME, ACT = "room-pick", "room-field", "room-use", "room-rename", "room-act"
+DEPTH = "depth"
 KINDS = ("people", "cameras", "microphones", "things")
 WALLS = "walls"
 FIELDS = {
@@ -174,6 +175,7 @@ def model_of(config, name: str) -> dict:
                 entry.update(width=size[0], depth=size[1])
             if kind == "cameras":
                 entry["calibration"] = placed.get("calibration")
+                entry["depth"] = bool(((data.get(kind) or {}).get(item) or {}).get("depth"))
             for use in USES.get(kind, ()):
                 entry[use] = list(((data.get(kind) or {}).get(item) or {}).get(use) or [])
             model[kind][str(item)] = entry
@@ -207,7 +209,10 @@ def room_of(model: dict) -> dict:
 def setup_data(model: dict, name: str) -> dict:
     return {
         "name": name,
-        "cameras": {device: {use: list(entry.get(use) or []) for use in USES["cameras"]} for device, entry in model["cameras"].items()},
+        "cameras": {
+            device: {**{use: list(entry.get(use) or []) for use in USES["cameras"]}, "depth": bool(entry.get("depth"))}
+            for device, entry in model["cameras"].items()
+        },
         "microphones": {device: {"hears": list(entry.get("hears") or [])} for device, entry in model["microphones"].items()},
         "room": room_of(model),
     }
@@ -246,7 +251,10 @@ def loose_setup(model: dict) -> tuple[SetupSection, RoomSection] | None:
     """The setup and room as far as they read, unchecked across devices, for notes on a setup not yet valid."""
     try:
         room = RoomSection.model_validate(room_of(model))
-        cameras = {device: CameraDevice(**{use: entry.get(use) or [] for use in USES["cameras"]}) for device, entry in model["cameras"].items()}
+        cameras = {
+            device: CameraDevice(**{use: entry.get(use) or [] for use in USES["cameras"]}, depth=bool(entry.get("depth")))
+            for device, entry in model["cameras"].items()
+        }
         microphones = {device: MicrophoneDevice.model_construct(hears=entry.get("hears") or []) for device, entry in model["microphones"].items()}
     except ValidationError:
         return None
@@ -350,7 +358,11 @@ def from_calibration(config_path: Path, model: dict):
 
 
 def used(model: dict, kind: str, name: str, use: str, role: str, on: bool) -> dict:
-    """The model with a device read, or not, for one person's body, face, gaze or voice."""
+    """The model with a device read, or not, for one person's body, face, gaze or voice; or a camera marked as recording depth."""
+    if kind == "cameras" and use == DEPTH and name in model.get(kind, {}):
+        model = _copy(model)
+        model[kind][name][DEPTH] = on
+        return model
     if name not in model.get(kind, {}) or use not in USES.get(kind, ()):
         return model
     model = _copy(model)
@@ -562,6 +574,11 @@ def panel(model: dict | None, selected: dict | None):
             html.Div("Whom it records" if kind == "cameras" else "Whose voices it carries", className="room-group-title"),
             ui.table(["", *[USE_LABELS[use] for use in USES[kind]]], rows),
         ]
+        if kind == "cameras":
+            uses.append(dcc.Checklist(
+                [{"label": " Records depth, in a depth folder beside its video", "value": DEPTH}], [DEPTH] if entry.get(DEPTH) else [],
+                id={"type": USE, "kind": kind, "name": name, "use": DEPTH, "role": DEPTH}, className="room-tick",
+            ))
     if not _is_placed(entry):
         head.append(html.P("Click in the plan or a view to put it there.", className="room-size-hint"))
     act = lambda what: {"type": ACT, "kind": kind, "name": name, "act": what}

@@ -900,6 +900,19 @@ def test_editing_changes_the_model_and_says_why_not(project):
     assert "table" not in removed[0]["things"] and removed[1] is None
 
 
+def test_a_camera_ticked_as_recording_depth_is_saved_so(project):
+    from macaw.interface.pages import room
+
+    placed_project(project)
+    model = room.model_of(resolve_config(project), "main")
+    assert model["cameras"]["room"]["depth"] is False and "Records depth" in text_of(room.panel(model, {"kind": "cameras", "name": "room"}))
+    ticked = room.changed_by(project, model, {"type": room.USE, "kind": "cameras", "name": "room", "use": room.DEPTH, "role": room.DEPTH}, [room.DEPTH])[0]
+    assert ticked["cameras"]["room"]["depth"] is True and ticked["cameras"]["room"]["body"] == model["cameras"]["room"]["body"]
+    path = room.save(project, "main", ticked)
+    assert "depth: true" in path.read_text(encoding="utf-8")
+    assert resolve_config(project).setup.cameras["room"].depth and room.model_of(resolve_config(project), "main")["cameras"]["room"]["depth"]
+
+
 def test_adding_a_person_adds_a_role_to_the_project(project):
     from macaw.interface.pages import room
 
