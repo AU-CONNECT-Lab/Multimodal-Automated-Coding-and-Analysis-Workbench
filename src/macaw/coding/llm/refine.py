@@ -13,7 +13,7 @@ from macaw.coding.agreement import NO_CODE, build_units, load_annotations, unit_
 from macaw.coding.codebook import Codebook, CodeDefinition
 from macaw.coding.llm.backends import LLMBackend
 from macaw.coding.llm.judge import LAYER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
-from macaw.coding.llm.parsing import answer_object
+from macaw.coding.llm.parsing import whole_answer
 from macaw.coding.llm.prompts import ABSTAIN, codebook_lines
 from macaw.exceptions import MacawError
 from macaw.project.layout import layout_for
@@ -235,7 +235,7 @@ def refine_code(
     if not unclear.any():
         return Revision(code, before, deepcopy(before), shown=shown)
     system, user = refine_prompt(codebook, code, shown, with_person=evidence.coder is not None, notes=notes)
-    answer = answer_object(backend.complete(system, user, seed=seed).text)
+    answer = whole_answer(backend.complete(system, user, seed=seed))
     after = deepcopy(before)
     description = str(answer.get("description") or "").strip()
     if description:

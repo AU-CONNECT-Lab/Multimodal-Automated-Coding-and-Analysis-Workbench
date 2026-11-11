@@ -10,7 +10,7 @@ from datetime import datetime
 import pandas as pd
 
 from macaw.coding.llm.backends import LLMBackend
-from macaw.coding.llm.parsing import answer_object
+from macaw.coding.llm.parsing import whole_answer
 from macaw.extractors.audio.content.diarization import OTHER
 
 CONTEXT_LINES = 5
@@ -71,7 +71,7 @@ def check_lines(backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, se
     for start in range(0, len(lines), batch_size):
         batch = lines.iloc[start : start + batch_size]
         context = lines.iloc[max(0, start - CONTEXT_LINES) : start]
-        answer = answer_object(backend.complete(*check_prompt(batch, context), seed=seed).text)
+        answer = whole_answer(backend.complete(*check_prompt(batch, context), seed=seed))
         ids = set(batch["id"])
         for item in answer.get("lines") or []:
             if isinstance(item, dict) and str(item.get("id", "")).strip() in ids:

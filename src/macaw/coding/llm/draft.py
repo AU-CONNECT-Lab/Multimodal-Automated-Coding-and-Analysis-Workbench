@@ -11,7 +11,7 @@ import pandas as pd
 
 from macaw.coding.codebook import RESERVED_LABELS, Codebook, CodeDefinition
 from macaw.coding.llm.backends import LLMBackend
-from macaw.coding.llm.parsing import answer_object
+from macaw.coding.llm.parsing import whole_answer
 
 N_UNITS = 200
 MAX_CODES = 12
@@ -114,7 +114,7 @@ def _codes(items, labels_of) -> list[dict]:
 def _merged(backend: LLMBackend, aim: str, codes: list[dict], counts: pd.Series, seed) -> list[dict]:
     """The codes merged as the model says; a code it places nowhere stays as it was."""
     before = {code["code"]: code for code in codes}
-    answer = answer_object(backend.complete(*merge_prompt(aim, codes, counts), seed=seed).text)
+    answer = whole_answer(backend.complete(*merge_prompt(aim, codes, counts), seed=seed))
 
     def labels_of(item):
         return [label for old in map(_code_name, item.get("merges") or []) if old in before for label in before[old]["labels"]]
@@ -138,7 +138,7 @@ def describe_units(backend: LLMBackend, aim: str, units: pd.DataFrame, *, batch_
     said: dict[str, str] = {}
     for start in range(0, len(units), batch_size):
         batch = units.iloc[start : start + batch_size]
-        answer = answer_object(backend.complete(*describe_prompt(aim, batch), seed=seed).text)
+        answer = whole_answer(backend.complete(*describe_prompt(aim, batch), seed=seed))
         for item in answer.get("labels") or []:
             if isinstance(item, dict) and _plain(item.get("label")):
                 said[str(item.get("id", "")).strip()] = _plain(item.get("label"))
@@ -153,7 +153,7 @@ def draft_codebook(
     request_seed = seed if takes_seed else None
     units = units.assign(description=describe_units(backend, aim, units, batch_size=batch_size, seed=request_seed))
     counts = units.loc[units["description"] != "", "description"].value_counts()
-    answer = answer_object(backend.complete(*gather_prompt(aim, counts), seed=request_seed).text) if not counts.empty else {}
+    answer = whole_answer(backend.complete(*gather_prompt(aim, counts), seed=request_seed)) if not counts.empty else {}
     codes = _codes(answer.get("codes"), lambda item: [label for label in map(_plain, item.get("labels") or []) if label in counts.index])
     proposed = [len(codes)]
     for _ in range(MERGE_TRIES):

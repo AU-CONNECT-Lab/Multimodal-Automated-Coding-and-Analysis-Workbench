@@ -10,11 +10,12 @@ from typer.testing import CliRunner
 from macaw.cli import transcript as command
 from macaw.cli.main import app
 from macaw.coding.llm import backends
+from macaw.exceptions import LLMBackendError
 from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, write_transcript
 from macaw.interop.transcript_eaf import DOUBT_TYPE, export_transcript_eaf, read_transcript_eaf
 from macaw.project.layout import layout_for
 from macaw.qc.transcript_check import check_lines, describe, read_check, still_there, transcript_lines
-from test_codebook_help import Model
+from test_codebook_help import CutOff, Model
 from test_transcript_correction import DROPPED, TRANSCRIPT, project  # noqa: F401
 
 pytest.importorskip("pympi")
@@ -57,6 +58,12 @@ def test_a_piece_cut_off_is_kept_apart_and_a_made_up_kind_counts_as_misheard():
     found = {"model": "tiny", "n_lines": 3, "lines": marked.to_dict("records")}
     assert describe(found) == "2 of 3 line(s) marked by tiny: 1 possibly misheard, 1 cut off"
     assert describe({"model": "tiny", "n_lines": 3, "lines": []}) == "0 of 3 line(s) marked by tiny"
+
+
+def test_an_answer_cut_off_is_refused_so_lines_it_never_reached_do_not_pass_as_checked():
+    lines = transcript_lines(LONGER, ["parent", "child"])
+    with pytest.raises(LLMBackendError, match="cut off at coding.llm.max_tokens"):
+        check_lines(CutOff(marks_watching, ""), lines, batch_size=2)
 
 
 def test_the_command_keeps_the_marks_and_the_export_puts_them_beside_the_transcript(project, monkeypatch, tmp_path):  # noqa: F811

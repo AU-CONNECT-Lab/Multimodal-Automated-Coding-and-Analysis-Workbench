@@ -17,7 +17,7 @@ from macaw.coding.llm.backends import LLMResponse
 from macaw.coding.llm.draft import draft_codebook, draft_text, sample_units
 from macaw.coding.llm.refine import changes_text, gather_evidence, refine_codebook
 from macaw.config.loader import resolve_config
-from macaw.exceptions import MacawError
+from macaw.exceptions import LLMBackendError, MacawError
 from macaw.extractors.audio.content import asr
 from macaw.project.layout import layout_for
 from macaw.store.annotations import write_annotations
@@ -97,6 +97,18 @@ def revised(system, user):
     return {"description": f"New {code}.", "criteria": ["asks with words, not only with a rising tone"],
             "boundary_cases": ["a statement said as a question is a question"], "positive_examples": [first, "e99"],
             "negative_examples": [], "why": "the person coded rising statements as questions"}
+
+
+class CutOff(Model):
+    """Stops at max_tokens partway through each answer to a request whose instructions hold `where`."""
+
+    def __init__(self, answer, where):
+        super().__init__(answer)
+        self.where = where
+
+    def complete(self, system, user, *, seed=None, images=()):
+        whole = super().complete(system, user, seed=seed, images=images)
+        return LLMResponse(text=whole.text[: len(whole.text) // 2], model="tiny", cut_off=True) if self.where in system else whole
 
 
 class TestRefine:
@@ -204,6 +216,17 @@ class TestDraft:
         assert made.left_out == {"greets": 1} and made.units["code"].fillna("").tolist() == ["asks_something", "tells", "", "", "asks_something"]
         text = draft_text(made, "what parents ask", "tiny@abc", 1)
         assert "## asks_something (2 units)" in text and "- greets (1)" in text and "1 unit(s) got no description" in text
+
+    def test_an_answer_cut_off_is_refused_not_read_as_a_shorter_one(self, project, monkeypatch):
+        monkeypatch.setattr(judge, "load_transcript", transcript_of(TALK))
+        units = sample_units({"r1": judge.coding_units(None, RECORDING, "utterance")}, 10, np.random.default_rng(0))
+        for request in ("You read units", "Gather them"):
+            with pytest.raises(LLMBackendError, match="cut off at coding.llm.max_tokens"):
+                draft_codebook(CutOff(described, request), "what parents ask", units, name="acts", unit="utterance", batch_size=2)
+        coded(project, ["question", "inform", "inform", "greet", "inform"], ["question", "inform", "question", "greet", "question"])
+        evidence = gather_evidence(resolve_config(project), CODEBOOK, ["r1"])
+        with pytest.raises(LLMBackendError, match="cut off at coding.llm.max_tokens"):
+            refine_codebook(CutOff(revised, "Rewrite the definition"), CODEBOOK, evidence, seed=0)
 
     def test_too_many_codes_are_merged_on_request_and_kept_to_the_largest_if_still_too_many(self, monkeypatch):
         from macaw.coding.llm import draft as draft_module

@@ -7,6 +7,7 @@ import pandas as pd
 
 from macaw.coding.codebook import Codebook
 from macaw.coding.llm.prompts import ABSTAIN
+from macaw.exceptions import LLMBackendError
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 # reasoning models write their thinking first, braces and all
@@ -41,6 +42,16 @@ def answer_object(text: str) -> dict:
     except ValueError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def whole_answer(response) -> dict:
+    """The JSON object of an answer that came to its end; one cut off is refused, since what is left reads as a shorter answer."""
+    if response.cut_off:
+        raise LLMBackendError(
+            "the model's answer was cut off at coding.llm.max_tokens before it ended. A model that reasons before it "
+            "answers spends tokens on that first; raise coding.llm.max_tokens."
+        )
+    return answer_object(response.text)
 
 
 def _items(text: str) -> list:
