@@ -58,6 +58,7 @@
 - The workbench asks for the reviewer's name instead of taking the login name, keeps imports on the cards they belong to, counts the speech acts decided, links the sections of its long pages and shows short settings notes; the README and the guide show screenshots of it.
 - 3D from a depth camera (`depth: true` in the setup, `macaw depth-import` for RealSense, Azure Kinect and Orbbec recordings) or, as an option, from one camera by a body model, with people's heights from `heights.csv`; cameras placed from where the flat board lay alone; the transcript check tells misheard lines from cut-off pieces; checks on speech and tracking within each segment.
 - A recorder whose clock drifts is corrected along the line fitted to its segment offsets and still held for a look, a clip of the start, middle and end of each recording plays every camera with all the sound mixed so that a file out of step sounds doubled, and the ELAN exports place each file that began before the reference by its offset and open in ELAN when they carry a codebook's codes.
+- Drafting or refining a codebook and the transcript check stop with a message when the model's answer was cut off at `coding.llm.max_tokens`, where the cut answer used to be read as a shorter one (a draft with fewer codes, lines passed as checked).
 
 ### Removed
 - `macaw export --rmd` and the R Markdown starter it wrote beside the export.
