@@ -111,4 +111,6 @@ def draft(
         typer.echo(f"the model proposed {made.proposed[0]} codes and merged them into {', then '.join(map(str, made.proposed[1:]))}")
     for definition in made.codebook.codes:
         typer.echo(f"{definition.code}: {int(counts.get(definition.code, 0))} of {len(made.units)} units")
+    if made.placed:
+        typer.echo(f"{int(made.units['description'].isin(list(made.placed)).sum())} of them placed when shown to the model again")
     typer.echo(f"{sum(made.left_out.values())} unit(s) in no code\n\n{out}\n{note}\n{OWN_WORDS}")

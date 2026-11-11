@@ -18,6 +18,8 @@ MAX_CODES = 12
 EXAMPLES = 3
 # requests to merge codes when the model gives more than MAX_CODES
 MERGE_TRIES = 2
+# descriptions shown in one request to place those gathered into no code
+PLACE_BATCH = 60
 
 
 @dataclass
@@ -26,6 +28,7 @@ class Draft:
     units: pd.DataFrame                                   # the sample, with each unit's description and code
     gathered: dict[str, list[str]] = field(default_factory=dict)   # code -> the descriptions it gathers
     left_out: dict[str, int] = field(default_factory=dict)         # description -> units, gathered into no code
+    placed: dict[str, str] = field(default_factory=dict)           # description -> the code it was placed in when shown again
     proposed: list[int] = field(default_factory=list)              # how many codes each gathering or merging answer held
 
 
@@ -87,6 +90,21 @@ def merge_prompt(aim: str, codes: list[dict], counts: pd.Series) -> tuple[str, s
     return system, "\n".join(["Codes:", *lines])
 
 
+def place_prompt(aim: str, codes: list[dict], rest: pd.Series) -> tuple[str, str]:
+    system = "\n".join([
+        "You help researchers build a coding scheme from what speakers did in recorded conversations.",
+        f"What the codes are for: {aim.strip()}",
+        f"The scheme has these {len(codes)} codes and no others: {', '.join(code['code'] for code in codes)}. Below are their "
+        "definitions, and numbered descriptions of units that are in no code yet, each with how many units it was given to. "
+        "For each description, choose the one code of the scheme whose definition it meets, or none if it meets none of them. "
+        "Do not stretch a code to take a description in.",
+        'Answer with one JSON object and nothing else: {"placed": [{"n": <number of the description>, '
+        f'"code": "<{" | ".join(code["code"] for code in codes)} | none>"}}]}}, one entry per description.',
+    ])
+    listed = [f"{number}. {label} ({n})" for number, (label, n) in enumerate(rest.items(), start=1)]
+    return system, "\n".join(["Codes:", *(f"- {code['code']}: {code['description']}" for code in codes), "", "Descriptions to place:", *listed])
+
+
 def _size(code: dict, counts: pd.Series) -> int:
     return int(counts.reindex(code["labels"]).fillna(0).sum())
 
@@ -127,6 +145,22 @@ def _merged(backend: LLMBackend, aim: str, codes: list[dict], counts: pd.Series,
     placed = {label for code in merged for label in code["labels"]}
     names = {code["code"] for code in merged}
     return merged + [code for code in codes if not set(code["labels"]) & placed and code["code"] not in names]
+
+
+def _placed(backend: LLMBackend, aim: str, codes: list[dict], rest: pd.Series, seed) -> dict[str, str]:
+    """Where the model puts each description gathered into no code; one it calls none, or answers nothing for, is absent."""
+    names = {code["code"] for code in codes}
+    placed: dict[str, str] = {}
+    for start in range(0, len(rest), PLACE_BATCH):
+        batch = rest.iloc[start : start + PLACE_BATCH]
+        answer = whole_answer(backend.complete(*place_prompt(aim, codes, batch), seed=seed))
+        for item in answer.get("placed") or []:
+            if not isinstance(item, dict) or not str(item.get("n", "")).strip().isdigit():
+                continue
+            number, code = int(str(item["n"]).strip()), _code_name(item.get("code"))
+            if 1 <= number <= len(batch) and code in names:
+                placed.setdefault(str(batch.index[number - 1]), code)
+    return placed
 
 
 def _plain(text) -> str:
@@ -182,12 +216,17 @@ def draft_codebook(
     if len(codes) > MAX_CODES:
         codes = sorted(codes, key=lambda code: -_size(code, counts))[:MAX_CODES]
 
+    rest = counts[~counts.index.isin([label for code in codes for label in code["labels"]])]
+    placed = _placed(backend, aim, codes, rest, request_seed) if codes and len(rest) else {}
     claimed: dict[str, str] = {}
     definitions, gathered = [], {}
     for code in codes:
+        first = code["labels"]
+        code["labels"] = first + [label for label, where in placed.items() if where == code["code"]]
         claimed.update(dict.fromkeys(code["labels"], code["code"]))
         gathered[code["code"]] = code["labels"]
-        members = units[units["description"].isin(code["labels"])]
+        # examples come from the units the code was made from, where it has any
+        members = units[units["description"].isin(first or code["labels"])]
         picked = members.iloc[np.sort(rng.choice(len(members), size=min(EXAMPLES, len(members)), replace=False))] if len(members) else members
         definitions.append(CodeDefinition(
             code=code["code"], description=code["description"], criteria=code["criteria"], boundary_cases=code["boundary_cases"],
@@ -195,7 +234,7 @@ def draft_codebook(
         ))
     units = units.assign(code=[claimed.get(description) for description in units["description"]])
     left_out = {label: int(n) for label, n in counts.items() if label not in claimed}
-    return Draft(Codebook(name=name, unit=unit, codes=definitions), units, gathered, left_out, proposed)
+    return Draft(Codebook(name=name, unit=unit, codes=definitions), units, gathered, left_out, placed, proposed)
 
 
 def draft_text(draft: Draft, aim: str, model: str, recordings: int) -> str:
@@ -215,11 +254,17 @@ def draft_text(draft: Draft, aim: str, model: str, recordings: int) -> str:
             f"when asked{f'; the {MAX_CODES} holding the most units are kept, and the descriptions of the others are under Left out' if capped else ''}.",
             "",
         ]
+    if draft.placed:
+        lines += [
+            f"{len(draft.placed)} description(s) the model first gathered into no code were shown to the model again and placed "
+            "in a code; they are marked below. Those it placed in none are under Left out.", "",
+        ]
     counts = units["description"].value_counts()
     for definition in draft.codebook.codes:
         mine = draft.gathered.get(definition.code, [])
         lines += [f"## {definition.code} ({int(counts.reindex(mine).fillna(0).sum())} units)", "", definition.description or "(no description)", ""]
-        lines += ["Gathers:", *(f"- {label} ({int(counts.get(label, 0))})" for label in mine), ""] if mine else ["Gathers no description of a sampled unit.", ""]
+        gathers = [f"- {label} ({int(counts.get(label, 0))}){', placed afterwards' if label in draft.placed else ''}" for label in mine]
+        lines += ["Gathers:", *gathers, ""] if mine else ["Gathers no description of a sampled unit.", ""]
     if draft.left_out:
         lines += ["## Left out", "", "Descriptions gathered into no code:", *(f"- {label} ({n})" for label, n in draft.left_out.items()), ""]
     blank = int((units["description"] == "").sum())

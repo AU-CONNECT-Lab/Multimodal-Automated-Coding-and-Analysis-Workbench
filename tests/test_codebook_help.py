@@ -207,7 +207,7 @@ class TestDraft:
         assert len(sample_units(lines, 3, np.random.default_rng(0))) == 3
         model = Model(described)
         made = draft_codebook(model, "what parents ask", units, name="acts", unit="utterance", batch_size=2)
-        assert len(model.requests) == 4 and "What the codes are for: what parents ask" in model.requests[0][0]
+        assert len(model.requests) == 5 and "What the codes are for: what parents ask" in model.requests[0][0]
         assert [code.code for code in made.codebook.codes] == ["asks_something", "tells"]
         asks = made.codebook.get("asks_something")
         assert asks.criteria == ["wants an answer"] and sorted(asks.positive_examples) == ["where is it?", "you know where"]
@@ -259,7 +259,7 @@ class TestDraft:
 
         stubborn = Model(answer({"codes": [{"code": label, "description": label, "merges": [label]} for label in dict.fromkeys(labels)]}))
         made = draft_codebook(stubborn, "acts", units, name="acts", unit="utterance", batch_size=6)
-        assert made.proposed == [6, 5, 5] and len(stubborn.requests) == 4
+        assert made.proposed == [6, 5, 5] and len(stubborn.requests) == 5
         assert [code.code for code in made.codebook.codes][0] == "asks" and len(made.codebook.codes) == 3
         assert sum(made.left_out.values()) == 2 and "descriptions of the others are under Left out" in draft_text(made, "acts", "tiny@abc", 1)
 
@@ -308,6 +308,32 @@ class TestDraft:
         # tells, kept by name and also named under says, stays where it came first
         assert made.gathered == {"asks": ["asks", "wonders"], "tells": ["tells"], "says": ["says", "hums"]}
         assert made.proposed == [5, 3] and not made.left_out and made.codebook.get("tells").description == "Tells."
+
+    def test_descriptions_gathered_into_no_code_are_shown_again_to_be_placed_or_left_out(self):
+        units = pd.DataFrame({"id": [f"d{i}" for i in range(1, 7)], "speaker": "A", "before": "", "text": [f"line {i}" for i in range(1, 7)]})
+        labels = ["asks", "asks", "wonders", "tells", "hums", "sings"]
+
+        def respond(system, user):
+            if "Units:" in user:
+                found = re.findall(r"^id d(\d+) ", user, re.MULTILINE)
+                return {"labels": [{"id": f"d{i}", "label": labels[int(i) - 1]} for i in found]}
+            if "Descriptions:" in user:
+                return {"codes": [{"code": "question", "description": "Asks.", "labels": ["asks"]},
+                                  {"code": "statement", "description": "Tells.", "labels": ["tells"]}]}
+            number = {label: n for n, label in re.findall(r"^(\d+)\. (.*) \(\d+\)$", user, re.MULTILINE)}
+            assert set(number) == {"wonders", "hums", "sings"} and "- question: Asks." in user
+            return {"placed": [{"n": number["wonders"], "code": "Question"}, {"n": int(number["hums"]), "code": "none"},
+                               {"n": number["sings"], "code": "made_up"}, {"n": 99, "code": "question"}]}
+
+        model = Model(respond)
+        made = draft_codebook(model, "acts", units, name="acts", unit="utterance", batch_size=6)
+        assert len(model.requests) == 3 and "| statement | none>" in model.requests[-1][0]
+        assert made.gathered == {"question": ["asks", "wonders"], "statement": ["tells"]} and made.placed == {"wonders": "question"}
+        assert made.left_out == {"hums": 1, "sings": 1} and made.units["code"].fillna("").tolist() == ["question"] * 3 + ["statement", "", ""]
+        text = draft_text(made, "acts", "tiny@abc", 1)
+        assert "- wonders (1), placed afterwards" in text and "- asks (2)\n" in text and "shown to the model again" in text
+        with pytest.raises(LLMBackendError, match="cut off at coding.llm.max_tokens"):
+            draft_codebook(CutOff(respond, "in no code yet"), "acts", units, name="acts", unit="utterance", batch_size=6)
 
     def test_the_command_writes_the_draft_and_a_note(self, project, monkeypatch):
         monkeypatch.setattr(command, "resolve_llm_backend", lambda cfg: Model(described))
