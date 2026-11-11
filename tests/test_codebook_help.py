@@ -263,6 +263,52 @@ class TestDraft:
         assert [code.code for code in made.codebook.codes][0] == "asks" and len(made.codebook.codes) == 3
         assert sum(made.left_out.values()) == 2 and "descriptions of the others are under Left out" in draft_text(made, "acts", "tiny@abc", 1)
 
+    def test_entries_copied_from_the_list_with_their_counts_are_still_recognised(self, monkeypatch):
+        from macaw.coding.llm import draft as draft_module
+
+        units = pd.DataFrame({"id": [f"d{i}" for i in range(1, 7)], "speaker": "A", "before": "", "text": [f"line {i}" for i in range(1, 7)]})
+        labels = ["asks where", "asks where", "wonders", "tells", "says", "hums (2)"]
+
+        def respond(system, user):
+            if "Units:" in user:
+                found = re.findall(r"^id d(\d+) ", user, re.MULTILINE)
+                return {"labels": [{"id": f"d{i}", "label": labels[int(i) - 1]} for i in found]}
+            if "Descriptions:" in user:
+                # copied with the count, and with the underscores asked for in code names
+                listed = [re.sub(r" (?!\()", "_", entry) for entry in re.findall(r"^- (.*)$", user, re.MULTILINE)]
+                assert "asks_where (2)" in listed
+                return {"codes": [{"code": f"code {index}", "description": entry, "labels": [entry]} for index, entry in enumerate(listed)]}
+            listed = re.findall(r"^- (.*?):", user, re.MULTILINE)
+            return {"codes": [{"code": "question", "description": "Asks.", "merges": listed[:2]},
+                              {"code": "statement", "description": "Tells.", "merges": listed[2:]}]}
+
+        monkeypatch.setattr(draft_module, "MAX_CODES", 3)
+        made = draft_codebook(Model(respond), "acts", units, name="acts", unit="utterance", batch_size=6)
+        assert made.proposed == [5, 2] and not made.left_out
+        # a description that itself ends in a count is taken as written before the count is dropped
+        assert made.gathered == {"question": ["asks where", "wonders"], "statement": ["tells", "says", "hums (2)"]}
+
+    def test_a_merged_code_named_after_one_before_holds_that_one_too(self, monkeypatch):
+        from macaw.coding.llm import draft as draft_module
+
+        units = pd.DataFrame({"id": [f"d{i}" for i in range(1, 7)], "speaker": "A", "before": "", "text": [f"line {i}" for i in range(1, 7)]})
+        labels = ["asks", "asks", "wonders", "tells", "says", "hums"]
+
+        def respond(system, user):
+            if "Units:" in user:
+                found = re.findall(r"^id d(\d+) ", user, re.MULTILINE)
+                return {"labels": [{"id": f"d{i}", "label": labels[int(i) - 1]} for i in found]}
+            if "Descriptions:" in user:
+                return {"codes": [{"code": label, "description": label, "labels": [label]} for label in dict.fromkeys(labels)]}
+            return {"codes": [{"code": "asks", "description": "Asks.", "merges": ["wonders"]}, {"code": "tells", "description": "Tells.", "merges": []},
+                              {"code": "says", "description": "Says.", "merges": ["tells", "hums"]}]}
+
+        monkeypatch.setattr(draft_module, "MAX_CODES", 3)
+        made = draft_codebook(Model(respond), "acts", units, name="acts", unit="utterance", batch_size=6)
+        # tells, kept by name and also named under says, stays where it came first
+        assert made.gathered == {"asks": ["asks", "wonders"], "tells": ["tells"], "says": ["says", "hums"]}
+        assert made.proposed == [5, 3] and not made.left_out and made.codebook.get("tells").description == "Tells."
+
     def test_the_command_writes_the_draft_and_a_note(self, project, monkeypatch):
         monkeypatch.setattr(command, "resolve_llm_backend", lambda cfg: Model(described))
         out = project.parent / "first.yaml"

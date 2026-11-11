@@ -116,8 +116,12 @@ def _merged(backend: LLMBackend, aim: str, codes: list[dict], counts: pd.Series,
     before = {code["code"]: code for code in codes}
     answer = whole_answer(backend.complete(*merge_prompt(aim, codes, counts), seed=seed))
 
+    known = {code: [code] for code in before}
+
     def labels_of(item):
-        return [label for old in map(_code_name, item.get("merges") or []) if old in before for label in before[old]["labels"]]
+        # a merged code that keeps the name of one before holds that one too, listed again or not
+        named = [_code_name(item.get("code")), *(old for text in item.get("merges") or [] for old in _listed(text, known, _code_name))]
+        return [label for old in dict.fromkeys(named) if old in before for label in before[old]["labels"]]
 
     merged = [code for code in _codes(answer.get("codes"), labels_of) if code["labels"]]
     placed = {label for code in merged for label in code["labels"]}
@@ -131,6 +135,16 @@ def _plain(text) -> str:
 
 def _code_name(text) -> str:
     return re.sub(r"[^0-9a-z]+", "_", _plain(text)).strip("_")
+
+
+def _loose(text: str) -> str:
+    return re.sub(r"[\s_\-]+", " ", text).strip()
+
+
+def _listed(text, known: dict[str, list[str]], key=_loose) -> list[str]:
+    """The listed entries the model means by one it copied, with or without the count the list gave beside it."""
+    plain = _plain(text)
+    return known.get(key(plain)) or known.get(key(re.sub(r"\(\d+\)$", "", plain))) or []
 
 
 def describe_units(backend: LLMBackend, aim: str, units: pd.DataFrame, *, batch_size: int, seed: int | None) -> pd.Series:
@@ -154,7 +168,10 @@ def draft_codebook(
     units = units.assign(description=describe_units(backend, aim, units, batch_size=batch_size, seed=request_seed))
     counts = units.loc[units["description"] != "", "description"].value_counts()
     answer = whole_answer(backend.complete(*gather_prompt(aim, counts), seed=request_seed)) if not counts.empty else {}
-    codes = _codes(answer.get("codes"), lambda item: [label for label in map(_plain, item.get("labels") or []) if label in counts.index])
+    known: dict[str, list[str]] = {}
+    for label in counts.index:
+        known.setdefault(_loose(label), []).append(label)
+    codes = _codes(answer.get("codes"), lambda item: [label for text in item.get("labels") or [] for label in _listed(text, known)])
     proposed = [len(codes)]
     for _ in range(MERGE_TRIES):
         if len(codes) <= MAX_CODES:
