@@ -284,17 +284,20 @@ _RECORDING_SPECS = {
     "median_hold_s": ("Median pause when a speaker restarted instead of handing over.", "s", "mean"),
 }
 
-_NO_TAKE = "Empty for a person who never took the floor from somebody else in the span: they get no row, not 0."
+_NO_TURN = "Empty for a person who took no turn in the span."
+_NO_TAKE = f"{_NO_TURN[:-1]}, or never took the floor from somebody else in it."
+_TAKEN = f"{_NO_TURN} 0 means they spoke but never took the floor from somebody else."
 _EVERY_SPAN = "Empty only outside the rows of the recording as a whole: every span gets a value."
 _NO_SWITCH = "Empty when the floor never changed hands in the span."
-_NEVER_INTERRUPTED = "0 means they took the floor but never with an overlap longer than turns.interruption_overlap_s."
+_NEVER_INTERRUPTED = "0 means they never took the floor with an overlap longer than turns.interruption_overlap_s."
 _MISSING = {
     "fto_s": "Empty only in rows of other events: every change of speaker has a value, and a speaker restarting their own turn has no row.",
     "response_latency_s": "Empty for a switch that overlapped, where subject_id started before subject_id_b had finished.",
     "median_response_latency_s": f"{_NO_TAKE} Also empty when they overlapped every time they took the floor.",
-    "n_interruptions_made": f"{_NO_TAKE} {_NEVER_INTERRUPTED}",
-    "interruptions_per_minute": f"{_NO_TAKE} {_NEVER_INTERRUPTED}",
-    "n_backchannels_made": f"{_NO_TAKE} 0 means none of their short overlaps was followed by the floor going straight back.",
+    "n_turns_taken_from_other": _TAKEN,
+    "n_interruptions_made": f"{_NO_TURN} {_NEVER_INTERRUPTED}",
+    "interruptions_per_minute": f"{_NO_TURN} {_NEVER_INTERRUPTED}",
+    "n_backchannels_made": f"{_NO_TURN} 0 means none of their short overlaps was followed by the floor going straight back.",
     "transition_count": (
         "Empty only outside pair rows: every ordered pair of those who can hold the floor, a person with themselves included, "
         "gets a value in every span. 0 means a turn of subject_id was never followed by one of subject_id_b there."
@@ -309,7 +312,7 @@ _MISSING = {
     "median_fto_s": _NO_SWITCH,
     "sd_fto_s": (
         "Empty with fewer than two switches in the span; in a person's row, with fewer than two times they took the floor, and "
-        "a person who never did gets no row."
+        "for a person who took no turn there."
     ),
     "gap_cv": "Empty with fewer than two switches that left a gap in the span, or when all those gaps are exactly 0 s.",
     "smooth_transfer_ratio": f"{_NO_SWITCH} 0 means no switch came within turns.smooth_transfer_gap_s of the previous turn ending.",
@@ -322,7 +325,7 @@ _MISSING = {
 @register_extractor
 class TransitionExtractor(Extractor):
     name = "turns.transitions"
-    version = "0.1.0"
+    version = "0.1.1"
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns", "text.diarization", "text.extra_voices")
@@ -408,7 +411,11 @@ class TransitionExtractor(Extractor):
         subject_ids = turn_takers(self.config, recording)
         switches = transitions[_switch_mask(transitions)]
         frames = []
-        for taker, group in switches.groupby("to_subject", observed=True):
+        spoke = set(turns["subject_id"].astype(str)) if not turns.empty else set()
+        to_subject = switches["to_subject"].astype(str).to_numpy()
+        # everyone who spoke gets a row, so a person who never took over counts 0 rather than nothing
+        for taker in [person for person in subject_ids if person in spoke]:
+            group = switches[to_subject == taker]
             fto = group["fto_s"].to_numpy(dtype=float)
             gaps = fto[fto >= 0.0]
             kinds = group["transition_type"].astype(str).to_numpy()
@@ -423,7 +430,7 @@ class TransitionExtractor(Extractor):
                             "median_response_latency_s": [
                                 float(np.median(gaps)) if gaps.size else np.nan
                             ],
-                            "mean_fto_s": [float(fto.mean())],
+                            "mean_fto_s": [float(fto.mean()) if fto.size else np.nan],
                             "sd_fto_s": [
                                 float(np.std(fto, ddof=1)) if fto.size > 1 else np.nan
                             ],

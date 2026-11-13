@@ -120,6 +120,13 @@ class TestSubjectRows:
     def test_rate_uses_the_task_window(self, rows):
         assert value(rows, "interruptions_per_minute", "child") == pytest.approx(1.0)
 
+    def test_someone_who_spoke_but_never_took_over_counts_zero(self, extractor, make_turns, make_recording, make_prep, cfg):
+        scene = build_scene(make_turns, make_recording, make_prep, cfg, [("parent", 11.0, 12.0), ("child", 12.5, 14.0)])
+        rows = extractor._rows(scene.recording, scene.turns, scene.transitions, scene.prep)
+        assert value(rows, "n_turns_taken_from_other", "parent") == 0 and value(rows, "n_interruptions_made", "parent") == 0
+        assert value(rows, "interruptions_per_minute", "parent") == 0 and pd.isna(value(rows, "mean_fto_s", "parent"))
+        assert value(rows, "n_turns_taken_from_other", "child") == 1
+
 
 class TestPairRows:
     def test_every_ordered_pair_gets_a_cell(self, rows):
