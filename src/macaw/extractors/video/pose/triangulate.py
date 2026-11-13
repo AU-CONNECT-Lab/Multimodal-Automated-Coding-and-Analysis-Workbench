@@ -23,6 +23,7 @@ from macaw.extractors.video.pose.kinematics import (
     _smoothed_derivative,
     below_outputs,
     below_specs,
+    below_summary,
     call_script,
     check_measures,
     joined_annotations,
@@ -390,6 +391,15 @@ class Kinematics3DExtractor(Extractor):
             if measure.method not in BUILTIN_MEASURES
         ]
         return [points_file(self.config, recording.recording_id), *scripts]
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        units = self.config.project.units
+        thresholds = {
+            f"{measure.name}_3d": measure.below_3d * below_3d_to_metres(measure, units)
+            for measure in measures_3d(self.config)
+            if measure.below_3d is not None
+        }
+        return below_summary(self, recording, thresholds, start_s, end_s)
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         smoothing_s = self.config.kinematics.smoothing_s

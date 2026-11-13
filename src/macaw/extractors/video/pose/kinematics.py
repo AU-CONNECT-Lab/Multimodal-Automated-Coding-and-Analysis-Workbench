@@ -21,7 +21,8 @@ from macaw.project.recording import Recording
 from macaw.project_scripts import script_function, script_path
 from macaw.store import keypoints as keypoints_store
 from macaw.store.annotations import build_annotations
-from macaw.store.longtable import build_long_rows, concat_long_tables
+from macaw.project.segments import clip_points
+from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import ANNOTATION_SCHEMA, UNITS_METRE, Scale, coerce_frame, empty_frame
 
 DEFAULT_SMOOTHING_S = 0.3
@@ -159,6 +160,10 @@ class KinematicsExtractor(Extractor):
             if measure.method not in BUILTIN_MEASURES
         ]
         return [_keypoints_file(self.config, recording.recording_id), *scripts]
+
+    def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
+        thresholds = {measure.name: measure.below for measure in self.config.kinematics.measures if measure.below is not None}
+        return below_summary(self, recording, thresholds, start_s, end_s)
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         smoothing_s = self.config.kinematics.smoothing_s
@@ -641,12 +646,28 @@ def below_outputs(feature: str, below: float, a: str, b: str, times, values, com
     return [rows], coded
 
 
+def below_summary(step, recording: Recording, thresholds: dict[str, float], start_s: float, end_s: float) -> pd.DataFrame | None:
+    """Each measure's time below its threshold within start_s to end_s, worked out again from the frame rows the step saved."""
+    path = layout_for(step.config, create=False).long_table_path(recording.recording_id) / f"{step.name}.parquet"
+    if not thresholds or not path.is_file():
+        return None
+    rows = read_long_table(path, recording_id=recording.recording_id, scale=Scale.FRAME, features=list(thresholds))
+    rows = clip_points(rows, start_s, end_s, column="t_start")
+    common = dict(recording_id=recording.recording_id, source=step.name, entities=recording.entities())
+    found = []
+    for (feature, a, b), own in rows.groupby(["feature", "subject_id", "subject_id_b"], dropna=False, observed=True, sort=True):
+        a = str(a)
+        summary, _ = below_outputs(str(feature), thresholds[str(feature)], a, a if pd.isna(b) else str(b), own["t_start"], own["value"], common)
+        found += [frame.assign(t_start=start_s, t_end=end_s) for frame in summary]
+    return concat_long_tables(found)
+
+
 def below_specs(feature: str, threshold: str, params: dict, emitted: set[str], step) -> list[FeatureSpec]:
     described = {
         f"{feature}_below_share": (f"Share of the frames {feature} was measured in during which it was below {threshold}.", None),
         f"{feature}_below_n": (f"Unbroken stretches of frames with {feature} below {threshold}.", "count"),
     }
-    missing = f"Empty for a person or pair with no frame in which {feature} has a value. 0 means it was measured but never below {threshold}."
+    missing = f"Empty for a person or pair with no frame in the span in which {feature} has a value. 0 means it was measured but never below {threshold}."
     return [
         FeatureSpec(
             name=name, description=description, unit=unit, scale=Scale.RECORDING, group=step.group, extractor=step.name,

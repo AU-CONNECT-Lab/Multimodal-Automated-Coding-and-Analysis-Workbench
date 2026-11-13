@@ -308,3 +308,23 @@ def test_syntax_is_parsed_again_from_the_utterances_inside(project):
     part = values(step.summarise(p.recording, 4.0, 20.0))
     assert part[("n_utterances_parsed", "parent", None)] == 2
     assert part[("subordinate_clauses_per_utterance", "parent", None)] == 0.0
+
+
+@pytest.mark.parametrize("three_d", [False, True])
+def test_time_below_a_value_is_worked_out_again_inside(project, three_d):
+    from macaw.extractors.video.pose.kinematics import KinematicsExtractor
+    from macaw.extractors.video.pose.triangulate import Kinematics3DExtractor
+
+    below = "below_3d: 40" if three_d else "below: 400"   # 40 cm in 3D, as the project is in cm
+    p = project(f"kinematics.measures=[{{name: near, person: parent, to_person: child, joints: [nose], to_joints: [nose], {below}}}]")
+    step = (Kinematics3DExtractor if three_d else KinematicsExtractor)(p.config)
+    feature = "near_3d" if three_d else "near"
+    scale = 0.001 if three_d else 1.0
+    rows = frame_rows(feature, "parent", range(10), np.array([300, 300, 500, 500, 300, 300, 300, 500, 500, 500]) * scale, source=step.name)
+    rows["subject_id_b"] = "child"
+    write_long_table(rows, p.layout.long_table_path(RID))
+    first, second = values(step.summarise(p.recording, 0.0, 5.0)), values(step.summarise(p.recording, 5.0, 10.0))
+    assert first[(f"{feature}_below_share", "parent", "child")] == pytest.approx(0.6) and first[(f"{feature}_below_n", "parent", "child")] == 2
+    assert second[(f"{feature}_below_share", "parent", "child")] == pytest.approx(0.4) and second[(f"{feature}_below_n", "parent", "child")] == 1
+    assert set(step.summarise(p.recording, 0.0, 5.0)[["t_start", "t_end"]].itertuples(index=False, name=None)) == {(0.0, 5.0)}
+    assert step.summarise(p.recording, 20.0, 30.0).empty
