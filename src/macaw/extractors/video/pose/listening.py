@@ -13,7 +13,9 @@ from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, lo
 from macaw.extractors.base import Extractor, ExtractorResult, Phase
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.extractors.video.motion.mea import MEAExtractor
-from macaw.extractors.video.pose.kinematics import _SUBJECT_SPECS, KinematicsExtractor
+from macaw.extractors.video.pose.kinematics import (
+    _SUBJECT_SPECS, BODY_UNIT, KinematicsExtractor, _body_size, _keypoints_file, keypoints_by_subject,
+)
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec, read_manifest
 from macaw.project.recording import Recording
@@ -28,14 +30,19 @@ def producers() -> dict[str, str]:
     return {**{name: KinematicsExtractor.name for name in _SUBJECT_SPECS}, "motion_energy": MEAExtractor.name}
 
 
+def body_lengths() -> set[str]:
+    """The series that are a length or a rate of one, which listening_per_body_size divides by the shoulder width."""
+    return {name for name, (_, unit, _) in _SUBJECT_SPECS.items() if unit and "{length}" in unit}
+
+
 @register_extractor
 class ListeningExtractor(Extractor):
     name = "pose.listening"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.listening", "segment")
+    config_sections = ("kinematics.listening", "kinematics.listening_per_body_size", "segment")
     requires = (ASRExtractor.name, MediaPrepExtractor.name)
 
     @classmethod
@@ -60,7 +67,19 @@ class ListeningExtractor(Extractor):
             layout.artifacts_dir(rid, ASRExtractor.name) / TRANSCRIPT_NAME,
             layout.artifacts_dir(rid, MediaPrepExtractor.name) / PREP_INFO_NAME,
             *(layout.long_table_path(rid) / f"{step}.parquet" for step in steps),
+            *([_keypoints_file(self.config, rid)] if self.divided() else []),
         ]
+
+    def divided(self) -> list[str]:
+        """The listed series divided by each person's shoulder width."""
+        kinematics = self.config.kinematics
+        return [name for name in kinematics.listening if name in body_lengths()] if kinematics.listening_per_body_size else []
+
+    def body_sizes(self, recording: Recording) -> dict[str, float]:
+        """Each person's shoulder width over the recording, on the camera their body is measured from, as per_body_size of
+        kinematics.measures takes it."""
+        _, by_subject = keypoints_by_subject(self.config, recording)
+        return {person: _body_size(rows) for person, rows in by_subject.items()}
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)
@@ -77,6 +96,8 @@ class ListeningExtractor(Extractor):
         talk = load_transcript(self.config, recording.recording_id, others=True)
         spans = alone_spans(talk, start_s, end_s)
         series = self._series(recording)
+        divided = self.divided()
+        sizes = self.body_sizes(recording) if divided else {}
         frames = []
         for person in people:
             listening = [span for speaker, span in spans if speaker != person and speaker in people]
@@ -85,7 +106,8 @@ class ListeningExtractor(Extractor):
                 mine = series[(series["subject_id"].astype(str) == person) & (series["feature"].astype(str) == feature)]
                 inside = mine[within(mine["t_start"].to_numpy(dtype=float), listening)]["value"].to_numpy(dtype=float)
                 inside = inside[np.isfinite(inside)]
-                values[f"{feature}_listening"] = [float(inside.mean()) if inside.size else np.nan]
+                mean = float(inside.mean()) if inside.size else np.nan
+                values[f"{feature}_listening"] = [mean / sizes.get(person, np.nan) if feature in divided else mean]
                 values[f"{feature}_listening_frames"] = [float(inside.size)]
             frames.append(
                 build_long_rows(
@@ -107,18 +129,36 @@ class ListeningExtractor(Extractor):
 
     def _specs(self, recording: Recording) -> list[FeatureSpec]:
         layout = layout_for(self.config, create=False)
-        units = {}
+        divided = self.divided()
+        units, comparable = {}, {}
         for feature in self.config.kinematics.listening:
             path = layout.manifest_fragment_path(recording.recording_id, producers()[feature])
             spec = read_manifest(path).specs.get(feature) if path.is_file() else None
             units[feature] = spec.unit if spec is not None else None
-        params = {"listening": list(self.config.kinematics.listening)}
+            comparable[feature] = spec.comparable_across_subjects if spec is not None else True
+            if feature in divided:
+                units[feature], comparable[feature] = _SUBJECT_SPECS[feature][1].format(length=BODY_UNIT), True
+        params = {"listening": list(self.config.kinematics.listening), "per_body_size": divided}
+        sized = {
+            feature: (
+                f" Divided by this person's shoulder width over the recording, so in {units[feature]}; comparable between "
+                "recordings where the person stays at about the same distance from the camera and faces it for part of the "
+                "recording." if feature in divided
+                else " Not divided by the shoulder width, which applies to lengths only." if self.config.kinematics.listening_per_body_size
+                else ""
+            )
+            for feature in self.config.kinematics.listening
+        }
         missing = {
             LISTENING_S: "Never empty. 0 means no other person of the recording talked alone in the span, by the transcript.",
             **{
                 f"{feature}_listening": (
                     "Empty where no other person of the recording talked alone in the span, or where this person's "
-                    f"{feature} has no value in any frame of those times (its own entry says when)."
+                    f"{feature} has no value in any frame of those times (its own entry says when)"
+                    + (
+                        ", and throughout when this person's two shoulders are never found in the same frame on the camera their "
+                        "body is measured from." if feature in divided else "."
+                    )
                 )
                 for feature in self.config.kinematics.listening
             },
@@ -135,7 +175,7 @@ class ListeningExtractor(Extractor):
             **{
                 f"{feature}_listening": (
                     f"Mean {feature} of this person over the frames in which another person talked and nobody else did, by the "
-                    "transcript's utterances; empty where they were not measured then.",
+                    f"transcript's utterances; empty where they were not measured then.{sized[feature]}",
                     units[feature],
                 )
                 for feature in self.config.kinematics.listening
@@ -152,9 +192,21 @@ class ListeningExtractor(Extractor):
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=params, aggregation="none", missing=missing[name], validation="none",
+                comparable_across_subjects=comparable.get(name.removesuffix("_listening"), True),
             )
             for name, (description, unit) in described.items()
         ]
+
+
+def body_size_notice(config) -> str | None:
+    """For the run plan: which listed series listening_per_body_size divides, and which it leaves as they are."""
+    kinematics = config.kinematics
+    if not kinematics.listening_per_body_size:
+        return None
+    divided = [name for name in kinematics.listening if name in body_lengths()]
+    kept = [name for name in kinematics.listening if name not in body_lengths()]
+    said = f"pose.listening divides {', '.join(divided)} by each person's shoulder width" if divided else "pose.listening divides nothing by the shoulder width"
+    return said + (f" and leaves {', '.join(kept)} unchanged, since {'it is' if len(kept) == 1 else 'they are'} not a length" if kept else "")
 
 
 def alone_spans(talk: pd.DataFrame, start_s: float, end_s: float) -> list[tuple[str, tuple[float, float]]]:

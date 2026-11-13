@@ -136,6 +136,10 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         where = f"each of {len(own.segments)} segments of each recording" if own.segments else "each recording"
         notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where} to {llm.provider}")
         notices.append(said_by_entity(name))
+    if "pose.listening" in dag.nodes:
+        from macaw.extractors.video.pose.listening import body_size_notice
+
+        notices.append(body_size_notice(config))
     look = config.qc.look
     if "pose.keypoints" in dag.nodes and config.pose.suggest_names and look.model and look.people:
         from macaw.qc.look import notice

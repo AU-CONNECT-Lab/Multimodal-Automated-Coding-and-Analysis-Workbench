@@ -13,6 +13,7 @@ from macaw import __version__
 from macaw.extractors.audio.content.asr import CORRECTED_CHECK, ASRExtractor
 from macaw.extractors.audio.content.diarization import others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
+from macaw.extractors.video.pose.kinematics import BODY_SIZE_QUANTILE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
 from macaw.project.scale import pixel_power
 from macaw.project.segments import read_segments
@@ -1075,10 +1076,21 @@ def _face_shares(config, spec, names) -> str:
 
 def _listening(config, spec, names) -> str:
     listed = _listed([name.replace("_", " ") for name in spec.params.get("listening", [])])
-    return (
+    text = (
         f"Each person's {listed} was averaged over the frames in which another person was talking and nobody else was, "
         "by the start and end of each utterance in the transcript, as their movement while listening."
     )
+    divided = spec.params.get("per_body_size") or []
+    if divided:
+        text += (
+            f" The average{'s' if len(divided) > 1 else ''} of {_listed([name.replace('_', ' ') for name in divided])} "
+            f"{'were' if len(divided) > 1 else 'was'} divided by the person's shoulder width, "
+            f"the {BODY_SIZE_QUANTILE * 100:g}th percentile of the distance between their shoulders over the recording on the "
+            "camera their body was measured from, so that values filmed from different distances or at different resolutions can "
+            "be compared; this holds where each person stayed at about the same distance from the camera and faced it for part "
+            "of the recording."
+        )
+    return text
 
 
 def _plugin(config, spec, names) -> str:

@@ -16,6 +16,7 @@ from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, Camera, read_se
 from macaw.extractors.video.pose.keypoints import PoseReviewGate
 from macaw.extractors.video.pose.kinematics import (
     _CENTRES,
+    BODY_UNIT,
     BUILTIN_MEASURES,
     POLYORDER,
     SELF,
@@ -642,7 +643,7 @@ def measure_spec_3d(measure) -> tuple[str, str | None, bool]:
         text, unit = f"How far {who} sits from their own shoulder midpoint in the direction of {target}; negative when away from it.", "m"
     if measure.per_body_size:
         text += f" In units of {measure.person}'s shoulder width."
-        unit = "1/s" if unit == "m/s" else None
+        unit = f"{BODY_UNIT}/s" if unit == "m/s" else BODY_UNIT
     return text, unit, True
 
 

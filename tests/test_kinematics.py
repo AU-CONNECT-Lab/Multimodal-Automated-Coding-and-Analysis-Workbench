@@ -434,6 +434,14 @@ class TestMeasureValues:
         scaled = measure_values(measure(joints=["nose"], to_joints=["nose"], per_body_size=True), a, b)
         assert scaled.iloc[0] == pytest.approx(raw.iloc[0] / 160.0)
 
+    def test_a_measure_per_body_size_is_in_shoulder_widths_in_the_picture_and_in_the_room(self):
+        from macaw.extractors.video.pose.kinematics import measure_spec
+        from macaw.extractors.video.pose.triangulate import measure_spec_3d
+
+        for method, unit in (("distance", "shoulder widths"), ("approach_speed", "shoulder widths/s"), ("offset_toward", "shoulder widths")):
+            sized = measure(joints=["nose"], to_joints=["nose"], method=method, per_body_size=True)
+            assert measure_spec(sized)[1] == unit and measure_spec_3d(sized)[1] == unit
+
     def test_approach_speed_is_positive_while_closing_in(self):
         path = np.column_stack([205.0 + 3.0 * np.arange(20), np.full(20, 160.0)])
         a = person("parent", centre=PARENT, moves={"left_wrist": path})

@@ -341,6 +341,8 @@ class KinematicsSection(_Section):
     gestures: GestureSection = Field(default_factory=GestureSection)
     # movement series averaged over the frames where another person talks alone, e.g. upper_body_speed or motion_energy
     listening: list[str] = Field(default_factory=list)
+    # the lengths among them (distances, speeds) divided by the person's shoulder width; motion_energy and angles stay as they are
+    listening_per_body_size: bool = False
 
     @model_validator(mode="after")
     def _distinct_names(self) -> "KinematicsSection":

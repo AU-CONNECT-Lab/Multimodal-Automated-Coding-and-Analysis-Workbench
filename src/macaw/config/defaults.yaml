@@ -97,6 +97,7 @@ kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
   measures: []                       # your own quantities between points on people; see the user guide
   listening: []                      # movement series averaged where another person talks alone (pose.listening), e.g. [upper_body_speed, motion_energy]
+  listening_per_body_size: false     # true divides the lengths among them (hand_distance, wrist and upper-body speeds) by each person's shoulder width
   gestures:
     tier: null                       # annotation tier whose segments are gestures, each on its person's tier; null = none measured
     annotator: null                  # whose segments, when several people coded that tier

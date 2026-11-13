@@ -32,6 +32,8 @@ POLYORDER = 3
 
 # a horizontal length only ever shrinks under rotation, so its upper envelope is the person's size
 BODY_SIZE_QUANTILE = 0.95
+# the unit of a length divided by the person's shoulder width
+BODY_UNIT = "shoulder widths"
 
 _ARM_JOINTS = (
     "left_shoulder",
@@ -704,7 +706,7 @@ def measure_spec(measure) -> tuple[str, str | None, bool]:
         return f"Computed by the project script {measure.method}.", None, False
     if measure.per_body_size:
         text += f" In units of {measure.person}'s shoulder width."
-        unit = "1/s" if unit.endswith("/s") else None
+        unit = f"{BODY_UNIT}/s" if unit.endswith("/s") else BODY_UNIT
     return text, unit, measure.per_body_size
 
 

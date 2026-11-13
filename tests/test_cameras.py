@@ -438,7 +438,7 @@ def test_the_projects_own_measures_have_3d_versions(seated, project, tmp_path):
     assert "flat_3d" not in set(rows.feature)
     assert set(rows[rows.feature == "hand_to_head_3d"].subject_id_b) == {"child"}
     units = {spec.name: spec.unit for spec in result.specs}
-    assert (units["hand_to_head_3d"], units["closing_3d"], units["lean_3d"], units["depth_3d"]) == ("m", "m/s", None, None)
+    assert (units["hand_to_head_3d"], units["closing_3d"], units["lean_3d"], units["depth_3d"]) == ("m", "m/s", "shoulder widths", None)
 
     manifest = FeatureManifest()
     for spec in result.specs:

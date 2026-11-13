@@ -170,3 +170,49 @@ class TestListening:
 
     def test_the_methods_name_the_series(self):
         assert "upper body speed and motion energy was averaged" in _listening(None, SimpleNamespace(params={"listening": ["upper_body_speed", "motion_energy"]}), set())
+
+    def sized(self, monkeypatch, sizes):
+        """The step over a constant series per person, with these shoulder widths, dividing what it can."""
+        monkeypatch.setattr(listening_module, "load_transcript", lambda config, rid, others=False: self.TALK)
+        times = np.arange(0.0, 10.0, 0.5)
+        series = pd.concat([
+            pd.DataFrame({"subject_id": person, "feature": feature, "t_start": times, "value": value})
+            for person, value in (("parent", 12.0), ("child", 6.0)) for feature in ("upper_body_speed", "motion_energy")
+        ], ignore_index=True)
+        monkeypatch.setattr(ListeningExtractor, "_series", lambda self, recording: series)
+        monkeypatch.setattr(ListeningExtractor, "body_sizes", lambda self, recording: sizes)
+        kinematics = KinematicsSection(listening=["upper_body_speed", "motion_energy"], listening_per_body_size=True)
+        return ListeningExtractor(SimpleNamespace(kinematics=kinematics))
+
+    def test_per_body_size_divides_the_lengths_by_each_person_s_shoulder_width_and_leaves_motion_energy(self, monkeypatch):
+        step = self.sized(monkeypatch, {"parent": 40.0, "child": 20.0})
+        recording = SimpleNamespace(recording_id="r1", entities=lambda: ENTITIES, subjects=[SimpleNamespace(subject_id=p) for p in ("parent", "child")])
+        values = step._rows(recording, 0.0, 10.0).set_index(["subject_id", "feature"])["value"]
+        assert values["parent", "upper_body_speed_listening"] == pytest.approx(0.3) and values["child", "upper_body_speed_listening"] == pytest.approx(0.3)
+        assert values["parent", "motion_energy_listening"] == 12.0 and values["child", "motion_energy_listening"] == 6.0
+        assert step.divided() == ["upper_body_speed"]
+
+    def test_a_person_whose_shoulders_were_never_seen_together_has_no_divided_value(self, monkeypatch):
+        step = self.sized(monkeypatch, {"parent": float("nan")})
+        recording = SimpleNamespace(recording_id="r1", entities=lambda: ENTITIES, subjects=[SimpleNamespace(subject_id=p) for p in ("parent", "child")])
+        values = step._rows(recording, 0.0, 10.0).set_index(["subject_id", "feature"])["value"]
+        assert np.isnan(values["parent", "upper_body_speed_listening"]) and np.isnan(values["child", "upper_body_speed_listening"])
+        assert values["parent", "motion_energy_listening"] == 12.0
+
+    def test_the_dictionary_methods_and_plan_say_what_was_divided_and_when_it_is_empty(self, monkeypatch, tmp_path):
+        from macaw.extractors.video.pose.listening import body_size_notice
+
+        step = self.sized(monkeypatch, {})
+        monkeypatch.setattr(listening_module, "layout_for", lambda config, create=False: SimpleNamespace(manifest_fragment_path=lambda rid, name: tmp_path / "none.json"))
+        specs = {spec.name: spec for spec in step._specs(SimpleNamespace(recording_id="r1"))}
+        speed, energy = specs["upper_body_speed_listening"], specs["motion_energy_listening"]
+        assert speed.unit == "shoulder widths/s" and speed.comparable_across_subjects and "faces it for part of the recording" in speed.description
+        assert speed.missing.endswith("two shoulders are never found in the same frame on the camera their body is measured from.")
+        assert "Not divided by the shoulder width" in energy.description and "shoulders" not in energy.missing
+        assert speed.params["per_body_size"] == ["upper_body_speed"]
+        said = _listening(None, speed, set())
+        assert "The average of upper body speed was divided by the person's shoulder width, the 95th percentile" in said
+        assert body_size_notice(step.config) == (
+            "pose.listening divides upper_body_speed by each person's shoulder width and leaves motion_energy unchanged, since it is not a length"
+        )
+        assert body_size_notice(SimpleNamespace(kinematics=KinematicsSection(listening=["upper_body_speed"]))) is None
