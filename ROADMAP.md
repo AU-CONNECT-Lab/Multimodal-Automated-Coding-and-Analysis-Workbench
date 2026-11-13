@@ -41,6 +41,8 @@ Reviewing the output works the same way. The quality report points at the frames
 - Paired values for convergence between speakers (each turn's voice measures beside the previous speaker's, lexical overlap with the previous turn), time spent below a threshold the study sets, and body orientation toward the other person in 3D.
 - Named segments of a recording, each with every recording-level measure and the turn checks worked out again as if the recording had been cut there, marked on the video in the workbench.
 - A codebook made clearer by the language model from the units a person and the model coded differently, or drafted from the transcripts, and transcript lines the model marks as possibly misheard, each for a person to read and decide.
+- Whole recordings or named segments rated on rating scales by a language model, in several versions side by side, beside people's ratings and their agreement.
+- Simple counts per person: questions and listed words per minute, faces found, action units above a threshold, and movement while another person talks.
 
 ### 0.1.0-alpha
 - Framework scaffold.

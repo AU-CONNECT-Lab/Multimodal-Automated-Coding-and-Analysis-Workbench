@@ -121,6 +121,120 @@ Whether the revision helps is tested by coding with it as a version, `coding.jud
 Examples in a proposed or drafted codebook are participants' own words from the transcripts. Check them before the codebook is shared or published.
 :::
 
+(ratings)=
+## Rating whole recordings with a language model
+
+Many observational coding systems score a whole interaction, or a part of it, on rating scales (for example 1 to 5, or 0 and 1) rather than coding each utterance. A language model can give such ratings from the transcript, scale by scale, and its scores can be set beside those of human raters.
+
+:::{important}
+The model reads the whole transcript of each recording. With a cloud service, the transcript is sent to that service; check that the ethics approval and the participants' consent cover this.
+:::
+
+### The scales
+
+The scales are written in a YAML file in the project folder, for example `scales.yaml`:
+
+```yaml
+name: family_talk
+scales:
+  - scale: warmth
+    person: parent           # a role from the project's roles, or all for everyone together
+    range: [1, 5]
+    definition: How much warmth and affection the parent shows the child.
+    anchors:                 # any of the scores; scores between anchors lie between them
+      1: cold or dismissive throughout
+      3: some warmth, not sustained
+      5: warm throughout
+    rules:
+      - Laughing together counts towards warmth.
+  - scale: on_task
+    person: child
+    range: [0, 1]
+    anchors:
+      0: mostly not doing the task as asked
+      1: mostly doing the task as asked
+  - scale: flow
+    person: all
+    range: [1, 5]
+    definition: How smoothly the two take turns and follow each other's lead.
+```
+
+Each scale names the person it rates, its lowest and highest score, and any of a definition, anchors and further rules. Anchors may be given for some scores only; the model is told that scores without an anchor lie between the anchors around them. A coding manual can also be copied into `definition` word for word, with anchors and rules left empty. A file that gives every scale by its name, person and range alone is rated as it stands, which shows what the model makes of the names; a file in which only some scales are described is treated as an unfinished draft, and rating stops.
+
+### Setting up
+
+Ratings are set up in the text part of the settings as named versions, each a step of its own. A version names its scales file and whatever it changes in the *Coding* group's model settings; everything else follows that group (model, answers per scale, what the model is shown, note, reasons).
+
+```yaml
+coding:
+  llm: {provider: ollama, model: "qwen3:14b", n_samples: 5, reasons: true}
+  ratings:
+    names_text: {scales: scales_names.yaml, show: []}
+    names_voice: {scales: scales_names.yaml, show: [timing, pitch, loudness, rate]}
+    full_text: {scales: scales.yaml, show: []}
+    full_voice: {scales: scales.yaml, show: [timing, pitch, loudness, rate]}
+```
+
+The versions run with the rest of the analysis, or alone with `macaw run -e coding.rate.full_text`. Before a run, the plan states how many requests each version sends per recording. Video frames cannot be shown for whole recordings.
+
+Each line of the transcript is given to the model with the role of the person speaking, as named in the project's roles. Roles that use the words of the coding manual (for example `caregiver` and `child`) therefore spare the model a translation. The roles are best chosen before the first run, since voices and cameras are named by them.
+
+A description of the task the participants were given is entered under *Note to the model*. Where tasks differ between recordings, a file `recordings/<recording>.yaml` sets the note for that recording:
+
+```yaml
+coding:
+  llm:
+    notes: "The parent and the child plan a weekend outing together."
+```
+
+### What the model is asked
+
+The model is asked about one scale at a time, so that the score on one scale does not shape the score on another. Each request holds the whole transcript in time order, followed by the one scale. Each scale is asked several times (*Answers per unit*, five by default), and the score is the median of the answers; the spread of the answers is kept beside it. An odd number of answers gives whole scores. With *Model says why*, the model adds a short reason after its score.
+
+An answer that gives no whole number within the scale's range is not corrected: it is counted, left out of the median, and reported in the quality report. The proportion of such answers per version is a column of the results.
+
+A model server reads only a limited number of tokens per request, and some, Ollama among them, drop the start of a longer prompt without warning. Before rating, the step compares the longest prompt with what the server reads and stops with a message if it does not fit. For Ollama the limit is raised by starting the server with, for example, `OLLAMA_CONTEXT_LENGTH=16384`.
+
+### Rating parts of a recording
+
+Without further settings, a version rates the analysed part of each recording as a whole. `segments: [first_half, second_half]` rates the named segments of the segments table one by one instead (see {ref}`segments`); recordings without such a segment are left out of that version and the quality report says so.
+
+### The effect of speaker errors
+
+Once a transcript has been corrected in ELAN (see {ref}`transcript`), every step reads the corrected one. The recogniser's transcript is kept beside it when the correction is first imported, and a version with `transcript: recognised` rates that one instead, so that the effect of the corrections on the scores can be measured:
+
+```yaml
+coding:
+  ratings:
+    full_text: {scales: scales.yaml, show: []}
+    full_text_asr: {scales: scales.yaml, show: [], transcript: recognised}
+```
+
+Such a version rates only recordings with a corrected transcript; elsewhere the two transcripts are the same. When only part of each recording was corrected, both versions should rate that part as a named segment, so that the uncorrected remainder does not dilute the difference. To compare speaker attribution alone, the corrector moves lines between the speakers' tiers in ELAN without changing their words.
+
+### Human ratings and agreement
+
+People's ratings are entered in a table `ratings.csv` in the project folder, one row per score:
+
+| recording | segment | scale | coder | score |
+|---|---|---|---|---|
+| dyad01 | | warmth | anna | 4 |
+| dyad01 | | warmth | ben | 3 |
+
+The segment is left empty for a rating of the whole recording. Further columns, such as a family identifier, may be added. The table is read where it lies whenever it is needed, and each line is checked: the recording must exist, the scale must be defined in a version's scales file, the score must be a whole number in its range, and no coder may score the same recording, segment and scale twice.
+
+```bash
+macaw ratings agreement --cluster group_id --out agreement
+```
+
+compares every pair of raters on each scale, over the recordings and segments both scored. Each version of the model counts as a rater under its own name. For each pair it gives the number of recordings, the intraclass correlation for absolute agreement of single raters, ICC(A,1) (McGraw and Wong, 1996), Cohen's kappa with disagreements weighted by how many points the two scores lie apart (Cohen, 1968), the proportion of identical scores, and the proportion within one point, each with a 95% percentile bootstrap interval. The proportion within one point is not given for scales of two scores, where it is always one. `--raters anna,ben,full_text` restricts the comparison to the raters named. `--cluster` resamples whole groups in the bootstrap, so that, for example, the two recordings of a family are drawn together; it names an entity of the recording pattern (such as `group_id`) or a column added to `ratings.csv`. Scales on which nearly every recording receives the same score give unstable ICC and kappa values; the proportion of identical scores is the more informative figure there.
+
+```bash
+macaw ratings export ratings_out
+```
+
+writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with its reason and its full text.
+
 (own-coding)=
 ## Human coding and inter-rater agreement
 
@@ -345,6 +459,47 @@ turns |>
 ```
 
 The counts differ from those of LENA itself, which segments the audio in its own way.
+
+(counts)=
+## Counts and shares per person
+
+A few simple summaries per person complement the measures every run gives. Each is computed for the whole analysed part and for every named segment ({ref}`segments`). They often serve as rule-based counterparts of a rating scale.
+
+### Questions and listed words
+
+Each person's sentences ending in a question mark are counted per minute (`questions_per_minute`). Sentences are cut after a full stop, question mark or exclamation mark followed by a space, so the count rests on the punctuation of the transcript: the recogniser's own, or that of the person who corrected it.
+
+Lists of words or phrases in the project folder, one entry per line, give the number of sentences per minute that hold at least one entry:
+
+```yaml
+text:
+  word_lists:
+    negative: negative_words.txt
+```
+
+This gives `negative_per_minute` for each person. An entry matches whole words regardless of case, a phrase matches its words in a row, and `#` starts a comment. No list is supplied with MACAW.
+
+### Faces and action units
+
+For each person, `face_found_share` is the share of the frames, on the camera their face is read from, in which a face was found and assigned to them. A low share means that the face was turned away, hidden or out of view; that person's action units and face angles rest on the frames that remain. With thresholds set,
+
+```yaml
+face:
+  au_above: {au12: 0.5}
+```
+
+`au12_above_share` is the share of the frames with that person's face in which the action unit exceeds the threshold. Thresholds have no default, because the scale of the values depends on the face backend and model, as the description of each action unit in the results states.
+
+### Movement while listening
+
+`upper_body_speed` is the mean speed of the head, shoulder, elbow and wrist points found in a frame, in pixels per second. With
+
+```yaml
+kinematics:
+  listening: [upper_body_speed]
+```
+
+each person's upper-body speed is averaged over the frames in which another participant is talking and nobody else is, judged from the start and end of each utterance in the transcript (`upper_body_speed_listening`). The results also give how long this was the case (`listening_s`) and how many frames the average rests on; an average over few frames is easily moved by a single jump of the tracker. Motion energy (`motion_energy`, see {ref}`motion`) can be listed as well. Speech in a voice other than the participants', such as a researcher's, does not count as another participant talking. Speeds in pixels depend on how far each person sits from the camera, so comparisons between people or recordings call for lengths in a common unit ({ref}`scale`).
 
 (suggest-names)=
 ## Suggesting who is who on a camera
