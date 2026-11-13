@@ -73,6 +73,19 @@ By default, the model receives each line's speaker, words and timing (onset, dur
 *Model reasons before answering*
 : Some models reason at length before answering, which makes each request several times slower. *No* asks for an immediate answer. This applies to models on the lab's own computer or server.
 
+(notes-by)=
+Where the recordings come from several tasks, a note can be given for each task, or for each value of another part of the recording name (group, session, run), in the text part of the settings. In the prompt it follows the *Note to the model*:
+
+```yaml
+coding:
+  llm:
+    notes: "A is the parent; B is the child."
+    notes_by:
+      task: {task_a: "The parent and the child plan a weekend outing together.", task_b: ""}
+```
+
+Every value the recordings take needs an entry, with `""` where no note is wanted; a run stops before it starts when one is missing and names the recordings concerned. A version under `coding.judges` or `coding.ratings` that sets its own `notes_by` uses that table instead (`notes_by: {}` gives none), and a recording's own file in the `recordings` folder can still change either note for that recording. Changing the note of one task codes or rates only that task's recordings again. The run plan, the Methods text and the data dictionary give the note of each value. `macaw codebook refine` works across recordings and is given the *Note to the model* only.
+
 ### Reliability and review
 
 Each unit is coded several times (*Answers per unit*, five by default), and the share of identical answers is the unit's confidence. The model may also answer "cannot tell". Units below *Review below this agreement* (0.7 by default) and every "cannot tell" are placed on the Review page under *Speech acts*.
@@ -179,13 +192,7 @@ The versions run with the rest of the analysis, or alone with `macaw run -e codi
 
 Each line of the transcript is given to the model with the role of the person speaking, as named in the project's roles. Roles that use the words of the coding manual (for example `caregiver` and `child`) therefore spare the model a translation. The roles are best chosen before the first run, since voices and cameras are named by them.
 
-A description of the task the participants were given is entered under *Note to the model*. Where tasks differ between recordings, a file `recordings/<recording>.yaml` sets the note for that recording:
-
-```yaml
-coding:
-  llm:
-    notes: "The parent and the child plan a weekend outing together."
-```
+A description of the task the participants were given is entered under *Note to the model*. Where tasks differ between recordings, `notes_by` gives a note for each task ({ref}`notes by task <notes-by>`).
 
 ### What the model is asked
 
@@ -233,7 +240,7 @@ compares every pair of raters on each scale, over the recordings and segments bo
 macaw ratings export ratings_out
 ```
 
-writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with its reason and its full text. Beside each table, a data dictionary (`scores_dictionary.csv` and `answers_dictionary.csv`, each also as a JSON sidecar) gives the meaning of every column and what an empty cell means ({ref}`data-dictionary`). Its entry for `rater` lists the settings of each version of the model, with each variant and its recordings where recordings have settings of their own, and each coder; its entry for `scale` lists each scale with the person it rates, its range and its scales file.
+writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with the recording's entities, its reason and its full text. Beside each table, a data dictionary (`scores_dictionary.csv` and `answers_dictionary.csv`, each also as a JSON sidecar) gives the meaning of every column and what an empty cell means ({ref}`data-dictionary`). Its entry for `rater` lists the settings of each version of the model, with each variant and its recordings where recordings have settings of their own, and each coder; its entry for `scale` lists each scale with the person it rates, its range and its scales file.
 
 (own-coding)=
 ## Human coding and inter-rater agreement
@@ -404,7 +411,7 @@ When the camera was placed differently in some sessions, those recordings get th
 | `aggregation` | How the step proposes that values of the measure be combined over a longer span. |
 | `missing` | What an empty cell means in a row of the measure's own kind, for example that no face of the participant was found in that frame, as opposed to an action unit that was not active; for counts and proportions, also what a value of 0 means. |
 | `step`, `backend` | The step and the model or library that computed the measure, with their versions and the version of pymacaw that wrote the dictionary. |
-| `settings` | The settings of the step that bear on the measure. Where recordings were processed under settings of their own (`recordings/<recording>.yaml`), each variant is listed with its recordings. |
+| `settings` | The settings of the step that bear on the measure. Where recordings were processed under settings of their own (`recordings/<recording>.yaml`), each variant is listed with its recordings. A note to the language model given by task is listed once, with the note of each task. |
 | `comparable_across_people` | Whether values may be compared between participants; loudness, for example, depends on each participant's distance to the microphone. |
 | `comparable_across_backends` | Whether values from different backends may be pooled; action units of different face models, for example, may not. |
 | `validation` | How the measure has been checked: `none`, `synthetic` (against data generated with known values), `against_reference` (against a reference tool or annotation) or `published` (a published validation of the method). |
@@ -522,7 +529,15 @@ kinematics:
   listening: [upper_body_speed]
 ```
 
-each person's upper-body speed is averaged over the frames in which another participant is talking and nobody else is, judged from the start and end of each utterance in the transcript (`upper_body_speed_listening`). The results also give how long this was the case (`listening_s`) and how many frames the average rests on; an average over few frames is easily moved by a single jump of the tracker. Motion energy (`motion_energy`, see {ref}`motion`) can be listed as well. Speech in a voice other than the participants', such as a researcher's, does not count as another participant talking. Speeds in pixels depend on how far each person sits from the camera, so comparisons between people or recordings call for lengths in a common unit ({ref}`scale`).
+each person's upper-body speed is averaged over the frames in which another participant is talking and nobody else is, judged from the start and end of each utterance in the transcript (`upper_body_speed_listening`). The results also give how long this was the case (`listening_s`) and how many frames the average rests on; an average over few frames is easily moved by a single jump of the tracker. Motion energy (`motion_energy`, see {ref}`motion`) can be listed as well. Speech in a voice other than the participants', such as a researcher's, does not count as another participant talking. Speeds in pixels depend on how far each person sits from the camera and on the camera's resolution, so comparisons between people or recordings call for lengths in a common unit ({ref}`scale`), or for speeds relative to body size:
+
+```yaml
+kinematics:
+  listening: [upper_body_speed, motion_energy]
+  listening_per_body_size: true
+```
+
+divides each listed length or speed by the person's shoulder width, the 95th percentile of the distance between their shoulders over the recording on the camera their body is measured from, as `per_body_size` does for the project's own measures ({ref}`measures`); `upper_body_speed_listening` is then in shoulder widths per second. This holds where each person stays at about the same distance from the camera and faces it for part of the recording. A person whose two shoulders are never found in the same frame has no value. Motion energy and the head angles are not lengths and stay as they are; the run plan says which series were divided.
 
 (suggest-names)=
 ## Suggesting who is who on a camera
@@ -588,7 +603,7 @@ kinematics:
 : `distance`; `approach_speed`, the rate at which that distance shrinks (positive while approaching); `offset_toward`, how far a point lies from the participant's own shoulder midpoint in the direction of the other participant, such as a head turned toward them; or a function of one's own (below).
 
 `per_body_size`
-: Divides by the participant's shoulder width, so that the measure does not depend on the distance from the camera.
+: Divides by the participant's shoulder width, so that the measure is in shoulder widths and does not depend on the distance from the camera. In the picture the width is the 95th percentile of the distance between the shoulders over the recording, which holds where the participant stays at about the same distance and faces the camera for part of the recording; in the room it is the median.
 
 Measures between two participants are computed only on a camera that shows both of them.
 
