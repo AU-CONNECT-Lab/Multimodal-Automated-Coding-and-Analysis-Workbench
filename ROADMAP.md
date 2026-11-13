@@ -43,6 +43,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - A codebook made clearer by the language model from the units a person and the model coded differently, or drafted from the transcripts, and transcript lines the model marks as possibly misheard, each for a person to read and decide.
 - Whole recordings or named segments rated on rating scales by a language model, in several versions side by side, beside people's ratings and their agreement.
 - Simple counts per person: questions and listed words per minute, faces found, action units above a threshold, and movement while another person talks.
+- A data dictionary beside each export, saying for every column what it means and what an empty cell means.
 
 ### 0.1.0-alpha
 - Framework scaffold.

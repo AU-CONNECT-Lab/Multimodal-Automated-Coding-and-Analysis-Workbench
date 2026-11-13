@@ -233,7 +233,7 @@ compares every pair of raters on each scale, over the recordings and segments bo
 macaw ratings export ratings_out
 ```
 
-writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with its reason and its full text.
+writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with its reason and its full text. Beside each table, a data dictionary (`scores_dictionary.csv` and `answers_dictionary.csv`, each also as a JSON sidecar) gives the meaning of every column and what an empty cell means ({ref}`data-dictionary`). Its entry for `rater` lists the settings of each version of the model, with each variant and its recordings where recordings have settings of their own, and each coder; its entry for `scale` lists each scale with the person it rates, its range and its scales file.
 
 (own-coding)=
 ## Human coding and inter-rater agreement
@@ -388,6 +388,29 @@ motion:
 ```
 
 When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
+
+(data-dictionary)=
+## The data dictionary of an export
+
+`macaw export` writes a data dictionary beside the table, for example `features_dictionary.csv` beside `features.csv`, and the same content as `features_dictionary.json`, a sidecar in the style of BIDS keyed by column name with the keys `Description` and `Units` and the fields below. It describes only the columns of that export, under the settings with which its recordings were processed, so that it can be archived and shared with the table. In the long layout, where the measures are values of the column `feature`, each measure has an entry of its own after the columns of the layout.
+
+| Field | Content |
+|---|---|
+| `column` | The name of the column, or of the measure in the long layout. |
+| `meaning` | What the column holds. |
+| `unit` | Its unit, where it has one. |
+| `who` | Whose rows hold the measure: `person` (one participant, in `subject_id`), `pair` (two participants, in `subject_id` and `subject_id_b`) or `recording` (the recording as a whole). |
+| `rows` | Which rows hold it: `frame`, `event`, `window`, `recording` (the whole analysed part) or `segment` (a named segment, {ref}`segments`). In the wide table a measure has no value in rows of another kind; a measure given per frame, for example, is empty in the row of the whole recording. |
+| `aggregation` | How the step proposes that values of the measure be combined over a longer span. |
+| `missing` | What an empty cell means in a row of the measure's own kind, for example that no face of the participant was found in that frame, as opposed to an action unit that was not active; for counts and proportions, also what a value of 0 means. |
+| `step`, `backend` | The step and the model or library that computed the measure, with their versions and the version of pymacaw that wrote the dictionary. |
+| `settings` | The settings of the step that bear on the measure. Where recordings were processed under settings of their own (`recordings/<recording>.yaml`), each variant is listed with its recordings. |
+| `comparable_across_people` | Whether values may be compared between participants; loudness, for example, depends on each participant's distance to the microphone. |
+| `comparable_across_backends` | Whether values from different backends may be pooled; action units of different face models, for example, may not. |
+| `validation` | How the measure has been checked: `none`, `synthetic` (against data generated with known values), `against_reference` (against a reference tool or annotation) or `published` (a published validation of the method). |
+| `converted_from` | For a measure given in the project's unit of length ({ref}`scale`), the measure in pixels or metres it was converted from. |
+
+A measure computed by a step of the lab's own ({ref}`extending`) that does not state what its empty cells mean is marked accordingly.
 
 (synchrony)=
 ## Synchrony, convergence and response rates
