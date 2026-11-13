@@ -218,7 +218,7 @@ _SUBJECT_SPECS = {
     "talk_ratio": ("Share of all floor time held by this speaker; 0.5 is an even split.", None),
     "mean_turn_s": ("Mean turn length.", "s"),
     "median_turn_s": ("Median turn length, which a single long turn cannot move.", "s"),
-    "turns_per_minute": ("Turns per minute of the task window.", "1/min"),
+    "turns_per_minute": ("Turns per minute of the analysed part, or the segment.", "1/min"),
 }
 
 _RECORDING_SPECS = {

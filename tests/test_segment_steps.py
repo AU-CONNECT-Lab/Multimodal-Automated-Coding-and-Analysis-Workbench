@@ -136,6 +136,8 @@ def test_pitch_is_summarised_over_the_frames_inside(project, write_wav):
     whole = values(step.summarise(p.recording, 10.0, 12.0))
     same(expected, {key: value for key, value in whole.items() if key[1] == "parent"})
     assert whole[("voiced_fraction", "child", None)] == 0.0 and ("f0_median_hz", "child", None) not in whole
+    # on a shared microphone with no stretch of theirs alone, nothing was measured: no share, not 0
+    assert not values(step._summary(p.recording, "child", np.array([]), 0, (10.0, 12.0)))
     part = values(step.summarise(p.recording, 10.505, 12.0))
     assert part[("voiced_fraction", "parent", None)] == pytest.approx(49 / 150)
     assert part[("f0_median_hz", "parent", None)] == pytest.approx(275.0)

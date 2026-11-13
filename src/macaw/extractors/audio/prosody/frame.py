@@ -60,7 +60,7 @@ _SUMMARY_SPECS = {
         "Median voiced pitch, the reference f0_semitone_rel is measured against.",
         "Hz",
     ),
-    "voiced_fraction": ("Share of frames in the task window that carried pitch.", None),
+    "voiced_fraction": ("Share of the frames in the analysed part, or the segment, that carried pitch.", None),
 }
 
 UNHEARD = "a person with neither a device that hears them alone nor a voice named as theirs on a shared microphone (text.diarization)"
@@ -87,8 +87,8 @@ _MISSING = {
         "where their voice is the only one count."
     ),
     "voiced_fraction": (
-        f"Empty for {UNHEARD}. 0 means no frame in the span carried pitch; on a shared microphone only frames where their "
-        "voice is the only one count, so a span without such frames gives 0."
+        f"Empty for {UNHEARD}, and on a shared microphone for a span with no frame where their voice is the only one, as only "
+        "those count there. 0 means no frame of theirs in the span carried pitch."
     ),
 }
 
@@ -96,7 +96,7 @@ _MISSING = {
 @register_extractor
 class FrameProsodyExtractor(Extractor):
     name = "prosody.frame"
-    version = "0.2.1"
+    version = "0.2.2"
     scale = Scale.FRAME
     group = "prosody"
     config_sections = ("prosody", "segment", "text.diarization")
@@ -252,7 +252,7 @@ class FrameProsodyExtractor(Extractor):
                         "t_start": [window[0]],
                         "t_end": [window[1]],
                         "f0_median_hz": [float(np.median(voiced[found])) if found.any() else np.nan],
-                        "voiced_fraction": [float(found.sum()) / n_frames if n_frames else 0.0],
+                        "voiced_fraction": [float(found.sum()) / n_frames if n_frames else np.nan],
                     }
                 ),
                 scale=Scale.RECORDING, subject_id=subject_id, recording_id=recording.recording_id, source=self.name,

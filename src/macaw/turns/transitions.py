@@ -240,7 +240,7 @@ _SUBJECT_SPECS = {
         "count",
         "sum",
     ),
-    "interruptions_per_minute": ("Interruptions by subject_id per minute of the task window.", "1/min", "mean"),
+    "interruptions_per_minute": ("Interruptions by subject_id per minute of the analysed part, or the segment.", "1/min", "mean"),
 }
 
 _PAIR_SPECS = {

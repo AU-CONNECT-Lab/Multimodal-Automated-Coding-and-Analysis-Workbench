@@ -331,7 +331,7 @@ _EVENT_SPECS = {
 _SUMMARY_SPECS = {
     "n_utterances": ("Utterances attributed to this speaker.", "count"),
     "total_speech_s": ("Seconds this speaker held the floor.", "s"),
-    "speech_fraction": ("Share of the task window this speaker was talking.", None),
+    "speech_fraction": ("Share of the analysed part, or the segment, this speaker was talking.", None),
     "total_words": ("Words this speaker produced.", "count"),
     "words_per_minute": ("Words per minute of their own speech, not of the session.", "word/min"),
     "mean_utterance_s": ("Mean utterance length.", "s"),
