@@ -116,6 +116,18 @@ class TestPreparedTrack:
         expected = beep_at(decode_audio(sources[which], sample_rate=RATE))
         assert beep_at(read_wav(tmp_path / "work" / shared["room"])) == pytest.approx(expected, abs=1e-3)
 
+    def test_a_silent_file_gives_its_person_no_track_offset(self, sources, tmp_path):
+        folder = tmp_path / "raw" / "003" / "room"
+        folder.mkdir(parents=True)
+        shutil.copy(sources["variable"], folder / f"clip{sources['variable'].suffix}")
+        project = tmp_path / "project.yaml"
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        write_setup(project, cameras={"room": camera(hears=("parent",))})
+        config = resolve_config(project)
+        (tmp_path / "work").mkdir()
+        result = MediaPrepExtractor(config).run(build_recording("003", config), tmp_path / "work")
+        assert not result.rows["feature"].astype(str).str.startswith("track_").any()
+
 
 def prepare(path: Path, workspace: Path, **settings):
     """(the entry prep.video wrote, its warnings, the copy's path or None)."""

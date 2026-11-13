@@ -124,6 +124,7 @@ class ParselmouthBackend(ProsodyBackend):
         # any speaker without smearing the contour
         contour = self._sound(audio, sr).to_intensity(time_step=step_s, minimum_pitch=50.0)
         values = np.asarray(contour.values[0], dtype=float)
+        values[values <= -300.0] = np.nan       # Praat floors digital silence at -300 dB
         return _to_grid(values, np.asarray(contour.xs()), frame_times(audio.size, sr, step_s))
 
     def hnr(self, audio, sr, step_s):

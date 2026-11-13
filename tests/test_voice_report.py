@@ -125,3 +125,13 @@ def test_no_turn_measure_shares_a_name_with_a_frame_measure():
     from macaw.extractors.audio.prosody import frame
 
     assert not set(module._SPECS) & (set(frame._FRAME_SPECS) | set(frame._SUMMARY_SPECS))
+
+
+def test_digital_silence_has_no_frame_intensity():
+    from macaw.extractors.audio.prosody.backends import ParselmouthBackend
+
+    sr = 16000
+    t = np.arange(sr) / sr
+    audio = np.concatenate([np.zeros(sr), 0.3 * np.sin(2 * np.pi * 200 * t)])
+    values = ParselmouthBackend().intensity(audio, sr, 0.01)
+    assert np.isnan(values[20:80]).all() and np.isfinite(values[120:180]).all()

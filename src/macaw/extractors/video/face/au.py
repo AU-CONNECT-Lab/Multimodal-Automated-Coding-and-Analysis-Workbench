@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ConfigError, UnreadableMediaError
@@ -43,6 +44,30 @@ _POSE_SPECS = {
     "gaze_pitch_deg": "Gaze pitch from the face model, both eyes together; up is positive.",
     "gaze_yaw_deg": "Gaze yaw from the face model, both eyes together; toward the person's own right is positive.",
 }
+_NO_FACE = (
+    "Empty in frames where no face was found and given to this person on the camera that reads their face: none was detected, "
+    "pose placed neither their nose nor their eyes inside it, or it went to someone else whose head also lay in it. Empty "
+    "throughout for a person whose face no camera is set to read."
+)
+_MISSING = {
+    **{
+        code.lower(): f"{_NO_FACE} Also empty where the face model does not score this unit or face.action_units is off."
+        for code in ACTION_UNITS
+    },
+    "gaze_pitch_deg": f"{_NO_FACE} Also empty when face.gaze is off.",
+    "gaze_yaw_deg": f"{_NO_FACE} Also empty when face.gaze is off.",
+}
+_MISSING_CHECK = {
+    "agreement": (
+        f"Empty for a person with fewer than {_MIN_AGREEMENT_BINS} stretches of {AGREEMENT_BIN_S:g} s in the span in which both "
+        "face models read their face, for a unit only one of the two models scores, and where either model gives the unit the "
+        "same value in every such stretch."
+    ),
+    "au_agreement_median": (
+        f"Empty where every action unit's agreement is empty: fewer than {_MIN_AGREEMENT_BINS} stretches of {AGREEMENT_BIN_S:g} s "
+        "in the span in which both face models read this person's face, or no unit both models score that varies over them."
+    ),
+}
 
 
 def _au_scale(backend: str, model: str) -> str:
@@ -54,7 +79,7 @@ def _au_scale(backend: str, model: str) -> str:
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
-    version = "0.2.0"
+    version = "0.2.1"
     scale = Scale.FRAME
     group = "face"
     config_sections = (
@@ -187,7 +212,7 @@ class FaceExtractor(Extractor):
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name,
                 backend_version=backend.version, params={"model": model}, interpolation="none",
-                aggregation="mean", comparable_across_backends=False, validation="none",
+                aggregation="mean", missing=_MISSING.get(name, _NO_FACE), comparable_across_backends=False, validation="none",
             )
             for name, (description, unit) in described.items()
             if name in emitted
@@ -299,7 +324,7 @@ class FaceAUCheckExtractor(FaceExtractor):
                     "backend": cfg.backend, "model": cfg.model or _default_model(cfg.backend),
                     "check_backend": backend.name, "check_model": cfg.check_model or _default_model(backend.name),
                 },
-                aggregation="mean", validation="none",
+                aggregation="mean", missing=_MISSING_CHECK.get(name, _MISSING_CHECK["agreement"]), validation="none",
             )
             for name, description in described.items()
             if name in emitted
@@ -331,7 +356,13 @@ def name_faces(faces: pd.DataFrame, keypoints: pd.DataFrame, subjects: list[str]
         (joined["x"] >= joined["face_x"]) & (joined["x"] <= joined["face_x"] + joined["face_width"])
         & (joined["y"] >= joined["face_y"]) & (joined["y"] <= joined["face_y"] + joined["face_height"])
     )
-    joined = joined[inside].sort_values("face_score", ascending=False)
+    joined = joined[inside].assign(
+        off_centre=lambda frame: np.hypot(
+            frame["x"] - (frame["face_x"] + frame["face_width"] / 2), frame["y"] - (frame["face_y"] + frame["face_height"] / 2)
+        )
+    )
+    # two heads in one box: the one nearer its centre gets the face
+    joined = joined.sort_values(["face_score", "off_centre"], ascending=[False, True], kind="stable")
     # one face per person and one person per face, most confident first
     joined = joined.drop_duplicates(["frame", "subject_id"]).drop_duplicates("face")
     out = faces.loc[joined["face"].to_numpy()].copy()

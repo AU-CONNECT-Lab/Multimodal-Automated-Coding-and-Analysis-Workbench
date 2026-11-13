@@ -73,6 +73,82 @@ _SUMMARY_SPECS = {
     "joint_attention_n": "Stretches of joint attention: unbroken runs of frames with both looking at one named thing.",
     "joint_attention_led_n": "Stretches of joint attention in which subject_id looked at the thing first and subject_id_b joined.",
 }
+_ONCE = "Each pair is written once, in name order, so its rows with the later name first hold none."
+_LAG_MISSING = (
+    "Never empty: each row is one stretch of joint attention, under the person who joined second, or under the two in name "
+    "order when both began together."
+)
+
+
+def _missing(points: bool) -> dict[str, str]:
+    if points:
+        unread = "no camera is set to read it, or pose found fewer than two of their nose, eyes and ears in its picture"
+        both, nothing = unread, "gaze.targets names no things"
+        unseen = "either one's head never appears in the picture the other's gaze is read from"
+        sideways = ", or could not be seen looking at the other because the other's head was not in their picture then"
+        looker = f"Empty in frames where subject_id's gaze was not read ({unread}),"
+        own = {
+            name: f"Empty in frames where this person's gaze was not read: {unread}." for name in ("gaze_x", "gaze_y", "gaze_in_frame")
+        }
+        pair = {
+            "gaze_to_head": f"{looker} and in frames where subject_id_b's head is not in that picture.",
+            "looks_at": (
+                f"{looker} and throughout the span when subject_id_b's head never appears in that picture. 0 means subject_id "
+                "looked elsewhere, which includes frames in which subject_id_b's head is not in the picture."
+            ),
+        }
+        span = (
+            f"Empty where subject_id's gaze was never read in the span ({unread}), or where subject_id_b's head never appears in "
+            "that picture in it."
+        )
+    else:
+        unread = "no camera is set to read it, or face.au found no face of theirs"
+        both = (
+            "no camera is set to read it, face.au found no face of theirs, or neither the room laid out in the setup nor labelled "
+            "frames say where anyone or anything is for them"
+        )
+        unseen, nothing = "neither the room nor labelled frames say where one of the two is", "setup.room.things and the labelled frames name no things"
+        sideways = ""
+        placed = (
+            "neither the room laid out in the setup (with the camera that reads subject_id's face and both people placed) nor at least "
+            f"{angles.MIN_LABELS} labelled frames of subject_id looking at subject_id_b say where subject_id_b is"
+        )
+        looker = f"Empty in frames where subject_id's gaze was not read ({unread}), and throughout for a pair where {placed}."
+        own = {}
+        pair = {
+            "gaze_off_deg": looker,
+            "looks_at": (
+                f"{looker} 0 means subject_id looked elsewhere: not within gaze.tolerance_deg of subject_id_b, or nearer someone or "
+                "something else."
+            ),
+        }
+        span = f"Empty where subject_id's gaze was never read in the span ({unread}), or where {placed}."
+    never = f"Empty where the two gazes were never read at the same moment in the span (for either person: {both})"
+    joint = f"{never}, and when {nothing}. {_ONCE} 0 means they were never seen looking at the same named thing."
+    return {
+        **own, **pair,
+        "looks_at_share": f"{span} 0 means the gaze was read but never rested on subject_id_b.",
+        "looks_at_n": f"{span} 0 means the gaze was read but never rested on subject_id_b.",
+        "mutual_gaze": (
+            f"Empty at moments when either person's gaze was not read ({both}), and throughout for a pair where {unseen}. {_ONCE} "
+            f"0 means at least one of them looked elsewhere{sideways}."
+        ),
+        "mutual_gaze_share": (
+            f"{never}, and for a pair where {unseen}. {_ONCE} 0 means both gazes were read but the two were never seen looking at "
+            "each other."
+        ),
+        "joint_attention": (
+            f"Empty at moments when either person's gaze was not read ({both}), and throughout when {nothing}. {_ONCE} 0 means "
+            "the two were not seen looking at the same named thing."
+        ),
+        "joint_attention_share": joint,
+        "joint_attention_n": joint,
+        "joint_attention_led_n": (
+            f"{never}, and when {nothing}. 0 means subject_id led no stretch: there was none, subject_id_b looked first, or both "
+            "began together."
+        ),
+        "joint_attention_lag_s": _LAG_MISSING,
+    }
 
 
 def finds_points(config) -> bool:
@@ -82,7 +158,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.4.0"
+    version = "0.4.1"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "segment", "video", "setup.cameras", "setup.room")
@@ -256,11 +332,13 @@ class GazeTargetExtractor(Extractor):
                         scale=Scale.FRAME, subject_id=str(subject), **common,
                     )
                 )
+        measured = set()
         for a, b in permutations(subjects, 2):
             mine = points[points["subject_id"] == a].sort_values("t")
             column, feature = (f"to_{b}", "gaze_to_head") if f"to_{b}" in mine else (f"angle_{b}", "gaze_off_deg")
             if mine.empty or column not in mine or mine[column].isna().all():
                 continue
+            measured.add((a, b))
             looks = (mine["target"] == b).astype(float)
             frames.append(
                 build_long_rows(
@@ -280,23 +358,23 @@ class GazeTargetExtractor(Extractor):
                 )
             )
         for a, b in [(a, b) for a, b in permutations(subjects, 2) if a < b]:
-            mutual = mutual_gaze(points, a, b)
-            if mutual.empty:
-                continue
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame({"t_start": mutual["t"].to_numpy(), "mutual_gaze": mutual["mutual"].astype(float).to_numpy()}),
-                    scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common,
+            # never 0 for a pair where one of the two looks could not be seen at all
+            mutual = mutual_gaze(points, a, b) if {(a, b), (b, a)} <= measured else pd.DataFrame()
+            if not mutual.empty:
+                frames.append(
+                    build_long_rows(
+                        values=pd.DataFrame({"t_start": mutual["t"].to_numpy(), "mutual_gaze": mutual["mutual"].astype(float).to_numpy()}),
+                        scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common,
+                    )
                 )
-            )
-            frames.append(
-                build_long_rows(
-                    values=pd.DataFrame(
-                        {"t_start": [float(mutual["t"].min())], "t_end": [float(mutual["t"].max())], "mutual_gaze_share": [float(mutual["mutual"].mean())]}
-                    ),
-                    scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
+                frames.append(
+                    build_long_rows(
+                        values=pd.DataFrame(
+                            {"t_start": [float(mutual["t"].min())], "t_end": [float(mutual["t"].max())], "mutual_gaze_share": [float(mutual["mutual"].mean())]}
+                        ),
+                        scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
+                    )
                 )
-            )
             if things:
                 frames.extend(self._joint_rows(joint_attention(points, a, b, things), a, b, common))
         return concat_long_tables(frames)
@@ -372,6 +450,7 @@ class GazeTargetExtractor(Extractor):
             rule += f" A look at anyone or anything lasting less than {cfg.min_look_s:g} s joins the look before it."
         params["min_look_s"] = cfg.min_look_s
         params["things"] = things
+        missing = _missing(backend.finds_points)
         described = {
             **_LOOKER_SPECS, **_DISTANCE_SPECS, "looks_at": (rule, None, "mean"), "mutual_gaze": _MUTUAL_SPEC,
             "joint_attention": _JOINT_SPEC, "joint_attention_lag_s": _LAG_SPEC,
@@ -383,7 +462,8 @@ class GazeTargetExtractor(Extractor):
                 scale=Scale.RECORDING if name in _SUMMARY_SPECS else Scale.EVENT if name == "joint_attention_lag_s" else Scale.FRAME,
                 group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name, backend_version=backend.version,
-                params=params, interpolation="none", aggregation=aggregation, comparable_across_backends=False,
+                params=params, interpolation="none", aggregation=aggregation, missing=missing.get(name, missing["looks_at"]),
+                comparable_across_backends=False,
                 validation="against_reference" if backend.finds_points and name in _CHECKED else "none",
             )
             for name, (description, unit, aggregation) in described.items()

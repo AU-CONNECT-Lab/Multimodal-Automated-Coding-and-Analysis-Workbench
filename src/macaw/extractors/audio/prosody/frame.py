@@ -77,8 +77,8 @@ _MISSING = {
         "range (prosody.f0_min_hz to f0_max_hz, or prosody.f0_range_by_role)."
     ),
     "intensity_db": (
-        f"{_FRAMES} With the librosa and builtin backends, also empty in frames of complete digital silence, such as the "
-        "padding before a device started or after it stopped."
+        f"{_FRAMES} Also empty in frames of complete digital silence, such as the padding before a device started or after "
+        "it stopped."
     ),
     "hnr_db": f"{_FRAMES} Also empty in silent frames, where the backend cannot measure it.",
     "formant": f"{_FRAMES} Also empty in frames where Praat found no formant of this number.",
@@ -96,7 +96,7 @@ _MISSING = {
 @register_extractor
 class FrameProsodyExtractor(Extractor):
     name = "prosody.frame"
-    version = "0.2.0"
+    version = "0.2.1"
     scale = Scale.FRAME
     group = "prosody"
     config_sections = ("prosody", "segment", "text.diarization")

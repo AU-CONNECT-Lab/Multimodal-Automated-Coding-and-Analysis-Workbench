@@ -53,6 +53,12 @@ class TestNameFaces:
         named = name_faces(faces([(80, 80, 40, 40, 0.6), (85, 85, 30, 30, 0.95)]), heads({"parent": (100, 100)}), ["parent"])
         assert named["face_score"].unique().tolist() == [0.95] and len(named) == 10
 
+    @pytest.mark.parametrize("order", [["parent", "child"], ["child", "parent"]])
+    def test_two_heads_in_one_box_give_it_to_the_one_nearer_its_centre(self, order):
+        people = {"parent": (100, 100), "child": (82, 82)}
+        named = name_faces(faces([(80, 80, 40, 40, 0.9)]), heads({name: people[name] for name in order}), ["parent", "child"])
+        assert set(named["subject_id"]) == {"parent"} and len(named) == 10
+
     def test_someone_not_measured_on_this_camera_is_not_named_here(self):
         named = name_faces(faces([(80, 80, 40, 40, 0.9)]), heads({"parent": (100, 100)}), ["child"])
         assert named.empty

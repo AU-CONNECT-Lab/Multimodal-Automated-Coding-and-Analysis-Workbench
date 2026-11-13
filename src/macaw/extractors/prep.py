@@ -210,6 +210,23 @@ _SPECS = {
     "track_offset_confidence": ("Alignment peak sharpness, 0-1.", None),
     "track_drift_ppm": ("Clock drift of this track against the reference.", "ppm"),
 }
+_SAME_IN_SEGMENTS = "Empty only in segments, which do not repeat it: the files are the same throughout the recording."
+_NO_OWN_TRACK = "Empty for a person no device with sound hears alone, and in segments, which do not repeat it."
+_MISSING = {
+    "n_audio_tracks": f"{_SAME_IN_SEGMENTS} 0 means no device with sound hears one person alone, as with only a shared microphone.",
+    "track_offset_s": (
+        f"{_NO_OWN_TRACK} 0 means this device is the reference the others are aligned to, or was taken to start with it: "
+        "without an offset table, or where its file could not be aligned."
+    ),
+    "track_offset_confidence": (
+        f"{_NO_OWN_TRACK} Also empty where no alignment peak was measured: without an offset table, for an offset set by hand "
+        "(macaw set-offset), or where the file could not be aligned."
+    ),
+    "track_drift_ppm": (
+        f"{_NO_OWN_TRACK} Also empty where drift was not measured: on the reference itself, without an offset table, for an "
+        "offset set by hand, with align.drift_check off, or with too few clearly aligned stretches to fit it."
+    ),
+}
 
 
 @register_extractor
@@ -260,7 +277,7 @@ class AlignReviewGate(Gate):
 @register_extractor
 class MediaPrepExtractor(Extractor):
     name = "prep.media"
-    version = "0.5.0"
+    version = "0.5.1"
     scale = Scale.RECORDING
     group = "prep"
     phase = Phase.PREP
@@ -486,7 +503,7 @@ class MediaPrepExtractor(Extractor):
         ]
         for subject in recording.subjects:
             track = recording.audio_for(subject.subject_id)
-            if track is None:
+            if track is None or track.sample_rate is None:
                 continue
             frames.append(
                 build_long_rows(
@@ -515,6 +532,7 @@ class MediaPrepExtractor(Extractor):
                 group=self.group,
                 extractor=self.name,
                 extractor_version=self.version,
+                missing=_MISSING.get(name, _SAME_IN_SEGMENTS),
                 validation="none",
             )
             for name, (description, unit) in _SPECS.items()
@@ -527,6 +545,21 @@ _VIDEO_SPECS = {
     "video_frames_repeated": ("Frames repeated to give the videos a constant rate and start them with their sound.", "count"),
     "video_frames_dropped": ("Frames left out for the same reasons, or to reach video.fps.", "count"),
     "n_tone_mapped_videos": ("Videos recorded in high dynamic range and tone-mapped to standard range.", "count"),
+}
+_VIDEOS_SAME = "Empty only in segments, which do not repeat it: the videos are the same throughout the recording."
+_NO_COUNTS = (
+    "Empty in segments, which do not repeat it, with video.normalise off, for a recording without video, and where FFmpeg "
+    "reported no frame counts for one of its videos."
+)
+_VIDEO_MISSING = {
+    "n_videos": f"{_VIDEOS_SAME} 0 means the recording has no video file.",
+    "n_variable_rate_videos": f"{_VIDEOS_SAME} 0 means every video has a constant frame rate.",
+    "video_frames_repeated": f"{_NO_COUNTS} 0 means no frame was repeated.",
+    "video_frames_dropped": f"{_NO_COUNTS} 0 means no frame was left out.",
+    "n_tone_mapped_videos": (
+        f"{_VIDEOS_SAME} 0 means no video was tone-mapped: none is in high dynamic range, video.normalise is off, or this "
+        "FFmpeg has no zscale filter."
+    ),
 }
 _INTERLACED = {"tt", "bb", "tb", "bt"}
 
@@ -715,6 +748,7 @@ class VideoPrepExtractor(Extractor):
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
                 extractor=self.name, extractor_version=self.version, validation="none",
+                missing=_VIDEO_MISSING.get(name, _VIDEOS_SAME),
                 params={"normalise": cfg.normalise, "fps": cfg.fps, "quality": cfg.quality, "encoder": cfg.encoder},
             )
             for name, (description, unit) in _VIDEO_SPECS.items()

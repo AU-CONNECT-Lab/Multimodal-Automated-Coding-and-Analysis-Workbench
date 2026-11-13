@@ -203,6 +203,11 @@ def test_detection_is_counted_over_the_frames_inside(project, monkeypatch):
     step = PoseDetectExtractor(p.config)
     assert values(step.summarise(recording, 0.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.6)
     assert values(step.summarise(recording, 5.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(0.2)
+    # a camera that stopped at 6 s counts no frames after it
+    short = recording_of([video_file("room.mp4", fps=10.0, offset_s=0.0, duration_s=6.0)], recording_id=RID)
+    assert values(step.summarise(short, 0.0, 9.9))[("frames_with_anyone", None, None)] == pytest.approx(1.0)
+    after = values(step.summarise(short, 7.0, 9.9))
+    assert np.isnan(after[("frames_with_anyone", None, None)]) and after[("n_videos_read", None, None)] == 0
 
 
 def test_blinks_are_counted_over_the_readable_time_inside(project):

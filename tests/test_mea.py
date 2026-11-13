@@ -128,6 +128,13 @@ class TestExtractor:
         assert rows.t_start.min() == pytest.approx(1.5)
         assert rows.t_start.max() == pytest.approx(2.0)
 
+    def test_the_first_frame_of_the_part_is_compared_with_the_frame_before(self, run, tmp_path):
+        video = write_video(tmp_path / "room.avi", blinking_left)
+        rois = {"parent": (0, 0, 160, 240), "child": (160, 0, 160, 240)}
+        rows = run([media(video, offset_s=1.0)], rois, start=1.5, duration=0.5).rows
+        first = rows[(rows.subject_id == "parent") & (rows.t_start == rows.t_start.min())]
+        assert first.value.notna().all() and first.value.iloc[0] > 0
+
     def test_a_region_reaching_outside_is_cut_and_reported(self, run, tmp_path):
         video = write_video(tmp_path / "room.avi", blinking_left)
         result = run([media(video)], {"parent": (-20, 0, 180, 240), "child": (160, 0, 200, 240)})

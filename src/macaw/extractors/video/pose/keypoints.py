@@ -40,11 +40,28 @@ _LOW_CONTINUITY = 0.8
 _LOW_DETECTION_RATE = 0.5
 
 _SPECS = {
-    "detection_rate": ("Frames in which this person was detected, over frames processed.", None),
+    "detection_rate": (
+        "Of the frames in which anyone was found on the camera this person's body is measured from, the share with this person.", None,
+    ),
     "mean_confidence": ("Mean keypoint confidence over detected frames.", None),
     "missing_fraction": ("Standard joints without a usable coordinate.", None),
     "track_continuity": ("Frames seen over frames spanned by the track.", None),
     "n_track_swaps": ("Identity crossovers detected between tracks.", "count"),
+}
+_MISSING = {
+    "detection_rate": (
+        "Empty for a person not named on any camera in the span, and where the camera their body is measured from found nobody "
+        "at all. 0 means that camera found people but never this person."
+    ),
+    "missing_fraction": (
+        "Empty for a person not named on any camera in the span, or never detected on the camera their body is measured from. "
+        "0 means every standard joint had a usable coordinate in every frame they were detected in."
+    ),
+    "n_track_swaps": (
+        "Empty where nobody was detected in the span. 0 means no crossover was found, which is also the count with "
+        "pose.track_repair off and on a camera the setup reads for one person alone."
+    ),
+    "person": "Empty for a person not named on any camera in the span, or never detected on the camera their body is measured from.",
 }
 
 
@@ -88,9 +105,16 @@ def measured_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, s
 
 
 def _frames_between(item, start: float, end: float) -> int:
-    """The frames of one video from start to end on the recording clock, both ends included."""
+    """The frames of one video from start to end on the recording clock, both ends included, up to the video's own end."""
     fps = item.fps or 0.0
-    return max(math.floor((end - item.offset_s) * fps) - max(math.ceil((start - item.offset_s) * fps), 0) + 1, 0)
+    last = math.floor((end - item.offset_s) * fps)
+    if item.span_s is not None:
+        last = min(last, math.floor(item.span_s * fps + 1e-9) - 1)
+    return max(last - max(math.ceil((start - item.offset_s) * fps), 0) + 1, 0)
+
+
+def _videos_with_frames(sources, start: float, end: float) -> int:
+    return sum(1 for item in sources if item.fps and _frames_between(item, start, end) > 0)
 
 
 DETECTIONS_NAME = "detections.parquet"
@@ -100,8 +124,15 @@ SWAPS_NAME = "swaps.json"
 BACKEND_NAME = "backend.json"
 
 _DETECT_SPECS = {
-    "n_videos_read": ("Videos the pose backend was run on.", "count"),
+    "n_videos_read": ("Videos with frames in the span, which the pose backend was run on.", "count"),
     "frames_with_anyone": ("Frames in which the backend found anyone, over frames processed.", None),
+}
+_DETECT_MISSING = {
+    "n_videos_read": "Never empty. 0 means no camera recorded in the span.",
+    "frames_with_anyone": (
+        "Empty for a span in which no camera recorded, as one before every camera started or after every camera stopped. 0 means "
+        "the backend found nobody in any frame of the span."
+    ),
 }
 
 
@@ -119,7 +150,7 @@ class PoseDetectExtractor(Extractor):
     not run the model again."""
 
     name = "pose.detect"
-    version = "0.1.0"
+    version = "0.1.1"
     scale = Scale.FRAME
     group = "pose"
     config_sections = (
@@ -207,12 +238,12 @@ class PoseDetectExtractor(Extractor):
             encoding="utf-8",
         )
         return ExtractorResult(
-            rows=self._summary(recording, len(sources), n_with_anyone, n_processed, (start, end)),
+            rows=self._summary(recording, _videos_with_frames(sources, start, end), n_with_anyone, n_processed, (start, end)),
             specs=[
                 FeatureSpec(
                     name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
                     extractor=self.name, extractor_version=self.version, backend=backend.name,
-                    backend_version=backend.version, validation="none",
+                    backend_version=backend.version, missing=_DETECT_MISSING[name], validation="none",
                 )
                 for name, (description, unit) in _DETECT_SPECS.items()
             ],
@@ -232,7 +263,7 @@ class PoseDetectExtractor(Extractor):
         inside = detections[(times >= start_s) & (times <= end_s)]
         n_with_anyone = int(inside.groupby("video", observed=True)["frame"].nunique().sum()) if not inside.empty else 0
         n_processed = sum(_frames_between(item, start_s, end_s) for item in sources if item.fps)
-        return self._summary(recording, len(sources), n_with_anyone, n_processed, (start_s, end_s))
+        return self._summary(recording, _videos_with_frames(sources, start_s, end_s), n_with_anyone, n_processed, (start_s, end_s))
 
     def _summary(self, recording: Recording, n_videos: int, n_with_anyone: int, n_processed: int, window) -> pd.DataFrame:
         values = {
@@ -618,6 +649,7 @@ class PoseExtractor(Extractor):
                 backend_version=backend["version"],
                 params={"joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence},
                 aggregation="mean",
+                missing=_MISSING.get(name, _MISSING["person"]),
                 comparable_across_backends=False,
             )
             for name, (description, unit) in _SPECS.items()

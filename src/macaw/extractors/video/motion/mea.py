@@ -26,12 +26,18 @@ _DESCRIPTION = (
     "Share of the region's pixels whose grey level changed by more than motion.threshold since "
     "the previous frame (motion energy analysis, frame differencing)."
 )
+_MISSING = (
+    "Empty in frames of cameras other than the one the setup reads this person's body from, and on that camera's first frame "
+    "when the analysed part starts before it, as there is no frame before it to differ from (motion.smoothing_s of three "
+    "frames or more fills it in). 0 means no pixel of the region changed by more than motion.threshold grey levels from one "
+    "frame to the next (over all the frames motion.smoothing_s averages), as when the person holds still or the picture froze."
+)
 
 
 @register_extractor
 class MEAExtractor(Extractor):
     name = "motion.mea"
-    version = "0.2.0"
+    version = "0.2.1"
     scale = Scale.FRAME
     group = "motion"
     config_sections = ("motion", "segment", "video", "setup.cameras")
@@ -83,7 +89,8 @@ class MEAExtractor(Extractor):
             fps = item.fps or 0.0
             if fps <= 0:
                 raise UnreadableMediaError(f"{path}: no frame rate to convert frames to time")
-            first = max(math.floor((start - item.offset_s) * fps), 0)
+            # one frame before the part, so its first frame has one to differ from
+            first = max(math.floor((start - item.offset_s) * fps) - 1, 0)
             stop = math.ceil((end - item.offset_s) * fps) + 1
             if stop <= first:
                 continue
@@ -140,6 +147,7 @@ class MEAExtractor(Extractor):
                     params={"threshold": cfg.threshold, "smoothing_s": cfg.smoothing_s},
                     interpolation="none",
                     aggregation="mean",
+                    missing=_MISSING,
                     # the share depends on how much of the region the person fills
                     comparable_across_subjects=False,
                     validation="synthetic",

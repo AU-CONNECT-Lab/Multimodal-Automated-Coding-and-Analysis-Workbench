@@ -233,6 +233,8 @@ class TestExtractor:
         assert sorted(backend.calls) == [("child.mp4", ["child"]), ("parent.mp4", ["parent"])]
         assert {w.subject_id for w in result.warnings if "cannot be read off it" in w.message} == {"parent", "child"}
         assert "looks_at" not in set(result.rows.feature)
+        # neither can be seen looking at the other, so mutual gaze is unknown rather than 0
+        assert not {"mutual_gaze", "mutual_gaze_share"} & set(result.rows.feature)
 
 
 class TestNameObjects:
