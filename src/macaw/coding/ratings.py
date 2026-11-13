@@ -246,3 +246,151 @@ def _interval(value: float, low: float, high: float) -> str:
     if not np.isfinite(value):
         return "-"
     return f"{value:.2f} [{low:.2f}, {high:.2f}]" if np.isfinite(low) else f"{value:.2f}"
+
+
+RATING_DICTIONARY_COLUMNS = ["column", "meaning", "unit", "missing", "step", "settings"]
+_SEGMENT = (
+    "The segment of the project's segments table the score is for.", None, "Empty for a score of the whole analysed part of the recording.",
+)
+_SCALE = ("The rating scale; its settings give the person it rates and its range.", None, "Never empty.")
+_NOT_A_PERSON = "Empty for a person's score, "
+SCORE_COLUMNS: dict[str, tuple[str, str | None, str]] = {
+    "segment": _SEGMENT,
+    "scale": _SCALE,
+    "person": ("The person the scale rates: one of the project's roles, or all for everyone together.", None, "Never empty."),
+    "rater": (
+        "Who gave the score: a version of the language model under coding.ratings, or a coder named in the project's ratings table.",
+        None, "Never empty.",
+    ),
+    "rater_kind": ("Whether the rater is a version of the model or a person.", None, "Never empty."),
+    "score": (
+        "The score: for a version of the model, the median of its answers that gave a whole score in the scale's range; for a person, "
+        "their score.", "points",
+        "Empty for a model's score where none of its answers gave a whole score in the scale's range; answers.csv holds each answer.",
+    ),
+    "score_sd": (
+        "Standard deviation of the scores in the model's answers.", "points",
+        f"{_NOT_A_PERSON}and for a model's score resting on fewer than two answers that gave a score.",
+    ),
+    "score_min": ("Lowest score among the model's answers.", "points", f"{_NOT_A_PERSON}and where none of the model's answers gave a score."),
+    "score_max": ("Highest score among the model's answers.", "points", f"{_NOT_A_PERSON}and where none of the model's answers gave a score."),
+    "n_answers": (
+        "How many of the model's answers gave a whole score in the scale's range; 1 for a person's score.", "count",
+        "Never empty. 0 means no answer gave a score, so the score is empty.",
+    ),
+    "n_asked": ("How many times the model was asked this scale (coding.llm.n_samples); 1 for a person's score.", "count", "Never empty."),
+}
+ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
+    "segment": _SEGMENT,
+    "scale": _SCALE,
+    "rater": ("The version of the language model under coding.ratings that answered.", None, "Never empty."),
+    "sample": (
+        "Which of the model's answers to this scale it is, from 0; where the server takes a seed, each answer is asked with "
+        "coding.llm.seed plus this number.", None, "Never empty.",
+    ),
+    "score": ("The whole score the answer gave.", "points", "Empty where the answer gave no whole score in the scale's range; problem says why."),
+    "problem": (
+        "Why the answer gave no score: unreadable (no score found in it), not a whole number, outside the range, or cut off (it stopped "
+        "at coding.llm.max_tokens before a score came).", None, "Empty where the answer gave a score.",
+    ),
+    "reason": (
+        "The reason the model gave with its score.", None,
+        "Empty when the version did not ask for reasons (coding.llm.reasons), or the answer gave none.",
+    ),
+    "answer": ("The model's whole answer as the server sent it back.", None, "Empty where the server sent back no text."),
+}
+_KIND_LEVELS = {MODEL: "a version of the language model under coding.ratings", PERSON: "a coder in the project's ratings table"}
+_ENTITY_COLUMNS = ("recording_id", *ENTITY_NAMES)
+
+
+def scores_dictionary(config, table: pd.DataFrame, base: Path) -> list[dict]:
+    """One entry per column of scores.csv; the rater and scale entries hold each rater's settings and each scale's range, with
+    files named from base, the project folder."""
+    entries = [_rating_entry(column, SCORE_COLUMNS) for column in table.columns]
+    for entry in entries:
+        if entry["column"] == "rater_kind":
+            entry["levels"] = _KIND_LEVELS
+        elif entry["column"] not in SCORE_COLUMNS and entry["column"] not in _ENTITY_COLUMNS:
+            entry.update(
+                meaning="A column added to the project's ratings table, carried to every score of the recording.",
+                missing="Empty for a recording no line of the ratings table gives it for.",
+            )
+    return _with_raters_and_scales(config, entries, table, base)
+
+
+def answers_dictionary(config, answers: pd.DataFrame, base: Path) -> list[dict]:
+    return _with_raters_and_scales(config, [_rating_entry(column, ANSWER_COLUMNS_SAID) for column in answers.columns], answers, base)
+
+
+def _rating_entry(column: str, said: dict[str, tuple[str, str | None, str]]) -> dict:
+    from macaw.project.dictionary import FIXED, PACKAGE, fixed_entry
+
+    if column in said:
+        meaning, unit, missing = said[column]
+        return {"column": column, "meaning": meaning, "unit": unit, "missing": missing, "step": PACKAGE}
+    if column in FIXED:
+        return fixed_entry(column)
+    return {"column": column, "step": PACKAGE}
+
+
+def _with_raters_and_scales(config, entries: list[dict], table: pd.DataFrame, base: Path) -> list[dict]:
+    for entry in entries:
+        if entry["column"] == "rater":
+            entry["settings"] = rater_settings(config, table, base)
+        elif entry["column"] == "scale":
+            entry["settings"] = scale_settings(config, table, base)
+    return entries
+
+
+def _shown(path, base: Path) -> str:
+    """A file inside the project folder by its path from there, so the dictionary carries no one's own folders."""
+    try:
+        return Path(path).resolve().relative_to(Path(base).resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def rater_settings(config, table: pd.DataFrame, base: Path) -> dict:
+    """Each rater in the table: a version's settings, from the manifest of each recording it rated, or a coder's table."""
+    from macaw.project.dictionary import varying_settings
+    from macaw.project.manifest import read_manifest
+
+    layout = layout_for(config, create=False)
+    kinds = table.groupby("rater")["rater_kind"].first().to_dict() if "rater_kind" in table.columns and len(table) else {}
+    found: dict[str, dict] = {}
+    for rater in sorted(set(table["rater"].dropna().astype(str))):
+        if kinds.get(rater, MODEL) == PERSON:
+            found[rater] = {"kind": PERSON, "table": _shown(config.project.ratings, base)}
+            continue
+        specs = {}
+        for rid in sorted(set(table.loc[table["rater"] == rater, "recording_id"].astype(str))):
+            path = layout.manifest_fragment_path(rid, f"{RATE_STEP}{rater}")
+            spec = read_manifest(path).specs.get(f"share_unread_answers_{rater}") if path.is_file() else None
+            if spec is not None:
+                backend = " ".join(part for part in (spec.backend, spec.backend_version) if part) or None
+                params = {key: value for key, value in spec.params.items() if key != "rating"}
+                specs[rid] = {"step": f"{spec.extractor} {spec.extractor_version}", "backend": backend, **params}
+        own: dict = {"kind": MODEL}
+        if rater in config.coding.ratings:
+            own["scales_file"] = _shown(config.coding.ratings[rater].scales, base)
+        if specs:
+            settings = varying_settings(specs)
+            own.update(settings if isinstance(settings, dict) else {"by_recording": settings})
+        found[rater] = own
+    return found
+
+
+def scale_settings(config, table: pd.DataFrame, base: Path) -> dict:
+    """Each scale in the table with the person it rates, its range and the scales files that define it."""
+    files: dict[str, list[str]] = {}
+    for version in config.coding.ratings.values():
+        for scale in read_scales(version.scales).scales:
+            files.setdefault(scale.scale, [])
+            if _shown(version.scales, base) not in files[scale.scale]:
+                files[scale.scale].append(_shown(version.scales, base))
+    scales = known_scales(config)
+    return {
+        name: {"person": scales[name].person, "range": [scales[name].low, scales[name].high], "defined_in": files.get(name, [])}
+        for name in sorted(set(table["scale"].dropna().astype(str)))
+        if name in scales
+    }

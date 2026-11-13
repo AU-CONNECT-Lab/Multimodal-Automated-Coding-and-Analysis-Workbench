@@ -34,14 +34,17 @@ def export(
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
 ) -> None:
     """Every score, the model's and people's, one row per recording, segment, scale and rater (scores.csv), and each of the
-    model's answers with its reason and its text (answers.csv)."""
-    from macaw.coding.ratings import model_answers
+    model's answers with its reason and its text (answers.csv), each with a data dictionary beside it."""
+    from macaw.coding.ratings import RATING_DICTIONARY_COLUMNS, answers_dictionary, model_answers, scores_dictionary
+    from macaw.project.dictionary import write_dictionary
 
     resolved, chosen, table = _table(config, recordings)
     folder = _folder(out)
     table.to_csv(folder / "scores.csv", index=False)
     answers = model_answers(resolved, chosen)
     answers.to_csv(folder / "answers.csv", index=False)
+    write_dictionary(scores_dictionary(resolved, table, config.parent), folder / "scores.csv", RATING_DICTIONARY_COLUMNS)
+    write_dictionary(answers_dictionary(resolved, answers, config.parent), folder / "answers.csv", RATING_DICTIONARY_COLUMNS)
     kinds = table.groupby("rater_kind")["rater"].nunique().to_dict()
     typer.echo(
         f"{len(table)} scores from {kinds.get('model', 0)} model version(s) and {kinds.get('person', 0)} coder(s), "

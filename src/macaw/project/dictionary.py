@@ -123,7 +123,7 @@ def _feature_entry(column: str, recordings: list[str], specs: dict[str, dict[str
     entry = {"column": column}
     for key in ("meaning", "unit", "aggregation", "missing", "step", "backend", "comparable_across_people", "comparable_across_backends", "validation"):
         entry[key] = _agreed({rid: values[key] for rid, values in fields.items()})
-    entry["settings"] = _settings({rid: spec.params for rid, spec in by_recording.items()})
+    entry["settings"] = varying_settings({rid: spec.params for rid, spec in by_recording.items()})
     if converted is not None:
         base, power_of_pixels = converted
         entry["unit"] = _agreed({rid: in_unit(spec.unit, units) for rid, spec in by_recording.items()})
@@ -170,7 +170,7 @@ def _agreed(values: dict[str, object]):
     return "; ".join(f"{_said(value)} (for {', '.join(rids)})" for value, rids in _pairs(groups))
 
 
-def _settings(params: dict[str, dict]):
+def varying_settings(params: dict[str, dict]):
     """The settings every recording ran under, or each variant with its recordings."""
     groups = _grouped(params)
     if len(groups) == 1:
@@ -230,19 +230,19 @@ def _with_levels(meaning: str | None, levels: dict | None) -> str | None:
     return f"{meaning} " + "; ".join(f"{level}: {said}" for level, said in levels.items()) + "."
 
 
-def write_dictionary(entries: list[dict], out: Path) -> tuple[Path, Path]:
+def write_dictionary(entries: list[dict], out: Path, columns: list[str] = COLUMNS) -> tuple[Path, Path]:
     """<stem>_dictionary.csv and <stem>_dictionary.json beside the export at out."""
     csv_path, json_path = dictionary_paths(out)
     rows = [
         {
-            **{key: entry.get(key) for key in COLUMNS},
+            **{key: entry.get(key) for key in columns},
             "meaning": _with_levels(entry.get("meaning"), entry.get("levels")),
             "settings": flat_settings(entry.get("settings")),
             **{key: _said(entry[key]) for key in ("comparable_across_people", "comparable_across_backends") if entry.get(key) is not None},
         }
         for entry in entries
     ]
-    pd.DataFrame(rows, columns=COLUMNS).to_csv(csv_path, index=False, encoding="utf-8")
+    pd.DataFrame(rows).reindex(columns=columns).to_csv(csv_path, index=False, encoding="utf-8")
     sidecar = {
         entry["column"]: {_JSON_KEYS.get(key, key): value for key, value in entry.items() if key != "column" and value not in (None, "", [], {})}
         for entry in entries

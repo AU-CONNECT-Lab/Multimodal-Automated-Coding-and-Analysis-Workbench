@@ -184,3 +184,39 @@ class TestTables:
         assert found.loc[0, "n"] == 4 and found.loc[0, "n_clusters"] == 2 and found.loc[0, "exact"] == 0.75
         result = runner.invoke(app, ["ratings", "agreement", "-c", str(path), "--raters", "anna,carl"])
         assert result.exit_code != 0 and "no scores by carl" in str(result.exception or result.output)
+
+    def test_the_export_says_what_each_column_holds_and_how_each_rater_rated(self, tmp_path):
+        import json
+
+        from macaw.project.manifest import FeatureManifest, FeatureSpec, write_manifest
+        from macaw.store.schema import Scale
+
+        path = project(tmp_path, PEOPLE)
+        config = resolve_config(path)
+        for rid, notes in (("F1_plan", "They plan."), ("F1_play", "They play."), ("F2_plan", "They plan.")):
+            model_scores(config, rid, {"warmth": 4})
+            fragment = FeatureManifest()
+            fragment.add(FeatureSpec(
+                name="share_unread_answers_k1", description="", unit="proportion", scale=Scale.RECORDING, group="coding",
+                extractor="coding.rate.k1", extractor_version="0.1.0", backend="ollama", backend_version="qwen3:14b",
+                params={"rating": "k1", "model": "qwen3:14b", "n_samples": 5, "notes": notes},
+            ))
+            write_manifest(fragment, layout_for(config).manifest_fragment_path(rid, "coding.rate.k1"))
+        result = CliRunner().invoke(app, ["ratings", "export", str(tmp_path / "out"), "-c", str(path)])
+        assert result.exit_code == 0, result.output
+        scores = pd.read_csv(tmp_path / "out" / "scores_dictionary.csv", keep_default_na=False).set_index("column")
+        assert list(scores.index) == list(pd.read_csv(tmp_path / "out" / "scores.csv").columns)
+        assert scores.at["score", "unit"] == "points" and scores.at["score_sd", "missing"].startswith("Empty for a person's score")
+        assert scores.at["family", "meaning"].startswith("A column added to the project's ratings table")
+        assert scores.at["scale", "settings"] == "warmth.defined_in=[scales.yaml]; warmth.person=parent; warmth.range=[1, 5]"
+        sidecar = json.loads((tmp_path / "out" / "scores_dictionary.json").read_text(encoding="utf-8"))
+        raters = sidecar["rater"]["settings"]
+        assert raters["anna"] == {"kind": "person", "table": "ratings.csv"}
+        model = raters["k1"]
+        assert model["kind"] == "model" and model["scales_file"] == "scales.yaml"
+        assert [variant["recordings"] for variant in model["by_recording"]] == [["F1_plan", "F2_plan"], ["F1_play"]]
+        assert model["by_recording"][0]["settings"]["step"] == "coding.rate.k1 0.1.0" and "rating" not in model["by_recording"][0]["settings"]
+        assert set(sidecar["rater_kind"]["Levels"]) == {"model", "person"}
+        answers = pd.read_csv(tmp_path / "out" / "answers_dictionary.csv", keep_default_na=False).set_index("column")
+        assert list(answers.index) == list(pd.read_csv(tmp_path / "out" / "answers.csv").columns)
+        assert answers.at["problem", "missing"] == "Empty where the answer gave a score."
