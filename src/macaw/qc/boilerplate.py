@@ -589,12 +589,19 @@ def _shown(show, speaker: str = "the speaker letter") -> str:
     return shown
 
 
+_ENTITY_WORDS = {"group_id": "group", "session_id": "session", "task": "task", "run": "run"}
+
+
 def _prompt_extras(params: dict) -> str:
     """What else the prompt held: the researchers' note, examples people coded, reasons asked for, reasoning switched."""
     text = ""
     if params.get("notes"):
         note = params["notes"]
         text += f" The prompt also held this note from the researchers: \"{note}\"" + ("" if note[-1] in ".!?" else ".")
+    for entity, values in (params.get("notes_by") or {}).items():
+        lead = " After it came" if text else " The prompt also held"
+        listed = "; ".join(f"\"{said}\" for {value}" if said else f"none for {value}" for value, said in values.items())
+        text += f"{lead} a note from the researchers for the recording's {_ENTITY_WORDS.get(entity, entity)}: {listed}."
     if params.get("n_examples"):
         text += (
             f" It showed {_count(params['n_examples'])} units people had coded in other recordings as examples, "
@@ -698,11 +705,18 @@ def _judge_version(config, params: dict, spec) -> str:
     own = config.coding.judges.get(params["judge"])
     changed = {
         "notes": params.get("notes") != base.notes.strip(),
+        "notes_by": own is not None and own.notes_by is not None,
         "n_examples": own is not None and own.examples is not None,
         "reasons": params.get("reasons") != base.reasons,
         "think": params.get("think") != base.think,
     }
     extras = _prompt_extras({key: value for key, value in params.items() if changed.get(key)})
+    # the version is said by what it changes, so a note it leaves out is said too
+    left_out = ["the researchers' note"] if changed["notes"] and not params.get("notes") else []
+    if changed["notes_by"] and not params.get("notes_by") and base.notes_by:
+        left_out.append("the note for the recording's " + " and ".join(_ENTITY_WORDS.get(entity, entity) for entity in base.notes_by))
+    if left_out:
+        extras += f" Its prompt left out {' and '.join(left_out)}."
     return text + (f" ({'; '.join(others)})." if others else ".") + extras
 
 

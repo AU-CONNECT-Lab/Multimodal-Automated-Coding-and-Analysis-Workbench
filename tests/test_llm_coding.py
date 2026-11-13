@@ -513,6 +513,28 @@ class TestVersions:
         assert not any(warning.check == "llm_review" for warning in result.warnings)
         assert version.name == "coding.judge.words" and version.wanted_by_default(config)
 
+    def test_a_note_by_task_follows_the_project_s_and_a_version_can_leave_it_out(self, monkeypatch, tmp_path, stub):
+        from macaw.qc.boilerplate import _judge_version
+
+        path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        llm = LLMSection(
+            provider="vllm", model="tiny", base_url=f"{stub.url}/v1", n_samples=1, notes="A is the mother.",
+            notes_by={"task": {"alpha": "They sort cards.", "beta": ""}},
+        )
+        coding = CodingSection(codebook=path, layers=["A", "B"], llm=llm, judges={"plain": {"notes_by": {}}})
+        config = SimpleNamespace(coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
+        module.register_judge_versions(config)
+        recording = SimpleNamespace(**{**vars(RECORDING), "entities": lambda: {"group_id": "1", "session_id": None, "task": "alpha", "run": None}})
+        result = JudgementExtractor(config).run(recording, tmp_path)
+        assert "Notes from the researchers: A is the mother.\nThey sort cards.\n" in text_of(stub.requests[0]["body"]["messages"][0]["content"])
+        assert result.specs[0].params["notes"] == "A is the mother." and result.specs[0].params["notes_by"] == {"task": {"alpha": "They sort cards."}}
+        plain = module._VERSIONS["plain"](config).run(recording, tmp_path)
+        assert "They sort cards." not in text_of(stub.requests[-1]["body"]["messages"][0]["content"])
+        said = _judge_version(config, plain.specs[0].params, plain.specs[0])
+        assert said.endswith("Its prompt left out the note for the recording's task.")
+        assert "notes_by" not in plain.specs[0].params
+
     def test_the_run_plan_warns_about_a_version_that_sends_the_transcript_to_a_cloud_service(self, tmp_path, capsys):
         from macaw.cli.run import _echo_reporting
 
@@ -522,7 +544,7 @@ class TestVersions:
             "judges": {"cloud": {"provider": "openai", "model": "gpt-x", "n_samples": 1}},
         })
         resolved = resolve_config(config)
-        _echo_reporting(resolved, build_dag(resolved))
+        _echo_reporting(resolved, build_dag(resolved), [])
         shown = capsys.readouterr().out
         assert "coding.judge sends 5 x" in shown and "coding.judge.cloud sends 1 x" in shown
         assert "sent to" in shown and "OpenAI" in shown

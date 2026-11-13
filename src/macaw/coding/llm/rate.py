@@ -12,6 +12,7 @@ import pandas as pd
 
 from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
 from macaw.coding.llm.judge import prosody_rows_file, voice_figures
+from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import VOICE, build_rating_prompt
 from macaw.coding.scales import ScaleSet, read_scales, validate_scales
@@ -107,10 +108,21 @@ class RatingExtractor(Extractor):
             inputs.append(voice)
         return inputs
 
+    @classmethod
+    def notes_settings(cls, config: MacawConfig) -> tuple[str, LLMSection]:
+        """Where its notes_by comes from, and the model settings that hold it."""
+        return notes_by_key(config, "ratings", cls.rating), cls.settings(config)[1]
+
+    def prompt_note(self, recording: Recording) -> str:
+        where, cfg = self.notes_settings(self.config)
+        return given_note(cfg, recording.entities(), where)
+
     def extra_key(self, recording: Recording) -> str:
+        """The note this recording's prompts hold, and where its segments lie."""
         own, _ = self.settings(self.config)
         named = {segment.name: segment for segment in segments_of(self.config, recording.recording_id)}
-        return canonical([[name, named[name].start_s, named[name].end_s] for name in own.segments if name in named])
+        segments = [[name, named[name].start_s, named[name].end_s] for name in own.segments if name in named]
+        return canonical({"note": self.prompt_note(recording), "segments": segments})
 
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
@@ -142,6 +154,7 @@ class RatingExtractor(Extractor):
                 f"run text.asr again, then import the corrected file again"
             )
         prompts = []
+        told = self.prompt_note(recording)
         if parts:
             lines = rating_lines(read_transcript(files[0]))
             words = read_words(files[1]) if files[1].is_file() else pd.DataFrame()
@@ -155,7 +168,7 @@ class RatingExtractor(Extractor):
                     continue
                 for scale in scales.scales:
                     system, user = build_rating_prompt(
-                        scale, shown, people=people, minutes=(end - start) / 60.0, show=cfg.show, notes=cfg.notes, reasons=cfg.reasons,
+                        scale, shown, people=people, minutes=(end - start) / 60.0, show=cfg.show, notes=told, reasons=cfg.reasons,
                     )
                     prompts.append((segment, start, end, scale, system, user))
         answers = ask(prompts, backend, cfg)
@@ -168,7 +181,7 @@ class RatingExtractor(Extractor):
         ratings.to_parquet(paths[RATINGS_NAME], index=False)
         answers[ANSWER_COLUMNS].to_parquet(paths[ANSWERS_NAME], index=False)
         return ExtractorResult(
-            rows=self._rows(recording, answers, parts), specs=self._specs(scales), artifacts=paths, warnings=warnings,
+            rows=self._rows(recording, answers, parts), specs=self._specs(scales, recording), artifacts=paths, warnings=warnings,
         )
 
     def _parts(self, recording: Recording, note) -> list[tuple[str, float, float]]:
@@ -204,13 +217,13 @@ class RatingExtractor(Extractor):
             scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name, entities=recording.entities(),
         )
 
-    def _specs(self, scales: ScaleSet) -> list[FeatureSpec]:
+    def _specs(self, scales: ScaleSet, recording: Recording) -> list[FeatureSpec]:
         own, cfg = self.settings(self.config)
         params = {
             "rating": self.rating, "scales": scales.name, "n_scales": len(scales.scales), "names_only": scales.names_only(),
             "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples, "temperature": cfg.temperature,
-            "seed": cfg.seed, "show": list(cfg.show), "notes": cfg.notes.strip(), "reasons": cfg.reasons, "think": cfg.think,
-            "transcript": own.transcript, "segments": list(own.segments),
+            "seed": cfg.seed, "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording),
+            "reasons": cfg.reasons, "think": cfg.think, "transcript": own.transcript, "segments": list(own.segments),
         }
         return [
             FeatureSpec(
@@ -384,15 +397,17 @@ _VERSIONS: dict[str, type[RatingExtractor]] = {}
 
 
 def register_rating_versions(config: MacawConfig) -> None:
-    """Each version under coding.ratings becomes the step coding.rate.<name>; a class per name, made once."""
-    sections = tuple(f"coding.llm.{key}" for key in ("provider", "model", "temperature", "max_tokens", "n_samples", "seed", "show", "notes", "reasons", "think"))
+    """Each version under coding.ratings becomes the step coding.rate.<name>; a class per name, made once. The note is
+    in extra_key, as each recording's own, so a changed note for one task rates only that task again."""
+    sections = tuple(f"coding.llm.{key}" for key in ("provider", "model", "temperature", "max_tokens", "n_samples", "seed", "show", "reasons", "think"))
     for name in config.coding.ratings:
         if name not in _VERSIONS:
+            own = tuple(f"coding.ratings.{name}.{key}" for key in RatingVersion.model_fields if key not in NOTE_KEYS)
             _VERSIONS[name] = register_extractor(
                 type(
                     f"RatingVersion_{name}",
                     (RatingExtractor,),
-                    {"name": f"{RATE_STEP}{name}", "rating": name, "config_sections": (*sections, f"coding.ratings.{name}"), "__module__": __name__},
+                    {"name": f"{RATE_STEP}{name}", "rating": name, "config_sections": (*sections, *own), "__module__": __name__},
                 )
             )
 

@@ -4,6 +4,7 @@ column name."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +24,8 @@ PACKAGE = f"pymacaw {__version__}"
 NOT_STATED = "The step that made it does not say."
 NEVER = "Never empty."
 NO_SPEC = "No step described this measure."
+# a language model step's note per entity value, kept per recording for the value it took
+NOTES_BY = "notes_by"
 _WHO = ("person", "pair", "recording")
 _ROWS = (Scale.FRAME.value, Scale.EVENT.value, Scale.WINDOW.value, Scale.RECORDING.value, "segment")
 LEVELS = {
@@ -172,10 +175,35 @@ def _agreed(values: dict[str, object]):
 
 def varying_settings(params: dict[str, dict]):
     """The settings every recording ran under, or each variant with its recordings."""
-    groups = _grouped(params)
+    groups = _grouped(merged_by_entity(params))
     if len(groups) == 1:
         return next(iter(groups.values()))[0] or None
     return [{"recordings": rids, "settings": value} for value, rids in _pairs(groups)]
+
+
+def merged_by_entity(params: dict[str, dict]) -> dict[str, dict]:
+    """Each recording's notes_by holds the notes of its own entity values; where no value took two different notes, every
+    recording shows the whole table, so a note per task reads as one setting rather than one per recording."""
+    whole: dict[str, dict[str, str]] = {}
+    for own in params.values():
+        for entity, values in (own.get(NOTES_BY) or {}).items():
+            for value, text in values.items():
+                if whole.setdefault(entity, {}).setdefault(value, text) != text:
+                    return params
+    if not whole:
+        return params
+    ordered = {entity: dict(sorted(values.items())) for entity, values in whole.items()}
+    return {rid: {**own, NOTES_BY: ordered} if NOTES_BY in own else own for rid, own in params.items()}
+
+
+def merged_notes(specs: dict[str, dict[str, FeatureSpec]]) -> dict[str, dict[str, FeatureSpec]]:
+    """Each recording's specs with merged_by_entity applied to every feature's settings."""
+    out = {rid: dict(own) for rid, own in specs.items()}
+    for name in {name for own in specs.values() for name in own}:
+        held = {rid: own[name].params for rid, own in specs.items() if name in own}
+        for rid, params in merged_by_entity(held).items():
+            out[rid][name] = replace(specs[rid][name], params=params)
+    return out
 
 
 def _grouped(values: dict[str, object]) -> dict[str, tuple[object, list[str]]]:

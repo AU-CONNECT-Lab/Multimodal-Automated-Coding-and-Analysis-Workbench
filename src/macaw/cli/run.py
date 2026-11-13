@@ -67,7 +67,7 @@ def run(
         raise MacawError(f"No recordings found under {resolved.project.raw_dir}")
     wanted = list(extractor or ())
     dag = build_dag(resolved, wanted or None)
-    _echo_reporting(resolved, dag)
+    _echo_reporting(resolved, dag, recording_ids)
 
     if dry_run:
         finished = runner.completed_on_disk(resolved, dag, recording_ids)
@@ -98,8 +98,16 @@ def run(
         raise typer.Exit(code=1)
 
 
-def _echo_reporting(config, dag) -> None:
+def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
+    from macaw.coding.llm.notes import notes_plan
     from macaw.extractors.video.face.backends import BACKEND_GROUP as FACE_BACKENDS
+    from macaw.project.recording import recording_entities
+
+    def said_by_entity(name: str) -> str | None:
+        where, llm = get_extractor(name).notes_settings(config)
+        if not llm.notes_by:
+            return None
+        return notes_plan(name, where, llm, {rid: recording_entities(rid, config) for rid in recording_ids})
 
     notices = []
     if "pose.detect" in dag.nodes and config.pose.backend is not None:
@@ -116,6 +124,7 @@ def _echo_reporting(config, dag) -> None:
             f"{name} sends {llm.n_samples} x ceil(units / {units_per_request(llm)}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
+        notices.append(said_by_entity(name))
     for name in sorted(node for node in dag.nodes if node.startswith("coding.rate.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
         from macaw.coding.llm.rate import rating_notice, scales_asked
@@ -126,6 +135,7 @@ def _echo_reporting(config, dag) -> None:
         scales = scales_asked(config, get_extractor(name).rating)
         where = f"each of {len(own.segments)} segments of each recording" if own.segments else "each recording"
         notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where} to {llm.provider}")
+        notices.append(said_by_entity(name))
     look = config.qc.look
     if "pose.keypoints" in dag.nodes and config.pose.suggest_names and look.model and look.people:
         from macaw.qc.look import notice

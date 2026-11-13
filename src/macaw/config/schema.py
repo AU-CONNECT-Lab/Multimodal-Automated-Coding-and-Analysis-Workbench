@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 
 class _Section(BaseModel):
@@ -470,6 +470,25 @@ class TurnsSection(_Section):
 
 
 ShownToModel = Literal["timing", "pitch", "loudness", "rate", "frames"]
+# the entities of recording_pattern a note to the model can be given by
+NOTE_ENTITIES = ("group_id", "session_id", "task", "run")
+
+
+def _text_keys(value):
+    # YAML reads a value such as 2 as a number; a recording's entity is text
+    if isinstance(value, dict):
+        return {entity: {str(key): text for key, text in values.items()} if isinstance(values, dict) else values for entity, values in value.items()}
+    return value
+
+
+def _known_entities(value: dict) -> dict:
+    unknown = sorted(set(value) - set(NOTE_ENTITIES))
+    if unknown:
+        raise ValueError(f"notes_by is keyed by {', '.join(NOTE_ENTITIES)}, not {', '.join(unknown)}")
+    return value
+
+
+NotesBy = Annotated[dict[str, dict[str, str]], BeforeValidator(_text_keys), AfterValidator(_known_entities)]
 
 
 class LLMSection(_Section):
@@ -489,6 +508,8 @@ class LLMSection(_Section):
     coded_roles: list[str] = Field(default_factory=list)
     show: list[ShownToModel] = Field(default_factory=lambda: ["timing"])
     notes: str = ""
+    # a note per value of a recording entity, told after notes: {task: {a_task: "..."}}
+    notes_by: NotesBy = Field(default_factory=dict)
     examples: Path | None = None
     reasons: bool = False
     think: bool | None = None
@@ -518,6 +539,7 @@ class JudgeVersion(_Section):
     coded_roles: list[str] | None = None
     show: list[ShownToModel] | None = None
     notes: str | None = None
+    notes_by: NotesBy | None = None
     examples: Path | None = None
     reasons: bool | None = None
     think: bool | None = None
@@ -540,6 +562,7 @@ class RatingVersion(_Section):
     seed: int | None = None
     show: list[ShownToModel] | None = None
     notes: str | None = None
+    notes_by: NotesBy | None = None
     reasons: bool | None = None
     think: bool | None = None
 
@@ -552,7 +575,7 @@ class RatingVersion(_Section):
 
 
 # what a rating takes from coding.llm, unless the version says otherwise
-RATING_LLM_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens", "n_samples", "seed", "show", "notes", "reasons", "think")
+RATING_LLM_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens", "n_samples", "seed", "show", "notes", "notes_by", "reasons", "think")
 
 
 class ImportedTier(_Section):
@@ -721,6 +744,21 @@ class MacawConfig(_Section):
         board = self.pose3d.board.in_mm(self.project.units)
         if board.marker_mm >= board.square_mm:
             raise ValueError("pose3d.board.marker must be smaller than its square")
+        return self
+
+    @model_validator(mode="after")
+    def _notes_by_pattern(self) -> "MacawConfig":
+        named = set(re.findall(r"\{([a-z_]+)\}", self.project.recording_pattern))
+        given = {"coding.llm": self.coding.llm.notes_by}
+        given.update({f"coding.judges.{name}": version.notes_by for name, version in self.coding.judges.items()})
+        given.update({f"coding.ratings.{name}": version.notes_by for name, version in self.coding.ratings.items()})
+        for where, notes_by in given.items():
+            absent = sorted(set(notes_by or {}) - named)
+            if absent:
+                raise ValueError(
+                    f"{where}.notes_by gives notes by {', '.join(absent)}, which project.recording_pattern "
+                    f"({self.project.recording_pattern}) does not have"
+                )
         return self
 
 

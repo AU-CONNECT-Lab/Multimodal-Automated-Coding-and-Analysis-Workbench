@@ -26,7 +26,7 @@ from macaw.extractors import get_extractor
 from macaw.extractors.base import Phase, QCWarning
 from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
-from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input
+from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input, recording_entities
 from macaw.project.segments import SUMMARY_STEP
 from macaw.project.segments import check_recordings as check_segment_recordings
 from macaw.project_scripts import script_file_of
@@ -211,7 +211,8 @@ def check_recording_steps(config: MacawConfig, dag, recording_ids: list[str], ex
     """Steps are planned once for the project, so a recording's own file may not need a step or an input step the plan lacks."""
     planned = {name: dag.dependencies(name) for name in dag.nodes}
     folder = Path(config.project.recording_config_dir)
-    for recording_id, own in recording_configs(config, recording_ids).items():
+    configs = recording_configs(config, recording_ids)
+    for recording_id, own in configs.items():
         if own is config:
             continue
         theirs = build_dag(own, extractors or None)
@@ -221,6 +222,25 @@ def check_recording_steps(config: MacawConfig, dag, recording_ids: list[str], ex
                 f"{folder / f'{recording_id}.yaml'} needs {', '.join(missing)} to run differently from the project's plan, "
                 "which is made once for every recording; put that setting in project.yaml"
             )
+    check_recording_notes(dag, configs)
+
+
+def check_recording_notes(dag, configs: dict[str, MacawConfig]) -> None:
+    """Before anything runs: a note by entity names every value the recordings take, so no prompt lacks one by mistake."""
+    from macaw.coding.llm.notes import absent_message, taken_notes
+
+    steps = [cls for cls in (get_extractor(name) for name in sorted(dag.nodes)) if hasattr(cls, "notes_settings")]
+    absent: dict[str, dict[tuple, list[str]]] = {}
+    for recording_id, own in configs.items():
+        for cls in steps:
+            where, cfg = cls.notes_settings(own)
+            if not cfg.notes_by:
+                continue
+            entities = recording_entities(recording_id, own)
+            for pair in taken_notes(cfg, entities)[1]:
+                absent.setdefault(where, {}).setdefault(pair, []).append(recording_id)
+    if absent:
+        raise ConfigError("; ".join(absent_message(where, pairs) for where, pairs in absent.items()))
 
 
 def task_states(config: MacawConfig, dag, recording_ids: list[str]) -> dict[str, str]:

@@ -15,9 +15,11 @@ import pandas as pd
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
 from macaw.coding.examples import read_examples
 from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
+from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, FRAME_AT, FRAMES, VOICE, build_annotation_prompt
-from macaw.config.schema import LLMSection, MacawConfig
+from macaw.config.hashing import canonical
+from macaw.config.schema import JudgeVersion, LLMSection, MacawConfig
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
@@ -72,11 +74,12 @@ class JudgementExtractor(Extractor):
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
-    # timeout_s) is the machine's business, so moving to a cluster does not code everything again
+    # timeout_s) is the machine's business, so moving to a cluster does not code everything again.
+    # The note is in extra_key, as each recording's own, so a changed note for one task recodes only that task
     config_sections = (
         "coding.codebook", "turns", *(f"coding.llm.{key}" for key in (
             "provider", "model", "temperature", "max_tokens", "n_samples", "seed", "allow_abstain",
-            "review_threshold", "batch_size", "context_units", "coded_roles", "show", "notes", "examples",
+            "review_threshold", "batch_size", "context_units", "coded_roles", "show", "examples",
             "reasons", "think",
         )),
     )
@@ -132,11 +135,22 @@ class JudgementExtractor(Extractor):
             inputs += [offsets] if offsets.is_file() else []
         return inputs
 
+    @classmethod
+    def notes_settings(cls, config: MacawConfig) -> tuple[str, LLMSection]:
+        """Where its notes_by comes from, and the model settings that hold it."""
+        return notes_by_key(config, "judges", cls.judge), cls.settings(config)[1]
+
+    def prompt_note(self, recording: Recording) -> str:
+        where, cfg = self.notes_settings(self.config)
+        return given_note(cfg, recording.entities(), where)
+
     def extra_key(self, recording: Recording) -> str:
-        """Shown frames come from each speaker's body camera, so the setup's choice of it decides them."""
-        if FRAMES not in set(self.settings(self.config)[1].show):
-            return ""
-        return ",".join(f"{person}={item.name}" for person, item in sorted(recording.views("body").items()))
+        """The note this recording's prompts hold; shown frames come from each speaker's body camera, so the setup's choice
+        of it decides them."""
+        views = ""
+        if FRAMES in set(self.settings(self.config)[1].show):
+            views = ",".join(f"{person}={item.name}" for person, item in sorted(recording.views("body").items()))
+        return canonical({"note": self.prompt_note(recording), "views": views})
 
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
@@ -154,7 +168,7 @@ class JudgementExtractor(Extractor):
         # an example from the conversation being coded would hand the model the answer
         own = examples["recording_id"] == recording.recording_id
         frames = unit_frames(self.config, recording, units, workspace / "frames") if FRAMES in cfg.show else None
-        samples = sample_labels(lines, codebook, backend, cfg, examples=examples[~own], frames=frames)
+        samples = sample_labels(lines, codebook, backend, cfg, examples=examples[~own], frames=frames, notes=self.prompt_note(recording))
         judged = aggregate_samples(units, samples, cfg)
 
         path = workspace / SAMPLES_NAME
@@ -162,7 +176,7 @@ class JudgementExtractor(Extractor):
         annotator = self.judge or f"llm:{backend.name}/{cfg.model}"
         return ExtractorResult(
             rows=self._rows(recording, judged),
-            specs=self._specs(codebook, examples),
+            specs=self._specs(codebook, examples, recording),
             annotations=self._annotations(recording, judged, codebook.name, annotator),
             artifacts={SAMPLES_NAME: path},
             warnings=self._warnings(
@@ -291,15 +305,15 @@ class JudgementExtractor(Extractor):
             note("llm_review", "info", f"{review} of {len(judged)} units wait for a person: macaw review --export <file>.csv.")
         return warnings
 
-    def _specs(self, codebook: Codebook, examples: pd.DataFrame) -> list[FeatureSpec]:
+    def _specs(self, codebook: Codebook, examples: pd.DataFrame, recording: Recording) -> list[FeatureSpec]:
         _, cfg = self.settings(self.config)
         params = {
             "codebook": codebook.name, "codebook_unit": codebook.unit, "names_only": codebook.names_only(),
             "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples,
             "temperature": cfg.temperature, "seed": cfg.seed, "review_threshold": cfg.review_threshold,
             "batch_size": units_per_request(cfg), "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
-            "show": list(cfg.show), "notes": cfg.notes.strip(), "n_examples": len(examples), "reasons": cfg.reasons,
-            "think": cfg.think, "judge": self.judge,
+            "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording), "n_examples": len(examples),
+            "reasons": cfg.reasons, "think": cfg.think, "judge": self.judge,
         }
         return [
             FeatureSpec(
@@ -391,7 +405,10 @@ def register_judge_versions(config: MacawConfig) -> None:
                     {
                         "name": f"{VERSION_STEP}{name}",
                         "judge": name,
-                        "config_sections": (*JudgementExtractor.config_sections, f"coding.judges.{name}"),
+                        "config_sections": (
+                            *JudgementExtractor.config_sections,
+                            *(f"coding.judges.{name}.{key}" for key in JudgeVersion.model_fields if key not in NOTE_KEYS),
+                        ),
                         "__module__": __name__,
                     },
                 )
@@ -487,10 +504,12 @@ def video_length(path: Path) -> float:
 
 def sample_labels(
     lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection, *,
-    examples: pd.DataFrame | None = None, frames: dict[str, list[bytes]] | None = None,
+    examples: pd.DataFrame | None = None, frames: dict[str, list[bytes]] | None = None, notes: str | None = None,
 ) -> pd.DataFrame:
     """One row per unit and sample: unit_id, sample, label (a code or abstain), reason. A batch is
-    units_per_request units with the uncoded lines between them in place."""
+    units_per_request units with the uncoded lines between them in place; notes is the recording's note, coding.llm.notes
+    when not given."""
+    notes = cfg.notes if notes is None else notes
     coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
     size = units_per_request(cfg)
     answers = []
@@ -502,7 +521,7 @@ def sample_labels(
             batch = lines.iloc[first : last + 1]
             context = lines.iloc[max(0, first - cfg.context_units) : first]
             system, user = build_annotation_prompt(
-                codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show, notes=cfg.notes,
+                codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show, notes=notes,
                 examples=examples, reasons=cfg.reasons,
             )
             ids = batch["unit_id"].dropna().tolist()

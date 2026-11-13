@@ -125,9 +125,9 @@ def project(tmp_path, ratings, *, llm=None, roles=("parent", "child"), segments=
     return path
 
 
-def transcript_frame(talk):
+def transcript_frame(talk, rid="r1"):
     frame = pd.DataFrame(talk, columns=["subject_id", "t_start", "t_end", "text"])
-    frame["recording_id"] = "r1"
+    frame["recording_id"] = rid
     frame["utterance_index"] = frame.groupby("subject_id").cumcount()
     frame["n_words"] = frame["text"].str.split().str.len()
     for column in ("confidence", "avg_logprob", "no_speech_prob"):
@@ -136,34 +136,34 @@ def transcript_frame(talk):
     return frame[list(TRANSCRIPT_SCHEMA)]
 
 
-def words_frame(talk):
+def words_frame(talk, rid="r1"):
     rows = []
-    frame = transcript_frame(talk)
+    frame = transcript_frame(talk, rid)
     for row in frame.itertuples(index=False):
         tokens = row.text.split()
         step = (row.t_end - row.t_start) / len(tokens)
         rows += [
-            ("r1", row.subject_id, row.utterance_index, row.t_start + i * step, row.t_start + (i + 1) * step, token, 1.0)
+            (rid, row.subject_id, row.utterance_index, row.t_start + i * step, row.t_start + (i + 1) * step, token, 1.0)
             for i, token in enumerate(tokens)
         ]
     return pd.DataFrame(rows, columns=list(WORD_SCHEMA))
 
 
-def transcribed(config_path, talk=TALK, *, where=None):
-    """text.asr's output for r1, or the same tables at where."""
+def transcribed(config_path, talk=TALK, *, where=None, rid="r1"):
+    """text.asr's output for rid, or the same tables at where."""
     config = resolve_config(config_path)
-    folder = layout_for(config).artifacts_dir("r1", ASRExtractor.name)
+    folder = layout_for(config).artifacts_dir(rid, ASRExtractor.name)
     folder.mkdir(parents=True, exist_ok=True)
     transcript, words = where or (folder / "transcript.parquet", folder / "words.parquet")
-    _io.write_file(transcript_frame(talk), transcript, TRANSCRIPT_SCHEMA, "transcript")
-    _io.write_file(words_frame(talk), words, WORD_SCHEMA, "words")
+    _io.write_file(transcript_frame(talk, rid), transcript, TRANSCRIPT_SCHEMA, "transcript")
+    _io.write_file(words_frame(talk, rid), words, WORD_SCHEMA, "words")
     return config
 
 
-def rate(monkeypatch, config, name, window=(0.0, 60.0)):
+def rate(monkeypatch, config, name, window=(0.0, 60.0), rid="r1"):
     monkeypatch.setattr(module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=window[0], duration_s=window[1] - window[0]))
     step = module._VERSIONS[name](config)
-    return step.run(build_recording("r1", config), layout_for(config).recording_dir("r1"))
+    return step.run(build_recording(rid, config), layout_for(config).recording_dir(rid))
 
 
 class TestScales:
@@ -418,7 +418,7 @@ class TestVersions:
 
         path = project(tmp_path, {"k1": {"scales": "scales.yaml"}, "cloud": {"scales": "names.yaml", "provider": "openai", "model": "gpt-x", "segments": ["a", "b"]}})
         resolved = resolve_config(path)
-        _echo_reporting(resolved, build_dag(resolved))
+        _echo_reporting(resolved, build_dag(resolved), [])
         shown = capsys.readouterr().out
         assert "coding.rate.k1 sends 5 x 3 scales requests for each recording" in shown
         assert "coding.rate.cloud sends 5 x 3 scales requests for each of 2 segments of each recording" in shown
@@ -432,10 +432,159 @@ class TestVersions:
         resolved = resolve_config(path)
         step = module._VERSIONS["k0"](resolved)
         manifest = FeatureManifest()
-        manifest.extend(step._specs(step.scale_set()))
+        manifest.extend(step._specs(step.scale_set(), build_recording("r1", resolved)))
         text = " ".join(describe(manifest, resolved)["Ratings"])
         assert "In a rating named k0, the language model tiny (ollama) rated the segments opening of each recording one by one" in text
         assert "given only each scale's name, the person it rates and its range" in text
         assert "the role of the person speaking, the words, its start and length" in text
         assert "asked five times at temperature 0.3; the score is the median" in text
         assert "before a person corrected it" in text and "what each score rested on, after the score" in text
+
+
+TASKS = ("f1_task_a", "f1_task_b", "f2_task_a")
+NOTES = {"notes": "A is the parent.", "notes_by": {"task": {"task_a": "They build a tower.", "task_b": ""}}}
+
+
+def task_project(tmp_path, ratings, *, llm=None):
+    """Three recordings named by family and task: two of task_a, one of task_b."""
+    for rid in TASKS:
+        (tmp_path / "raw" / rid.replace("_task", "/task", 1)).mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "project.yaml"
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["project"]["recording_pattern"] = "{group_id}/{task}"
+    data["coding"] = {"llm": llm or {"model": "tiny"}, "ratings": ratings}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    write_yaml(tmp_path / "scales.yaml", SCALES)
+    return path
+
+
+def edit(path, change):
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    change(data)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+class TestNotesBy:
+    def test_the_prompt_holds_the_project_s_note_then_the_one_for_the_recording_s_task(self, monkeypatch, tmp_path, server):
+        llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 1, **NOTES}
+        path = task_project(tmp_path, {"k1": {"scales": "scales.yaml"}}, llm=llm)
+        for rid in ("f1_task_a", "f1_task_b"):
+            rate(monkeypatch, transcribed(path, rid=rid), "k1", rid=rid)
+        systems = [request["messages"][0]["content"] for request in server.requests]
+        assert "Notes from the researchers: A is the parent.\nThey build a tower.\nAnswer with" in systems[0]
+        assert "Notes from the researchers: A is the parent.\nAnswer with" in systems[-1]
+
+    def test_a_changed_note_for_one_task_asks_again_only_for_that_task(self, tmp_path):
+        from macaw.execution.runner import task_key
+
+        path = task_project(tmp_path, {"k1": {"scales": "scales.yaml"}}, llm={"model": "tiny", **NOTES})
+        for rid in TASKS:
+            config = transcribed(path, rid=rid)
+            prep = layout_for(config).artifacts_dir(rid, "prep.media")
+            prep.mkdir(parents=True)
+            (prep / "prep.json").write_text("{}", encoding="utf-8")
+
+        def keys():
+            config = resolve_config(path)
+            return {rid: task_key(config, "coding.rate.k1", build_recording(rid, config)) for rid in TASKS}
+
+        before = keys()
+        edit(path, lambda data: data["coding"]["llm"]["notes_by"]["task"].update(task_b="They draw."))
+        after = keys()
+        assert [before[rid] == after[rid] for rid in TASKS] == [True, False, True]
+        edit(path, lambda data: data["coding"]["llm"].update(notes="B is the child."))
+        assert not any(keys()[rid] == after[rid] for rid in TASKS)
+
+    def test_a_task_without_a_note_stops_the_run_before_anything_is_asked(self, tmp_path):
+        from macaw.exceptions import ConfigError
+        from macaw.execution.runner import plan
+
+        path = task_project(tmp_path, {"k1": {"scales": "scales.yaml"}}, llm={"model": "tiny", "notes_by": {"task": {"task_b": "They draw."}}})
+        config = resolve_config(path)
+        with pytest.raises(ConfigError, match=r"coding.llm.notes_by has no note for task task_a \(f1_task_a, f2_task_a\); add each"):
+            plan(config, list(TASKS), ["coding.rate.k1"])
+        with pytest.raises(ConfigError, match="no note for task task_a"):
+            module._VERSIONS["k1"](config).prompt_note(build_recording("f2_task_a", config))
+        edit(path, lambda data: data["coding"]["llm"]["notes_by"]["task"].update(task_a=""))
+        assert plan(resolve_config(path), list(TASKS), ["coding.rate.k1"])
+
+    def test_a_version_s_own_table_replaces_coding_llm_s_and_a_recording_s_file_changes_its_part(self, tmp_path):
+        from macaw.coding.llm.notes import notes_by_key
+
+        versions = {
+            "own": {"scales": "scales.yaml", "notes_by": {"task": {"task_a": "Own a.", "task_b": "Own b."}}},
+            "bare": {"scales": "scales.yaml", "notes_by": {}}, "same": {"scales": "scales.yaml"},
+        }
+        path = task_project(tmp_path, versions, llm={"model": "tiny", **NOTES})
+        (tmp_path / "recordings").mkdir()
+        write_yaml(tmp_path / "recordings" / "f2_task_a.yaml", {"coding": {"llm": {"notes": "Here B is the child."}}})
+        config = resolve_config(path)
+
+        def told(name, rid, own=config):
+            return module._VERSIONS[name](own).prompt_note(build_recording(rid, own))
+
+        assert told("own", "f1_task_a") == "A is the parent.\nOwn a." and told("bare", "f1_task_a") == "A is the parent."
+        assert told("same", "f1_task_b") == "A is the parent."
+        assert told("same", "f2_task_a", resolve_config(path, recording_id="f2_task_a")) == "Here B is the child.\nThey build a tower."
+        assert notes_by_key(config, "ratings", "own") == "coding.ratings.own.notes_by"
+        assert notes_by_key(config, "ratings", "same") == "coding.llm.notes_by"
+
+    def test_notes_are_given_by_an_entity_the_recording_pattern_has(self, tmp_path):
+        from macaw.exceptions import ConfigError
+
+        with pytest.raises(ValidationError, match="keyed by group_id, session_id, task, run, not family"):
+            LLMSection(notes_by={"family": {"x": "y"}})
+        assert LLMSection(notes_by={"run": {1: "first"}}).notes_by == {"run": {"1": "first"}}
+        path = project(tmp_path, {"k1": {"scales": "scales.yaml", "notes_by": {"task": {"a": "x"}}}})
+        with pytest.raises(ConfigError, match=r"coding.ratings.k1.notes_by gives notes by task, which project.recording_pattern \(\{group_id\}\)"):
+            resolve_config(path)
+
+    def test_the_run_plan_says_each_task_s_note_and_how_many_recordings_take_it(self, tmp_path, capsys):
+        from macaw.cli.run import _echo_reporting
+
+        path = task_project(tmp_path, {"k1": {"scales": "scales.yaml"}}, llm={"model": "tiny", **NOTES})
+        resolved = resolve_config(path)
+        _echo_reporting(resolved, build_dag(resolved), list(TASKS))
+        assert (
+            "coding.rate.k1 adds to the researchers' note one by task (coding.llm.notes_by): "
+            'task_a (2 recording(s)): "They build a tower."; task_b (1 recording(s)): none'
+        ) in capsys.readouterr().out
+
+    def test_the_dictionary_and_the_methods_give_one_note_per_task_not_one_per_recording(self, tmp_path):
+        from macaw.coding.ratings import rater_settings
+        from macaw.project.dictionary import merged_notes
+        from macaw.project.manifest import FeatureManifest, recording_specs, write_manifest
+        from macaw.qc.boilerplate import describe, settings_by_recording
+
+        path = task_project(tmp_path, {"k1": {"scales": "scales.yaml"}}, llm={"model": "tiny", **NOTES})
+        config = resolve_config(path)
+        layout = layout_for(config)
+        step = module._VERSIONS["k1"](config)
+        for rid in TASKS:
+            manifest = FeatureManifest()
+            manifest.extend(step._specs(step.scale_set(), build_recording(rid, config)))
+            write_manifest(manifest, layout.manifest_fragment_path(rid, step.name))
+        table = pd.DataFrame({"recording_id": list(TASKS), "rater": "k1", "rater_kind": "model"})
+        settings = rater_settings(config, table, tmp_path)["k1"]
+        assert settings["notes_by"] == {"task": {"task_a": "They build a tower.", "task_b": ""}} and "by_recording" not in settings
+
+        specs = merged_notes({rid: recording_specs(layout, rid) for rid in TASKS})
+        assert settings_by_recording(specs) == ""
+        manifest = FeatureManifest()
+        manifest.extend(list(specs["f1_task_a"].values()))
+        text = " ".join(describe(manifest, config)["Ratings"])
+        assert (
+            'The prompt also held this note from the researchers: "A is the parent." After it came a note from the researchers '
+            'for the recording\'s task: "They build a tower." for task_a; none for task_b.'
+        ) in text
+
+    def test_two_notes_for_one_task_show_as_variants_by_recording(self):
+        from macaw.project.dictionary import varying_settings
+
+        params = {
+            "f1_task_a": {"notes_by": {"task": {"task_a": "Old."}}}, "f2_task_a": {"notes_by": {"task": {"task_a": "New."}}},
+            "f1_task_b": {"notes_by": {"task": {"task_b": "B."}}},
+        }
+        found = varying_settings(params)
+        assert isinstance(found, list) and len(found) == 3

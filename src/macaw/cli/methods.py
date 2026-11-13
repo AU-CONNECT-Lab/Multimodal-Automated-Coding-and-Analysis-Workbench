@@ -8,6 +8,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.project.layout import layout_for
 from macaw.execution.runner import resolve_recordings
+from macaw.project.dictionary import NOTES_BY, merged_notes
 from macaw.project.manifest import read_manifest, recording_specs
 from macaw.qc.boilerplate import (
     drift_corrected_files, recordings_scaled, settings_by_recording, transcripts_corrected, write_methods,
@@ -33,9 +34,16 @@ def methods(
     corrected = transcripts_corrected(resolve_config(config))
     drifted = drift_corrected_files(resolve_config(config))
     ran = [rid for rid in resolve_recordings(resolve_config(config), None) if layout.manifest_fragment_path(rid, "x").parent.is_dir()]
-    own = settings_by_recording({rid: recording_specs(layout, rid) for rid in ran})
+    specs = merged_notes({rid: recording_specs(layout, rid) for rid in ran})
+    own = settings_by_recording(specs)
+    manifest = read_manifest(layout.manifest_path)
+    # the project's manifest keeps one recording's note by entity; the merged one has every value's
+    for name, spec in manifest.specs.items():
+        merged = [theirs[name] for theirs in specs.values() if name in theirs and NOTES_BY in theirs[name].params]
+        if merged and NOTES_BY in spec.params:
+            spec.params = {**spec.params, NOTES_BY: merged[0].params[NOTES_BY]}
     text, bib = write_methods(
-        read_manifest(layout.manifest_path), resolve_config(settings), out or layout.output_dir / "methods", scaled=scaled, looked=looked,
+        manifest, resolve_config(settings), out or layout.output_dir / "methods", scaled=scaled, looked=looked,
         corrected=corrected, drifted=drifted, own=own,
     )
     typer.echo(f"methods {text}")
