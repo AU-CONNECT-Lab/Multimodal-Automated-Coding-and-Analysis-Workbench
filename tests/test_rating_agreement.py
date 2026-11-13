@@ -224,5 +224,9 @@ class TestTables:
         assert model["by_recording"][0]["settings"]["step"] == "coding.rate.k1 0.1.0" and "rating" not in model["by_recording"][0]["settings"]
         assert set(sidecar["rater_kind"]["Levels"]) == {"model", "person"}
         answers = pd.read_csv(tmp_path / "out" / "answers_dictionary.csv", keep_default_na=False).set_index("column")
-        assert list(answers.index) == list(pd.read_csv(tmp_path / "out" / "answers.csv").columns)
+        table = pd.read_csv(tmp_path / "out" / "answers.csv", keep_default_na=False)
+        assert list(answers.index) == list(table.columns)
+        assert list(table.columns[:5]) == ["recording_id", "group_id", "session_id", "task", "run"]
+        assert table.set_index("recording_id").at["F1_play", "task"] == "play" and set(table["group_id"]) == {"F1", "F2"}
+        assert answers.at["task", "meaning"] == "The task, read from the recording's name."
         assert answers.at["problem", "missing"] == "Empty where the answer gave a score."

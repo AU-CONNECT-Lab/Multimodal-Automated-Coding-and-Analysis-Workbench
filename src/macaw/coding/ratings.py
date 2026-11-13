@@ -12,7 +12,7 @@ from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, RATE_STEP, RATIN
 from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
 from macaw.project.layout import layout_for
-from macaw.project.recording import ENTITY_NAMES, build_recording
+from macaw.project.recording import ENTITY_NAMES, recording_entities
 
 PEOPLE_COLUMNS = ("recording", "segment", "scale", "coder", "score")
 MODEL, PERSON = "model", "person"
@@ -20,6 +20,8 @@ TABLE_COLUMNS = [
     "recording_id", *ENTITY_NAMES, "segment", "scale", "person", "rater", "rater_kind", "score", "score_sd", "score_min",
     "score_max", "n_answers", "n_asked",
 ]
+# answers.csv carries the recording's entities after its id, as scores.csv does
+ANSWER_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *ANSWER_COLUMNS[1:]]
 STATISTICS = ("icc", "kappa", "exact", "within_one")
 _UNIT = ["recording_id", "segment"]
 
@@ -49,7 +51,22 @@ def model_ratings(config, recording_ids: list[str]) -> pd.DataFrame:
 
 def model_answers(config, recording_ids: list[str]) -> pd.DataFrame:
     frames = _artifacts(config, recording_ids, ANSWERS_NAME)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=ANSWER_COLUMNS)
+    if not frames:
+        return pd.DataFrame(columns=ANSWER_TABLE_COLUMNS)
+    return _with_entities(config, pd.concat(frames, ignore_index=True)).reindex(columns=ANSWER_TABLE_COLUMNS)
+
+
+def _with_entities(config, table: pd.DataFrame) -> pd.DataFrame:
+    """Each row given its recording's entities, read from the recording's name."""
+    table = table.copy()
+    for name in ENTITY_NAMES:
+        table[name] = pd.Series([None] * len(table), index=table.index, dtype=object)
+    for rid in table["recording_id"].dropna().unique():
+        entities = recording_entities(str(rid), config)
+        mine = table["recording_id"] == rid
+        for name in ENTITY_NAMES:
+            table.loc[mine, name] = entities.get(name)
+    return table
 
 
 def _artifacts(config, recording_ids: list[str], name: str) -> list[pd.DataFrame]:
@@ -123,13 +140,11 @@ def ratings_table(config, recording_ids: list[str], all_recordings: list[str]) -
     table = pd.concat(present, ignore_index=True) if present else pd.DataFrame(columns=TABLE_COLUMNS)
     table = table.reindex(columns=[*TABLE_COLUMNS, *extra])
     table["segment"] = table["segment"].fillna(WHOLE).astype(str)
-    for name in [*ENTITY_NAMES, *extra]:
-        table[name] = table[name].astype(object)
+    table = _with_entities(config, table)
+    for column in extra:
+        table[column] = table[column].astype(object)
     for rid in table["recording_id"].dropna().unique():
-        entities = build_recording(str(rid), config).entities()
         mine = table["recording_id"] == rid
-        for name in ENTITY_NAMES:
-            table.loc[mine, name] = entities.get(name)
         for column in extra:
             values = set(people.loc[people["recording_id"] == rid, column])
             if len(values) > 1:
