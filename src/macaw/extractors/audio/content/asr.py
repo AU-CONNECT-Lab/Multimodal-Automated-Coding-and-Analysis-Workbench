@@ -337,6 +337,27 @@ _SUMMARY_SPECS = {
     "mean_utterance_s": ("Mean utterance length.", "s"),
 }
 
+_UNTRANSCRIBED = (
+    "nothing of this person was transcribed in the span: no microphone of their own and no voice on a shared one named as "
+    "theirs, no speech of theirs recognised or in the corrected transcript, all of it dropped as another person's bleed, or a "
+    "segment in which they did not speak"
+)
+_MISSING = {
+    "utterance_duration_s": "Never empty on an utterance row. A person of whom nothing was transcribed has no utterance rows.",
+    "n_words": (
+        "Never empty on an utterance row. A person of whom nothing was transcribed has no utterance rows. 0 means the "
+        "recogniser returned an utterance without text."
+    ),
+    "speech_rate_wps": "Empty for an utterance of no length. 0 means an utterance without text.",
+    "asr_confidence": (
+        "Empty where the recogniser gave no confidence for the utterance: always for a transcript a person corrected, with "
+        "whisperx on a person's own microphone when text.word_timestamps is off, and where none of its words was scored."
+    ),
+    "total_words": f"Empty, not 0, where {_UNTRANSCRIBED}. 0 means their utterances held no text.",
+    "words_per_minute": f"Empty where their utterances have no length, and where {_UNTRANSCRIBED}.",
+    "summary": f"Empty, not 0, where {_UNTRANSCRIBED}.",
+}
+
 
 @register_extractor
 class ASRExtractor(Extractor):
@@ -772,6 +793,7 @@ class ASRExtractor(Extractor):
                 backend_version=str(backend.version),
                 params=params,
                 aggregation="mean",
+                missing=_MISSING[feature],
                 comparable_across_backends=feature != "asr_confidence",
                 validation="none",
             )
@@ -790,6 +812,7 @@ class ASRExtractor(Extractor):
                 backend_version=str(backend.version),
                 params=params,
                 aggregation="mean",
+                missing=_MISSING.get(feature, _MISSING["summary"]),
                 validation="none",
             )
             for feature, (description, unit) in _SUMMARY_SPECS.items()

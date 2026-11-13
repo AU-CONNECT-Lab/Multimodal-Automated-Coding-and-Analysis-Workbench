@@ -66,6 +66,38 @@ _EMBEDDING_SPECS = {
     ),
 }
 
+_SILENT = "nothing of this person was transcribed in the span"
+_NO_WORD = "where their utterances held no word in English letters or digits"
+_MISSING = {
+    "mlu_words": f"Empty where {_SILENT}. 0 means their utterances held no word in English letters or digits.",
+    "n_tokens": f"Empty, not 0, where {_SILENT}. 0 means their utterances held no word in English letters or digits.",
+    "n_types": f"Empty, not 0, where {_SILENT}. 0 means their utterances held no word in English letters or digits.",
+    "type_token_ratio": f"Empty where {_SILENT}, and {_NO_WORD}.",
+    "unigram_entropy_bits": f"Empty where {_SILENT}, and {_NO_WORD}. 0 means they used one distinct word only.",
+    "first_use_share": (
+        f"Empty where {_SILENT}, and for everyone where no counted word (text.exclude_words, text.first_use_words) was used "
+        "by at least text.first_use_min_speakers people there. 0 means such shared words exist but this person said none of "
+        "them first."
+    ),
+    "questions_per_minute": (
+        f"Empty, not 0, where {_SILENT}. 0 means they spoke but ended no sentence with a question mark, which is also what a "
+        "transcript without punctuation gives."
+    ),
+    "word_list": f"Empty, not 0, where {_SILENT}. 0 means they spoke but no sentence held a word or phrase of the list.",
+    "lexical_overlap": (
+        "Empty for a turn with no counted word. A turn has no row unless it comes straight after a turn of another participant, "
+        "not of a voice that is no participant's. 0 means none of its counted words was in the turn before, as when that one held none."
+    ),
+    "mean_lexical_overlap": (
+        "Empty for a pair where subject_id never took a turn straight after one of subject_id_b in the span, and where none "
+        "of those turns held a counted word. 0 means none of their counted words was in the turn before."
+    ),
+    "semantic_following": (
+        "Empty unless text.embedding_model is set, and for a pair where subject_id never spoke an utterance straight after one "
+        "of subject_id_b in the span; an utterance next to one of a voice that is no participant's is not counted."
+    ),
+}
+
 STOPWORDS = "english_stopwords"
 
 _INSTALL = (
@@ -273,6 +305,7 @@ class TextFeatureExtractor(Extractor):
                     "first_use_words": _list_name(self.config.text.first_use_words),
                     "word_lists": {name: path.name for name, path in self.config.text.word_lists.items()},
                 },
+                missing=_MISSING.get(name, _MISSING["word_list"]),
                 validation="synthetic",
             )
             for name, (description, unit, scale) in described.items()

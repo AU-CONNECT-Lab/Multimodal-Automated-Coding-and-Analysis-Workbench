@@ -47,6 +47,11 @@ RATING_COLUMNS = [
     "n_answers", "n_asked",
 ]
 ANSWER_COLUMNS = ["recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer"]
+_MISSING = (
+    "Empty for a recording where this rating asked the model nothing: its transcript is recognised and no person corrected "
+    "this one, nothing was said in the parts it rates, or none of the segments it names lies in the analysed part. 0 means "
+    "every answer gave a whole score in the scale's range."
+)
 
 
 class RatingExtractor(Extractor):
@@ -212,7 +217,7 @@ class RatingExtractor(Extractor):
                 name=f"share_unread_answers_{self.rating}",
                 description="Share of the model's answers in this rating that gave no whole score in the scale's range; those scales' scores are the median of the rest.",
                 unit="proportion", scale=Scale.RECORDING, group=self.group, extractor=self.name, extractor_version=self.version,
-                params=params, aggregation="none", validation="none",
+                params=params, aggregation="none", missing=_MISSING, validation="none",
             )
         ]
 

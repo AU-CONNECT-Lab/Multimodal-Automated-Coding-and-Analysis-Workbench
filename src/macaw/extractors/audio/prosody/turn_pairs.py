@@ -24,6 +24,8 @@ PAIRED = {
     **VOICE_SPECS,
     "turn_speech_rate_wps": ("Words per second over the turn.", "word/s", True),
 }
+_WHICH_TURN = {"prior": "subject_id_b's turn before the switch", "next": "subject_id's turn that took the floor"}
+_RATE_MISSING = "Empty where that turn lasts no time, its first and last word at the same instant. 0 means the transcript gave that turn no words."
 
 
 @register_extractor
@@ -75,6 +77,9 @@ class TurnPairsExtractor(Extractor):
                     FeatureSpec(
                         name=f"{prefix}_{name}", description=f"{description} {whose}", unit=unit, scale=Scale.EVENT,
                         group=self.group, extractor=self.name, extractor_version=self.version, aggregation="mean",
+                        missing=_RATE_MISSING if name == "turn_speech_rate_wps" else (
+                            f"Empty where prosody.voice_report has no {name} for {_WHICH_TURN[prefix]}, for the reasons given under {name}."
+                        ),
                         comparable_across_subjects=comparable, comparable_across_backends=False, validation="none",
                     )
                 )

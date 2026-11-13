@@ -104,6 +104,37 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
     ),
 }
 
+_NOT_FOUND = "A point found below pose.min_confidence or outside the picture counts as not found."
+_ON_OWN = "not found on the camera this person's body is measured from"
+_SHORT_RUN = "shorter than the smoothing window (kinematics.smoothing_s, and at least 5 frames)"
+_PAIR_FRAMES = "Empty for a pair no camera is set to read both bodies from, or whom that camera never showed together, and in frames"
+_MISSING = {
+    "hand_distance": f"Empty in frames where either wrist was {_ON_OWN}. {_NOT_FOUND}",
+    **{
+        f"{wrist}_{name}": (
+            f"Empty in frames where the {wrist.replace('_', ' ')} was {_ON_OWN}, and across any unbroken run of frames with it "
+            f"found that is {_SHORT_RUN}. {_NOT_FOUND}"
+        )
+        for wrist in _WRISTS
+        for name, _ in _DERIVATIVES
+    },
+    "upper_body_speed": (
+        f"Empty in frames where none of the head, shoulder, elbow and wrist points has a speed: each was {_ON_OWN}, or found "
+        f"only in a run of frames {_SHORT_RUN}. {_NOT_FOUND}"
+    ),
+    "head_yaw_index": f"Empty in frames where the nose or either eye was {_ON_OWN}. {_NOT_FOUND}",
+    "head_roll_deg": f"Empty in frames where either eye was {_ON_OWN}. {_NOT_FOUND}",
+    "postural_openness": (
+        f"Empty in frames where any shoulder, elbow or wrist was {_ON_OWN}, and in every frame when both shoulders are never "
+        f"found in the same frame. {_NOT_FOUND}"
+    ),
+    "interpersonal_distance": f"{_PAIR_FRAMES} where a shoulder of either was not found on it. {_NOT_FOUND}",
+    "envelope_overlap": (
+        f"{_PAIR_FRAMES} where too few points of either were found on it to span a box. {_NOT_FOUND} 0 means the two boxes "
+        "do not overlap."
+    ),
+}
+
 
 @register_extractor
 class KinematicsExtractor(Extractor):
@@ -198,9 +229,11 @@ class KinematicsExtractor(Extractor):
             "body_size_quantile": BODY_SIZE_QUANTILE,
         }
         catalog = {name: (*spec, params) for name, spec in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        missing = dict(_MISSING)
         specs = []
         for measure in self.config.kinematics.measures:
             catalog[measure.name] = (*measure_spec(measure), {**params, **measure.model_dump()})
+            missing[measure.name] = measure_missing(measure)
             if measure.below is not None:
                 unit = measure_spec(measure)[1]
                 specs += below_specs(
@@ -222,6 +255,7 @@ class KinematicsExtractor(Extractor):
                     params=spec_params,
                     interpolation="none",
                     aggregation="mean",
+                    missing=missing[name],
                     comparable_across_subjects=comparable,
                     comparable_across_backends=False,
                     validation="synthetic",
@@ -612,10 +646,12 @@ def below_specs(feature: str, threshold: str, params: dict, emitted: set[str], s
         f"{feature}_below_share": (f"Share of the frames {feature} was measured in during which it was below {threshold}.", None),
         f"{feature}_below_n": (f"Unbroken stretches of frames with {feature} below {threshold}.", "count"),
     }
+    missing = f"Empty for a person or pair with no frame in which {feature} has a value. 0 means it was measured but never below {threshold}."
     return [
         FeatureSpec(
             name=name, description=description, unit=unit, scale=Scale.RECORDING, group=step.group, extractor=step.name,
-            extractor_version=step.version, params=params, aggregation="mean", comparable_across_backends=False, validation="synthetic",
+            extractor_version=step.version, params=params, aggregation="mean", missing=missing, comparable_across_backends=False,
+            validation="synthetic",
         )
         for name, (description, unit) in described.items()
         if name in emitted
@@ -649,6 +685,24 @@ def measure_spec(measure) -> tuple[str, str | None, bool]:
         text += f" In units of {measure.person}'s shoulder width."
         unit = "1/s" if unit.endswith("/s") else None
     return text, unit, measure.per_body_size
+
+
+def measure_missing(measure) -> str:
+    who, target = measure_ends(measure)
+    if measure.method in ("distance", "approach_speed"):
+        where = f"none of {who} or none of {target} was found"
+    elif measure.method == "offset_toward":
+        where = f"{who}, either of {measure.person}'s shoulders or {target} was not found"
+    else:
+        where = f"the project script {measure.method} returned no value or where the person (or either person of the pair) was not detected"
+    if measure.method == "approach_speed":
+        where += f", and across any unbroken run of frames with a distance {_SHORT_RUN}"
+    throughout = [f"when {measure.person}'s two shoulders are never found in the same frame"] if measure.per_body_size else []
+    if measure.to_person != SELF:
+        throughout.append("for a pair no camera is set to read both bodies from, or whom that camera never showed together")
+    if throughout:
+        where += f", and throughout {' and '.join(throughout)}"
+    return f"Empty in frames where {where}. {_NOT_FOUND}" if measure.method in BUILTIN_MEASURES else f"Empty in frames where {where}."
 
 
 def _boxes(kp: pd.DataFrame) -> pd.DataFrame:

@@ -49,6 +49,20 @@ _SUBJECT_SPECS = {
     "share_abstained": ("Share of those units where the model's majority answer was that it could not tell.", "proportion"),
     "share_needs_review": ("Share of those units sent to the review queue: abstained, tied, or below coding.llm.review_threshold.", "proportion"),
 }
+_UNCODED = "Empty for a person outside the roles this coding codes, where coding.llm.coded_roles or the version's own coded_roles names any"
+_MISSING = {
+    "n_units_judged": (
+        f"{_UNCODED}. 0 means this person has no line with words in the span (an utterance or a turn, as the codebook's unit "
+        "says), so nothing of theirs was coded."
+    ),
+    "share_abstained": (
+        f"{_UNCODED}, and where no unit of this person was coded in the span. 0 means the model's majority answer was never "
+        "that it could not tell."
+    ),
+    "share_needs_review": (
+        f"{_UNCODED}, and where no unit of this person was coded in the span. 0 means none of their units went to the review queue."
+    ),
+}
 
 
 @register_extractor
@@ -290,7 +304,8 @@ class JudgementExtractor(Extractor):
         return [
             FeatureSpec(
                 name=self.feature(feature), description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
-                extractor=self.name, extractor_version=self.version, params=params, aggregation="none", validation="none",
+                extractor=self.name, extractor_version=self.version, params=params, aggregation="none", missing=_MISSING[feature],
+                validation="none",
             )
             for feature, (description, unit) in _SUBJECT_SPECS.items()
         ]

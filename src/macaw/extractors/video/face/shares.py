@@ -21,6 +21,17 @@ from macaw.store.longtable import build_long_rows, concat_long_tables, read_long
 from macaw.store.schema import Scale
 
 _FOUND = "face_found_share"
+_MISSING = {
+    _FOUND: (
+        "Empty for a person whose face no camera is set to read, and where that camera has no frames in the span, such as a "
+        "segment it did not record. 0 means the camera recorded but no face was given to this person."
+    ),
+    "above": (
+        "Empty where no face of this person was found in the span, where no camera reads their face, or where face.au gave no "
+        "values for this action unit (its backend lacks it, or face.action_units is off). 0 means faces were found but the unit "
+        "never rose above the threshold."
+    ),
+}
 
 
 @register_extractor
@@ -99,7 +110,8 @@ class FaceShareExtractor(Extractor):
         return [
             FeatureSpec(
                 name=name, description=description, unit=None, scale=Scale.RECORDING, group=self.group, extractor=self.name,
-                extractor_version=self.version, params=params, aggregation="none", validation="none",
+                extractor_version=self.version, params=params, aggregation="none", missing=_MISSING.get(name, _MISSING["above"]),
+                validation="none",
             )
             for name, description in described.items()
         ]

@@ -87,6 +87,48 @@ _BOTH_HANDS_SPECS: dict[str, tuple[str, str | None, str, bool]] = {
     ),
     "hold_s": ("Time spent in those holds.", "s", "mean", False),
 }
+_WORDS = {
+    False: {
+        "lost": (
+            "not found, or below pose.min_confidence or outside the picture, in all its frames, or found only in runs shorter "
+            "than the smoothing window (kinematics.smoothing_s)"
+        ),
+        "found": "found", "suffix": "", "plane": "the {side} wrist was",
+    },
+    True: {
+        "lost": "not placed in 3D in any of its frames, or only in runs shorter than the smoothing window (kinematics.smoothing_s)",
+        "found": "placed in 3D", "suffix": "_3d", "plane": "the {side} wrist, both hips and both shoulders were all",
+    },
+}
+_UNTRACKED = "Empty for a gesture in which the {side} wrist was not tracked: {lost}."
+_HELD = (
+    "fewer than two submovements, or no stretch between them with the {side} wrist and elbow both slower than "
+    "kinematics.gestures.still_speed{suffix}"
+)
+_PLACES = "Empty for a gesture with no frame in which the {side} wrist, both shoulders, both hips, both eyes and the nose were all {found}."
+_HAND_MISSING = {
+    "peak_speed": _UNTRACKED,
+    "submovements": (
+        f"{_UNTRACKED} 0 means the wrist's speed never rose to a peak kinematics.gestures.peak_prominence{{suffix}} above its "
+        "surroundings."
+    ),
+    "rhythm_sd_s": "Empty for a gesture with fewer than three submovements of the {side} hand, or in which the {side} wrist was not tracked: {lost}.",
+    "holds": f"{_UNTRACKED} 0 means {_HELD}; a frame without the elbow's speed is not still.",
+    "hold_s": f"{_UNTRACKED} 0 means no hold: {_HELD}.",
+    "extent": "Empty for a gesture in which the {side} wrist was not tracked: {lost}; or with fewer than two frames in which {plane} {found}.",
+    "max_height": _PLACES,
+    "space_max": _PLACES,
+    "space_mode": _PLACES,
+    "space_sectors": f"{_PLACES} 0 means the wrist stayed in the centre space whenever these points were all {{found}}.",
+}
+_BOTH_HELD = (
+    "fewer than two submovements of the two hands together, or no stretch between them with both wrists and both elbows slower "
+    "than kinematics.gestures.still_speed{suffix}"
+)
+_BOTH_HANDS_MISSING = {
+    "holds": f"Empty for a gesture in which either wrist was not tracked: {{lost}}. 0 means {_BOTH_HELD}.",
+    "hold_s": f"Empty for a gesture in which either wrist was not tracked: {{lost}}. 0 means no hold: {_BOTH_HELD}.",
+}
 
 
 @register_extractor
@@ -128,7 +170,7 @@ class GestureExtractor(Extractor):
         params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump(exclude={"still_speed_3d", "peak_prominence_3d"})}
         named = [(name, description, unit.format(length=_length_unit(keypoints)) if unit else None, aggregation, comparable)
                  for name, description, unit, aggregation, comparable in gesture_specs(cfg.holds == "both_hands")]
-        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params), warnings=warnings)
+        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=False)), warnings=warnings)
 
     def _tracks(self, kp: pd.DataFrame) -> tuple[np.ndarray, dict, pd.DataFrame]:
         """Frame times, each hand's (wrist speed, elbow speed, wrist position) and the body's landmarks, per frame."""
@@ -202,7 +244,7 @@ class Gesture3DExtractor(Extractor):
         # in metres and against each person's own body, so every measure compares across people
         named = [(f"{name}_3d", _in_the_room(name, description), unit.format(length="m") if unit else None, aggregation, True)
                  for name, description, unit, aggregation, _ in gesture_specs(cfg.holds == "both_hands")]
-        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params), warnings=warnings)
+        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=True)), warnings=warnings)
 
 
 def _coded_file(config, recording: Recording) -> list[Path]:
@@ -320,7 +362,17 @@ def _in_the_room(name: str, description: str) -> str:
     )
 
 
-def _feature_specs(extractor: Extractor, named: list, params: dict) -> list[FeatureSpec]:
+def gesture_missing(in_room: bool) -> dict[str, str]:
+    words = _WORDS[in_room]
+    missing = {
+        f"gesture_{side}_{name}{words['suffix']}": text.format(side=side, **{**words, "plane": words["plane"].format(side=side)})
+        for side in SIDES
+        for name, text in _HAND_MISSING.items()
+    }
+    return missing | {f"gesture_{name}{words['suffix']}": text.format(**words) for name, text in _BOTH_HANDS_MISSING.items()}
+
+
+def _feature_specs(extractor: Extractor, named: list, params: dict, missing: dict[str, str]) -> list[FeatureSpec]:
     return [
         FeatureSpec(
             name=name,
@@ -332,6 +384,7 @@ def _feature_specs(extractor: Extractor, named: list, params: dict) -> list[Feat
             extractor_version=extractor.version,
             params=params,
             aggregation=aggregation,
+            missing=missing.get(name),
             comparable_across_subjects=comparable,
             comparable_across_backends=False,
             validation="synthetic",

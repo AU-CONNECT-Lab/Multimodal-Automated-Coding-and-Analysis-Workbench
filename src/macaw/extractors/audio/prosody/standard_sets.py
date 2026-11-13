@@ -12,6 +12,7 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import load_audio
+from macaw.extractors.audio.prosody.frame import UNHEARD
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -25,6 +26,11 @@ PREFIXES = {"eGeMAPSv02": "egemaps", "ComParE_2016": "compare"}
 # missing value. The UV measures are over unvoiced frames and stay.
 VOICED_ONLY = "_sma3nz_"
 UNVOICED = "UV"
+_MISSING = (
+    f"Empty for every turn of {UNHEARD}, and for a turn too short for openSMILE to measure or, on a shared microphone, "
+    "with no stretch where their voice is the only one."
+)
+_MISSING_VOICED = f"{_MISSING} Also empty for a turn with no voiced frame, since this measure is taken over voiced frames only."
 
 _INSTALL = (
     "prosody.standard_sets needs openSMILE, which pymacaw does not install: its licence allows "
@@ -119,6 +125,7 @@ class StandardSetExtractor(Extractor):
                 backend_version=version,
                 params={"feature_set": feature_set},
                 aggregation="mean",
+                missing=_MISSING_VOICED if VOICED_ONLY in name and UNVOICED not in name.split("_")[1] else _MISSING,
                 comparable_across_backends=False,
                 validation="against_reference",
             )

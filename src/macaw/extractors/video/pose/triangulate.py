@@ -311,6 +311,40 @@ _PAIR_SPECS: dict[str, tuple[str, str]] = {
         "deg",
     ),
 }
+_UNPLACED = {
+    TriangulationExtractor.name: "fewer than two cameras found it, or they missed each other by more than pose3d.max_reprojection_px",
+    DEPTH_STEP: "the video did not find it, or the depth image had no surface there",
+    ONE_CAMERA_STEP: (
+        "the picture did not show it, the body model did not read that frame (it reads one in pose3d.one_camera_every), or "
+        "no fitted body matched this person"
+    ),
+}
+_SHORT_RUN = "shorter than the smoothing window (kinematics.smoothing_s, and at least 5 frames)"
+_APART = "Empty for two people placed in 3D from different cameras, and in frames"
+_ONCE = "Empty on the pair's reverse row (the distance is given once, with the person whose id sorts first as the first person)"
+_MISSING = {
+    "hand_distance_3d": "Empty in frames where either wrist of this person was not placed in the room.",
+    **{
+        f"{wrist}_{name}_3d": (
+            f"Empty in frames where the {wrist.replace('_', ' ')} was not placed in the room, and across any unbroken run of "
+            f"frames with it placed that is {_SHORT_RUN}."
+        )
+        for wrist in _WRISTS
+        for name, _ in _DERIVATIVES
+    },
+    "interpersonal_distance_3d": (
+        f"{_ONCE}, for two people placed in 3D from different cameras, and in frames where a shoulder of either was not "
+        "placed in the room."
+    ),
+    "head_distance_3d": (
+        f"{_ONCE}, for two people placed in 3D from different cameras, and in frames where an ear of either was not placed "
+        "in the room."
+    ),
+    "head_toward_deg_3d": f"{_APART} where this person's nose or either ear, or either ear of the other person, was not placed in the room.",
+    "body_toward_deg_3d": (
+        f"{_APART} where this person's shoulders, hips or nose, or the other person's shoulders, were not placed in the room."
+    ),
+}
 # compared with an independent 3D reconstruction of real recordings; the rest only with simulated cameras
 _AGAINST_REFERENCE = frozenset(
     {"interpersonal_distance_3d", "head_distance_3d", "head_toward_deg_3d", "left_wrist_speed_3d", "right_wrist_speed_3d"}
@@ -416,16 +450,20 @@ class Kinematics3DExtractor(Extractor):
     def _specs(self, emitted: set[str], smoothing_s: float) -> list[FeatureSpec]:
         params = {"joint_set": JOINT_SET, "smoothing_s": smoothing_s, "polyorder": POLYORDER}
         catalog = {name: (description, unit, True, params) for name, (description, unit) in {**_SUBJECT_SPECS, **_PAIR_SPECS}.items()}
+        missing = dict(_MISSING)
         below = []
         for measure in measures_3d(self.config):
             catalog[f"{measure.name}_3d"] = (*measure_spec_3d(measure), {**params, **measure.model_dump()})
+            missing[f"{measure.name}_3d"] = measure_missing_3d(measure)
             if measure.below_3d is not None:
                 typed = below_3d_unit(measure, self.config.project.units)
                 below += below_specs(f"{measure.name}_3d", f"{measure.below_3d:g}{f' {typed}' if typed else ''}", {**params, **measure.model_dump()}, emitted, self)
+        unplaced = _UNPLACED.get(three_d_step(self.config), _UNPLACED[TriangulationExtractor.name])
         return below + [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
+                missing=f"{missing[name]} A point is not placed where {unplaced}.",
                 comparable_across_subjects=comparable, comparable_across_backends=False,
                 validation="against_reference" if name in _AGAINST_REFERENCE else "synthetic",
             )
@@ -596,3 +634,21 @@ def measure_spec_3d(measure) -> tuple[str, str | None, bool]:
         text += f" In units of {measure.person}'s shoulder width."
         unit = "1/s" if unit == "m/s" else None
     return text, unit, True
+
+
+def measure_missing_3d(measure) -> str:
+    who, target = measure_ends(measure)
+    if measure.method not in BUILTIN_MEASURES:
+        where = f"the project script {measure.method} returned no value or where the person (or either person of the pair) was not placed in the room"
+    elif measure.method == "offset_toward":
+        where = f"{who}, either of {measure.person}'s shoulders or {target} was not placed in the room"
+    else:
+        where = f"none of {who} or none of {target} was placed in the room"
+    if measure.method == "approach_speed":
+        where += f", and across any unbroken run of frames with a distance {_SHORT_RUN}"
+    throughout = [f"when {measure.person}'s two shoulders are never placed in the same frame"] if measure.per_body_size else []
+    if measure.to_person != SELF:
+        throughout.append("for two people placed in 3D from different cameras")
+    if throughout:
+        where += f", and throughout {' and '.join(throughout)}"
+    return f"Empty in frames where {where}."

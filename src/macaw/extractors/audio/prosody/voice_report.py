@@ -11,7 +11,7 @@ from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.audio.prosody.frame import SEMITONE_REF_HZ, f0_range, to_semitones
+from macaw.extractors.audio.prosody.frame import SEMITONE_REF_HZ, UNHEARD, f0_range, to_semitones
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -72,6 +72,27 @@ _SPECS = {
     "shimmer_dda": ("Mean absolute difference of consecutive amplitude differences over the mean amplitude; three times APQ3.", None, False),
     "turn_hnr_db": ("Mean harmonics-to-noise ratio over the voiced part of the turn.", "dB", False),
     "cpps_db": ("Smoothed cepstral peak prominence; lower means a breathier or less periodic voice.", "dB", False),
+}
+
+_UNMEASURED = (
+    f"Empty for every turn of {UNHEARD}, and for a turn too short for Praat's pitch analysis or, on a shared microphone, "
+    "with no stretch where their voice is the only one."
+)
+_MISSING = {
+    **dict.fromkeys(
+        ("turn_f0_mean_hz", "turn_f0_median_hz", "turn_f0_min_hz", "turn_f0_max_hz", "turn_f0_iqr_hz", "turn_f0_range_st"),
+        f"{_UNMEASURED} Also empty for a turn with no voiced frame.",
+    ),
+    "turn_f0_sd_hz": f"{_UNMEASURED} Also empty for a turn with fewer than two voiced frames.",
+    "turn_f0_slope_st_per_s": f"{_UNMEASURED} Also empty for a turn with fewer than three voiced frames.",
+    "turn_voiced_fraction": (
+        f"{_UNMEASURED} 0 means no frame of the turn carried pitch within the person's range (prosody.f0_min_hz to f0_max_hz, "
+        "or prosody.f0_range_by_role)."
+    ),
+    "turn_intensity_db": f"{_UNMEASURED} Also empty for a turn of complete digital silence.",
+    "periods": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or with too few voice periods for Praat to compute it.",
+    "turn_hnr_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat found every frame of it silent.",
+    "cpps_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat could not build its cepstrogram.",
 }
 
 _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[audio]"'
@@ -178,6 +199,7 @@ class VoiceReportExtractor(Extractor):
                 backend_version=version,
                 params=params,
                 aggregation="mean",
+                missing=_MISSING.get(name, _MISSING["periods"]),
                 comparable_across_subjects=comparable,
                 comparable_across_backends=False,
                 validation="synthetic",

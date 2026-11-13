@@ -49,7 +49,7 @@ it under `pipeline.run` in project.yaml. Its parameters go under `plugins` in pr
       $name:
         quantiles: [0.1, 0.9]
 
-The example reads f0 from prosody.frame and reports each person's pitch spread. Replace the computation in `src/$module/extractor.py` and keep the shape: `requires` names what must run first, `inputs_for` lists the files whose content decides whether a cached result is still valid, `run` returns long-table rows plus one FeatureSpec per feature, and `summarise` gives the same recording-level rows over one named segment, for projects that list segments in segments.csv.
+The example reads f0 from prosody.frame and reports each person's pitch spread. Replace the computation in `src/$module/extractor.py` and keep the shape: `requires` names what must run first, `inputs_for` lists the files whose content decides whether a cached result is still valid, `run` returns long-table rows plus one FeatureSpec per feature (its `missing` says what an empty value means, for the data dictionary beside an export), and `summarise` gives the same recording-level rows over one named segment, for projects that list segments in segments.csv.
 ''')
 
 EXTRACTOR = Template('''\
@@ -115,6 +115,8 @@ class $cls(Extractor):
             extractor_version=self.version,
             params={"quantiles": [low, high]},
             aggregation="mean",
+            # the data dictionary beside an export shows this for every empty cell of the feature
+            missing="Empty where the person had no voiced frame in the span.",
         )
         return ExtractorResult(rows=self._rows(recording, f0), specs=[spec])
 

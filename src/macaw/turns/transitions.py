@@ -284,6 +284,40 @@ _RECORDING_SPECS = {
     "median_hold_s": ("Median pause when a speaker restarted instead of handing over.", "s", "mean"),
 }
 
+_NO_TAKE = "Empty for a person who never took the floor from somebody else in the span: they get no row, not 0."
+_EVERY_SPAN = "Empty only outside the rows of the recording as a whole: every span gets a value."
+_NO_SWITCH = "Empty when the floor never changed hands in the span."
+_NEVER_INTERRUPTED = "0 means they took the floor but never with an overlap longer than turns.interruption_overlap_s."
+_MISSING = {
+    "fto_s": "Empty only in rows of other events: every change of speaker has a value, and a speaker restarting their own turn has no row.",
+    "response_latency_s": "Empty for a switch that overlapped, where subject_id started before subject_id_b had finished.",
+    "median_response_latency_s": f"{_NO_TAKE} Also empty when they overlapped every time they took the floor.",
+    "n_interruptions_made": f"{_NO_TAKE} {_NEVER_INTERRUPTED}",
+    "interruptions_per_minute": f"{_NO_TAKE} {_NEVER_INTERRUPTED}",
+    "n_backchannels_made": f"{_NO_TAKE} 0 means none of their short overlaps was followed by the floor going straight back.",
+    "transition_count": (
+        "Empty only outside pair rows: every ordered pair of those who can hold the floor, a person with themselves included, "
+        "gets a value in every span. 0 means a turn of subject_id was never followed by one of subject_id_b there."
+    ),
+    "pair_median_fto_s": (
+        "Empty where subject_id never handed the floor to subject_id_b in the span, and always where the two are the same "
+        "speaker, since a restart is not a handover."
+    ),
+    "n_transitions": f"{_EVERY_SPAN} 0 means fewer than two turns in the span.",
+    "n_switches": f"{_EVERY_SPAN} 0 means the floor never changed hands in the span.",
+    "n_holds": f"{_EVERY_SPAN} 0 means no speaker started a new turn of their own after a pause of turns.max_gap_s or more.",
+    "median_fto_s": _NO_SWITCH,
+    "sd_fto_s": (
+        "Empty with fewer than two switches in the span; in a person's row, with fewer than two times they took the floor, and "
+        "a person who never did gets no row."
+    ),
+    "gap_cv": "Empty with fewer than two switches that left a gap in the span, or when all those gaps are exactly 0 s.",
+    "smooth_transfer_ratio": f"{_NO_SWITCH} 0 means no switch came within turns.smooth_transfer_gap_s of the previous turn ending.",
+    "gap_ratio": f"{_NO_SWITCH} 0 means every switch overlapped.",
+    "overlap_ratio": f"{_NO_SWITCH} 0 means no switch overlapped.",
+    "median_hold_s": "Empty when no speaker restarted their own turn in the span.",
+}
+
 
 @register_extractor
 class TransitionExtractor(Extractor):
@@ -532,6 +566,7 @@ class TransitionExtractor(Extractor):
                 extractor_version=self.version,
                 params=params,
                 aggregation=aggregation,
+                missing=_MISSING.get(feature, _NO_TAKE),
                 validation="none",
             )
             for specs, scale in groups

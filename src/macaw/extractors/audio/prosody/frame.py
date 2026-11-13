@@ -63,6 +63,35 @@ _SUMMARY_SPECS = {
     "voiced_fraction": ("Share of frames in the task window that carried pitch.", None),
 }
 
+UNHEARD = "a person with neither a device that hears them alone nor a voice named as theirs on a shared microphone (text.diarization)"
+_FRAMES = f"Empty for {UNHEARD}, and on a shared microphone in frames where their voice is not the only one."
+_PITCHLESS = (
+    "Empty in frames where no pitch was found: silence, unvoiced sound, or a voice outside prosody.f0_min_hz to f0_max_hz "
+    f"(or the person's prosody.f0_range_by_role). Also empty for {UNHEARD}, and on a shared microphone in frames where "
+    "their voice is not the only one."
+)
+_MISSING = {
+    **dict.fromkeys(("f0_hz", "f0_semitone", "f0_semitone_rel"), _PITCHLESS),
+    "voiced": (
+        f"{_FRAMES} 0 means no pitch was found in the frame: silence, unvoiced sound, or a voice outside the person's pitch "
+        "range (prosody.f0_min_hz to f0_max_hz, or prosody.f0_range_by_role)."
+    ),
+    "intensity_db": (
+        f"{_FRAMES} With the librosa and builtin backends, also empty in frames of complete digital silence, such as the "
+        "padding before a device started or after it stopped."
+    ),
+    "hnr_db": f"{_FRAMES} Also empty in silent frames, where the backend cannot measure it.",
+    "formant": f"{_FRAMES} Also empty in frames where Praat found no formant of this number.",
+    "f0_median_hz": (
+        f"Empty for {UNHEARD}, and where no frame of theirs in the span carried pitch. On a shared microphone only frames "
+        "where their voice is the only one count."
+    ),
+    "voiced_fraction": (
+        f"Empty for {UNHEARD}. 0 means no frame in the span carried pitch; on a shared microphone only frames where their "
+        "voice is the only one count, so a span without such frames gives 0."
+    ),
+}
+
 
 @register_extractor
 class FrameProsodyExtractor(Extractor):
@@ -275,6 +304,7 @@ class FrameProsodyExtractor(Extractor):
                 params={"frame_step_s": self.config.prosody.frame_step_s},
                 interpolation="none",
                 aggregation="mean",
+                missing=_MISSING[feature],
                 comparable_across_subjects=feature != "intensity_db",
                 comparable_across_backends=feature not in {"hnr_db"},
                 validation="none",
@@ -296,6 +326,7 @@ class FrameProsodyExtractor(Extractor):
                     backend_version=version,
                     interpolation="none",
                     aggregation="mean",
+                    missing=_MISSING["formant"],
                     comparable_across_backends=False,
                     validation="none",
                 )
@@ -313,6 +344,7 @@ class FrameProsodyExtractor(Extractor):
                 backend=name,
                 backend_version=version,
                 aggregation="mean",
+                missing=_MISSING[feature],
                 validation="none",
             )
             for feature, (description, unit) in _SUMMARY_SPECS.items()

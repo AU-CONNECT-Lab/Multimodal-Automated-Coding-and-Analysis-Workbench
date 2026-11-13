@@ -163,6 +163,35 @@ _RECORDING_SPECS = {
 }
 
 
+_ONE_SPEAKER = "Also empty when only one person can hold the floor, since the ceiling is then 0."
+_FEW_TURNS = "Empty with fewer than two turns in the span, or in a window fewer than two starting in it."
+_FEW_SWITCHES = "Empty with fewer changes of speaker in the span than turns.permutation_entropy_order."
+_NO_FLOOR = "Empty when nobody took a turn in the span (in a window, none started in it), or when every such turn lasts no time."
+_CONDITIONAL = (
+    "Empty with fewer than two turns in the span; in a person's row, when no turn of theirs was followed by another, as when "
+    "they took no turn there."
+)
+_SAME_PAIR = "0 means every pair of consecutive turns was the same pair of speakers."
+_PREDICTABLE = "0 means the next speaker was always the same given the current one."
+_ONE_PATTERN = "0 means every run of consecutive offsets followed the same ordinal pattern, as when they only rise."
+_ONE_HOLDER = "0 means one speaker held all the floor time."
+_MISSING = {
+    "transition_entropy_bits": f"{_FEW_TURNS} {_SAME_PAIR}",
+    "transition_entropy_norm": f"{_FEW_TURNS} {_ONE_SPEAKER} {_SAME_PAIR}",
+    "conditional_entropy_bits": f"{_CONDITIONAL} {_PREDICTABLE}",
+    "conditional_entropy_norm": f"{_CONDITIONAL} {_ONE_SPEAKER} {_PREDICTABLE}",
+    "permutation_entropy_fto_bits": f"{_FEW_SWITCHES} {_ONE_PATTERN}",
+    "permutation_entropy_fto_norm": f"{_FEW_SWITCHES} {_ONE_PATTERN}",
+    "permutation_entropy_n": (
+        "Empty only outside the rows of the recording as a whole: every span gets a value. 0 means fewer changes of speaker than "
+        "turns.permutation_entropy_order, so the permutation entropies are empty."
+    ),
+    "speaker_entropy_bits": f"{_NO_FLOOR} {_ONE_HOLDER}",
+    "speaker_entropy_norm": f"{_NO_FLOOR} {_ONE_SPEAKER} {_ONE_HOLDER}",
+    "turn_pairs_n": "Empty only outside window rows: every window gets a value. 0 means fewer than two turns started in the window.",
+}
+
+
 _WINDOW_SPECS = {
     "turn_pairs_n": (
         "Consecutive turn pairs starting in the window, the sample its entropies were counted "
@@ -478,6 +507,7 @@ class EntropyExtractor(Extractor):
                 extractor_version=self.version,
                 params=params,
                 aggregation=aggregation,
+                missing=_MISSING[feature],
                 validation="synthetic",
                 notes=(
                     "Always emitted at recording scale, and at window scale too once window_s "
@@ -492,7 +522,7 @@ class EntropyExtractor(Extractor):
                 FeatureSpec(
                     name=feature, description=description, unit=unit, scale=Scale.WINDOW, group=self.group,
                     extractor=self.name, extractor_version=self.version, params=params, aggregation=aggregation,
-                    validation="synthetic",
+                    missing=_MISSING[feature], validation="synthetic",
                 )
                 for feature, (description, unit, aggregation) in _WINDOW_SPECS.items()
             ]

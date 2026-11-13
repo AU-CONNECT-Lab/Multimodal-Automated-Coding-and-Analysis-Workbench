@@ -224,8 +224,33 @@ _SUBJECT_SPECS = {
 _RECORDING_SPECS = {
     "n_turns_total": ("Turns taken by everyone.", "count"),
     "n_joint_silences": ("Stretches of at least silence_min_s where nobody talked.", "count"),
-    "joint_silence_total_s": ("Total time nobody was talking.", "s"),
-    "joint_silence_fraction": ("Share of the task window with nobody talking.", None),
+    "joint_silence_total_s": (
+        "Total length of those stretches; the time before the first word and after the last is not counted.", "s",
+    ),
+    "joint_silence_fraction": ("joint_silence_total_s as a share of the analysed part, or of the segment.", None),
+}
+
+_NO_WORDS = "0 means the transcript gave the turn no words."
+_NO_TURN = "Empty for a person who took no turn in the span: they get no row, not 0."
+_EVERY_SPAN = "Empty only outside the rows of the recording as a whole: every span gets a value."
+_NO_SILENCE = (
+    "0 means no gap of at least turns.silence_min_s between stretches of talk, as in a span with fewer than two stretches of "
+    "talk; time before the first word and after the last is not counted."
+)
+_MISSING = {
+    "turn_duration_s": "Empty only in rows that are not this person's turns: every turn has a value.",
+    "n_utterances_in_turn": "Empty only in rows that are not this person's turns: every turn has a value.",
+    "turn_n_words": f"Empty only in rows that are not this person's turns: every turn has a value. {_NO_WORDS}",
+    "turn_speech_rate_wps": f"Empty for a turn that lasts no time, its first and last word at the same instant. {_NO_WORDS}",
+    "joint_silence_s": (
+        "Empty only in rows of other events: a row is written for each gap of at least turns.silence_min_s between stretches "
+        "of talk; time before the first word and after the last is not counted."
+    ),
+    "talk_ratio": f"{_NO_TURN} Also empty when no turn in the span lasts any time.",
+    "n_turns_total": f"{_EVERY_SPAN} 0 means nobody took a turn in the span.",
+    "n_joint_silences": f"{_EVERY_SPAN} {_NO_SILENCE}",
+    "joint_silence_total_s": f"{_EVERY_SPAN} {_NO_SILENCE}",
+    "joint_silence_fraction": f"{_EVERY_SPAN} {_NO_SILENCE}",
 }
 
 
@@ -447,6 +472,7 @@ class TurnStructureExtractor(Extractor):
                 extractor_version=self.version,
                 params=params,
                 aggregation="mean",
+                missing=_MISSING.get(feature, _NO_TURN),
                 validation="none",
             )
             for specs, scale in groups

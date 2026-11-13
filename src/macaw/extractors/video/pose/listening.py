@@ -113,6 +113,23 @@ class ListeningExtractor(Extractor):
             spec = read_manifest(path).specs.get(feature) if path.is_file() else None
             units[feature] = spec.unit if spec is not None else None
         params = {"listening": list(self.config.kinematics.listening)}
+        missing = {
+            LISTENING_S: "Never empty. 0 means no other person of the recording talked alone in the span, by the transcript.",
+            **{
+                f"{feature}_listening": (
+                    "Empty where no other person of the recording talked alone in the span, or where this person's "
+                    f"{feature} has no value in any frame of those times (its own entry says when)."
+                )
+                for feature in self.config.kinematics.listening
+            },
+            **{
+                f"{feature}_listening_frames": (
+                    f"Never empty. 0 means this person's {feature} has no value in any frame while another person of the "
+                    "recording talked alone, or that nobody else talked alone in the span."
+                )
+                for feature in self.config.kinematics.listening
+            },
+        }
         described = {
             LISTENING_S: ("Seconds of the analysed part in which another person talked and nobody else did, this person included.", "s"),
             **{
@@ -134,7 +151,7 @@ class ListeningExtractor(Extractor):
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group, extractor=self.name,
-                extractor_version=self.version, params=params, aggregation="none", validation="none",
+                extractor_version=self.version, params=params, aggregation="none", missing=missing[name], validation="none",
             )
             for name, (description, unit) in described.items()
         ]

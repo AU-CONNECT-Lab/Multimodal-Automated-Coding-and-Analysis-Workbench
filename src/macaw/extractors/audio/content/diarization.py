@@ -384,7 +384,7 @@ class DiarizationExtractor(Extractor):
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
-                extractor=self.name, extractor_version=self.version, params=params, validation="synthetic",
+                extractor=self.name, extractor_version=self.version, params=params, missing=_MISSING[name], validation="synthetic",
             )
             for name, (description, unit) in _DIARIZATION_SPECS.items()
             if name in values
@@ -411,6 +411,15 @@ _DIARIZATION_SPECS = {
     "n_shared_tracks_diarized": ("Shared audio files read for voices; 0 when every person has their own track.", "count"),
     "n_voices_found": ("Distinct voices the diarizer found on the shared track.", "count"),
     "overlapped_speech_fraction": ("Share of the time anyone speaks during which two or more voices do.", None),
+}
+_NOT_SHARED = "Empty for a recording whose text.diarization is not pyannote, as each person's voice then comes from their own track"
+_MISSING = {
+    "n_shared_tracks_diarized": "Never empty. 0 means text.diarization is not pyannote, so no shared track was read for voices.",
+    "n_voices_found": f"{_NOT_SHARED}. 0 means the diarizer found no voice on the shared track in the span.",
+    "overlapped_speech_fraction": (
+        "Empty where no voice was found on the shared track in the span, and for a recording whose text.diarization is not "
+        "pyannote. 0 means voices were found but never two at once."
+    ),
 }
 
 

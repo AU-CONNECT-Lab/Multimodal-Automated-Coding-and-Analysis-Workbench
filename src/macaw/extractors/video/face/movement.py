@@ -46,6 +46,32 @@ _FRAME_SPECS = {
     "mouth_movement": "Absolute change in mouth_opening from the previous frame, per second.",
     "eye_opening": "Eyelid gap over eye width, both eyes averaged; missing where the eyes are too small or the head turned too far to read.",
 }
+_NO_FACE = "Empty in frames where face.au found no face of this person, and for a person whose face no camera is set to read."
+_MISSING = {
+    "mouth_opening": _NO_FACE,
+    "mouth_movement": (
+        "Empty in frames where face.au found no face of this person, and in the first frame of each unbroken run of frames with "
+        "their face, which has no frame before it to change from. 0 means the mouth opening did not change from the frame before."
+    ),
+    "eye_opening": (
+        "Empty in frames where face.au found no face of this person, and where their eyes could not be read: narrower than "
+        f"face.blink_min_eye_px, the head turned more than {MAX_YAW_DEG:g} degrees or tilted more than {MAX_PITCH_SHIFT_DEG:g} "
+        f"degrees from their usual pitch, or the landmarks spread over less than {MIN_FACE_WIDTH_SHARE:.0%} of their usual face width."
+    ),
+    "blink_duration_s": (
+        "Never empty: each row is one blink. Blinks are looked for only where eye_opening has a value, so eyes_measurable_s gives "
+        "the time in which a person without rows was looked at."
+    ),
+    "blinks_per_min": (
+        "Empty for a person whose face face.au never found in the recording, where the eyes could not be read anywhere in the span "
+        f"(eyes_measurable_s is 0), and where not one blink was found in {_NO_BLINK_S:g} s or more of readable eyes, which says the "
+        f"landmarks do not follow the lids. 0 means no blink in less than {_NO_BLINK_S:g} s of readable eyes."
+    ),
+    "eyes_measurable_s": (
+        "Empty for a person whose face face.au never found in the recording. 0 means their eyes could not be read anywhere in the "
+        "span, as in a segment in which no face of theirs was found."
+    ),
+}
 
 
 @register_extractor
@@ -182,7 +208,7 @@ class FaceMovementExtractor(Extractor):
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=scale, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=params, interpolation="none",
-                aggregation="sum" if name == "eyes_measurable_s" else "mean",
+                aggregation="sum" if name == "eyes_measurable_s" else "mean", missing=_MISSING.get(name, _NO_FACE),
                 # landmarks are placed differently by each face model, and face size and pose change what they can show
                 comparable_across_backends=False, comparable_across_subjects=name == "eyes_measurable_s", validation="synthetic",
             )

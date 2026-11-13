@@ -40,6 +40,26 @@ _SPECS = {
     **{f"pos_share_{tag.lower()}": (f"Share of words tagged {tag} (Universal Dependencies).", None) for tag in POS_TAGS},
 }
 
+_UNPARSED = (
+    "nothing of this person was transcribed in the span, and where none of their utterances held a word the parser counts "
+    "(only punctuation, symbols or tokens it could not classify)"
+)
+_UNLINKED = (
+    "Empty where nothing of this person was transcribed in the span, and where no word of theirs is attached to another, as "
+    "when their utterances are single words or hold only punctuation, symbols or tokens the parser could not classify."
+)
+_MISSING = {
+    "n_utterances_parsed": (
+        "Empty where nothing of this person was transcribed in the span. 0 means utterances were transcribed but none held a "
+        "word the parser counts (only punctuation, symbols or tokens it could not classify)."
+    ),
+    "dependency_distance_mean": _UNLINKED,
+    "adjacent_dependency_share": f"{_UNLINKED} 0 means no dependency joined neighbouring words.",
+    "subordinate_clauses_per_utterance": f"Empty where {_UNPARSED}. 0 means no such clause.",
+    "lexical_density": f"Empty where {_UNPARSED}. 0 means no noun, proper noun, verb, adjective or adverb.",
+    "pos": f"Empty where {_UNPARSED}. 0 means no word with this tag.",
+}
+
 _INSTALL = "text.syntax needs spaCy and a parser for the language: pip install spacy, then python -m spacy download {model}"
 
 
@@ -125,7 +145,7 @@ class SyntaxExtractor(Extractor):
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
                 extractor=self.name, extractor_version=self.version,
                 params={"syntax_model": model, "syntax_model_version": nlp.meta.get("version")},
-                validation="synthetic",
+                missing=_MISSING.get(name, _MISSING["pos"]), validation="synthetic",
             )
             for name, (description, unit) in _SPECS.items()
         ]

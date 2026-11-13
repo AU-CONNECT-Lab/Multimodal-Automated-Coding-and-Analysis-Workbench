@@ -167,6 +167,20 @@ _SUBJECT_SPECS = {
         "mean",
     ),
 }
+_MISSING = {
+    "n_backchannels_coded": (
+        "Never empty for a person of the recording. 0 means no backchannel of theirs was coded in the span, as for a person "
+        "who did not speak there; it is always 0 while coding.backchannel_lexicon is empty."
+    ),
+    "n_turn_internal_pauses": (
+        "Never empty for a person of the recording. 0 means no silence of at least coding.min_turn_internal_pause_s fell "
+        "between two of their utterances inside one of their turns in the span, as for a person who did not speak there."
+    ),
+    "median_turn_internal_pause_s": (
+        "Empty where n_turn_internal_pauses is 0: no such silence of this person in the span, as when they did not speak "
+        "there or each of their turns is a single utterance."
+    ),
+}
 
 
 @register_extractor
@@ -349,6 +363,7 @@ class LayerACodingExtractor(Extractor):
                 extractor_version=self.version,
                 params=params,
                 aggregation=aggregation,
+                missing=_MISSING[feature],
                 validation="none",
             )
             for feature, (description, unit, aggregation) in _SUBJECT_SPECS.items()
