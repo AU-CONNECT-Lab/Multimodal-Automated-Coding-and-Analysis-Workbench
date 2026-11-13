@@ -12,6 +12,7 @@ project:
   calibration_dir: calibration       # clips filmed before recording: an object of known length, a board per camera setup
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
   heights: heights.csv               # table of people's standing heights (recording, person, height) for 3D from one camera
+  ratings: ratings.csv               # table of people's scores on the rating scales (recording, segment, scale, coder, score)
   n_subjects: 2                      # people per recording; tested with 2
   roles: [parent, child]             # role labels; length must equal n_subjects
   units: cm                          # cm | m | in, for every length entered or shown
@@ -190,6 +191,7 @@ coding:
     reasons: false                   # true: the model says what each code rests on
     think: null                      # null = the model's default; false answers at once (local servers)
   judges: {}                         # more codings by the language model beside this one, to compare, e.g. {k0: {codebook: names_only.yaml}, words_only: {show: []}}; each takes codebook and any coding.llm key, the rest as above
+  ratings: {}                        # whole recordings rated on scales by the language model, one version per name, e.g. {full_text: {scales: scales.yaml, show: []}}; each takes scales, transcript (in_use | recognised), segments and the coding.llm keys provider, model, base_url, temperature, max_tokens, n_samples, seed, show, notes, reasons, think
   imports: {}                        # for macaw import-codes: each tier of your coding files, as the file names it, and whose it is, e.g. {"Child Gaze": {person: child, tier: gaze_target, labels: {Mom: parent, Away: elsewhere}}}; tier and labels are optional
 
 qc:

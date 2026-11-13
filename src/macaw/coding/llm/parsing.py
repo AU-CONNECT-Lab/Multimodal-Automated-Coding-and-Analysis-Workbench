@@ -35,6 +35,27 @@ def parse_annotation_response(
     return pd.DataFrame({"unit_id": list(labels), "label": list(labels.values()), "reason": list(reasons.values())})
 
 
+UNREADABLE, NOT_WHOLE, OUTSIDE = "unreadable", "not a whole number", "outside the range"
+
+
+def parse_rating(text: str, low: int, high: int) -> tuple[int | None, str, str]:
+    """(score, reason, what was wrong). A score that is not whole or lies outside low to high is no score; it is never mended."""
+    found = answer_object(text)
+    if "score" not in found:
+        return None, "", UNREADABLE
+    value, reason = found["score"], str(found.get("reason") or "").strip()
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return None, reason, NOT_WHOLE
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not float(value).is_integer():
+        return None, reason, NOT_WHOLE
+    if not low <= int(value) <= high:
+        return None, reason, OUTSIDE
+    return int(value), reason, ""
+
+
 def answer_object(text: str) -> dict:
     """The JSON object an answer holds, or an empty one when there is none."""
     try:

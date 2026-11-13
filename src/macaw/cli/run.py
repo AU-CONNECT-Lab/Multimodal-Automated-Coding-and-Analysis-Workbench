@@ -116,6 +116,16 @@ def _echo_reporting(config, dag) -> None:
             f"{name} sends {llm.n_samples} x ceil(units / {units_per_request(llm)}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
+    for name in sorted(node for node in dag.nodes if node.startswith("coding.rate.")):
+        from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
+        from macaw.coding.llm.rate import rating_notice, scales_asked
+
+        own, llm = get_extractor(name).settings(config)
+        backend = get_backend(LLM_BACKENDS, llm.provider)(llm)
+        notices.append(rating_notice(name, backend) if backend.reporting else None)
+        scales = scales_asked(config, get_extractor(name).rating)
+        where = f"each of {len(own.segments)} segments of each recording" if own.segments else "each recording"
+        notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where} to {llm.provider}")
     look = config.qc.look
     if "pose.keypoints" in dag.nodes and config.pose.suggest_names and look.model and look.people:
         from macaw.qc.look import notice

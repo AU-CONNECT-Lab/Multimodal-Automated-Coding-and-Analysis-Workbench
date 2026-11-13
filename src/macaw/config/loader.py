@@ -276,6 +276,10 @@ def resolve_config(
         from macaw.coding.llm.judge import register_judge_versions
 
         register_judge_versions(config)
+    if config.coding.ratings:
+        from macaw.coding.llm.rate import register_rating_versions
+
+        register_rating_versions(config)
     return config
 
 

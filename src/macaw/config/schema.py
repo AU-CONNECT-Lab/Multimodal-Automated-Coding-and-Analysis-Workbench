@@ -35,6 +35,8 @@ class ProjectSection(_Section):
     segments: Path = Path("segments.csv")
     # people's standing heights, for 3D from one camera; no file, no heights
     heights: Path = Path("heights.csv")
+    # people's scores on the rating scales, for macaw ratings; no file, no people's ratings
+    ratings: Path = Path("ratings.csv")
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
@@ -49,6 +51,8 @@ class ProjectSection(_Section):
         taken = sorted({"none", "other"} & set(self.roles))
         if taken:
             raise ValueError(f"{', '.join(taken)} cannot be a role: it names a voice that is not one of the people")
+        if "all" in self.roles:
+            raise ValueError("all cannot be a role: a rating scale names everyone together by it")
         return self
 
 
@@ -505,6 +509,38 @@ class JudgeVersion(_Section):
     think: bool | None = None
 
 
+class RatingVersion(_Section):
+    """One rating of whole recordings by the language model: its scales, and what differs from coding.llm."""
+
+    scales: Path
+    # in_use: the transcript every step reads; recognised: the recogniser's, where a person corrected it
+    transcript: Literal["in_use", "recognised"] = "in_use"
+    # named segments rated one by one; empty rates the whole analysed window
+    segments: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    n_samples: int | None = Field(default=None, ge=1)
+    seed: int | None = None
+    show: list[ShownToModel] | None = None
+    notes: str | None = None
+    reasons: bool | None = None
+    think: bool | None = None
+
+    @field_validator("segments")
+    @classmethod
+    def _once_each(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("segments names a segment twice")
+        return value
+
+
+# what a rating takes from coding.llm, unless the version says otherwise
+RATING_LLM_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens", "n_samples", "seed", "show", "notes", "reasons", "think")
+
+
 class ImportedTier(_Section):
     person: str | None = None
     tier: str | None = None
@@ -519,16 +555,31 @@ class CodingSection(_Section):
     min_turn_internal_pause_s: float = 0.2
     llm: LLMSection = Field(default_factory=LLMSection)
     judges: dict[str, JudgeVersion] = Field(default_factory=dict)
+    ratings: dict[str, RatingVersion] = Field(default_factory=dict)
     imports: dict[str, ImportedTier] = Field(default_factory=dict)
 
-    @field_validator("judges")
+    @field_validator("judges", "ratings")
     @classmethod
-    def _judge_names(cls, value: dict[str, JudgeVersion]) -> dict[str, JudgeVersion]:
+    def _judge_names(cls, value: dict) -> dict:
         # the name becomes a step name, a file name and a coder in agreement
         bad = [name for name in value if not re.fullmatch(r"[A-Za-z0-9_]+", name)]
         if bad:
             raise ValueError(f"{', '.join(bad)}: a version's name takes letters, digits and _ only")
         return value
+
+    @field_validator("ratings")
+    @classmethod
+    def _no_frames(cls, value: dict[str, RatingVersion]) -> dict[str, RatingVersion]:
+        framed = [name for name, version in value.items() if version.show and "frames" in version.show]
+        if framed:
+            raise ValueError(f"{', '.join(framed)}: a rating of whole recordings is not shown frames")
+        return value
+
+    def rating_settings(self, version: str) -> tuple[RatingVersion, LLMSection]:
+        """A rating's own settings and the model settings it uses, coding.llm with what the version changes."""
+        own = self.ratings[version]
+        changes = {key: value for key, value in own.model_dump(exclude_none=True).items() if key in RATING_LLM_KEYS}
+        return own, self.llm.model_copy(update=changes)
 
     def judge_settings(self, version: str | None = None) -> tuple[Path | None, LLMSection]:
         """The codebook and model settings of one coding by the language model; None is coding.llm's own."""
@@ -693,6 +744,7 @@ NAME_OR_PATH_FIELDS: tuple[str, ...] = (
 CONTENT_HASHED_PATHS: tuple[str, ...] = (
     "coding.codebook",
     "coding.judges.*.codebook",
+    "coding.ratings.*.scales",
     "coding.llm.examples",
     "coding.judges.*.examples",
     "execution.output_rules",

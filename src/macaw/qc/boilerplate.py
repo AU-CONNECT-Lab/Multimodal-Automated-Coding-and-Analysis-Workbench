@@ -117,7 +117,8 @@ def describe(
     sections: dict[str, list[str]] = {}
     for name in names:
         specs = by_extractor[name]
-        writer = _WRITERS.get(name) or (_judge if name.startswith("coding.judge.") else _plugin)
+        rating = name.startswith("coding.rate.")
+        writer = _WRITERS.get(name) or (_judge if name.startswith("coding.judge.") else _rating if rating else _plugin)
         text = writer(config, specs[0], {spec.name for spec in specs})
         if not text:
             continue
@@ -125,7 +126,7 @@ def describe(
             text += " " + _corrected(*corrected)
         if name == "prep.media" and drifted and drifted[0] and config.align.method == "gcc_phat":
             text += " " + _drifted(*drifted)
-        sections.setdefault(SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
+        sections.setdefault("Ratings" if rating else SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
         sections.setdefault("Body", []).append(_converted(*scaled, config.project.units))
@@ -530,15 +531,15 @@ def _layer_a(config, spec, names) -> str:
     return text
 
 
-def _shown(show) -> str:
+def _shown(show, speaker: str = "the speaker letter") -> str:
     """What the model was given for each line, as a Methods phrase."""
-    parts = ["the speaker letter", "the words"]
+    parts = [speaker, "the words"]
     if "timing" in show:
         parts += ["its start and length", "the pause or overlap before it"]
     voice = [term for item, term in (("pitch", "pitch"), ("loudness", "loudness"), ("rate", "speech rate")) if item in show]
     if voice:
         parts.append(f"its {_listed(voice)} relative to the median of that speaker's lines")
-    shown = "the speaker letter and the words only" if len(parts) == 2 else ", ".join(parts[:-1]) + ", and " + parts[-1]
+    shown = f"{speaker} and the words only" if len(parts) == 2 else ", ".join(parts[:-1]) + ", and " + parts[-1]
     if "frames" in show:
         shown += "; each unit to code came with three video frames near its start, middle and end, one unit per request"
     return shown
@@ -592,6 +593,39 @@ def _judge(config, spec, names) -> str:
             f" Besides those, {_count(drawn)} units per recording that the model was sure of were drawn at random for a person "
             "to check, to estimate how often its sure answers were wrong."
         )
+    return text
+
+
+def _rating(config, spec, names) -> str:
+    params = spec.params
+    model = spec.backend_version or params.get("model")
+    parts = params.get("segments") or []
+    what = f"the segments {_listed(parts)} of each recording one by one" if parts else "each recording as a whole"
+    given = (
+        "only each scale's name, the person it rates and its range" if params.get("names_only")
+        else "each scale's name, the person it rates, its range, and its definition, anchors and rules as written"
+    )
+    text = (
+        f"In a rating named {params['rating']}, the language model {model} ({params.get('provider')}) rated {what} on the "
+        f"{params.get('n_scales')} scales of \"{params.get('scales')}\", one scale per request. It was given {given}, and the "
+        f"whole transcript in time order with, for each line, {_shown(params.get('show', []), speaker='the role of the person speaking')}."
+    )
+    samples = params.get("n_samples", 1)
+    if samples > 1:
+        text += (
+            f" Each scale was asked {_count(samples)} times at temperature {params.get('temperature')}; the score is the median of "
+            "the answers that gave a whole number in the scale's range."
+        )
+    else:
+        text += f" Each scale was asked once at temperature {params.get('temperature')}."
+    if params.get("transcript") == "recognised":
+        text += (
+            " The transcript was the speech recogniser's as it stood before a person corrected it, and only recordings with a "
+            "corrected transcript were rated."
+        )
+    text += _prompt_extras({key: value for key, value in params.items() if key != "reasons"})
+    if params.get("reasons"):
+        text += " The model was asked to name in a few words what each score rested on, after the score."
     return text
 
 

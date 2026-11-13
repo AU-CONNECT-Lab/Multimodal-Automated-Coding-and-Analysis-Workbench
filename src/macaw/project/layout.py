@@ -108,6 +108,13 @@ class Layout:
     def corrected_transcript_stamp_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "transcript_corrected.json"
 
+    # the recogniser's transcript and words as they were when a person's correction first replaced them
+    def recognised_transcript_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "transcript_recognised.parquet"
+
+    def recognised_words_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "words_recognised.parquet"
+
     # the three tables are directories of parquet files, one per writer; store/_io.py
     # explains why a single file cannot survive concurrent extractors
     def long_table_path(self, recording_id: str) -> Path:
@@ -144,6 +151,9 @@ class Layout:
             self.gaze_labels_path(recording_id),
             self.corrected_transcript_path(recording_id),
             self.corrected_transcript_stamp_path(recording_id),
+            # no run gives the recogniser's back while the correction stands
+            self.recognised_transcript_path(recording_id),
+            self.recognised_words_path(recording_id),
             self.scale_path(recording_id),
             self.imported_codes_path(recording_id),
             self.reviewed_codes_path(recording_id),

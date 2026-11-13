@@ -61,11 +61,14 @@ def import_(
     by: str = typer.Option(None, "--by", help="Who corrected it. Default: the login name."),
 ) -> None:
     """Keep a corrected transcript; text.asr and everything after it use it from the next run."""
+    from macaw.coding.llm.rate import keep_recognised
+
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
     corrected = read_transcript_eaf(eaf, turn_takers(resolved, build_recording(recording, resolved)))
     target = layout.corrected_transcript_path(recording)
     target.parent.mkdir(parents=True, exist_ok=True)
+    kept = keep_recognised(resolved, recording)
     shutil.copyfile(eaf, target)
     stamp = {"by": by or getpass.getuser(), "at": datetime.now().isoformat(timespec="seconds"), "from": eaf.name}
     layout.corrected_transcript_stamp_path(recording).write_text(json.dumps(stamp, indent=2), encoding="utf-8")
@@ -74,6 +77,8 @@ def import_(
         f"{recording}: kept {len(corrected)} utterances ({', '.join(f'{who} {n}' for who, n in counts.items())}); "
         f"apply it with `macaw run -r {recording}`"
     )
+    if kept:
+        typer.echo("the recogniser's transcript stays beside it, for a rating with transcript: recognised")
 
 
 @app.command("check")
@@ -118,6 +123,6 @@ def reset(
     paths = [layout.corrected_transcript_path(recording), layout.corrected_transcript_stamp_path(recording)]
     if not any(path.exists() for path in paths):
         raise MacawError(f"{recording}: no corrected transcript")
-    for path in paths:
+    for path in [*paths, layout.recognised_transcript_path(recording), layout.recognised_words_path(recording)]:
         path.unlink(missing_ok=True)
     typer.echo(f"{recording}: back to the recogniser's transcript from the next `macaw run -r {recording}`")

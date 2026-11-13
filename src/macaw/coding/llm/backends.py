@@ -71,6 +71,10 @@ class LLMBackend(Backend):
     def model_version(self) -> str:
         return self._seen_model or str(self.cfg.model)
 
+    def context_length(self) -> int | None:
+        """Tokens the loaded model reads at most, prompt and answer together; None where the server does not say."""
+        return None
+
     def _post(self, url: str, body: dict, headers: dict[str, str]) -> dict:
         data = json.dumps(body).encode("utf-8")
         for attempt in range(_RETRIES + 1):
@@ -188,6 +192,17 @@ class OllamaBackend(OpenAICompatibleBackend):
     def _think_fields(self, think: bool) -> dict:
         # its chat completions endpoint reads reasoning_effort and ignores a think field
         return {"reasoning_effort": "medium" if think else "none"}
+
+    def context_length(self) -> int | None:
+        # it cuts a longer prompt from the front without saying so; only a loaded model is listed
+        try:
+            loaded = _get(f"{self.base_url.removesuffix('/v1')}/api/ps").get("models") or []
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+            return None
+        for entry in loaded:
+            if self.cfg.model in (entry.get("name"), entry.get("model")) and entry.get("context_length"):
+                return int(entry["context_length"])
+        return None
 
     def _served_version(self) -> str:
         # the tag can be pulled again with other weights; the digest cannot

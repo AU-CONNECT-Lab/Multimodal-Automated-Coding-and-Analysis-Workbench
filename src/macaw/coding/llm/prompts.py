@@ -8,6 +8,7 @@ from typing import Sequence
 import pandas as pd
 
 from macaw.coding.codebook import Codebook
+from macaw.coding.scales import ALL, RatingScale
 from macaw.extractors.audio.content.diarization import OTHER
 
 ABSTAIN = "abstain"
@@ -105,7 +106,12 @@ def codebook_lines(codebook: Codebook) -> list[str]:
 
 
 def _describe(row, show: Sequence[str]) -> str:
-    parts = [f"speaker {row.speaker}"]
+    return f"{' | '.join([f'speaker {row.speaker}', *_details(row, show)])}: {row.text}"
+
+
+def _details(row, show: Sequence[str]) -> list[str]:
+    """The timing and voice figures of a line that show asks for."""
+    parts = []
     if "timing" in show:
         gap = row.gap_before
         if pd.isna(gap):
@@ -123,4 +129,68 @@ def _describe(row, show: Sequence[str]) -> str:
     ]
     if voice:
         parts.append(", ".join(voice))
-    return f"{' | '.join(parts)}: {row.text}"
+    return parts
+
+
+def build_rating_prompt(
+    scale: RatingScale,
+    lines: pd.DataFrame,
+    *,
+    people: Sequence[str],
+    minutes: float,
+    show: Sequence[str] = (),
+    notes: str = "",
+    reasons: bool = False,
+) -> tuple[str, str]:
+    """Returns (system, user). lines carry speaker (a role), t_start and t_end from the start of what is rated, gap_before,
+    text and the voice items of show. Only the end of the user part names the scale, so every scale asked about one
+    conversation starts the same and a server can reuse what it read."""
+    system = [
+        "You rate a recorded conversation on one rating scale, as a trained observer would. The transcript gives what was "
+        "said in time order; each line starts with the role of the person who said it.",
+        f"The people recorded: {', '.join(people)}.",
+    ]
+    if (lines["speaker"] == OTHER).any():
+        system.append(f"The speaker {OTHER} is someone besides the people recorded, such as a researcher in the room.")
+    if "timing" in show:
+        system.append(
+            "Each line gives its start and length in seconds from the start of the transcript, and the pause before it or "
+            "how far it overlaps the talk before."
+        )
+    voice = [item for item in VOICE if item in show]
+    if voice:
+        terms = ", ".join(_VOICE_TERMS[item] for item in voice)
+        system.append(
+            f"Each line gives its {terms}, against the median of that speaker's lines in the whole recording; one that could "
+            "not be measured is left out."
+        )
+    if notes.strip():
+        system.append(f"Notes from the researchers: {notes.strip()}")
+    entry = '{"score": <score>, "reason": "<what it rests on>"}' if reasons else '{"score": <score>}'
+    system.append(f"Answer with one JSON object and nothing else: {entry}, the score a whole number in the scale's range.")
+    if reasons:
+        system.append("The reason names in a few words what the score rests on: what was said, the timing or the voice.")
+
+    user = [f"Transcript ({minutes:.1f} minutes):"]
+    user.extend(f"{' | '.join([str(row.speaker), *_details(row, show)])}: {row.text}" for row in lines.itertuples(index=False))
+    user += ["", "Rate the conversation on this scale.", f"Scale: {scale.scale}", f"Who is rated: {_rated(scale, people)}"]
+    user.append(f"Scores: whole numbers from {scale.low} to {scale.high}.")
+    if scale.definition:
+        user.append(f"Definition: {scale.definition}")
+    if scale.anchors:
+        user.append("Anchors:")
+        user.extend(f"{score}: {text}" for score, text in sorted(scale.anchors.items()))
+        if len(scale.anchors) < scale.high - scale.low + 1:
+            user.append("Scores without an anchor lie between the anchors around them.")
+    if scale.rules:
+        user.append("Rules:")
+        user.extend(f"- {rule}" for rule in scale.rules)
+    user.append("Answer with the JSON object.")
+    return "\n".join(system), "\n".join(user)
+
+
+def _rated(scale: RatingScale, people: Sequence[str]) -> str:
+    if scale.person != ALL:
+        return f"the {scale.person}"
+    named = [f"the {person}" for person in people]
+    return (named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]) + " together"
