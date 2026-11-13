@@ -90,11 +90,11 @@ def load_references() -> dict[str, dict]:
 
 def write_methods(
     manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
-    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None,
+    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None, own: str = "",
 ) -> tuple[Path, Path]:
     references = load_references()
     text, used = render(
-        describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected, drifted=drifted), references
+        describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected, drifted=drifted, own=own), references
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
@@ -106,10 +106,10 @@ def write_methods(
 
 def describe(
     manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
-    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None,
+    corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None, own: str = "",
 ) -> dict[str, list[str]]:
     """scaled, corrected and drifted are what recordings_scaled, transcripts_corrected and drift_corrected_files give;
-    looked is qc.look.project_summary's."""
+    looked is qc.look.project_summary's; own is what settings_by_recording says."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
         by_extractor.setdefault(spec.extractor, []).append(spec)
@@ -133,6 +133,8 @@ def describe(
     found = read_segments(config)
     if found and sections:
         sections.setdefault("Segments", []).append(_segments(found))
+    if own and sections:
+        sections.setdefault("Settings of individual recordings", []).append(own)
     if looked:
         sections.setdefault("Quality review", []).append(_looked(looked))
     return sections
@@ -204,6 +206,40 @@ def _converted(with_scale: int, recordings: int, units: str) -> str:
         "holds only at the distance from the camera at which it was taken, and measures between two participants were "
         "converted only when both had the same scale."
     )
+
+
+_MANY_VALUES = 3
+
+
+def settings_by_recording(specs_by_recording: dict[str, dict[str, FeatureSpec]]) -> str:
+    """For each step run under different settings in different recordings, each setting that differs with its value and
+    recordings; empty when every recording ran the same. A setting with many values, such as a note per recording, is
+    counted rather than listed."""
+    from macaw.project.dictionary import flatten_settings
+
+    found: dict[tuple[str, str, str], dict[str, set[str]]] = {}
+    for rid, specs in specs_by_recording.items():
+        for spec in specs.values():
+            for key, value in flatten_settings(spec.params):
+                found.setdefault((spec.extractor, spec.name, key), {}).setdefault(value, set()).add(rid)
+    said: dict[str, dict[str, str]] = {}
+    for (step, _, key), values in sorted(found.items()):
+        if len(values) < 2:
+            continue
+        if len(values) > _MANY_VALUES:
+            text = f"{key} took {len(values)} different values"
+        else:
+            parts = [f"{value} for {_listed(sorted(rids))}" for value, rids in sorted(values.items(), key=lambda item: sorted(item[1]))]
+            text = f"{key} was " + ", ".join(parts[:-1]) + f", and {parts[-1]}"
+        said.setdefault(step, {}).setdefault(key, text)
+    if not said:
+        return ""
+    steps = "; ".join(f"for {step}, " + "; ".join(texts.values()) for step, texts in said.items())
+    return f"Some recordings were processed under settings of their own: {steps}."
+
+
+def _listed(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
 def render(sections: dict[str, list[str]], references: dict[str, dict]) -> tuple[str, list[str]]:

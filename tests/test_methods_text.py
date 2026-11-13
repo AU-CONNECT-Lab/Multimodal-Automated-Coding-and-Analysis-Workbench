@@ -324,3 +324,24 @@ def test_name_suggestions_are_described_only_when_set_and_the_picture_model_only
     looked = config(pose={"suggest_names": True}, qc={"look": {"model": "qwen3-vl:8b-instruct", "people": {"parent": "an adult"}}})
     text, _ = render(describe(ran, looked), load_references())
     assert "vision-language model (qwen3-vl:8b-instruct)" in text and "up to 5 frames" in text
+
+
+def test_recordings_run_under_settings_of_their_own_are_named():
+    from macaw.qc.boilerplate import settings_by_recording
+
+    def specs(floor, note):
+        return {
+            "f0_hz": spec("prosody.frame", "f0_hz", f0_min_hz=floor),
+            "voiced": spec("prosody.frame", "voiced", f0_min_hz=floor),
+            "share_unread_answers_k1": spec("coding.rate.k1", "share_unread_answers_k1", notes=note),
+        }
+
+    by_recording = {rid: specs(floor, f"note {rid}") for rid, floor in (("a", 75), ("b", 100), ("c", 75), ("d", 75))}
+    said = settings_by_recording(by_recording)
+    assert said == (
+        "Some recordings were processed under settings of their own: for coding.rate.k1, notes took 4 different values; "
+        "for prosody.frame, f0_min_hz was 75 for a, c and d, and 100 for b."
+    )
+    assert settings_by_recording({rid: specs(75, "same") for rid in "abc"}) == ""
+    sections = describe(manifest(spec("prosody.frame", "f0_hz", "parselmouth", "0.4.7")), config(), own=said)
+    assert sections["Settings of individual recordings"] == [said]

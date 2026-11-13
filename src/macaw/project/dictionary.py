@@ -202,15 +202,15 @@ def flat_settings(settings) -> str:
         return ""
     if isinstance(settings, list):
         return " | ".join(f"{', '.join(variant['recordings'])}: {flat_settings(variant['settings']) or 'none'}" for variant in settings)
-    return "; ".join(f"{key}={value}" for key, value in _flatten(settings))
+    return "; ".join(f"{key}={value}" for key, value in flatten_settings(settings))
 
 
-def _flatten(params: dict, prefix: str = "") -> list[tuple[str, str]]:
+def flatten_settings(params: dict, prefix: str = "") -> list[tuple[str, str]]:
     pairs = []
     for key in sorted(params):
         value, name = params[key], f"{prefix}{key}"
         if isinstance(value, dict) and value:
-            pairs += _flatten(value, f"{name}.")
+            pairs += flatten_settings(value, f"{name}.")
         else:
             pairs.append((name, _value(value)))
     return pairs
