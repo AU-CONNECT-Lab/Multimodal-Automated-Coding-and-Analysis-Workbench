@@ -125,6 +125,21 @@ def model_scores(config, rid, scores: dict[str, float]):
         for scale, value in scores.items()
     ]).to_parquet(folder / "ratings.parquet", index=False)
     pd.DataFrame([{"recording_id": rid, "segment": "", "scale": "warmth", "rater": "k1", "sample": 0, "score": 3.0, "problem": "", "reason": "", "answer": '{"score": 3}'}]).to_parquet(folder / "answers.parquet", index=False)
+    manifest_fragment(config, rid)
+
+
+def manifest_fragment(config, rid, notes="", model="tiny"):
+    """The spec a run of the version leaves in the recording's manifest, which the export's dictionary reads."""
+    from macaw.project.manifest import FeatureManifest, FeatureSpec, write_manifest
+    from macaw.store.schema import Scale
+
+    fragment = FeatureManifest()
+    fragment.add(FeatureSpec(
+        name="share_unread_answers_k1", description="", unit="proportion", scale=Scale.RECORDING, group="coding",
+        extractor="coding.rate.k1", extractor_version="0.1.0", backend="ollama", backend_version=model,
+        params={"rating": "k1", "model": model, "n_samples": 5, "notes": notes},
+    ))
+    write_manifest(fragment, layout_for(config).manifest_fragment_path(rid, "coding.rate.k1"))
 
 
 PEOPLE = [
@@ -188,20 +203,11 @@ class TestTables:
     def test_the_export_says_what_each_column_holds_and_how_each_rater_rated(self, tmp_path):
         import json
 
-        from macaw.project.manifest import FeatureManifest, FeatureSpec, write_manifest
-        from macaw.store.schema import Scale
-
         path = project(tmp_path, PEOPLE)
         config = resolve_config(path)
         for rid, notes in (("F1_plan", "They plan."), ("F1_play", "They play."), ("F2_plan", "They plan.")):
             model_scores(config, rid, {"warmth": 4})
-            fragment = FeatureManifest()
-            fragment.add(FeatureSpec(
-                name="share_unread_answers_k1", description="", unit="proportion", scale=Scale.RECORDING, group="coding",
-                extractor="coding.rate.k1", extractor_version="0.1.0", backend="ollama", backend_version="qwen3:14b",
-                params={"rating": "k1", "model": "qwen3:14b", "n_samples": 5, "notes": notes},
-            ))
-            write_manifest(fragment, layout_for(config).manifest_fragment_path(rid, "coding.rate.k1"))
+            manifest_fragment(config, rid, notes, "qwen3:14b")
         result = CliRunner().invoke(app, ["ratings", "export", str(tmp_path / "out"), "-c", str(path)])
         assert result.exit_code == 0, result.output
         scores = pd.read_csv(tmp_path / "out" / "scores_dictionary.csv", keep_default_na=False).set_index("column")

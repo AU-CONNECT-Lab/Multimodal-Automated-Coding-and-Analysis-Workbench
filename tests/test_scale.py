@@ -255,7 +255,7 @@ def _pixel_measures(project):
     manifest = FeatureManifest()
     for name, unit in (("hand_distance", "px"), ("f0_hz", "Hz"), ("shoulder_distance", "px")):
         manifest.add(FeatureSpec(name=name, description="", unit=unit, scale=Scale.FRAME, group="pose", extractor="pose.kinematics", extractor_version="0.4.0"))
-    write_manifest(manifest, layout.manifest_path)
+    write_manifest(manifest, layout.manifest_fragment_path("003", "pose.kinematics"))
     settings(project, "scale:\n  per_px_by_role: {parent: 0.2, child: 0.3}\n")
 
 

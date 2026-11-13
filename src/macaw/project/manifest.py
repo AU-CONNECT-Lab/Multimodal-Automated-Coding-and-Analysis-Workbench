@@ -124,10 +124,6 @@ def merge_manifests(manifests: list[FeatureManifest]) -> FeatureManifest:
 
 
 def recording_specs(layout, recording_id: str) -> dict[str, FeatureSpec]:
-    """What each step said of its features for one recording, under that recording's own settings; the project's
-    merged manifest where the recording has no fragments."""
+    """What each step said of its features for one recording, under that recording's own settings."""
     folder = layout.manifest_fragment_path(recording_id, "x").parent
-    fragments = sorted(folder.glob("*.json")) if folder.is_dir() else []
-    if fragments:
-        return merge_manifests([read_manifest(path) for path in fragments]).specs
-    return read_manifest(layout.manifest_path).specs if layout.manifest_path.is_file() else {}
+    return merge_manifests([read_manifest(path) for path in sorted(folder.glob("*.json"))]).specs

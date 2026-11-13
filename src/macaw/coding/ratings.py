@@ -364,18 +364,13 @@ def rater_settings(config, table: pd.DataFrame, base: Path) -> dict:
             continue
         specs = {}
         for rid in sorted(set(table.loc[table["rater"] == rater, "recording_id"].astype(str))):
-            path = layout.manifest_fragment_path(rid, f"{RATE_STEP}{rater}")
-            spec = read_manifest(path).specs.get(f"share_unread_answers_{rater}") if path.is_file() else None
-            if spec is not None:
-                backend = " ".join(part for part in (spec.backend, spec.backend_version) if part) or None
-                params = {key: value for key, value in spec.params.items() if key != "rating"}
-                specs[rid] = {"step": f"{spec.extractor} {spec.extractor_version}", "backend": backend, **params}
-        own: dict = {"kind": MODEL}
-        if rater in config.coding.ratings:
-            own["scales_file"] = _shown(config.coding.ratings[rater].scales, base)
-        if specs:
-            settings = varying_settings(specs)
-            own.update(settings if isinstance(settings, dict) else {"by_recording": settings})
+            spec = read_manifest(layout.manifest_fragment_path(rid, f"{RATE_STEP}{rater}")).specs[f"share_unread_answers_{rater}"]
+            backend = " ".join(part for part in (spec.backend, spec.backend_version) if part) or None
+            params = {key: value for key, value in spec.params.items() if key != "rating"}
+            specs[rid] = {"step": f"{spec.extractor} {spec.extractor_version}", "backend": backend, **params}
+        settings = varying_settings(specs)
+        own = {"kind": MODEL, "scales_file": _shown(config.coding.ratings[rater].scales, base)}
+        own.update(settings if isinstance(settings, dict) else {"by_recording": settings})
         found[rater] = own
     return found
 
