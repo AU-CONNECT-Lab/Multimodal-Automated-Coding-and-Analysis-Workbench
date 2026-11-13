@@ -161,7 +161,7 @@ class Recording:
         return max(known)
 
 
-def _entity_regex(pattern: str, separator: str = "/") -> re.Pattern[str]:
+def _entity_regex(pattern: str) -> re.Pattern[str]:
     parts: list[str] = []
     cursor = 0
     for match in _PLACEHOLDER.finditer(pattern):
@@ -175,10 +175,7 @@ def _entity_regex(pattern: str, separator: str = "/") -> re.Pattern[str]:
         parts.append(f"(?P<{name}>[^/\\\\]+?)")
         cursor = match.end()
     parts.append(re.escape(pattern[cursor:]))
-    body = "".join(parts)
-    if separator != "/":
-        body = body.replace("/", re.escape(separator))
-    return re.compile(f"^{body}$")
+    return re.compile(f"^{''.join(parts)}$")
 
 
 def parse_entities(relative_path: Path, pattern: str) -> dict[str, str | None]:
@@ -322,22 +319,61 @@ def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list
     return media, notes
 
 
-def build_recording(recording_id: str, config: MacawConfig) -> Recording:
-    """Resolve one recording on demand from directory convention plus its optional override file."""
-    pattern = config.project.recording_pattern
-    # the id is the pattern with separators flattened, so the same regex reads it back
-    match = _entity_regex(pattern, separator="_").match(recording_id)
-    if match is None:
-        raise RecordingNotFoundError(
-            f"'{recording_id}' does not look like a recording_pattern '{pattern}' id"
-        )
-    entities = {name: match.groupdict().get(name) for name in ENTITY_NAMES}
+def _readings(recording_id: str, pattern: str) -> list[dict[str, str]]:
+    """Every way the id reads as the pattern with its folders joined by _; a value may hold _ itself."""
+    pieces = _PLACEHOLDER.split(pattern.replace("/", "_"))
+    unknown = sorted(set(pieces[1::2]) - set(ENTITY_NAMES))
+    if unknown:
+        raise ConfigError(f"recording_pattern uses unknown entity '{unknown[0]}'. Available: {', '.join(ENTITY_NAMES)}")
+    found: list[dict[str, str]] = []
 
+    def walk(position: int, index: int, taken: dict[str, str]) -> None:
+        if not recording_id.startswith(pieces[index], position):
+            return
+        position += len(pieces[index])
+        if index == len(pieces) - 1:
+            if position == len(recording_id):
+                found.append(taken)
+            return
+        name = pieces[index + 1]
+        for end in range(position + 1, len(recording_id) + 1):
+            value = recording_id[position:end]
+            if taken.get(name, value) == value:
+                walk(end, index + 2, {**taken, name: value})
+
+    walk(0, 0, {})
+    return found
+
+
+def _folder(pattern: str, entities: dict[str, str | None]) -> str:
     relative = pattern
     for name in ENTITY_NAMES:
         if entities.get(name) is not None:
             relative = relative.replace("{" + name + "}", entities[name])
-    root = Path(config.project.raw_dir) / relative
+    return relative
+
+
+def recording_entities(recording_id: str, config: MacawConfig) -> dict[str, str | None]:
+    """The entities a recording id stands for; where _ inside a value makes it read more than one way, the folder under
+    raw_dir that exists says which."""
+    pattern = config.project.recording_pattern
+    readings = _readings(recording_id, pattern)
+    if len(readings) > 1:
+        readings = [found for found in readings if (Path(config.project.raw_dir) / _folder(pattern, found)).is_dir()] or readings
+    if not readings:
+        raise RecordingNotFoundError(f"'{recording_id}' does not look like a recording_pattern '{pattern}' id")
+    if len(readings) > 1:
+        folders = ", ".join(_folder(pattern, found) for found in readings)
+        raise RecordingNotFoundError(f"'{recording_id}' reads as more than one recording folder ({folders}) and none is under raw_dir")
+    return {name: readings[0].get(name) for name in ENTITY_NAMES}
+
+
+def build_recording(recording_id: str, config: MacawConfig) -> Recording:
+    """Resolve one recording on demand from directory convention plus its optional override file."""
+    pattern = config.project.recording_pattern
+    entities = recording_entities(recording_id, config)
+
+    root = Path(config.project.raw_dir) / _folder(pattern, entities)
     if not root.is_dir():
         raise RecordingNotFoundError(f"{recording_id}: no directory at {root}")
 
