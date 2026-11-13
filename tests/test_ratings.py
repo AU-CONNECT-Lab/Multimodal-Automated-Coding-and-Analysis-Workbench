@@ -322,6 +322,10 @@ class TestRun:
         rate(monkeypatch, config, "full")
         assert len(server.requests) == 3
 
+    def test_numbers_count_for_more_tokens_than_their_characters_suggest(self):
+        assert module.estimated_tokens("at 312.5 s") == 4 + int(1.3 * 2) + 1
+        assert module.estimated_tokens("你好吗") == 3
+
     def test_named_segments_are_rated_one_by_one_and_a_missing_one_is_said(self, monkeypatch, tmp_path, server):
         config = transcribed(project(
             tmp_path, {"parts": {"scales": "names.yaml", "segments": ["opening", "late", "absent"]}},

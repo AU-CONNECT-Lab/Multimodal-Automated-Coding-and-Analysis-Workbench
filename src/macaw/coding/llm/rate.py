@@ -4,6 +4,7 @@ several times, the median answer kept as the score."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -37,9 +38,9 @@ ANSWERS_NAME = "answers.parquet"
 # the segment column of a rating of the whole analysed window
 WHOLE = ""
 CUT_OFF = "cut off"
-# characters per token, on the low side so a prompt is not thought shorter than it is
-_CHARS_PER_TOKEN = 3.5
 _EDGE_S = 1e-3
+# words in Latin letters; any other character but a space counts alone, as in scripts written without spaces
+_DIGIT, _WORD, _SYMBOL = re.compile(r"\d"), re.compile(r"[A-Za-zÀ-ɏ]+"), re.compile(r"[^\sA-Za-zÀ-ɏ\d]")
 
 RATING_COLUMNS = [
     "recording_id", "segment", "t_start", "t_end", "scale", "person", "rater", "score", "score_sd", "score_min", "score_max",
@@ -271,7 +272,7 @@ def ask(prompts: list, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
     shorter than the longest prompt and its answer stops the step after the first answer."""
     rows = []
     checked = False
-    longest = max((len(system) + len(user) for *_, system, user in prompts), default=0)
+    longest = max((estimated_tokens(system + user) for *_, system, user in prompts), default=0)
     for segment, _, _, scale, system, user in prompts:
         for sample in range(cfg.n_samples):
             seed = cfg.seed + sample if backend.takes_seed else None
@@ -292,13 +293,18 @@ def ask(prompts: list, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
     return answers.astype({"sample": int, "score": float})
 
 
-def check_context(backend: LLMBackend, characters: int, cfg: LLMSection) -> None:
+def estimated_tokens(text: str) -> int:
+    """Tokens a prompt takes, on the high side: many tokenizers give each digit a token of its own."""
+    return len(_DIGIT.findall(text)) + int(1.3 * len(_WORD.findall(text))) + len(_SYMBOL.findall(text))
+
+
+def check_context(backend: LLMBackend, tokens: int, cfg: LLMSection) -> None:
     limit = backend.context_length()
     if limit is None:
         return
     # a model that reasons first needs room for that too
     answer = 512 if cfg.think is False else min(cfg.max_tokens, 4096)
-    needed = int(characters / _CHARS_PER_TOKEN) + answer
+    needed = tokens + answer
     if needed > limit:
         raise LLMBackendError(
             f"{backend.name} {cfg.model} reads {limit} tokens at most, and the longest prompt with its answer needs about {needed}; "
