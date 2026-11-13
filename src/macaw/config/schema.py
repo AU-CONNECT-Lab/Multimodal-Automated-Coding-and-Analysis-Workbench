@@ -272,6 +272,16 @@ class TextSection(_Section):
     # left out wherever speakers' words are compared: who said a word first, and lexical overlap
     exclude_words: Literal["none", "english_stopwords"] | Path = "english_stopwords"
     first_use_words: Path | None = None
+    # name -> a file of words or phrases; each gives the sentences holding one per minute
+    word_lists: dict[str, Path] = Field(default_factory=dict)
+
+    @field_validator("word_lists")
+    @classmethod
+    def _list_names(cls, value: dict[str, Path]) -> dict[str, Path]:
+        bad = [name for name in value if not re.fullmatch(r"[a-z][a-z0-9_]*", name)]
+        if bad:
+            raise ValueError(f"{', '.join(bad)}: a word list's name becomes part of a feature name; use lower-case letters, digits and _")
+        return value
 
 
 class PoseSection(_Section):
@@ -329,6 +339,8 @@ class KinematicsSection(_Section):
     smoothing_s: float = 0.3
     measures: list[MeasureSection] = Field(default_factory=list)
     gestures: GestureSection = Field(default_factory=GestureSection)
+    # movement series averaged over the frames where another person talks alone, e.g. upper_body_speed or motion_energy
+    listening: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _distinct_names(self) -> "KinematicsSection":
@@ -412,6 +424,8 @@ class FaceSection(_Section):
     action_units: bool = True
     landmarks: bool = True
     blink_min_eye_px: float = 5.0
+    # action unit -> the value above which a frame counts, on the face model's scale; no default, the project sets it
+    au_above: dict[str, float] = Field(default_factory=dict)
     gaze: bool = False
     check_model: str | None = None
     check_backend: str | None = None

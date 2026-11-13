@@ -41,6 +41,8 @@ _ARM_JOINTS = (
     "right_wrist",
 )
 _WRISTS = ("left_wrist", "right_wrist")
+# what a table leaves in view of someone sitting at it
+UPPER_BODY = ("nose", "left_eye", "right_eye", "left_ear", "right_ear", *_ARM_JOINTS)
 _DERIVATIVES = (("speed", 1), ("acceleration", 2), ("jerk", 3))
 
 # points a measure may name besides the skeleton's joints
@@ -62,6 +64,12 @@ _SUBJECT_SPECS: dict[str, tuple[str, str | None, bool]] = {
         for wrist in _WRISTS
         for name, order in _DERIVATIVES
     },
+    "upper_body_speed": (
+        "Mean speed of the head, shoulder, elbow and wrist points found in the frame, each from a Savitzky-Golay fit within "
+        "each unbroken run of frames; how much the upper body moves.",
+        "{length}/s",
+        False,
+    ),
     "head_yaw_index": (
         "Nose position between the eyes, (d_right - d_left) / (d_right + d_left): 0 facing the "
         "camera, positive when turned toward the person's own left. Not an angle.",
@@ -100,11 +108,11 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics", "setup.cameras")
+    config_sections = ("kinematics.smoothing_s", "kinematics.measures", "setup.cameras")
     requires = (PoseReviewGate.name,)
 
     def check_available(self) -> None:
@@ -327,6 +335,7 @@ def _subject_values(kp: pd.DataFrame, smoothing_s: float) -> pd.DataFrame:
         values[f"{wrist}_speed"] = velocity(kp, wrist, smoothing_s=smoothing_s)
         values[f"{wrist}_acceleration"] = acceleration(kp, wrist, smoothing_s=smoothing_s)
         values[f"{wrist}_jerk"] = jerk(kp, wrist, smoothing_s=smoothing_s)
+    values["upper_body_speed"] = upper_body_speed(kp, smoothing_s=smoothing_s)
     head = head_orientation(kp)
     values["head_yaw_index"] = head["yaw_index"]
     values["head_roll_deg"] = head["roll_deg"]
@@ -429,6 +438,12 @@ def acceleration(
 
 def jerk(kp: pd.DataFrame, joint: str, *, smoothing_s: float = DEFAULT_SMOOTHING_S) -> pd.Series:
     return _derivative(kp, joint, 3, smoothing_s)
+
+
+def upper_body_speed(kp: pd.DataFrame, *, smoothing_s: float = DEFAULT_SMOOTHING_S) -> pd.Series:
+    """Per frame the mean speed of the upper-body points measured there; NaN where none is."""
+    speeds = pd.concat([velocity(kp, joint, smoothing_s=smoothing_s) for joint in UPPER_BODY], axis=1)
+    return speeds.mean(axis=1, skipna=True)
 
 
 def head_orientation(kp: pd.DataFrame) -> pd.DataFrame:

@@ -34,6 +34,8 @@ BUILTIN_MODULES = (
     "macaw.extractors.audio.prosody.turn_pairs",
     "macaw.extractors.video.face.au",
     "macaw.extractors.video.face.movement",
+    "macaw.extractors.video.face.shares",
+    "macaw.extractors.video.pose.listening",
     "macaw.extractors.segments",
 )
 

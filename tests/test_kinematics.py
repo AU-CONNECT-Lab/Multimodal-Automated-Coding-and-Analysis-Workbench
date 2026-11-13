@@ -402,7 +402,7 @@ class TestExtractor:
         monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: tmp_path / rid)
         extractor = KinematicsExtractor(SimpleNamespace(kinematics=KinematicsSection()))
         assert extractor.inputs_for(SimpleNamespace(recording_id="r1")) == [tmp_path / "r1"]
-        assert extractor.config_sections == ("kinematics", "setup.cameras")
+        assert extractor.config_sections == ("kinematics.smoothing_s", "kinematics.measures", "setup.cameras")
 
 
 def measure(**fields):

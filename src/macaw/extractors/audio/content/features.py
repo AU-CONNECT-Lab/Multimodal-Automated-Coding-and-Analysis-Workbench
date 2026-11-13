@@ -37,7 +37,15 @@ _SPECS = {
         "who brings in the shared vocabulary.",
         None,
     ),
+    "questions_per_minute": (
+        "Sentences this speaker ended with a question mark, per minute of the analysed part; it rests on the transcript's "
+        "punctuation.",
+        "1/min",
+    ),
 }
+# a sentence ends where . ! or ? is followed by a space; 3.5 does not end one
+_SENTENCE_END = re.compile(r"(?:(?<=[.!?])|(?<=[.!?][\"')\]]))\s+")
+_CLOSING = re.compile(r"[.!?\"')\]\s]*$")
 
 # a row per change of speaker and its mean per pair, subject_id taking the floor from subject_id_b
 _OVERLAP_SPECS = {
@@ -69,12 +77,12 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
         "text.embedding_model", "text.device", "text.first_use_min_speakers", "text.exclude_words",
-        "text.first_use_words", "segment",
+        "text.first_use_words", "text.word_lists", "segment",
     )
     requires = (ASRExtractor.name, TURNS_STEP)
 
@@ -109,7 +117,7 @@ class TextFeatureExtractor(Extractor):
 
     def _word_lists(self) -> list[Path]:
         text = self.config.text
-        return [path for path in (text.exclude_words, text.first_use_words) if isinstance(path, Path)]
+        return [path for path in (text.exclude_words, text.first_use_words, *text.word_lists.values()) if isinstance(path, Path)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         transcript = load_transcript(self.config, recording.recording_id)
@@ -162,9 +170,12 @@ class TextFeatureExtractor(Extractor):
             exclude=excluded_words(text.exclude_words),
             only=None if text.first_use_words is None else read_word_list(text.first_use_words),
         )
+        lists = {name: read_phrases(path) for name, path in text.word_lists.items()}
+        minutes = (window[1] - window[0]) / 60.0
         frames = []
         for subject_id, spoken in transcript.groupby("subject_id", observed=True):
             tokens = [token for tokens in spoken["tokens"] for token in tokens]
+            said = [sentence for line in spoken["text"].fillna("").astype(str) for sentence in sentences(line)]
             values = pd.DataFrame(
                 {
                     "t_start": [window[0]],
@@ -175,6 +186,11 @@ class TextFeatureExtractor(Extractor):
                     "type_token_ratio": [type_token_ratio(tokens)],
                     "unigram_entropy_bits": [unigram_entropy(tokens)],
                     "first_use_share": [first.get(str(subject_id), np.nan)],
+                    "questions_per_minute": [_per_minute(sum(map(is_question, said)), minutes)],
+                    **{
+                        f"{name}_per_minute": [_per_minute(sum(any_phrase(tokenize(sentence), phrases) for sentence in said), minutes)]
+                        for name, phrases in lists.items()
+                    },
                 }
             )
             frames.append(
@@ -226,8 +242,17 @@ class TextFeatureExtractor(Extractor):
         ])
 
     def _specs(self) -> list[FeatureSpec]:
+        listed = {
+            f"{name}_per_minute": (
+                f"Sentences of this speaker holding a word or phrase of the word list {path.name} (text.word_lists {name}), per "
+                "minute of the analysed part.",
+                "1/min", Scale.RECORDING,
+            )
+            for name, path in self.config.text.word_lists.items()
+        }
         described = {
             **{name: (description, unit, Scale.RECORDING) for name, (description, unit) in _SPECS.items()},
+            **listed,
             **_OVERLAP_SPECS,
             **{name: (description, unit, Scale.RECORDING) for name, (description, unit) in _EMBEDDING_SPECS.items() if self.config.text.embedding_model},
         }
@@ -246,6 +271,7 @@ class TextFeatureExtractor(Extractor):
                     "first_use_min_speakers": self.config.text.first_use_min_speakers,
                     "exclude_words": _list_name(self.config.text.exclude_words),
                     "first_use_words": _list_name(self.config.text.first_use_words),
+                    "word_lists": {name: path.name for name, path in self.config.text.word_lists.items()},
                 },
                 validation="synthetic",
             )
@@ -289,6 +315,37 @@ def read_word_list(path: Path) -> frozenset[str]:
 def word_list(text: str) -> frozenset[str]:
     """One word per line, # starts a comment; each line is tokenized like the transcript."""
     return frozenset(token for line in text.splitlines() for token in tokenize(line.split("#", 1)[0]))
+
+
+def sentences(text: str) -> list[str]:
+    """A line split after each . ! or ? that a space follows; a line without one is a sentence of its own."""
+    return [part for part in _SENTENCE_END.split(text.strip()) if part.strip()]
+
+
+def is_question(sentence: str) -> bool:
+    return "?" in _CLOSING.search(sentence).group(0)
+
+
+def read_phrases(path: Path) -> list[tuple[str, ...]]:
+    """One word or phrase per line, # starts a comment; each is tokenized like the transcript."""
+    phrases = (tuple(tokenize(line.split("#", 1)[0])) for line in Path(path).read_text(encoding="utf-8").splitlines())
+    return sorted({phrase for phrase in phrases if phrase})
+
+
+def any_phrase(tokens: list[str], phrases: list[tuple[str, ...]]) -> bool:
+    """Whether the tokens hold one of the phrases, its words in a row."""
+    words = set(tokens)
+    for phrase in phrases:
+        if len(phrase) == 1:
+            if phrase[0] in words:
+                return True
+        elif any(tuple(tokens[start : start + len(phrase)]) == phrase for start in range(len(tokens) - len(phrase) + 1)):
+            return True
+    return False
+
+
+def _per_minute(count: int, minutes: float) -> float:
+    return float(count) / minutes if minutes > 0 else np.nan
 
 
 def excluded_words(setting: str | Path) -> frozenset[str]:

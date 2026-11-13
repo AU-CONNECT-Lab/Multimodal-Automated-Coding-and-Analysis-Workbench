@@ -80,6 +80,7 @@ text:
   first_use_min_speakers: 2          # first_use_share counts a word once this many speakers have used it
   exclude_words: english_stopwords      # english_stopwords | none | path to a word list, one word per line
   first_use_words: null              # path to a word list; only these words count, e.g. the task's topic words
+  word_lists: {}                     # name -> a file of words or phrases, one per line; gives <name>_per_minute, the sentences holding one, e.g. {negative: negative_words.txt}
 
 pose:
   backend: null                      # mediapipe (reports usage to Google) | yolo (offline; AGPL, not bundled)
@@ -95,6 +96,7 @@ pose:
 kinematics:
   smoothing_s: 0.3                   # s; Savitzky-Golay window for joint speed, acceleration, jerk
   measures: []                       # your own quantities between points on people; see the user guide
+  listening: []                      # movement series averaged where another person talks alone (pose.listening), e.g. [upper_body_speed, motion_energy]
   gestures:
     tier: null                       # annotation tier whose segments are gestures, each on its person's tier; null = none measured
     annotator: null                  # whose segments, when several people coded that tier
@@ -134,6 +136,7 @@ face:
   action_units: true                 # 20 action units per frame, 0 to 1
   landmarks: true                    # face landmarks kept in an artifact, not the long table; face.movement reads them
   blink_min_eye_px: 5.0              # px; eyes narrower than this in the picture are not read for blinks
+  au_above: {}                       # action unit -> value on the face model's scale; face.shares gives the share of face frames above it, e.g. {au12: 0.5}
   gaze: false                        # gaze direction per frame as well (pyfeat: v1 adds L2CS-Net, v2 has it built in)
   check_model: null                  # a second model (v1 or v2) for face.au_check, which only checks AU agreement
   check_backend: null                # face.au_check with another backend, e.g. openface against pyfeat; null = face.backend

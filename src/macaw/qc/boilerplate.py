@@ -24,8 +24,8 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "face.au", "face.au_check", "face.movement",
-    "gaze.target",
+    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
+    "face.movement", "face.shares", "gaze.target",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -472,6 +472,14 @@ def _text_features(config, spec, names) -> str:
         "passed from one speaker to another, lexical overlap was taken as the share of the distinct words in the new turn "
         f"that the previous speaker had used in the turn just before{f', {left_out} left out' if left_out else ''}."
     )
+    text += (
+        " Utterances were split into sentences after each full stop, question mark or exclamation mark followed by a space, "
+        "and the sentences ending in a question mark were counted per minute of the analysed part."
+    )
+    lists = sorted((params.get("word_lists") or {}).values())
+    if lists:
+        which = f"each of the researcher-supplied word lists {_listed(lists)}" if len(lists) > 1 else f"the researcher-supplied word list {lists[0]}"
+        text += f" For {which}, the sentences holding at least one of its words or phrases were counted per minute."
     model = params.get("embedding_model")
     if model:
         text += (
@@ -722,7 +730,8 @@ def _keypoints(config, spec, names) -> str:
 def _kinematics(config, spec, names) -> str:
     return (
         f"Wrist speed, acceleration and jerk were estimated with a {_seconds(config.kinematics.smoothing_s)} "
-        "Savitzky-Golay filter of polynomial order 3 [savitzky1964] within each unbroken run of detections. The distance "
+        "Savitzky-Golay filter of polynomial order 3 [savitzky1964] within each unbroken run of detections, and upper-body "
+        "speed as the mean speed, estimated the same way, of the head, shoulder, elbow and wrist points found in each frame. The distance "
         "between the wrists, head yaw and roll from the eyes and nose, postural openness, the distance between two "
         "people's shoulder midpoints and the overlap of their body outlines were also derived. All are measured in the "
         "image plane, in pixels or relative to body size, not in metric units."
@@ -1002,6 +1011,26 @@ def _syntax(config, spec, names) -> str:
     )
 
 
+def _face_shares(config, spec, names) -> str:
+    text = (
+        "For each person, the share of the frames of the analysed part in which a face was found and given to them was "
+        "computed from the camera their face was read from."
+    )
+    above = spec.params.get("au_above") or {}
+    if above:
+        listed = _listed([f"action unit {int(unit[2:])} above {threshold:g}" for unit, threshold in sorted(above.items())])
+        text += f" Among the frames with their face, the shares with {listed} on the face model's scale were taken."
+    return text
+
+
+def _listening(config, spec, names) -> str:
+    listed = _listed([name.replace("_", " ") for name in spec.params.get("listening", [])])
+    return (
+        f"Each person's {listed} was averaged over the frames in which another person was talking and nobody else was, "
+        "by the start and end of each utterance in the transcript, as their movement while listening."
+    )
+
+
 def _plugin(config, spec, names) -> str:
     backend = f", backend {spec.backend} {spec.backend_version}" if spec.backend else ""
     return f"Features from the {spec.extractor} {spec.extractor_version} extractor{backend} were included."
@@ -1026,6 +1055,8 @@ _WRITERS = {
     "pose.detect": _detect,
     "pose.keypoints": _keypoints,
     "pose.kinematics": _kinematics,
+    "pose.listening": _listening,
+    "face.shares": _face_shares,
     "pose.gestures": _gestures,
     "pose.kinematics3d": _kinematics_3d,
     "pose.gestures3d": _gestures_3d,

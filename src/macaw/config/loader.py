@@ -347,9 +347,11 @@ def _absolutise(model: BaseModel, base: Path) -> None:
         elif isinstance(value, BaseModel):
             _absolutise(value, base)
         elif isinstance(value, dict):
-            for entry in value.values():
+            for key, entry in value.items():
                 if isinstance(entry, BaseModel):
                     _absolutise(entry, base)
+                elif isinstance(entry, Path) and not entry.is_absolute():
+                    value[key] = (base / entry).resolve()
 
 
 def _anchor_names(config: MacawConfig, base: Path) -> None:
