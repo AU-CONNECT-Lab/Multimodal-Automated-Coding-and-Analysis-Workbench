@@ -23,7 +23,7 @@ This page describes the standard procedure, from organising the recordings to ex
 MACAW is installed once per computer, usually by whoever maintains it.
 
 1. Install Python 3.10, 3.11 or 3.12, git and ffmpeg.
-2. Install PyTorch for the computer's graphics card, following the instructions at [pytorch.org](https://pytorch.org/get-started/locally/). Installing it first ensures that the graphics card is used.
+2. Install PyTorch for the computer's graphics card, following the instructions at [pytorch.org](https://pytorch.org/get-started/locally/), in the release that the speech recognition component (whisperx) requires: PyTorch 2.8 for whisperx 3.8, found under the previous versions on that site. Installing it first ensures that the graphics card is used: step 3 replaces any other release with one from the general package index, which on Windows runs on the processor only.
 3. Install MACAW with all its components:
 
    ```bash

@@ -4,6 +4,7 @@ off, but only after the partner's bleed has been taken back out."""
 from __future__ import annotations
 
 import json
+import re
 import wave
 from pathlib import Path
 
@@ -91,6 +92,7 @@ class PyannoteBackend(DiarizationBackend):
             return "unknown"
 
     def check_available(self) -> None:
+        refuse_older("pyannote.audio", (4, 0), "which gives the diarization without overlaps and loads with current torchaudio")
         try:
             import pyannote.audio  # noqa: F401
         except ImportError:
@@ -129,6 +131,22 @@ class PyannoteBackend(DiarizationBackend):
             for turn, label in annotation:
                 rows.append({"t_start": float(turn.start), "t_end": float(turn.end), "label": str(label), "exclusive": exclusive})
         return pd.DataFrame(rows, columns=["t_start", "t_end", "label", "exclusive"])
+
+
+def refuse_older(package: str, minimum: tuple[int, ...], why: str) -> None:
+    """Stop at a release too old to work, whose import would fail with a less readable error."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        installed = version(package)
+    except PackageNotFoundError:
+        return
+    if tuple(int(part) for part in re.findall(r"\d+", installed)[: len(minimum)]) < minimum:
+        raise BackendNotAvailableError(
+            f"{package} {installed} is installed; MACAW needs {'.'.join(map(str, minimum))} or later, {why}. "
+            "Install the PyTorch release that whisperx requires, for your CUDA version, then "
+            '`pip install --upgrade "pymacaw[asr]"`.'
+        )
 
 
 def speaker_counts(n_speakers: int | None, extra_speakers: int) -> dict[str, int | None]:

@@ -18,6 +18,7 @@ from macaw.extractors.audio.content.diarization import (
     SpeakerReviewGate,
     inside,
     read_diarization,
+    refuse_older,
     resolve_diarization,
     shared_track,
     speaker_names,
@@ -152,6 +153,7 @@ class WhisperXBackend(ASRBackend):
         return _package_version("whisperx")
 
     def check_available(self) -> None:
+        refuse_older("whisperx", (3, 8), "the first release built on pyannote.audio 4")
         try:
             import whisperx  # noqa: F401
         except ImportError:

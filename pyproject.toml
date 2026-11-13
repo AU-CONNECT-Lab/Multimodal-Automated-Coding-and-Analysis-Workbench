@@ -36,12 +36,12 @@ audio = [
   "soundfile>=0.12",
 ]
 
-# Install PyTorch from the index matching your CUDA version *before* this group. These
-# packages pin torch against each other, and letting pip resolve it lands a CPU-only build.
+# Install the PyTorch release whisperx pins, from the index matching your CUDA version, *before*
+# this group; letting pip resolve it lands a CPU-only build on Windows.
 asr = [
-  "whisperx>=3.1",
+  "whisperx>=3.8",          # the first built on pyannote.audio 4; older ones break under torchaudio 2.9
   "faster-whisper>=1.0",
-  "pyannote.audio>=3.1",
+  "pyannote.audio>=4.0",
 ]
 
 text = [
