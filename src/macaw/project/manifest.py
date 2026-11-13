@@ -29,6 +29,7 @@ class FeatureSpec:
     params: dict = field(default_factory=dict)
     interpolation: str | None = None    # how to fill gaps at frame scale
     aggregation: str | None = None      # how to roll up to window/recording scale
+    missing: str | None = None          # what an empty cell of this feature means
     comparable_across_subjects: bool = True   # False for intensity; mic distance confounds it
     comparable_across_backends: bool = True   # False for AU; never merge across backends
     validation: str = "none"            # none | synthetic | against_reference | published
@@ -112,7 +113,21 @@ def write_manifest(manifest: FeatureManifest, path: Path) -> Path:
 
 
 def merge_manifests(manifests: list[FeatureManifest]) -> FeatureManifest:
+    """One entry per feature; where recordings ran a step under settings of their own, the first one's."""
     merged = FeatureManifest()
     for manifest in manifests:
-        merged.extend(list(manifest.specs.values()))
+        for spec in manifest.specs.values():
+            seen = merged.specs.setdefault(spec.name, spec)
+            if seen.extractor != spec.extractor:
+                raise MacawError(f"Feature '{spec.name}' is described by both {seen.extractor} and {spec.extractor}")
     return merged
+
+
+def recording_specs(layout, recording_id: str) -> dict[str, FeatureSpec]:
+    """What each step said of its features for one recording, under that recording's own settings; the project's
+    merged manifest where the recording has no fragments."""
+    folder = layout.manifest_fragment_path(recording_id, "x").parent
+    fragments = sorted(folder.glob("*.json")) if folder.is_dir() else []
+    if fragments:
+        return merge_manifests([read_manifest(path) for path in fragments]).specs
+    return read_manifest(layout.manifest_path).specs if layout.manifest_path.is_file() else {}

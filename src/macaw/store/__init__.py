@@ -20,7 +20,7 @@ from macaw.store.sequence import (
     to_joint_sequence,
     to_state_sequence,
 )
-from macaw.store.wide import export_csv, to_wide
+from macaw.store.wide import to_wide
 
 __all__ = [
     "Scale",
@@ -45,7 +45,6 @@ __all__ = [
     "write_annotations",
     "build_annotations",
     "to_wide",
-    "export_csv",
     "to_state_sequence",
     "to_joint_sequence",
     "export_state_sequence",

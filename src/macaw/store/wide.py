@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from macaw.store.schema import SEGMENT_TABLE_SCHEMA, Scale, coerce_frame
@@ -49,10 +47,3 @@ def with_segment(df: pd.DataFrame) -> pd.DataFrame:
     """Long-table rows, or per-segment ones, in one layout; a row of the whole recording has no segment."""
     return coerce_frame(df if "segment" in df.columns else df.assign(segment=pd.NA), SEGMENT_TABLE_SCHEMA, "export")
 
-
-def export_csv(df: pd.DataFrame, path: Path, *, wide: bool = True) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    out = to_wide(df) if wide else with_segment(df)
-    out.to_csv(path, index=False, encoding="utf-8")
-    return path

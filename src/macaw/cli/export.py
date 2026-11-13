@@ -12,7 +12,9 @@ from macaw.execution.runner import resolve_recordings
 from macaw.interop.eaf import export_eaf
 from macaw.media.align import apply_offset_table
 from macaw.logging_setup import get_logger
+from macaw.project.dictionary import feature_dictionary, long_columns, write_dictionary
 from macaw.project.layout import layout_for
+from macaw.project.manifest import recording_specs
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.project.recording import build_recording
 from macaw.project.segments import summaries
@@ -26,7 +28,7 @@ from macaw.store.sequence import (
     speaking_intervals,
     to_state_sequence,
 )
-from macaw.store.wide import export_csv, to_wide, with_segment
+from macaw.store.wide import to_wide, with_segment
 
 app = typer.Typer()
 logger = get_logger("export")
@@ -93,14 +95,20 @@ def export(
 
     out = out or (layout.output_dir / "exports" / f"features.{format_}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    table = _in_project_units(config, resolved.project.units, layout, table, out.parent)
+    units = resolved.project.units
+    specs = {str(rid): recording_specs(layout, str(rid)) for rid in table["recording_id"].dropna().unique()}
+    table = _in_project_units(config, units, layout, table, out.parent, specs)
+    exported = to_wide(table) if wide else with_segment(table)
     if format_ == "csv":
-        export_csv(table, out, wide=wide)
+        exported.to_csv(out, index=False, encoding="utf-8")
     else:
-        (to_wide(table) if wide else table).to_parquet(out, index=False)
+        exported.to_parquet(out, index=False)
+    columns = list(exported.columns) if wide else long_columns(table)
+    written = write_dictionary(feature_dictionary(table, columns, specs, units), out)
 
     logger.info("%d rows from %d recordings", len(table), len(frames))
-    typer.echo(str(out))
+    for path in (out, *written):
+        typer.echo(str(path))
 
 
 def _whole_and_segments(config, recording_id: str, rows: pd.DataFrame, scale: str | None) -> pd.DataFrame:
@@ -118,20 +126,19 @@ def _whole_and_segments(config, recording_id: str, rows: pd.DataFrame, scale: st
     return with_segment(pd.concat([with_segment(whole), parts], ignore_index=True))
 
 
-def _in_project_units(config_path: Path, units: str, layout, table: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+def _in_project_units(config_path: Path, units: str, layout, table: pd.DataFrame, out_dir: Path, specs: dict) -> pd.DataFrame:
     """Features in metres again in the project's unit, and pixel features too for each recording with a scale;
-    scale.csv says which scale."""
-    from macaw.project.manifest import read_manifest
+    scale.csv says which scale. specs holds each recording's own feature specs."""
     from macaw.project.room import CM_PER_UNIT
     from macaw.project.scale import DEPTH_NOTE, recording_scale, suffix, unit_rows, unusable
     from macaw.qc.checks import RecordingResults
 
-    if not layout.manifest_path.exists():
-        return table
-    features = {name: spec.unit for name, spec in read_manifest(layout.manifest_path).specs.items()}
     pieces, used, converted = [table], [], 0
     for recording_id, rows in table.groupby("recording_id", observed=True):
         recording_id = str(recording_id)
+        features = {name: spec.unit for name, spec in specs.get(recording_id, {}).items()}
+        if not features:
+            continue
         own = resolve_config(config_path, recording_id=recording_id)
         scale = recording_scale(own, layout, recording_id)
         problem = unusable(scale, own, recording_id, RecordingResults(layout, recording_id).keypoints()) if scale is not None else None
