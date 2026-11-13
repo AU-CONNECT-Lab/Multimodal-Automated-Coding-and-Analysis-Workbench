@@ -17,6 +17,7 @@ from macaw.extractors.video.gaze.target import (
     OFF_SCREEN,
     GazeTargetExtractor,
     label_runs,
+    looks_at,
     mutual_gaze,
     name_targets,
     settle_looks,
@@ -94,6 +95,17 @@ def test_mutual_gaze_needs_both_looking_at_each_other_in_the_same_frame():
     ])
     mutual = mutual_gaze(points, "child", "parent")
     assert mutual["mutual"].tolist() == [True] * 3 + [False] * 7
+
+
+def test_a_look_out_of_the_picture_at_someone_not_in_it_is_unknown():
+    # frames 0-3 out of the picture with the child not in it, 4-6 out of it with the child in it, 7-9 at something in it
+    parent = gaze("parent", 0, 0).assign(
+        target=[OFF_SCREEN] * 7 + [ELSEWHERE] * 3, to_child=[np.nan] * 4 + [2.0] * 3 + [np.nan] * 3,
+    )
+    assert looks_at(parent, "child").tolist() == pytest.approx([np.nan] * 4 + [0.0] * 6, nan_ok=True)
+    child = gaze("child", 0, 0).assign(target=["parent"] * 10, to_parent=[0.0] * 10)
+    mutual = mutual_gaze(pd.concat([parent, child]), "child", "parent")
+    assert mutual["mutual"].tolist() == pytest.approx([np.nan] * 4 + [0.0] * 6, nan_ok=True)
 
 
 def test_people_read_from_cameras_with_different_offsets_are_paired_by_time():

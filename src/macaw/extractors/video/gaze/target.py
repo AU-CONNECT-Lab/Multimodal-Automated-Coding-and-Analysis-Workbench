@@ -85,7 +85,11 @@ def _missing(points: bool) -> dict[str, str]:
         unread = "no camera is set to read it, or pose found fewer than two of their nose, eyes and ears in its picture"
         both, nothing = unread, "gaze.targets names no things"
         unseen = "either one's head never appears in the picture the other's gaze is read from"
-        sideways = ", or could not be seen looking at the other because the other's head was not in their picture then"
+        undecided = (
+            ", at moments when neither is seen to look at someone or something else but one looks out of the picture while "
+            "the other is not in it"
+        )
+        left_out = " Moments at which it is not known (see looks_at and mutual_gaze) are left out."
         looker = f"Empty in frames where subject_id's gaze was not read ({unread}),"
         own = {
             name: f"Empty in frames where this person's gaze was not read: {unread}." for name in ("gaze_x", "gaze_y", "gaze_in_frame")
@@ -93,8 +97,10 @@ def _missing(points: bool) -> dict[str, str]:
         pair = {
             "gaze_to_head": f"{looker} and in frames where subject_id_b's head is not in that picture.",
             "looks_at": (
-                f"{looker} and throughout the span when subject_id_b's head never appears in that picture. 0 means subject_id "
-                "looked elsewhere, which includes frames in which subject_id_b's head is not in the picture."
+                f"{looker} throughout the span when subject_id_b's head never appears in that picture, and in frames where "
+                "subject_id looked out of the picture while subject_id_b's head was not in it, as they may have looked at "
+                "subject_id_b. 0 means subject_id looked at someone or something in the picture, or out of it while subject_id_b "
+                "was in it."
             ),
         }
         span = (
@@ -108,7 +114,7 @@ def _missing(points: bool) -> dict[str, str]:
             "frames say where anyone or anything is for them"
         )
         unseen, nothing = "neither the room nor labelled frames say where one of the two is", "setup.room.things and the labelled frames name no things"
-        sideways = ""
+        undecided = left_out = ""
         placed = (
             "neither the room laid out in the setup (with the camera that reads subject_id's face and both people placed) nor at least "
             f"{angles.MIN_LABELS} labelled frames of subject_id looking at subject_id_b say where subject_id_b is"
@@ -127,15 +133,15 @@ def _missing(points: bool) -> dict[str, str]:
     joint = f"{never}, and when {nothing}. {_ONCE} 0 means they were never seen looking at the same named thing."
     return {
         **own, **pair,
-        "looks_at_share": f"{span} 0 means the gaze was read but never rested on subject_id_b.",
+        "looks_at_share": f"{span}{left_out} 0 means the gaze was read but never rested on subject_id_b.",
         "looks_at_n": f"{span} 0 means the gaze was read but never rested on subject_id_b.",
         "mutual_gaze": (
-            f"Empty at moments when either person's gaze was not read ({both}), and throughout for a pair where {unseen}. {_ONCE} "
-            f"0 means at least one of them looked elsewhere{sideways}."
+            f"Empty at moments when either person's gaze was not read ({both}){undecided}, and throughout for a pair where {unseen}. "
+            f"{_ONCE} 0 means at least one of them was seen looking at someone or something else."
         ),
         "mutual_gaze_share": (
-            f"{never}, and for a pair where {unseen}. {_ONCE} 0 means both gazes were read but the two were never seen looking at "
-            "each other."
+            f"{never}, and for a pair where {unseen}.{left_out} {_ONCE} 0 means both gazes were read but the two were never seen "
+            "looking at each other."
         ),
         "joint_attention": (
             f"Empty at moments when either person's gaze was not read ({both}), and throughout when {nothing}. {_ONCE} 0 means "
@@ -158,7 +164,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.4.1"
+    version = "0.4.2"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "segment", "video", "setup.cameras", "setup.room")
@@ -339,7 +345,7 @@ class GazeTargetExtractor(Extractor):
             if mine.empty or column not in mine or mine[column].isna().all():
                 continue
             measured.add((a, b))
-            looks = (mine["target"] == b).astype(float)
+            looks = looks_at(mine, b)
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame({"t_start": mine["t"].to_numpy(), feature: mine[column].to_numpy(), "looks_at": looks.to_numpy()}),
@@ -422,7 +428,7 @@ class GazeTargetExtractor(Extractor):
             mutual = mutual_gaze(points, a, b)
             if mutual.empty:
                 continue
-            mutual = mutual.assign(label=np.where(mutual["mutual"], b, None))
+            mutual = mutual.assign(label=np.where(mutual["mutual"] == 1, b, None))
             intervals = label_runs(mutual, "label").dropna(subset=["label"])
             if not intervals.empty:
                 frames.append(build_annotations(tier=MUTUAL_TIER, intervals=intervals.reset_index(drop=True), subject_id=a, **common))
@@ -554,24 +560,38 @@ def _settled(labels: list, min_frames: float) -> list:
     return [label for label, length in kept for _ in range(length)]
 
 
+def looks_at(own: pd.DataFrame, other: str) -> pd.Series:
+    """1 where this person looks at other and 0 where not; empty where they look out of the picture while other is not in
+    it, since they may be looking at other there."""
+    looks = (own["target"] == other).astype(float)
+    column = next((name for name in (f"to_{other}", f"angle_{other}") if name in own), None)
+    absent = own[column].isna() if column else pd.Series(True, index=own.index)
+    looks[(own["target"] == OFF_SCREEN) & absent] = np.nan
+    return looks
+
+
 def paired_looks(points: pd.DataFrame, a: str, b: str) -> pd.DataFrame:
-    """a's frame and t with each one's target and when their look at it began, for the moments both gazes were read in;
-    matched by time, so people read from cameras of their own line up."""
+    """a's frame and t with each one's target, whether they look at the other (looks_at) and when their look began, for
+    the moments both gazes were read in; matched by time, so people read from cameras of their own line up."""
     mine, theirs = _with_starts(points[points["subject_id"] == a]), _with_starts(points[points["subject_id"] == b])
     if mine.empty or theirs.empty:
-        return pd.DataFrame(columns=["frame", "t", "target_a", "began_a", "target_b", "began_b"])
+        return pd.DataFrame(columns=["frame", "t", "target_a", "began_a", "at_a", "target_b", "began_b", "at_b"])
+    mine, theirs = mine.assign(at=looks_at(mine, b)), theirs.assign(at=looks_at(theirs, a))
     half = 0.5 * max(_period(mine), _period(theirs))
     both = pd.merge_asof(
-        mine[["frame", "t", "target", "began"]], theirs[["t", "target", "began"]].rename(columns={"t": "t_b"}),
+        mine[["frame", "t", "target", "began", "at"]], theirs[["t", "target", "began", "at"]].rename(columns={"t": "t_b"}),
         left_on="t", right_on="t_b", direction="nearest", tolerance=half + 1e-9, suffixes=("_a", "_b"),
     )
     return both.dropna(subset=["t_b"]).drop(columns="t_b").sort_values("frame").reset_index(drop=True)
 
 
 def mutual_gaze(points: pd.DataFrame, a: str, b: str) -> pd.DataFrame:
-    """t and mutual for the moments both gazes were read in."""
+    """t and mutual for the moments both gazes were read in: 0 once either one is seen not to look at the other, 1 when both
+    look at each other, else empty."""
     both = paired_looks(points, a, b)
-    return pd.DataFrame({"frame": both["frame"], "t": both["t"], "mutual": (both["target_a"] == b) & (both["target_b"] == a)})
+    at_a, at_b = both["at_a"].to_numpy(dtype=float), both["at_b"].to_numpy(dtype=float)
+    mutual = np.where((at_a == 0) | (at_b == 0), 0.0, np.where((at_a == 1) & (at_b == 1), 1.0, np.nan))
+    return pd.DataFrame({"frame": both["frame"], "t": both["t"], "mutual": mutual})
 
 
 def joint_attention(points: pd.DataFrame, a: str, b: str, things: list[str]) -> pd.DataFrame:
