@@ -21,6 +21,8 @@ from macaw.extractors.base import Backend
 BACKEND_GROUP = "llm"
 
 _RETRIES = 3
+# the longest wait a refusing server's Retry-After is followed for
+_MAX_RETRY_AFTER_S = 120
 _PROBE_TIMEOUT_S = 5
 _POLL_S = 0.5
 
@@ -86,6 +88,7 @@ class LLMBackend(Backend):
     def _post(self, url: str, body: dict, headers: dict[str, str]) -> dict:
         data = json.dumps(body).encode("utf-8")
         for attempt in range(_RETRIES + 1):
+            pause = float(2**attempt)
             request = urllib.request.Request(
                 url, data=data, headers={"Content-Type": "application/json", **headers}, method="POST"
             )
@@ -96,13 +99,36 @@ class LLMBackend(Backend):
                 detail = error.read().decode("utf-8", errors="replace")[:500]
                 if (error.code != 429 and error.code < 500) or attempt == _RETRIES:
                     raise LLMBackendError(f"{self.name} answered {error.code} at {url}: {detail}") from None
+                pause = retry_after(error.headers, pause)
             except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
                 if attempt == _RETRIES:
                     raise LLMBackendError(
                         f"{self.name} at {url} did not answer after {_RETRIES + 1} tries: {error}"
                     ) from None
-            time.sleep(2**attempt)
+            time.sleep(pause)
         raise AssertionError("unreachable")
+
+
+def retry_after(headers, otherwise: float) -> float:
+    """The wait a server that refused asks for, in retry-after-ms or Retry-After (seconds or a date), within limits."""
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+
+    if headers is None:
+        return otherwise
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        value = headers.get(name)
+        if not value:
+            continue
+        try:
+            seconds = float(value) * scale
+        except ValueError:
+            try:
+                seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError):
+                continue
+        return min(max(seconds, 0.0), _MAX_RETRY_AFTER_S)
+    return otherwise
 
 
 def _get(url: str, headers: dict[str, str] | None = None, timeout: float = _PROBE_TIMEOUT_S) -> dict:
@@ -111,7 +137,10 @@ def _get(url: str, headers: dict[str, str] | None = None, timeout: float = _PROB
         return json.loads(response.read().decode("utf-8"))
 
 
-_RATE_LIMITS = "The provider's rate limits apply: a request over them is refused, tried again a few times, and then stops the step."
+_RATE_LIMITS = (
+    "The provider's rate limits apply: a refused request waits as long as the provider asks (up to two minutes) and is tried "
+    "again up to three times before it stops the step."
+)
 
 
 def run_in_order(jobs: Sequence[Callable[[], T]], concurrency: int, *, after_first: Callable[[], None] | None = None) -> list[T]:
@@ -324,6 +353,10 @@ class LlamaCppBackend(OpenAICompatibleBackend):
     name = "llamacpp"
     is_local = True
     default_base_url = "http://127.0.0.1:8080/v1"
+    at_once = (
+        "llama.cpp's server answers that many at once only when started with --parallel at or above it, and the rest wait; "
+        "its context (-c) can then be shared among the requests, so it needs to hold all of them."
+    )
 
     def _serves(self, served: list[str]) -> bool:
         # it answers with the model it was started with, whatever the request names

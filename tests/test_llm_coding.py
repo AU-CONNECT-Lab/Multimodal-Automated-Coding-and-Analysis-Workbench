@@ -50,6 +50,7 @@ class Stub:
         self.requests: list[dict] = []
         self.gets: list[str] = []
         self.fail_first = 0
+        self.refused = None  # (code, headers) a failing request is answered with
         self.cut = None  # "all": stopped at max_tokens before any code; "part": after the first one
         self.reason = None  # text -> the reason given with its code
         stub = self
@@ -58,9 +59,11 @@ class Stub:
             def log_message(self, *args):
                 pass
 
-            def _send(self, code, body):
+            def _send(self, code, body, headers=None):
                 data = json.dumps(body).encode()
                 self.send_response(code)
+                for name, value in (headers or {}).items():
+                    self.send_header(name, value)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -80,7 +83,8 @@ class Stub:
                 stub.requests.append({"path": self.path, "body": body, "headers": {key.lower(): value for key, value in self.headers.items()}})
                 if stub.fail_first:
                     stub.fail_first -= 1
-                    self._send(503, {"error": "busy"})
+                    code, headers = stub.refused or (503, {})
+                    self._send(code, {"error": "busy"}, headers)
                     return
                 user = text_of(body["messages"][-1]["content"])
                 labels = [
@@ -284,6 +288,29 @@ class TestBackends:
         backend = VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1"))
         backend.complete("s", "u")
         assert len(stub.requests) == 3
+
+    def test_a_refusal_waits_as_long_as_the_server_asks(self, stub, monkeypatch):
+        slept = []
+        monkeypatch.setattr(backends_module.time, "sleep", slept.append)
+        stub.fail_first, stub.refused = 2, (429, {"Retry-After": "30"})
+        backend = VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1"))
+        backend.complete("s", "u")
+        assert len(stub.requests) == 3 and slept == [30.0, 30.0]
+        stub.fail_first, stub.refused = 1, (503, {})
+        backend.complete("s", "u")
+        assert slept[-1] == 1.0
+
+    def test_what_a_server_asks_to_wait_is_read_in_every_form_and_kept_within_bounds(self):
+        from email.utils import format_datetime
+        from datetime import datetime, timedelta, timezone
+
+        retry_after = backends_module.retry_after
+        assert retry_after({"retry-after-ms": "1500", "retry-after": "9"}, 2.0) == 1.5
+        assert retry_after({"retry-after": "7"}, 2.0) == 7.0
+        assert retry_after({"retry-after": "3600"}, 2.0) == 120.0
+        assert retry_after({"retry-after": "-3"}, 2.0) == 0.0
+        assert 15 <= retry_after({"retry-after": format_datetime(datetime.now(timezone.utc) + timedelta(seconds=20), usegmt=True)}, 2.0) <= 20
+        assert retry_after({"retry-after": "soon"}, 2.0) == 2.0 and retry_after({}, 4.0) == 4.0 and retry_after(None, 1.0) == 1.0
 
     def test_a_server_that_stays_down_is_an_error_not_an_abstention(self, stub):
         stub.fail_first = 10
