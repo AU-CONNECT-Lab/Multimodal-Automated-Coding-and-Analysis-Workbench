@@ -232,6 +232,33 @@ def _dropped(results: RecordingResults) -> list[dict]:
     ]
 
 
+def _voice_checks(config: MacawConfig, layout, recording_id: str) -> list[dict]:
+    """The further voice found and the lines given to another speaker, each with who decided."""
+    from macaw.extractors.audio.content.diarization import (
+        describe_further_voice, read_further_voice, read_line_speakers, unheard_further_voice, voices_mixed,
+    )
+    from macaw.extractors.audio.content.line_speakers import SUGGESTED, describe_kept
+
+    rows = []
+    found = read_further_voice(config, recording_id)
+    if found and not config.text.extra_voices:
+        heard = layout.further_voice_path(recording_id)
+        waiting = bool(unheard_further_voice(config, recording_id))
+        rows.append({
+            "what": "A further voice",
+            "decided": f"{describe_further_voice(found)}; " + ("nobody has listened to it" if waiting else "a person heard nobody else"),
+            "by": "waiting" if waiting else _who_and_when(json.loads(heard.read_text(encoding="utf-8")).get("by")), "href": "#Voices",
+        })
+    if voices_mixed(config, recording_id):
+        kept = read_line_speakers(config, recording_id)
+        rows.append({
+            "what": "Who speaks each line",
+            "decided": "a person found two people in one voice; " + (describe_kept(kept) if kept else "the lines are not checked yet"),
+            "by": "waiting" if not kept else "software" if kept.get("route") == SUGGESTED else _who_and_when(kept.get("by")), "href": "#Voices",
+        })
+    return rows
+
+
 def _who_and_when(stamp: str | None) -> str:
     """'ann 2026-10-26T10:00:00' as 'ann, 2026-10-26'."""
     if not stamp:
@@ -296,6 +323,7 @@ def _decisions(
             "decided": f"{len(voices)} voice(s) on the shared microphone" + ("" if by else ", not named yet"),
             "by": "waiting" if not by else "software" if by == AUTOMATIC else _who_and_when(by), "href": "#Voices",
         })
+        rows += _voice_checks(config, layout, recording_id)
     stamp_path = layout.corrected_transcript_stamp_path(recording_id)
     if stamp_path.is_file():
         stamp = json.loads(stamp_path.read_text(encoding="utf-8"))

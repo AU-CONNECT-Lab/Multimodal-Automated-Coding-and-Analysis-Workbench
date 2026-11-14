@@ -311,6 +311,17 @@ def runs_again(before: MacawConfig, after: MacawConfig) -> list[str]:
     return [name for name in order if name in reached and not issubclass(get_extractor(name), Gate)]
 
 
+def save_for_recording(config_path: Path, recording_id: str, values: dict[str, Any]) -> Path:
+    """Sets these keys in one recording's own settings file, which then has to read as before."""
+    folder = Path(resolve_config(config_path).project.recording_config_dir)
+    path = folder / f"{recording_id}.yaml"
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    folder.mkdir(parents=True, exist_ok=True)
+    save(path, with_values(text, values))
+    resolve_config(config_path, recording_id=recording_id)
+    return path
+
+
 def save(path: Path, text: str) -> None:
     """Writes the text with the line endings the file already has."""
     newline = "\r\n" if path.is_file() and b"\r\n" in path.read_bytes() else "\n"

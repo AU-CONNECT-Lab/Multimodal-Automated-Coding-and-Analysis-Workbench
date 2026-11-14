@@ -349,3 +349,75 @@ class TestFurtherVoice:
     def test_nothing_to_dismiss_is_said(self, project):
         name_voices(project)
         assert "no further voice was found" in str(macaw(project, "accept-voices", "--nobody-else").exception)
+
+
+class TestShown:
+    def shown(self, project):
+        from macaw.interface.pages import review
+
+        return json.dumps(review.body(project.config, "003"), default=lambda item: item.to_plotly_json())
+
+    def test_the_review_page_asks_about_a_further_voice_and_shows_who_heard_nobody(self, project):
+        pytest.importorskip("dash")
+        name_voices(project)
+        TestFurtherVoice().found(project)
+        shown = self.shown(project)
+        assert "Someone else may speak here: 22 s in 2 stretch(es)" in shown and "/segments?recording=003" in shown
+        assert "Keep it as a voice of its own" in shown and "Nobody else speaks" in shown
+        macaw(project, "accept-voices", "--nobody-else")
+        shown = self.shown(project)
+        assert "ann heard nobody else" in shown and "Nobody else speaks" not in shown
+
+    def test_a_voice_of_its_own_is_set_for_that_recording_alone(self, project):
+        pytest.importorskip("dash")
+        from macaw.interface import project_file
+
+        path = project_file.save_for_recording(project.config, "003", {"text.extra_voices": 1})
+        assert path.name == "003.yaml" and resolve_config(project.config, recording_id="003").text.extra_voices == 1
+        assert project.resolved().text.extra_voices == 0
+
+    def test_the_review_page_lists_the_lines_once_the_voices_are_marked_as_mixed(self, project, monkeypatch):
+        pytest.importorskip("dash")
+        from macaw.interface.pages import review
+
+        name_voices(project)
+        assert "Who speaks each line" not in self.shown(project)
+        argv = review.action_command(project.config, "003", "accept-voices", "", "ann", {"S0": "parent", "S1": "child"}, mixed=True)
+        assert argv[-3:] == ["--mixed", "--by", "ann"]
+        name_voices(project, "--mixed")
+        suggested = lines_of(project).assign(suggested=pd.Series([None, "child", None], dtype=object), sure=[False, True, False], doubt=["", "the mouth of child moves and that of parent is still", ""])
+        monkeypatch.setattr("macaw.extractors.audio.content.line_speakers.suggested_lines", lambda config, recording: suggested)
+        shown = self.shown(project)
+        assert "Who speaks each line" in shown and "Not checked yet." in shown and "no I want red" in shown
+        assert "Give the 1 sure ones to the person suggested" in shown and "the other 2 lines" in shown
+        picks = review.lines_file(project.config, "003", {"14.200": "child"})
+        argv = review.action_command(project.config, "003", "lines-apply", str(picks), "ann", {})
+        assert CliRunner().invoke(app, argv[1:]).exit_code == 0
+        assert "1 of 3 lines were given to another person" in self.shown(project)
+        argv = review.action_command(project.config, "003", "lines-split", "15", "ann", {"person": "child"})
+        assert argv[1] == "line-speakers" and argv[-6:] == ["--at", "15", "--person", "child", "--by", "ann"]
+
+    def test_the_report_says_who_decided_each(self, project):
+        from macaw.qc.report import write_recording_report
+
+        name_voices(project, "--mixed")
+        TestFurtherVoice().found(project)
+        text = write_recording_report(project.resolved(), "003")[0].read_text(encoding="utf-8")
+        assert "A further voice" in text and "nobody has listened to it" in text
+        assert "Who speaks each line" in text and "the lines are not checked yet" in text
+        macaw(project, "accept-voices", "--nobody-else")
+        macaw(project, "line-speakers", "--at", "14.3", "--person", "child")
+        text = write_recording_report(project.resolved(), "003")[0].read_text(encoding="utf-8")
+        assert "a person heard nobody else" in text and "1 of 3 lines were given to another person" in text
+
+    def test_methods_say_what_was_looked_for_and_what_was_changed(self, project):
+        from macaw.qc import boilerplate
+
+        config = project.resolved()
+        assert "One voice more than the participants was also looked for" in boilerplate._further_voice(config)
+        name_voices(project)
+        assert boilerplate._mixed_voices(config) == ""
+        name_voices(project, "--mixed")
+        macaw(project, "line-speakers", "--at", "14.3", "--person", "child")
+        said = boilerplate._mixed_voices(config)
+        assert "In 1 recording a researcher found two participants within one voice" in said and "1 line was given to the other speaker." in said

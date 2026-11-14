@@ -374,10 +374,10 @@ def review_update(app):
     return callback(app, "..review-body.children...review-message.children...review-recording.options")
 
 
-# the states after the recording, the clicks and the uploads: name, voices, acts, gaze, scale, camera, names, note, picker
+# the states after the recording, the clicks, the uploads and the split: name, voices, acts, gaze, scale, camera, names, note, mixed, lines, picker
 def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None):
     return [by, [], [], [], [], [], [], [], *([[]] * 6), list(cameras), [marks] if marks else [], [frame] if frame else [],
-            [tags] if tags is not None else [], [text] if text is not None else [], []]
+            [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], []]
 
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
@@ -444,12 +444,12 @@ def test_your_name_starts_blank_is_kept_in_the_browser_and_is_needed_for_a_decis
     update = review_update(create_app(project))
     pressed = {"type": review.ACT, "action": "accept-offset", "target": "mic"}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
-    body, said, _ = update("003", [1], [], [], *review_states("  "))
+    body, said, _ = update("003", [1], [], [], [], *review_states("  "))
     assert body is no_update and "Type your name first" in text_of(said)
     dropped = {"type": review.UPLOAD, "kind": review.CODING_UPLOAD}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=dropped, triggered=[{"value": "data:,"}],
                                                        inputs_list=[None, None, [{"id": dropped}]]))
-    body, said, _ = update("003", [], ["data:,"], ["a.csv"], *review_states(""))
+    body, said, _ = update("003", [], ["data:,"], [], ["a.csv"], *review_states(""))
     assert body is no_update and "Type your name first" in text_of(said)
 
 
@@ -798,9 +798,9 @@ def test_a_note_is_kept_with_its_tags_and_can_be_taken_back(project, monkeypatch
     update = review_update(create_app(project))
     pressed = {"type": review.ACT, "action": "add-note", "target": ""}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
-    _, said, _ = update("003", [1], [], [], *review_states("ann", tags=[], text=" "))
+    _, said, _ = update("003", [1], [], [], [], *review_states("ann", tags=[], text=" "))
     assert "Tick a tag or write the note first" in text_of(said)
-    body, said, _ = update("003", [1], [], [], *review_states("ann", tags=["trim the start"], text="cut the first minute"))
+    body, said, _ = update("003", [1], [], [], [], *review_states("ann", tags=["trim the start"], text="cut the first minute"))
     assert "kept in" in text_of(said) and "cut the first minute" in text_of(body) and "trim the start" in text_of(body)
     from macaw.project.review_notes import read_notes
 
@@ -810,7 +810,7 @@ def test_a_note_is_kept_with_its_tags_and_can_be_taken_back(project, monkeypatch
         CliRunner().invoke(cli, ["note", "-c", str(project), "-r", "003", "--tag", "nonsense"], catch_exceptions=False)
     removed = {"type": review.ACT, "action": "remove-note", "target": note["id"]}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=removed, triggered=[{"value": 1}]))
-    body, said, _ = update("003", [1], [], [], *review_states("ann"))
+    body, said, _ = update("003", [1], [], [], [], *review_states("ann"))
     assert "taken back" in text_of(said) and "cut the first minute" not in text_of(body)
 
 
@@ -840,9 +840,9 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     update = review_update(create_app(project))
     saving = {"type": review.ACT, "action": "name-people", "target": ""}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=saving, triggered=[{"value": 1}]))
-    _, said, _ = update("003", [1], [], [], *review_states(" ", ["room"], marks, shown))
+    _, said, _ = update("003", [1], [], [], [], *review_states(" ", ["room"], marks, shown))
     assert "Type your name first" in text_of(said)
-    body, said, _ = update("003", [1], [], [], *review_states("ann", ["room"], marks, shown))
+    body, said, _ = update("003", [1], [], [], [], *review_states("ann", ["room"], marks, shown))
     assert "on room, child at 1 s, parent at 1 s" in text_of(said)
     listed = text_of(naming.saved(resolve_config(project), "003", "room", people))
     assert "25% across, 50% down" in listed and "100% across, 25% down" in listed
@@ -850,13 +850,13 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     assert "no, outside the analysed part" in marked
     taking = {"type": review.ACT, "action": "take-back-click", "target": "1|child"}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=taking, triggered=[{"value": 1}]))
-    body, said, _ = update("003", [1], [], [], *review_states("", ["room"]))
+    body, said, _ = update("003", [1], [], [], [], *review_states("", ["room"]))
     assert "took back 1 click on room at 1 s" in text_of(said)
     left = text_of(naming.saved(resolve_config(project), "003", "room", people))
     assert "25% across, 50% down" in left and "100% across, 25% down" not in left and "take-back-click" in text_of(body)
     clearing = {"type": review.ACT, "action": "clear-names", "target": ""}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=clearing, triggered=[{"value": 1}]))
-    _, said, _ = update("003", [1], [], [], *review_states("", ["room"]))
+    _, said, _ = update("003", [1], [], [], [], *review_states("", ["room"]))
     assert "no clicks on room now" in text_of(said)
     assert "Nobody is named on room yet" in text_of(naming.saved(resolve_config(project), "003", "room", people))
 

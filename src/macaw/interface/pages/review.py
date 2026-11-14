@@ -42,8 +42,12 @@ TRANSCRIPT_UPLOAD, CODING_UPLOAD = "transcript", "coding"
 # the actions that record who decided, so they wait for a name
 NAMED = {
     "accept-offset", "accept-owner", "accept-voices", "apply-review", "set-scale", "label-gaze", "look-right", "look-wrong",
-    "name-people", "add-note",
+    "name-people", "add-note", "further-nobody", "lines-suggested", "lines-apply", "lines-as-they-are",
 }
+VOICES_MIXED = "voices-mixed"
+LINE_PICK, LINE_PERSON, LINE_HERE, LINE_AT = "line-pick", "line-split-person", "line-split-here", "line-split-at"
+# more lines than this are changed from a csv with macaw line-speakers --apply
+_MAX_LINES = 400
 EVERYONE = "everyone"
 RECORDING, PREVIOUS, NEXT = "review-recording", "review-previous", "review-next"
 PLAYER, SEEK, SEEKED = "review-player", "review-seek", "review-seeked"
@@ -336,11 +340,113 @@ def _voices(config, layout, recording):
     status = ui.note(f"Named by {by.split(' ')[0]}." if by else "Not named yet; the choices shown are the suggestion.", "ok" if by else "warn")
     return ui.card(
         "Voices on the shared microphone",
+        *_further_voice(config, layout, rid, directory),
         ui.table(["Voice", "Speech", "Pitch", "What it says", "Clips", "Suggested", "Person"], rows, numeric={"Pitch"}),
         status,
+        _mouth_doubts(config, recording) if by else None,
+        dcc.Checklist(
+            [{"label": "One voice holds two people here: I will say who speaks each line", "value": "mixed"}],
+            ["mixed"] if named.get("mixed") else [], id=_one(VOICES_MIXED), className="tag-picks",
+        ),
         html.Div(_button("Save these names", "accept-voices", primary=True), className="buttons"),
         desc="Pick whose voice each is" + ("; none counts as other in turn-taking." if others_take_turns(config) else "; none leaves it out."),
     )
+
+
+def _mouth_doubts(config, recording):
+    """How many lines mouth movement speaks against, as a hint that a voice may hold two people."""
+    from macaw.extractors.audio.content.line_speakers import mouths, spoken_lines, with_evidence
+
+    try:
+        ranks = mouths(config, recording.recording_id)
+        lines = with_evidence(spoken_lines(config, recording), ranks) if ranks else None
+    except Exception:   # no shared transcript or no faces yet: no hint
+        return None
+    if lines is None or lines.empty:
+        return None
+    doubted = int((lines["doubt"] != "").sum())
+    return ui.note(f"Mouth movement speaks against the voice of {doubted} of {len(lines)} lines.", "warn" if doubted else "ok")
+
+
+def _further_voice(config, layout, rid: str, directory: Path) -> list:
+    """What to show where one more voice than there are people was found: its clips and the three ways on."""
+    import json
+
+    from macaw.extractors.audio.content.diarization import describe_further_voice, read_further_voice, unheard_further_voice
+
+    found = read_further_voice(config, rid)
+    if not found or config.text.extra_voices:
+        return []
+    if not unheard_further_voice(config, rid):
+        heard = json.loads(layout.further_voice_path(rid).read_text(encoding="utf-8"))
+        return [ui.note(f"A further voice was found ({describe_further_voice(found)}); {heard['by'].split(' ')[0]} heard nobody else.", "ok")]
+    return [
+        ui.note(f"Someone else may speak here: {describe_further_voice(found)}. Listen, then choose.", "warn"),
+        html.Div([
+            html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True), seek(clip["t_start"], "on video")], className="clip")
+            for clip in found.get("clips", [])
+        ], className="clips"),
+        html.Div([
+            dcc.Link("Cut that part out", href=f"/segments?{urlencode({'recording': rid})}", className="button"),
+            _button("Keep it as a voice of its own", "further-own"),
+            _button("Nobody else speaks", "further-nobody"),
+        ], className="buttons"),
+    ]
+
+
+def _lines(config, layout, recording):
+    from macaw.extractors.audio.content.diarization import read_line_speakers, voices_mixed
+    from macaw.extractors.audio.content.line_speakers import describe_kept, suggested_lines
+
+    rid = recording.recording_id
+    if not voices_mixed(config, rid):
+        return None
+    title = "Who speaks each line"
+    try:
+        lines = suggested_lines(config, recording)
+    except Exception as error:   # the shared transcript is not there yet, or cannot be read
+        return ui.card(title, ui.note(str(error), "bad"))
+    people = [*(subject.subject_id for subject in recording.subjects), NO_ONE]
+
+    def row(line):
+        doubt = html.Span([ui.pill("sure" if line.sure else "doubt", "warn"), f" {line.suggested or 'not ' + line.base}: {line.doubt}"]) if line.doubt else ""
+        pick = dcc.Dropdown(people, line.person, id={"type": LINE_PICK, "t": f"{line.t_start:.3f}"}, clearable=False, className="picker small")
+        return [seek(line.t_start), line.base, line.text, doubt, pick]
+
+    columns = ["At (s)", "Voice of", "Words", "Mouth movement", "Speaker"]
+    shown = lines.head(_MAX_LINES)
+    doubted, rest = shown[shown["doubt"] != ""], shown[shown["doubt"] == ""]
+    kept = read_line_speakers(config, rid)
+    sure = int((lines["sure"] & lines["suggested"].notna() & (lines["suggested"] != lines["person"])).sum())
+    parts = [ui.note(f"{describe_kept(kept)}. Saved by {kept['by'].split(' ')[0]}." if kept else "Not checked yet.", "ok" if kept else "warn")]
+    if doubted.empty:
+        parts.append(ui.note("Mouth movement speaks against no line, or no face was read here."))
+    else:
+        parts.append(ui.table(columns, [row(line) for line in doubted.itertuples(index=False)], numeric={"At (s)"}))
+    if not rest.empty:
+        table = ui.table(columns, [row(line) for line in rest.itertuples(index=False)], numeric={"At (s)"})
+        parts.append(html.Details([html.Summary(f"the other {len(rest)} lines"), table], open=doubted.empty))
+    if len(lines) > _MAX_LINES:
+        parts.append(ui.note(f"Showing the first {_MAX_LINES} of {len(lines)} lines; the rest are changed from a csv."))
+    parts.append(html.Div([
+        ui.field("While playing: from the player's moment to the end of that line it is", dcc.Dropdown(people, None, id=_one(LINE_PERSON), placeholder="speaker", className="picker small")),
+        ui.button("Split there", _one(LINE_HERE)),
+        dcc.Store(id=_one(LINE_AT)),
+    ], className="toolbar"))
+    parts.append(html.Div([
+        *([_button(f"Give the {sure} sure ones to the person suggested", "lines-suggested")] if sure else []),
+        _button("Nothing more to change", "lines-as-they-are"),
+        _button("Save these speakers", "lines-apply", primary=True),
+    ], className="buttons"))
+    return ui.card(title, *parts, desc="Each line shows whose voice it fell in; pick who really speaks it. A sure suggestion needs both faces and two seconds.")
+
+
+def lines_file(config_path: Path, rid: str, picks: dict[str, str]) -> Path:
+    """The speakers picked, written where macaw line-speakers --apply reads them."""
+    path = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / f"lines_{rid}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"t_start": [float(t) for t in picks], "person": list(picks.values())}).to_csv(path, index=False)
+    return path
 
 
 def _scale(config, layout, recording):
@@ -695,7 +801,8 @@ def body(config_path: Path, rid: str | None, camera: str | None = None):
         _offsets(config, layout, rid),
         _people_on_camera(own, layout, results, recording, camera),
         _model_look(config, layout, rid),
-        _voices(config, layout, recording),
+        _voices(own, layout, recording),
+        _lines(own, layout, recording),
         _speech_acts(config, layout, recording),
         _coding(layout, rid),
         _scale(resolve_config(config_path, recording_id=rid), layout, recording),
@@ -730,7 +837,7 @@ def _coding(layout, rid: str):
 
 def action_command(
     config_path: Path, rid: str, action: str, target: str, by: str, voices: dict, scale: dict | None = None,
-    gaze: dict | None = None,
+    gaze: dict | None = None, mixed: bool = False,
 ) -> list[str]:
     def command(*sub, extra=()):
         return cli_bridge.build_command(list(sub), config_path=config_path, recordings=[rid], extra_flags=list(extra))
@@ -761,7 +868,16 @@ def action_command(
     if action == "accept-owner":
         return command("accept-owner", extra=["--camera", target, *by_flag])
     if action == "accept-voices":
-        return command("accept-voices", extra=["--rename", ",".join(f"{label}={who}" for label, who in sorted(voices.items())), *by_flag])
+        names = ",".join(f"{label}={who}" for label, who in sorted(voices.items()))
+        return command("accept-voices", extra=["--rename", names, *(["--mixed"] if mixed else []), *by_flag])
+    if action == "further-nobody":
+        return command("accept-voices", extra=["--nobody-else", *by_flag])
+    if action in ("lines-suggested", "lines-as-they-are"):
+        return command("line-speakers", extra=[f"--{action.removeprefix('lines-')}", *by_flag])
+    if action == "lines-apply":
+        return command("line-speakers", extra=["--apply", target, *by_flag])
+    if action == "lines-split":
+        return command("line-speakers", extra=["--at", target, "--person", voices["person"], *by_flag])
     if action == "render":
         return command("qc", extra=["--render"])
     if action == "look":
@@ -858,6 +974,17 @@ def register(app, config_path: Path) -> None:
         prevent_initial_call=True,
     )
 
+    app.clientside_callback(
+        """function (clicks, timing) {
+            const video = document.getElementById('""" + PLAYER + """');
+            if (!clicks || !video) { return window.dash_clientside.no_update; }
+            const t = timing && timing.length ? video.currentTime * timing[0].clock_scale + timing[0].offset_s : video.currentTime;
+            return {t: Math.round(t * 100) / 100, n: clicks};
+        }""",
+        Output({"type": LINE_AT, "key": MATCH}, "data"), Input({"type": LINE_HERE, "key": MATCH}, "n_clicks"),
+        State({"type": TIMING, "key": ALL}, "data"), prevent_initial_call=True,
+    )
+
     @app.callback(
         Output({"type": SCALE_GRAPH, "key": MATCH}, "figure"),
         Output({"type": SCALE_POINTS, "key": MATCH}, "data"),
@@ -911,6 +1038,7 @@ def register(app, config_path: Path) -> None:
         Input(RECORDING, "value"),
         Input({"type": ACT, "action": ALL, "target": ALL}, "n_clicks"),
         Input({"type": UPLOAD, "kind": ALL}, "contents"),
+        Input({"type": LINE_AT, "key": ALL}, "data"),
         State({"type": UPLOAD, "kind": ALL}, "filename"),
         State("review-by", "value"),
         State({"type": "voice-pick", "label": ALL}, "value"),
@@ -931,6 +1059,10 @@ def register(app, config_path: Path) -> None:
         State({"type": naming.FRAME["type"], "key": ALL}, "data"),
         State({"type": NOTE_TAGS, "key": ALL}, "value"),
         State({"type": NOTE_TEXT, "key": ALL}, "value"),
+        State({"type": VOICES_MIXED, "key": ALL}, "value"),
+        State({"type": LINE_PERSON, "key": ALL}, "value"),
+        State({"type": LINE_PICK, "t": ALL}, "value"),
+        State({"type": LINE_PICK, "t": ALL}, "id"),
         State(RECORDING, "options"),
         prevent_initial_call="initial_duplicate",
     )
@@ -941,8 +1073,8 @@ def register(app, config_path: Path) -> None:
             return no_update, message, no_update
         return content, message, relabelled(options, rid)
 
-    def _acted(rid, clicks, uploads, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
-        *scale, cameras, marks, shown, tags, text = rest
+    def _acted(rid, clicks, uploads, split, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
+        *scale, cameras, marks, shown, tags, text, mixed, split_person, line_picks, line_ids = rest
         camera = cameras[0] if cameras else None
         marks, shown = (marks or [None])[0], (shown or [None])[0]
         trigger = ctx.triggered_id
@@ -990,13 +1122,29 @@ def register(app, config_path: Path) -> None:
             elif action == "apply-review":
                 chosen = {item["key"]: value for item, value in zip(act_ids, acts) if value}
                 argv = ["macaw", "review", "-c", str(config_path), "--apply", str(review_file(config_path, rid, by, chosen))]
+            elif action == "further-own":
+                from macaw.interface import project_file
+
+                path = project_file.save_for_recording(config_path, rid, {"text.extra_voices": 1})
+                return body(config_path, rid, camera), ui.note(f"text.extra_voices is 1 for this recording, in {path}. The next run separates its voices again; name them here after it.", "ok")
+            elif action == "lines-apply":
+                chosen = {item["t"]: value for item, value in zip(line_ids, line_picks) if value}
+                argv = action_command(config_path, rid, action, str(lines_file(config_path, rid, chosen)), by, {})
             else:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
                 measured["at"] = float(measured["at"] or 0.0)
-                argv = action_command(config_path, rid, action, target, by, voices, measured)
+                argv = action_command(config_path, rid, action, target, by, voices, measured, mixed=bool(mixed and mixed[0]))
             # a model asked about every frame or line, or a copy of a camera, takes longer than a click's command
             slow = {"timeout_s": 3600} if action in ("look", "transcript-check", "prepare") else {}
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent, **slow))]
+        elif isinstance(trigger, dict) and trigger.get("type") == LINE_AT:
+            at = ctx.triggered[0]["value"]
+            if not at:   # the card was drawn again, nothing was clicked
+                return no_update, no_update
+            if not by or not (split_person and split_person[0]):
+                return no_update, ui.note("Type your name and pick the speaker first.", "warn")
+            argv = action_command(config_path, rid, "lines-split", f"{at['t']:g}", by, {"person": split_person[0]})
+            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         elif isinstance(trigger, dict) and trigger.get("type") == UPLOAD:
             contents = ctx.triggered[0]["value"]
             if not contents:   # the card was drawn again, nothing was uploaded

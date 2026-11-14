@@ -484,6 +484,62 @@ def _diarize(config, spec, names) -> str:
     return (
         f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
         f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review] + _voice_hints(config)
+        + ("" if extra else _further_voice(config)) + _mixed_voices(config)
+    )
+
+
+def _further_voice(config) -> str:
+    from macaw.extractors.audio.content.diarization import _FURTHER_MIN_S
+
+    then = (
+        "this was noted in the quality report." if config.text.voice_review == "skip" else
+        "the recording was held until a researcher had listened to it and cut that part of the recording out, kept it as a "
+        "further speaker, or confirmed that no one else spoke."
+    )
+    return (
+        " One voice more than the participants was also looked for in each recording; where it held at least "
+        f"{_FURTHER_MIN_S:g} s of speech, {then}"
+    )
+
+
+def lines_reassigned(config) -> tuple[int, int, int]:
+    """(recordings whose voices a person found mixed, lines given to another speaker there, those changed without listening)."""
+    from macaw.exceptions import MacawError
+    from macaw.execution.runner import resolve_recordings
+    from macaw.extractors.audio.content.diarization import line_changes, voices_mixed
+    from macaw.extractors.audio.content.line_speakers import SUGGESTION
+
+    mixed = changed = unheard = 0
+    try:
+        recording_ids = resolve_recordings(config, None)
+    except MacawError:   # described from a manifest alone, with no recordings to read
+        return 0, 0, 0
+    for rid in recording_ids:
+        if not voices_mixed(config, rid):
+            continue
+        changes = line_changes(config, rid)
+        mixed += 1
+        changed += len(changes)
+        unheard += sum(change.get("by") == SUGGESTION for change in changes)
+    return mixed, changed, unheard
+
+
+def _mixed_voices(config) -> str:
+    from macaw.extractors.audio.content.line_speakers import _SURE_MIN_S
+
+    mixed, changed, unheard = lines_reassigned(config)
+    if not mixed:
+        return ""
+    by_mouth = (
+        f", {unheard} of them without listening, from mouth movement: only lines of at least {_SURE_MIN_S:g} s during which both "
+        "participants' mouths were read, where the suggested speaker's mouth moved more and the other's less than on their other lines"
+        if unheard else ""
+    )
+    return (
+        f" In {mixed} recording{'s' if mixed > 1 else ''} a researcher found two participants within one voice. There every line "
+        f"was shown with the voice it fell in for its speaker to be assigned; {changed} line{'s were' if changed != 1 else ' was'} "
+        f"given to the other speaker{by_mouth}. A reassigned stretch counts as its new speaker's in the transcript, the "
+        "turn-taking measures and the voice measures."
     )
 
 

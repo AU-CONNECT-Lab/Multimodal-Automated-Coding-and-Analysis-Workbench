@@ -120,14 +120,9 @@ def segment_command(config_path: Path, rid: str, name: str, start: float | None 
 
 
 def set_window(config_path: Path, rid: str, start: float, end: float) -> Path:
-    """Writes the analysed part into the recording's own settings file, which then has to read as before."""
-    folder = Path(resolve_config(config_path).project.recording_config_dir)
-    path = folder / f"{rid}.yaml"
-    text = path.read_text(encoding="utf-8") if path.is_file() else ""
-    folder.mkdir(parents=True, exist_ok=True)
-    project_file.save(path, project_file.with_values(text, {"segment.task_start_s": float(start), "segment.task_end_s": float(end), "segment.keep_last_s": None}))
-    resolve_config(config_path, recording_id=rid)
-    return path
+    return project_file.save_for_recording(
+        config_path, rid, {"segment.task_start_s": float(start), "segment.task_end_s": float(end), "segment.keep_last_s": None}
+    )
 
 
 def _time_from_player() -> str:
@@ -143,6 +138,13 @@ def register(app, config_path: Path) -> None:
     @app.callback(Output("segments-recording", "options"), Input("url", "pathname"))
     def recordings(_):
         return resolve_recordings(resolve_config(config_path), None)
+
+    @app.callback(Output("segments-recording", "value"), Input("url", "pathname"), Input("url", "search"))
+    def linked_recording(pathname, search):
+        rid = ui.asked(search).get("recording")
+        if (pathname or "/").rstrip("/") != f"/{LABEL.lower()}" or rid not in resolve_recordings(resolve_config(config_path), None):
+            return no_update
+        return rid
 
     app.clientside_callback(
         _time_from_player(), Output({"type": FIELD, "name": MATCH}, "value"), Input({"type": HERE, "name": MATCH}, "n_clicks"),
