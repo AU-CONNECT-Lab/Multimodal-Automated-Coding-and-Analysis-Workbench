@@ -24,7 +24,11 @@ It depends mainly on the length of the videos and on whether the computer has a 
 
 ## An experimenter is present in the room. Is their speech mixed into the results?
 
-With a shared microphone or the camera's sound, set *Other voices on a shared microphone* to 1 in the settings, and assign that voice *none* when reviewing the voices. The experimenter's speech still counts as a turn in the turn-taking measures, but is excluded from the participants' voice and language measures.
+With a shared microphone or the camera's sound, set *Other voices on a shared microphone* to 1 in the settings, and assign that voice *none* when reviewing the voices. The experimenter's speech still counts as a turn in the turn-taking measures, but is excluded from the participants' voice and language measures. Where an experimenter speaks only before or after the task in a video that was not trimmed, MACAW reports a further voice when the voices are reviewed ({ref}`step 6 <review>`), and the part can be cut out from there.
+
+## Two participants sound alike and their speech is mixed. What can be done?
+
+Mark the voices as mixed when reviewing them ({ref}`step 6 <review>`). Every line is then listed for its speaker to be checked, with suggestions from the participants' mouth movement where their faces were read, and a line that holds both participants can be split.
 
 ## A session contains several tasks. Can they be analysed separately?
 
