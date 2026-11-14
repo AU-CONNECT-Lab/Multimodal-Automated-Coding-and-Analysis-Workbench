@@ -879,6 +879,11 @@ def _keypoints(config, spec, names) -> str:
     }.get(pose.review, ".")
     if pose.track_repair:
         text += f" Identity swaps between tracks across gaps of up to {_seconds(pose.track_repair_max_gap_s)} were repaired."
+    if config.setup.ignore:
+        text += (
+            " Regions of the picture marked by a researcher as showing no participant, such as a mirror, were excluded: a track "
+            "whose centre lay inside such a region in more than half of its frames was not assigned to anyone."
+        )
     return text
 
 

@@ -118,6 +118,10 @@ def _take_back(target: str):
     return _button("Take back", "take-back-click", target, small=True)
 
 
+def _take_back_area(target: str):
+    return _button("Take back", "take-back-area", target, small=True)
+
+
 def _upload(label: str, kind: str, accept: str):
     return dcc.Upload(ui.button(label, icon_name="upload"), id={"type": UPLOAD, "kind": kind}, accept=accept)
 
@@ -240,10 +244,11 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
     editor = html.Div(
         [
             html.H3("Name the people on the camera playing"),
-            html.Div(naming.editor(config, rid, camera, people[camera], _take_back), id=_one(NAMES_BOX)),
+            html.Div(naming.editor(config, rid, camera, people[camera], _take_back, _take_back_area), id=_one(NAMES_BOX)),
             html.Div([
                 _button("Save the names", "name-people", primary=True),
                 _button("Clear this camera's names", "clear-names"),
+                _button("Ignore this area", "ignore-area"),
             ], className="buttons"),
         ],
     )
@@ -959,7 +964,7 @@ def register(app, config_path: Path) -> None:
         own = resolve_config(config_path, recording_id=rid)
         camera = cameras[0]
         people = naming.cameras_of(own, rid)
-        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, []), _take_back) for _ in boxes]
+        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, []), _take_back, _take_back_area) for _ in boxes]
 
     app.clientside_callback(
         """function (clicks, timing) {
@@ -1058,6 +1063,7 @@ def register(app, config_path: Path) -> None:
         State({"type": CAMERA, "key": ALL}, "value"),
         State({"type": naming.MARKS["type"], "key": ALL}, "data"),
         State({"type": naming.FRAME["type"], "key": ALL}, "data"),
+        State({"type": naming.CORNERS["type"], "key": ALL}, "data"),
         State({"type": NOTE_TAGS, "key": ALL}, "value"),
         State({"type": NOTE_TEXT, "key": ALL}, "value"),
         State({"type": VOICES_MIXED, "key": ALL}, "value"),
@@ -1075,9 +1081,9 @@ def register(app, config_path: Path) -> None:
         return content, message, relabelled(options, rid)
 
     def _acted(rid, clicks, uploads, split, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
-        *scale, cameras, marks, shown, tags, text, mixed, split_person, line_picks, line_ids = rest
+        *scale, cameras, marks, shown, corners, tags, text, mixed, split_person, line_picks, line_ids = rest
         camera = cameras[0] if cameras else None
-        marks, shown = (marks or [None])[0], (shown or [None])[0]
+        marks, shown, corners = (marks or [None])[0], (shown or [None])[0], (corners or [None])[0]
         trigger = ctx.triggered_id
         message = None
         by = (by or "").strip()
@@ -1112,6 +1118,12 @@ def register(app, config_path: Path) -> None:
                 argv = action_command(config_path, rid, action, camera, by, {})
             elif action == "take-back-click":
                 argv = naming.take_back_command(config_path, rid, camera, target)
+            elif action == "ignore-area":
+                if not shown or len(corners or []) != 2:
+                    return no_update, ui.note("Choose an area to ignore under Click on, then click two opposite corners of it on the frame.", "warn")
+                argv = naming.area_command(config_path, rid, camera, corners)
+            elif action == "take-back-area":
+                argv = naming.area_back_command(config_path, rid, camera, target)
             elif action == "prepare-all":
                 argv = cli_bridge.build_command(["previews"], config_path=config_path)
                 log = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "previews.log"

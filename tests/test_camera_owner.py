@@ -303,6 +303,39 @@ class TestAcceptOwner:
         assert outcome.exit_code != 0
 
 
+class TestIgnoreArea:
+    def ignore(self, project, *args):
+        return invoke("ignore-area", "-c", str(project.config), "--camera", "room", *args)
+
+    def test_an_area_is_kept_with_the_setup_and_taken_back_by_its_number(self, project):
+        assert "no area to ignore" in self.ignore(project).output
+        outcome = self.ignore(project, "--area", "0.75,0,1,0.5")
+        assert outcome.exit_code == 0, outcome.output
+        assert "room in setup main: 1: 75% to 100% across, 0% to 50% down; apply it with `macaw run -e pose.keypoints`" in outcome.output
+        self.ignore(project, "--area", "0,0.8,0.2,1")
+        assert project.resolved().setup.ignore == {"room": [(0.75, 0.0, 1.0, 0.5), (0.0, 0.8, 0.2, 1.0)]}
+        assert "1: 75% to 100% across" in self.ignore(project).output and "2: 0% to 20% across, 80% to 100% down" in self.ignore(project).output
+        assert self.ignore(project, "--remove", "1").exit_code == 0
+        assert project.resolved().setup.ignore == {"room": [(0.0, 0.8, 0.2, 1.0)]}
+        assert "no area to ignore" in self.ignore(project, "--clear").output
+        assert project.resolved().setup.ignore == {} and "ignore" not in (project.config.parent / "setups" / "main.yaml").read_text(encoding="utf-8")
+
+    def test_what_cannot_be_an_area_is_refused_and_the_setup_stays(self, project):
+        before = (project.config.parent / "setups" / "main.yaml").read_text(encoding="utf-8")
+        for args, why in (
+            (("--area", "0.5,0,0.4,1"), "shares of the picture from 0 to 1"),
+            (("--area", "0.5,0,1"), "four numbers"),
+            (("--area", "left"), "write LEFT,TOP,RIGHT,BOTTOM"),
+            (("--remove", "2"), "none numbered 2"),
+            (("--area", "0,0,1,1", "--clear"), "give one of"),
+        ):
+            outcome = self.ignore(project, *args)
+            assert outcome.exit_code != 0 and why in str(outcome.exception), args
+        outcome = invoke("ignore-area", "-c", str(project.config), "--camera", "nowhere", "--area", "0,0,0.5,0.5")
+        assert outcome.exit_code != 0 and "nowhere, which is no camera of this setup" in str(outcome.exception)
+        assert (project.config.parent / "setups" / "main.yaml").read_text(encoding="utf-8") == before
+
+
 class TestNamePeople:
     def name(self, project, *args):
         return invoke("name-people", "-c", str(project.config), "-r", "003", *args)

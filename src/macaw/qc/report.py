@@ -38,6 +38,7 @@ from macaw.qc.figures import (
     present_spans,
     require_matplotlib,
     timeline_figure,
+    tracks_figure,
 )
 from macaw.store import annotations as annotations_store
 from macaw.store.schema import Scale
@@ -175,6 +176,84 @@ def _cameras(layout, results: RecordingResults, recording_id: str) -> list[dict]
     return cameras
 
 
+# bodies nobody named are labelled on the tracks figure when in this share of the frames of the one most in view, a few at most
+_LABELLED_SHARE = 0.1
+_LABELLED_MOST = 5
+
+
+def _tracks(config: MacawConfig, layout, results: RecordingResults, recording, page: Path) -> dict | None:
+    """Where each tracked body was on each camera, drawn when the page is written, and what was left out for lying in an
+    area to ignore; skipped without matplotlib."""
+    from macaw.extractors.prep import load_video_prep
+    from macaw.extractors.video.pose.keypoints import IGNORED_NAME, PoseExtractor, ignored_areas
+    from macaw.extractors.video.pose.track_repair import _track_boxes
+
+    try:
+        require_matplotlib()
+    except BackendNotAvailableError:
+        return None
+    rid = recording.recording_id
+    keypoints = results.keypoints()
+    keypoints = keypoints[keypoints["track_id"].notna() & keypoints["x"].notna()]
+    if keypoints.empty:
+        return None
+    kept = results.artifact(PoseExtractor.name, IGNORED_NAME)
+    ignored = json.loads(kept.read_text(encoding="utf-8")) if kept else {}
+    videos = load_video_prep(config, rid)
+    directory = layout.renders_dir(rid) / "report"
+    views = []
+    for camera, piece in keypoints.groupby("video", sort=True):
+        video = videos.get(camera)
+        size = tuple((video.get("prepared_size") or video["size"])) if video else (float(piece["x"].max()), float(piece["y"].max()))
+        boxes = _track_boxes(piece)
+        who = piece.groupby("track_id")["subject_id"].first()
+        boxes["who"] = boxes["track_id"].map(who)
+        left_out = set(ignored.get(camera, {}).get("tracks", []))
+        tracks = [
+            {"who": str(person), "ignored": False, "label": str(person), "x": group["cx"].to_numpy(), "y": group["cy"].to_numpy()}
+            for person, group in boxes[boxes["who"].notna()].groupby("who")
+        ]
+        unnamed = boxes[boxes["who"].isna()]
+        most = int(boxes.groupby("track_id")["frame"].nunique().max())
+        counts = unnamed.groupby("track_id")["frame"].nunique().sort_values(ascending=False)
+        labelled = set(counts[counts >= _LABELLED_SHARE * most].index[:_LABELLED_MOST])
+        for track, group in unnamed.groupby("track_id"):
+            away = int(track) in left_out
+            tracks.append({
+                "who": None, "ignored": away, "label": f"track {int(track)}" if away or track in labelled else "",
+                "x": group["cx"].to_numpy(), "y": group["cy"].to_numpy(),
+            })
+        views.append({
+            "camera": str(camera), "size": size, "picture": _camera_picture(config, recording, str(camera), directory),
+            "areas": ignored_areas(config, str(camera), video), "tracks": tracks,
+        })
+    path = tracks_figure(views, [subject.subject_id for subject in recording.subjects], directory / "tracks.png")
+    return {
+        "href": _href(path, page),
+        "ignored": [
+            {"file": camera, "tracks": ", ".join(str(track) for track in found["tracks"]),
+             "seconds": f"{found['seconds']:.0f} s" if found.get("seconds") is not None else f"{found['frames']} frames"}
+            for camera, found in sorted(ignored.items())
+        ],
+    }
+
+
+def _camera_picture(config: MacawConfig, recording, camera: str, directory: Path):
+    """A frame from the middle of the camera's analysed part to draw the tracks on; None when none can be read."""
+    from macaw.extractors.video.pose.keypoints import analysed_part
+    from macaw.media.ffmpeg import extract_frame
+
+    try:
+        from matplotlib.image import imread
+
+        part = analysed_part(config, recording.recording_id, camera)
+        item = recording.media_named(camera)
+        at = (part[0] + part[1]) / 2 if part else 0.0
+        return imread(extract_frame(item.path, at, directory / f"tracks_{camera}.jpg", square_pixels=True))
+    except Exception:   # the tracks read without the picture behind them
+        return None
+
+
 def _voices(config: MacawConfig, layout, recording, page: Path) -> list[dict]:
     """Each voice found on a shared microphone, what it says and its pitch, whom the suggestion and
     the person gave it to, and its clips to listen to."""
@@ -270,6 +349,7 @@ def _who_and_when(stamp: str | None) -> str:
 def _decisions(
     config: MacawConfig, layout, results: RecordingResults, recording_id: str,
     alignment: list[dict], cameras: list[dict], voices: list[dict], dropped: list[dict], frames: list[dict],
+    tracks: dict | None = None,
 ) -> list[dict]:
     """What the software decided by itself for this recording, beside what a person decided, with where to check it."""
     from macaw.extractors.audio.content.diarization import AUTOMATIC, read_voice_owners
@@ -293,6 +373,13 @@ def _decisions(
     video = _prepared_video(config, recording_id)
     if video is not None:
         rows.append(video)
+    if tracks and tracks["ignored"]:
+        said = "; ".join(f"{found['file']}: tracks {found['tracks']}, in view {found['seconds']}" for found in tracks["ignored"])
+        rows.append({
+            "what": "Bodies left out in an area to ignore",
+            "decided": f"{said}; the areas are in setup {config.setup.name} (macaw ignore-area)",
+            "by": "software", "href": "#Camera",
+        })
     if cameras:
         clicked = sum(1 for camera in cameras if camera["people"] and all("clicked" in person["chosen_by"] for person in camera["people"]))
         hows = sorted({person["chosen_by"].removeprefix("suggested ") for camera in cameras for person in camera["people"] if person["chosen_by"].startswith("suggested")})
@@ -726,6 +813,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     notes, versions = _feature_notes(layout, recording_id)
     alignment, alignment_figures = _alignment(config, layout, recording_id, page)
     cameras = _cameras(layout, results, recording_id)
+    tracks = _tracks(config, layout, results, recording, page)
     voices = _voices(config, layout, recording, page)
     dropped = _dropped(results)
     frames = _frames(layout, recording_id, page)
@@ -742,8 +830,9 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "alignment": alignment,
         "alignment_figures": alignment_figures,
         "alignment_clip": _alignment_clip(layout, recording_id, page),
-        "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames),
+        "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames, tracks),
         "cameras": cameras,
+        "tracks": tracks,
         "voices": voices,
         "dropped": dropped,
         "over_time": _over_time(config, layout, results, recording_id, [subject.subject_id for subject in recording.subjects], page),
@@ -758,7 +847,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     }
     sections = [("Summary", "Summary"), ("Decisions", "Decisions")]
     sections += [("Alignment", "Alignment")] if alignment else []
-    sections += [("Camera", "On camera")] if cameras else []
+    sections += [("Camera", "On camera")] if cameras or tracks else []
     sections += [("Voices", "Voices")] if voices else []
     sections += [("Dropped", "Speech left out")] if dropped else []
     sections += [("Time", "Over time")] if context["over_time"] else []

@@ -23,6 +23,10 @@ COLOURS = ("#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f59f00", "#0c8599", "#c
 _UNNAMED = "#adb5bd"
 AT, TIMELINE, FROM_PLAYER, PERSON, GRAPH, NOTE = "names-at", "names-timeline", "names-from-player", "names-person", "names-graph", "names-note"
 WINDOW = "names-window"
+# chosen under Click on to mark a part of the picture where nobody is read; no role can be named so
+AREA = "__area__"
+CORNERS = {"type": "names-corners", "key": "one"}
+_IGNORED = "#5f5e5a"
 # the moment shown first before the analysed part is known, or the middle of a shorter file
 FIRST_AT_S = 10.0
 # otherwise this share of the way into the analysed part
@@ -99,10 +103,26 @@ def first_moment(part: tuple[float, float] | None, length: float | None) -> floa
     return FIRST_AT_S if not length or length > FIRST_AT_S else round(length / 2, 1)
 
 
-def editor(config, rid: str, camera: str, people: list[str], take_back=None):
+def areas_kept(config, camera: str, take_back=None):
+    """The parts of the camera's picture the setup says to ignore; take_back(number) draws a row's button."""
+    areas = config.setup.ignore.get(camera, [])
+    if not areas:
+        return None
+    rows = [
+        [str(number), f"{left:.0%} to {right:.0%} across, {top:.0%} to {bottom:.0%} down"] + ([take_back(str(number))] if take_back else [])
+        for number, (left, top, right, bottom) in enumerate(areas, 1)
+    ]
+    return html.Div([
+        html.P(f"Areas of {camera} where nobody is read, in every recording of setup {config.setup.name}."),
+        ui.table(["Area", "Where"] + ([""] if take_back else []), rows, fit=True),
+    ])
+
+
+def editor(config, rid: str, camera: str, people: list[str], take_back=None, take_back_area=None):
     """A frame of the camera at the moment on the timeline, typed, or taken from the player; Save and Clear are the
     Review page's buttons."""
     options = [{"label": swatch(person, people), "value": person} for person in people]
+    options.append({"label": "an area to ignore, by two corners", "value": AREA})
     length = file_length(config, rid, camera)
     part = analysed(config, rid, camera)
     first = first_moment(part, length)
@@ -114,6 +134,7 @@ def editor(config, rid: str, camera: str, people: list[str], take_back=None):
     return html.Div(
         [
             saved(config, rid, camera, people, part, take_back),
+            areas_kept(config, camera, take_back_area),
             ui.note(f"Analysed: {part[0]:.1f} to {part[1]:.1f} s of this file; click at a moment inside it.") if part else None,
             html.Div(
                 [
@@ -127,6 +148,7 @@ def editor(config, rid: str, camera: str, people: list[str], take_back=None):
             html.Div(id=NOTE),
             dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False}),
             dcc.Store(id=MARKS, data={}),
+            dcc.Store(id=CORNERS, data=[]),
             dcc.Store(id=FRAME, data=None),
             dcc.Store(id=WINDOW, data=list(part) if part else None),
         ],
@@ -156,7 +178,8 @@ def frame_of(config_path: Path, rid: str, camera: str, at_s: float) -> tuple[dic
     except Exception:   # the people found are a help; the frame can be named without them
         found = None
     return {"uri": uri, "width": width, "height": height, "rid": rid, "camera": camera, "at": at_s,
-            "detected": None if found is None else found.to_dict("records")}, None
+            "detected": None if found is None else found.to_dict("records"),
+            "areas": [list(area) for area in config.setup.ignore.get(camera, [])]}, None
 
 
 def detected_at(config, rid: str, camera: str, at_s: float, shown: tuple[int, int]) -> pd.DataFrame | None:
@@ -221,11 +244,36 @@ def jpeg_size(data: bytes) -> tuple[int, int]:
     raise MacawError("the frame written is not a JPEG picture")
 
 
-def marks_figure(frame: dict | None, marks: dict[str, list[float]], people: list[str]):
+def area_of(corners: list) -> tuple[float, float, float, float]:
+    """left, top, right, bottom of the area between two clicked corners, as shares of the picture."""
+    (x1, y1), (x2, y2) = corners
+    return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+
+def cornered(corners: list, click: dict, frame: dict) -> list:
+    """The corners with this click: the second ends an area, a third starts another."""
+    point = marked({}, AREA, click, frame)[AREA]
+    return [point] if len(corners or []) != 1 else [corners[0], point]
+
+
+def marks_figure(frame: dict | None, marks: dict[str, list[float]], people: list[str], corners: list | None = None):
     import plotly.graph_objects as go
 
     figure = go.Figure()
     if frame:
+        wide, high = frame["width"], frame["height"]
+        drawn = [(area, "dash", "rgba(95,94,90,0.35)") for area in frame.get("areas") or []]
+        drawn += [(area_of(corners), "solid", "rgba(95,94,90,0.15)")] if len(corners or []) == 2 else []
+        for (left, top, right, bottom), dash, fill in drawn:
+            figure.add_shape(
+                type="rect", x0=left * wide, x1=right * wide, y0=top * high, y1=bottom * high,
+                line={"color": _IGNORED, "width": 2, "dash": dash}, fillcolor=fill,
+            )
+        if corners:
+            figure.add_trace(go.Scatter(
+                x=[x * wide for x, _ in corners], y=[y * high for _, y in corners], mode="markers", hoverinfo="skip",
+                marker={"size": 13, "symbol": "cross", "color": _IGNORED, "line": {"color": "white", "width": 1}},
+            ))
         # no label on hover, but the picture still reports clicks
         figure.add_trace(go.Image(source=frame["uri"], hoverinfo="none"))
         owners = {}
@@ -283,6 +331,15 @@ def take_back_command(config_path: Path, rid: str, camera: str, target: str) -> 
     )
 
 
+def area_command(config_path: Path, rid: str, camera: str, corners: list) -> list[str]:
+    area = ",".join(f"{edge:g}" for edge in area_of(corners))
+    return cli_bridge.build_command(["ignore-area"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--area", area])
+
+
+def area_back_command(config_path: Path, rid: str, camera: str, number: str) -> list[str]:
+    return cli_bridge.build_command(["ignore-area"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--remove", number])
+
+
 def clear_command(config_path: Path, rid: str, camera: str) -> list[str]:
     return cli_bridge.build_command(["name-people"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--clear"])
 
@@ -297,30 +354,35 @@ def register(app, config_path: Path, player: str, recording: str, camera: dict) 
 
     @app.callback(
         Output(GRAPH, "figure"), Output(MARKS, "data"), Output(FRAME, "data"), Output(NOTE, "children"),
-        Output(AT, "value"), Output({"type": TIMELINE, "key": ALL}, "value"),
+        Output(AT, "value"), Output({"type": TIMELINE, "key": ALL}, "value"), Output(CORNERS, "data"),
         Input(AT, "value"), Input({"type": TIMELINE, "key": ALL}, "value"), Input(GRAPH, "clickData"),
         State(recording, "value"), State(camera, "value"),
         State(PERSON, "value"), State(PERSON, "options"), State(MARKS, "data"), State(FRAME, "data"), State(WINDOW, "data"),
+        State(CORNERS, "data"),
     )
-    def frame(at, moved, click, rid, chosen, person, options, marks, shown, part):
-        people = [option["value"] for option in options or []]
+    def frame(at, moved, click, rid, chosen, person, options, marks, shown, part, corners):
+        people = [option["value"] for option in options or [] if option["value"] != AREA]
         if ctx.triggered_id != GRAPH:
             # the timeline and the typed moment follow each other; either shows its frame
             at = moved[0] if isinstance(ctx.triggered_id, dict) and moved else at
             if at is None or not rid or not chosen:
-                return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved)
+                return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved), no_update
             found, problem = frame_of(config_path, rid, chosen, float(at))
             if problem:
-                return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn"), at, [at] * len(moved)
+                return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn"), at, [at] * len(moved), []
             hint = " The people found are drawn grey until a click names them." if found["detected"] else ""
             away = outside(found["at"], part)
             note = ui.note(away, "warn") if away else ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
-            return marks_figure(found, {}, people), {}, found, note, at, [at] * len(moved)
+            return marks_figure(found, {}, people), {}, found, note, at, [at] * len(moved), []
         if not shown or not click or not person:
-            return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved)
+            return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved), no_update
+        if person == AREA:
+            corners = cornered(corners, click, shown)
+            said = ui.note("Click the opposite corner of the area." if len(corners) == 1 else "Area marked: press Ignore this area to keep it, or click again to start another.")
+            return marks_figure(shown, marks or {}, people, corners), no_update, no_update, said, no_update, [no_update] * len(moved), corners
         marks = marked(marks or {}, person, click, shown)
         left = [name for name in people if name not in marks]
         note = (f"Still to click: {', '.join(left)}." if left else "Everyone is clicked: save the names, or click again to move one.")
         away = outside(shown["at"], part)
         said = ui.note(f"{away} {note}{where_they_landed(shown, marks)}", "warn") if away else ui.note(note + where_they_landed(shown, marks))
-        return marks_figure(shown, marks, people), marks, no_update, said, no_update, [no_update] * len(moved)
+        return marks_figure(shown, marks, people, corners), marks, no_update, said, no_update, [no_update] * len(moved), no_update

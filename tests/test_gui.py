@@ -375,9 +375,9 @@ def review_update(app):
 
 
 # the states after the recording, the clicks, the uploads and the split: name, voices, acts, gaze, scale, camera, names, note, mixed, lines, picker
-def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None):
+def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None, corners=None):
     return [by, [], [], [], [], [], [], [], *([[]] * 6), list(cameras), [marks] if marks else [], [frame] if frame else [],
-            [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], []]
+            [corners] if corners else [], [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], []]
 
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
@@ -861,6 +861,39 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     assert "Nobody is named on room yet" in text_of(naming.saved(resolve_config(project), "003", "room", people))
 
 
+def test_a_person_marks_an_area_to_ignore_by_two_corners_and_takes_it_back(project, monkeypatch):
+    from macaw.cli.main import app as cli
+    from macaw.interface.pages import naming
+    from typer.testing import CliRunner
+
+    shown = {"uri": "data:image/jpeg;base64,", "width": 640, "height": 360, "rid": "003", "camera": "room", "at": 1.0, "detected": None, "areas": []}
+    corners = naming.cornered([], {"points": [{"x": 640, "y": 180}]}, shown)
+    assert corners == [[1.0, 0.5]]
+    corners = naming.cornered(corners, {"points": [{"x": 480, "y": 0}]}, shown)
+    assert corners == [[1.0, 0.5], [0.75, 0.0]] and naming.area_of(corners) == (0.75, 0.0, 1.0, 0.5)
+    assert naming.cornered(corners, {"points": [{"x": 0, "y": 0}]}, shown) == [[0.0, 0.0]]
+    figure = naming.marks_figure(shown, {}, ["parent", "child"], corners)
+    assert len(figure.layout.shapes) == 1 and (figure.layout.shapes[0].x0, figure.layout.shapes[0].x1) == (480.0, 640.0)
+    assert naming.areas_kept(resolve_config(project), "room") is None
+
+    monkeypatch.setattr(review.cli_bridge, "run_now", lambda argv, cwd=None, **_: (0, CliRunner().invoke(cli, argv[1:]).output))
+    update = review_update(create_app(project))
+    keeping = {"type": review.ACT, "action": "ignore-area", "target": ""}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=keeping, triggered=[{"value": 1}]))
+    _, said, _ = update("003", [1], [], [], [], *review_states("", ["room"], None, shown, corners=corners[:1]))
+    assert "click two opposite corners" in text_of(said)
+    body, said, _ = update("003", [1], [], [], [], *review_states("", ["room"], None, shown, corners=corners))
+    assert "room in setup main: 1: 75% to 100% across, 0% to 50% down" in text_of(said)
+    assert resolve_config(project).setup.ignore == {"room": [(0.75, 0.0, 1.0, 0.5)]}
+    assert "75% to 100% across, 0% to 50% down" in text_of(body) and "take-back-area" in text_of(body) and "Ignore this area" in text_of(body)
+    kept = naming.marks_figure({**shown, "areas": [[0.75, 0.0, 1.0, 0.5]]}, {}, ["parent", "child"])
+    assert len(kept.layout.shapes) == 1 and kept.layout.shapes[0].line.dash == "dash"
+    taking = {"type": review.ACT, "action": "take-back-area", "target": "1"}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=taking, triggered=[{"value": 1}]))
+    body, said, _ = update("003", [1], [], [], [], *review_states("", ["room"]))
+    assert "no area to ignore" in text_of(said) and resolve_config(project).setup.ignore == {} and "take-back-area" not in text_of(body)
+
+
 def test_a_click_shows_whom_it_lands_on_among_the_people_found():
     from macaw.interface.pages import naming
 
@@ -1137,15 +1170,25 @@ def test_the_naming_frame_follows_the_timeline_and_the_typed_moment(project, mon
     shown = text_of(naming.editor(resolve_config(project, recording_id="003"), "003", "room", ["parent", "child"]))
     assert "names-timeline" in shown and "Show frame" not in shown and '"value": 3.0' in shown
     frame = callback(create_app(project), "..names-graph.figure")
-    states = ("003", "room", "parent", [{"value": "parent"}, {"value": "child"}], {}, None, None)
+    options = [{"value": "parent"}, {"value": "child"}, {"value": naming.AREA}]
+    states = ("003", "room", "parent", options, {}, None, None, [])
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id={"type": naming.TIMELINE, "key": "one"}))
-    figure, marks, found, note, at, moved = frame(3.0, [4.5], None, *states)
-    assert at == 4.5 and moved == [4.5] and found["at"] == 4.5 and "Frame at 4.5 s of room" in text_of(note)
+    figure, marks, found, note, at, moved, corners = frame(3.0, [4.5], None, *states)
+    assert at == 4.5 and moved == [4.5] and found["at"] == 4.5 and "Frame at 4.5 s of room" in text_of(note) and corners == []
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.AT))
-    *_, at, moved = frame(1.25, [4.5], None, *states)
+    *_, at, moved, _ = frame(1.25, [4.5], None, *states)
     assert at == 1.25 and moved == [1.25]
-    *_, note, _, _ = frame(1.25, [4.5], None, *states[:-1], [2.0, 5.0])
+    *_, note, _, _, _ = frame(1.25, [4.5], None, *states[:-2], [2.0, 5.0], [])
     assert "1.25 s is outside the analysed part of this file (2.0 to 5.0 s)" in text_of(note)
+    # with an area chosen under Click on, two clicks are its corners and name nobody
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.GRAPH))
+    area = ("003", "room", naming.AREA, options, {}, found, None)
+    figure, marks, _, note, _, _, corners = frame(4.5, [4.5], {"points": [{"x": 240, "y": 0}]}, *area, [])
+    assert corners == [[0.75, 0.0]] and marks is no_update and "opposite corner" in text_of(note)
+    figure, _, _, note, _, _, corners = frame(4.5, [4.5], {"points": [{"x": 320, "y": 120}]}, *area, corners)
+    assert corners == [[0.75, 0.0], [1.0, 0.5]] and "Ignore this area" in text_of(note) and len(figure.layout.shapes) == 1
+    figure, marks, *_, corners = frame(4.5, [4.5], {"points": [{"x": 80, "y": 120}]}, "003", "room", "parent", options, {}, found, None, corners)
+    assert marks == {"parent": [0.25, 0.5]} and corners is no_update and len(figure.layout.shapes) == 1
 
 
 def test_the_first_moment_shown_is_inside_the_analysed_part():

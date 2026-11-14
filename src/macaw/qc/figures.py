@@ -378,6 +378,94 @@ def _lane_limits(series) -> tuple[float, float] | None:
     return low - pad, high + pad
 
 
+IGNORED_COLOR = "#5f5e5a"
+# points drawn per track at most; a seated person's middle stays in one small cloud
+_TRACK_POINTS = 1500
+# inches: the least a tracks figure is wide, so its legend fits beside a small picture, and the room around its panels
+_TRACKS_MIN_IN = 6.0
+_TRACKS_PAD_IN = 0.15
+_TRACKS_TITLE_IN = 0.3
+_TRACKS_LEGEND_ROW_IN = 0.18
+
+
+def tracks_panel_width(views: list[dict], columns: int) -> float:
+    """Inches a camera's panel is wide: a share of the page, and never more than its picture's own pixels give."""
+    pictures = [view["picture"].shape[1] / DPI for view in views if view.get("picture") is not None]
+    return min([12.0 / columns, *pictures])
+
+
+def tracks_figure(views: list[dict], people: list[str], path: Path) -> Path:
+    """Per camera, where the middle of each tracked body was through the analysed part, on a frame of that camera: the
+    people named in their colours, bodies nobody named in grey, the areas the setup says to ignore hatched. A view holds
+    camera, size, picture (an image array or None), areas and tracks, each track with who, ignored, label, x and y."""
+    Figure = require_matplotlib()
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch, Rectangle
+
+    color = dict(zip(people, PERSON_COLORS))
+    drawn = [track for view in views for track in view["tracks"]]
+    handles = [
+        Line2D([], [], marker="o", ls="", color=color.get(person, MUTED_INK), label=person)
+        for person in people if any(track["who"] == person for track in drawn)
+    ]
+    if any(track["who"] is None and not track["ignored"] for track in drawn):
+        handles.append(Line2D([], [], marker="o", ls="", color=MUTED_INK, label="nobody named"))
+    if any(view["areas"] for view in views):
+        handles.append(Patch(fill=False, hatch="///", ec=IGNORED_COLOR, ls="--", label="area to ignore"))
+    if any(track["ignored"] for track in drawn):
+        handles.append(Line2D([], [], marker="x", ls="", color=IGNORED_COLOR, label="left out: in an area to ignore"))
+
+    columns = min(len(views), 2)
+    rows = -(-len(views) // columns)
+    wide = tracks_panel_width(views, columns)
+    tall = [wide * view["size"][1] / view["size"][0] for view in views]
+    row_tall = [max(tall[row * columns:(row + 1) * columns]) for row in range(rows)]
+    legend_rows = -(-len(handles) // 3)
+    legend_in = _TRACKS_LEGEND_ROW_IN * legend_rows + _TRACKS_PAD_IN / 2
+    across = max(columns * wide + (columns + 1) * _TRACKS_PAD_IN, _TRACKS_MIN_IN)
+    down = legend_in + sum(row_tall) + rows * (_TRACKS_TITLE_IN + _TRACKS_PAD_IN)
+    figure = Figure(figsize=(across, down))
+    for index, view in enumerate(views):
+        row, column = divmod(index, columns)
+        top = down - legend_in - sum(row_tall[:row]) - row * (_TRACKS_TITLE_IN + _TRACKS_PAD_IN) - _TRACKS_TITLE_IN
+        left = _TRACKS_PAD_IN + column * (wide + _TRACKS_PAD_IN)
+        # placed by hand: a layout that fills the page would draw the picture larger than its pixels
+        axes = figure.add_axes([left / across, (top - tall[index]) / down, wide / across, tall[index] / down])
+        pixels_wide, pixels_high = view["size"]
+        if view.get("picture") is not None:
+            axes.imshow(view["picture"], extent=(0, pixels_wide, pixels_high, 0), alpha=0.55, zorder=0, aspect="auto")
+        for area_left, area_top, area_right, area_bottom in view["areas"]:
+            axes.add_patch(Rectangle(
+                (area_left, area_top), area_right - area_left, area_bottom - area_top, fill=False, hatch="///", ec=IGNORED_COLOR,
+                lw=1.2, ls="--", zorder=1,
+            ))
+        for track in view["tracks"]:
+            shade = IGNORED_COLOR if track["ignored"] else color.get(track["who"], MUTED_INK)
+            step = max(len(track["x"]) // _TRACK_POINTS, 1)
+            axes.plot(
+                track["x"][::step], track["y"][::step], "x" if track["ignored"] else ".", ms=4, color=shade, alpha=0.4, mew=0.7, zorder=2,
+            )
+            if track["label"]:
+                axes.annotate(
+                    track["label"], (float(np.median(track["x"])), float(np.median(track["y"]))), xytext=(0, 8), textcoords="offset points",
+                    ha="center", fontsize=7, color="white", zorder=4, annotation_clip=False,
+                    bbox={"boxstyle": "round,pad=0.25", "fc": shade, "ec": "white", "lw": 0.6},
+                )
+        axes.set_xlim(0, pixels_wide)
+        axes.set_ylim(pixels_high, 0)
+        axes.set_xticks([])
+        axes.set_yticks([])
+        for side in axes.spines.values():
+            side.set_color(GRID_COLOR)
+        axes.set_title(view["camera"], fontsize=9, loc="left", pad=4)
+    if handles:
+        figure.legend(
+            handles=handles, loc="upper left", bbox_to_anchor=(_TRACKS_PAD_IN / across, 1.0), ncol=3, fontsize=8, frameon=False,
+            borderaxespad=0.3, columnspacing=1.2, handletextpad=0.4,
+        )
+    return _save(figure, path)
+
+
 def _save(figure, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=DPI)

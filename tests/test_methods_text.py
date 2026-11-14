@@ -326,6 +326,16 @@ def test_name_suggestions_are_described_only_when_set_and_the_picture_model_only
     assert "vision-language model (qwen3-vl:8b-instruct)" in text and "up to 5 frames" in text
 
 
+def test_an_area_to_ignore_is_said_only_when_the_setup_has_one():
+    ran = manifest(spec("pose.keypoints", "detection_rate", "yolo", "8.0"))
+    cameras = {"room": {"body": ["parent"]}}
+    text, _ = render(describe(ran, config(setup={"cameras": cameras})), load_references())
+    assert "such as a mirror" not in text
+    text, _ = render(describe(ran, config(setup={"cameras": cameras, "ignore": {"room": [[0.75, 0, 1, 0.5]]}})), load_references())
+    assert "Regions of the picture marked by a researcher as showing no participant, such as a mirror, were excluded" in text
+    assert "in more than half of its frames was not assigned to anyone" in text
+
+
 def test_recordings_run_under_settings_of_their_own_are_named():
     from macaw.qc.boilerplate import settings_by_recording
 

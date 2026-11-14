@@ -255,6 +255,64 @@ def name_people(
         )
 
 
+def _area_text(area) -> str:
+    left, top, right, bottom = area
+    return f"{left:.0%} to {right:.0%} across, {top:.0%} to {bottom:.0%} down"
+
+
+@app.command("ignore-area")
+def ignore_area(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recording: str = typer.Option(None, "--recording", "-r", help="A recording filmed with the setup meant, where recordings name setups of their own."),
+    camera: str = typer.Option(..., "--camera", help="The camera, as its folder is named."),
+    area: str = typer.Option(None, "--area", help="LEFT,TOP,RIGHT,BOTTOM: its edges as shares of the picture's width and height."),
+    remove: int = typer.Option(None, "--remove", min=1, help="Take back the area with this number, as listed."),
+    clear: bool = typer.Option(False, "--clear", help="Take back every area on this camera."),
+) -> None:
+    """Mark a part of a camera's picture where nobody is read, such as a mirror; it is kept with the setup, for every
+    recording filmed with it. A body tracked there in most of its frames is left out of who is who. Given the camera
+    alone, lists its areas."""
+    import yaml
+    from pydantic import ValidationError
+
+    from macaw.config.schema import SetupSection
+    from macaw.project.setup import setup_path, write_setup
+
+    resolved = resolve_config(config, recording_id=recording)
+    path = setup_path(resolved)
+    if not path.is_file():
+        raise MacawError(f"the setup {resolved.setup.name} is not saved yet ({path})")
+    if sum([area is not None, remove is not None, clear]) > 1:
+        raise MacawError("give one of --area, --remove and --clear")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    kept = dict(data.get("ignore") or {})
+    areas = [list(found) for found in kept.get(camera, [])]
+    if area is not None:
+        try:
+            areas.append([float(value) for value in area.split(",")])
+        except ValueError:
+            raise MacawError(f"--area {area}: write LEFT,TOP,RIGHT,BOTTOM as shares of the picture's width and height") from None
+        if len(areas[-1]) != 4:
+            raise MacawError(f"--area {area}: write LEFT,TOP,RIGHT,BOTTOM, four numbers")
+    elif remove is not None:
+        if remove > len(areas):
+            raise MacawError(f"{camera} has {len(areas)} area(s) to ignore, so none numbered {remove}")
+        del areas[remove - 1]
+    elif clear:
+        areas = []
+    else:
+        typer.echo(f"{camera} in setup {resolved.setup.name}: " + ("; ".join(f"{n}: {_area_text(found)}" for n, found in enumerate(areas, 1)) or "no area to ignore"))
+        return
+    kept[camera] = areas
+    try:
+        setup = SetupSection.model_validate({**data, "name": resolved.setup.name, "ignore": {name: found for name, found in kept.items() if found}})
+    except ValidationError as error:
+        raise MacawError("; ".join(item["msg"].removeprefix("Value error, ") for item in error.errors())) from None
+    write_setup(path, setup)
+    listed = "; ".join(f"{n}: {_area_text(found)}" for n, found in enumerate(setup.ignore.get(camera, []), 1)) or "no area to ignore"
+    typer.echo(f"{camera} in setup {setup.name}: {listed}; apply it with `macaw run -e pose.keypoints`")
+
+
 @app.command("accept-owner")
 def accept_owner(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),

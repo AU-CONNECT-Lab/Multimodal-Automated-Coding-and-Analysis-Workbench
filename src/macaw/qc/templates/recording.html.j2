@@ -69,8 +69,24 @@
 {% endif %}
 {% endif %}
 
-{% if cameras %}
+{% if cameras or tracks %}
 <h2 id="Camera">Who is on camera</h2>
+{% endif %}
+{% if tracks %}
+<p class="desc">Where the middle of each tracked body was through the analysed part, on a frame of each camera: the people named in colour, bodies nobody named in grey, with the longest of them labelled by track id. An area the setup says to ignore is hatched, and a body left out for lying in it is drawn with crosses.</p>
+<div class="figures"><a href="{{ tracks.href }}"><img src="{{ tracks.href }}" alt="Where each tracked body was" loading="lazy"/></a></div>
+{% if tracks.ignored %}
+<table class="flat">
+  <thead><tr><th>File</th><th>Tracks left out</th><th class="num">In view</th></tr></thead>
+  <tbody>
+  {%- for found in tracks.ignored %}
+  <tr><td>{{ found.file }}</td><td>{{ found.tracks }}</td><td class="num">{{ found.seconds }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+{% if cameras %}
 <p class="desc">Which tracker ids were taken to be which person, on every camera where more than one person was in view. Track ids are the ones drawn in the review frames.</p>
 <table class="flat">
   <thead><tr><th>File</th><th>Person</th><th>Tracks</th><th>Chosen by</th><th>Status</th></tr></thead>
