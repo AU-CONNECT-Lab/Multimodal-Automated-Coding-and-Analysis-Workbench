@@ -844,7 +844,7 @@ def _one_camera(config) -> str:
     from macaw.project.heights import read_heights
 
     model = (
-        "Multi-HMR [baradel2024] fitting the Anny body model [bregier2025]" if config.pose3d.one_camera == BUILT_IN
+        "Multi-HMR [baradel2024] fitting the Anny body model [bregier2026]" if config.pose3d.one_camera == BUILT_IN
         else f"a body model run by the study's own script {config.pose3d.one_camera}"
     )
     if config.pose3d.one_camera == BUILT_IN:

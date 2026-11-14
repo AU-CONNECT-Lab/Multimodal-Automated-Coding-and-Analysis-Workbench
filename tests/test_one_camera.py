@@ -205,4 +205,4 @@ def test_the_methods_say_how_size_was_set(one_camera_project):
     assert "too large for a small child" in text and "only for people placed from the same camera" in text
     assert "detection threshold" not in text
     built_in = config.model_copy(update={"pose3d": config.pose3d.model_copy(update={"one_camera": "multihmr", "one_camera_threshold": 0.2})})
-    assert "fitting the Anny body model [bregier2025] (detection threshold 0.2) to every person" in _placed_3d(built_in)
+    assert "fitting the Anny body model [bregier2026] (detection threshold 0.2) to every person" in _placed_3d(built_in)

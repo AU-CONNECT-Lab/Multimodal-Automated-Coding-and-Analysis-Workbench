@@ -16,7 +16,7 @@ mcfee2015:
   author: "McFee, Brian and Raffel, Colin and Liang, Dawen and Ellis, Daniel P. W. and McVicar, Matt and Battenberg, Eric and Nieto, Oriol"
   title: "librosa: Audio and music signal analysis in Python"
   booktitle: Proceedings of the 14th Python in Science Conference
-  pages: 18--25
+  pages: 18--24
   year: 2015
 hillenbrand1996:
   type: article
@@ -288,9 +288,12 @@ baradel2024:
   publisher: Springer
   doi: 10.1007/978-3-031-73337-6_12
   year: 2024
-bregier2025:
-  type: misc
+bregier2026:
+  type: inproceedings
   author: "Brégier, Romain and Fiche, Guénolé and Bravo-Sánchez, Laura and Lucas, Thomas and Armando, Matthieu and Weinzaepfel, Philippe and Rogez, Grégory and Baradel, Fabien"
   title: "Human mesh modeling for Anny body"
-  howpublished: arXiv:2511.03589
-  year: 2025
+  booktitle: "Computer Vision, ECCV 2026"
+  publisher: Springer
+  pages: 170--188
+  doi: 10.1007/978-3-032-37314-4_10
+  year: 2026
