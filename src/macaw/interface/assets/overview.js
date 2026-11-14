@@ -17,7 +17,7 @@
   }
 
   function draw(next) {
-    if (next !== undefined) data = next;
+    if (next !== undefined) { data = next; for (const key of Object.keys(above)) delete above[key]; }
     const box = document.getElementById('overview-flow');
     if (!box) return;
     box.replaceChildren();
@@ -81,17 +81,42 @@
       if (n.issue) el('text', { class: `issue ${n.issue[1]}`, x: p.x + nodeW - 9, y: lineY[0], 'text-anchor': 'end' }, g).textContent = n.issue[0];
       g.addEventListener('click', () => open(n.href));
     }
-    const above = {};
-    const ancestors = (id) => above[id] || (above[id] = new Set(data.edges.filter(([, to]) => to === id).flatMap(([from]) => [from, ...ancestors(from)])));
     svg.addEventListener('mouseover', (event) => {
       const g = event.target.closest('.node');
       if (!g) return;
-      const lit = new Set([g.dataset.n, ...ancestors(g.dataset.n)]);
-      svg.classList.add('focus');
-      svg.querySelectorAll('.node').forEach((x) => x.classList.toggle('hot', lit.has(x.dataset.n)));
-      svg.querySelectorAll('.edge').forEach((e) => e.classList.toggle('hot', lit.has(e.dataset.from) && lit.has(e.dataset.to)));
+      flowFocus(g.dataset.n);
+      gridFocus(g.dataset.n);
     });
-    svg.addEventListener('mouseleave', () => { svg.classList.remove('focus'); svg.querySelectorAll('.hot').forEach((x) => x.classList.remove('hot')); });
+    svg.addEventListener('mouseleave', () => { flowClear(); gridFocus(null); });
+  }
+
+  // a step pointed at, in the drawing or in the grid, lights what it needs in both
+  const above = {};
+  function ancestors(id) {
+    if (!data) return new Set();
+    return above[id] || (above[id] = new Set(data.edges.filter(([, to]) => to === id).flatMap(([from]) => [from, ...ancestors(from)])));
+  }
+  function flowFocus(id) {
+    const svg = document.querySelector('#overview-flow svg.flow');
+    if (!svg) return;
+    const lit = new Set([id, ...ancestors(id)]);
+    svg.classList.add('focus');
+    svg.querySelectorAll('.node').forEach((x) => x.classList.toggle('hot', lit.has(x.dataset.n)));
+    svg.querySelectorAll('.edge').forEach((e) => e.classList.toggle('hot', lit.has(e.dataset.from) && lit.has(e.dataset.to)));
+  }
+  function flowClear() {
+    const svg = document.querySelector('#overview-flow svg.flow');
+    if (!svg) return;
+    svg.classList.remove('focus');
+    svg.querySelectorAll('.hot').forEach((x) => x.classList.remove('hot'));
+  }
+  function gridFocus(id) {
+    const table = document.querySelector('table.standing');
+    if (!table) return;
+    table.querySelectorAll('.hl, .up').forEach((x) => x.classList.remove('hl', 'up'));
+    if (!id) return;
+    table.querySelectorAll(`[data-col="${CSS.escape(id)}"]`).forEach((x) => x.classList.add('hl'));
+    ancestors(id).forEach((up) => table.querySelectorAll(`[data-col="${CSS.escape(up)}"]`).forEach((x) => x.classList.add('up')));
   }
 
   // the drawing follows the card's width
@@ -105,7 +130,8 @@
   // pointing at a square shows it beside the grid; the grid lights its column
   let hint = null;
   function clearGrid(table) {
-    table.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl'));
+    table.querySelectorAll('.hl, .up').forEach((x) => x.classList.remove('hl', 'up'));
+    flowClear();
     const inspect = table.closest('.standing-card')?.querySelector('.inspect');
     if (inspect && hint !== null) inspect.innerHTML = hint;
   }
@@ -116,9 +142,10 @@
     if (!table) return;
     active = table;
     const cell = event.target.closest('[data-col]');
-    table.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl'));
-    if (!cell) return;
+    table.querySelectorAll('.hl, .up').forEach((x) => x.classList.remove('hl', 'up'));
+    if (!cell) { flowClear(); return; }
     table.querySelectorAll(`[data-col="${CSS.escape(cell.dataset.col)}"]`).forEach((x) => x.classList.add('hl'));
+    flowFocus(cell.dataset.col);
     const inspect = table.closest('.standing-card')?.querySelector('.inspect');
     if (!inspect || !cell.dataset.rec) return;
     if (hint === null || !inspect.dataset.pointing) hint = inspect.innerHTML;

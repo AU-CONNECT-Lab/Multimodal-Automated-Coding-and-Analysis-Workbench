@@ -382,6 +382,8 @@ table.standing td.summary.bad { color: var(--state-failed-ink); }
 table.standing td.summary.warn { color: var(--state-waiting-ink); }
 table.standing a { display: block; }
 table.standing tbody tr:hover th.recording, table.standing th.step-name.hl span { color: var(--accent); font-weight: 600; }
+table.standing td.c.up { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+table.standing th.step-name.up span { color: var(--accent); }
 table.standing tbody tr:hover td.c, table.standing td.c.hl { background: color-mix(in srgb, var(--accent) 13%, transparent); }
 table.standing tbody tr:hover td.c.hl { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 table.standing a:focus-visible .cell { outline: 2px solid var(--accent); outline-offset: 1px; }
