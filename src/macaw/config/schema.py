@@ -102,16 +102,6 @@ class CameraDevice(_Section):
     hears: list[str] = Field(default_factory=list)
     # the camera also records how far each pixel is, in a depth folder beside its video; bodies on it are placed in 3D
     depth: bool = False
-    # parts of its picture where nobody is read, such as a mirror: left, top, right, bottom as shares of its width and height
-    ignore: list[tuple[float, float, float, float]] = added(default_factory=list)
-
-    @field_validator("ignore")
-    @classmethod
-    def _inside_the_picture(cls, value: list) -> list:
-        for left, top, right, bottom in value:
-            if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
-                raise ValueError(f"an area to ignore is left, top, right, bottom as shares of the picture from 0 to 1, not {[left, top, right, bottom]}")
-        return value
 
     def people(self) -> list[str]:
         return sorted(set(self.body) | set(self.face) | set(self.gaze))
@@ -180,6 +170,23 @@ class SetupSection(_Section):
     cameras: dict[str, CameraDevice] = Field(default_factory=dict)
     microphones: dict[str, MicrophoneDevice] = Field(default_factory=dict)
     room: RoomSection = Field(default_factory=RoomSection)
+    # per camera, parts of its picture where nobody is read, such as a mirror: left, top, right, bottom as shares of its
+    # width and height. Apart from the cameras, whose section many steps read, so that marking one runs only the naming again
+    ignore: dict[str, list[tuple[float, float, float, float]]] = added(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _areas(self) -> "SetupSection":
+        unknown = sorted(set(self.ignore) - set(self.cameras))
+        if unknown:
+            raise ValueError(f"setup.ignore names {', '.join(unknown)}, which is no camera of this setup")
+        for camera, areas in self.ignore.items():
+            for left, top, right, bottom in areas:
+                if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+                    raise ValueError(
+                        f"an area to ignore on {camera} is left, top, right, bottom as shares of the picture from 0 to 1, "
+                        f"not {[left, top, right, bottom]}"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _devices(self) -> "SetupSection":

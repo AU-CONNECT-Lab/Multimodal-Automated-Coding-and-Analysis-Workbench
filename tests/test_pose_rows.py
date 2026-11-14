@@ -10,7 +10,7 @@ import pytest
 
 from pydantic import ValidationError
 
-from macaw.config.schema import CameraDevice, LookSection, PoseSection, QCSection
+from macaw.config.schema import CameraDevice, LookSection, PoseSection, QCSection, SetupSection
 from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
@@ -152,8 +152,7 @@ class Chain:
     """pose.detect then pose.keypoints, the way the runner chains them."""
 
     def __init__(self, backend, look=None, ignore=None, **pose):
-        cameras = {camera: CameraDevice(body=["parent"], ignore=areas) for camera, areas in (ignore or {}).items()}
-        config = SimpleNamespace(pose=PoseSection(**pose), qc=QCSection(look=look or LookSection()), setup=SimpleNamespace(cameras=cameras))
+        config = SimpleNamespace(pose=PoseSection(**pose), qc=QCSection(look=look or LookSection()), setup=SimpleNamespace(ignore=ignore or {}))
         self.fake = backend
         self.detect = PoseDetectExtractor(config)
         self.identify = PoseExtractor(config)
@@ -486,6 +485,7 @@ class TestAnAreaToIgnore:
         assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {1}
         assert keypoints.loc[keypoints.track_id == 2, "subject_id"].isna().all() and (keypoints.track_id == 2).sum() == N_FRAMES * len(STANDARD_JOINTS)
         assert "owners" not in result.artifacts
+        assert json.loads(result.artifacts["ignored.json"].read_text(encoding="utf-8")) == {"a.mp4": {"tracks": [2], "frames": N_FRAMES, "seconds": 2.0}}
         plain = extractor(FakeBackend(self.FRAMES)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path / "plain").keypoints
         assert keypoints[["frame", "track_id", "joint", "x"]].equals(plain[["frame", "track_id", "joint", "x"]])
         said = [warning for warning in result.warnings if "the setup says to ignore" in warning.message]
@@ -494,7 +494,8 @@ class TestAnAreaToIgnore:
     def test_someone_who_only_passes_through_it_is_still_read(self, extractor, recording, tmp_path):
         frames = spread_frame((1, range(N_FRAMES), 200.0, 100.0), (2, range(0, 4), 560.0, 100.0), (2, range(4, N_FRAMES), 400.0, 100.0))
         result = extractor(FakeBackend(frames), ignore=self.MIRROR).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
-        assert "owners" in result.artifacts and not any("to ignore" in warning.message for warning in result.warnings)
+        assert "owners" in result.artifacts and "ignored.json" not in result.artifacts
+        assert not any("to ignore" in warning.message for warning in result.warnings)
 
     def test_a_click_names_among_those_outside_it_and_the_one_left_out_is_no_rival(self, extractor, recording, tmp_path):
         clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
@@ -502,9 +503,32 @@ class TestAnAreaToIgnore:
         owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
         assert owners["a.mp4"]["people"] == {"parent": [1]} and "nearly as much" not in (owners["a.mp4"]["doubt"] or "")
 
-    def test_an_area_has_to_lie_inside_the_picture(self):
+    def test_an_area_has_to_lie_inside_the_picture_of_a_camera_of_the_setup(self):
+        cameras = {"a": CameraDevice(body=["parent"])}
+        assert SetupSection(cameras=cameras, ignore={"a": [(0.75, 0, 1, 1)]}).ignore == {"a": [(0.75, 0.0, 1.0, 1.0)]}
         with pytest.raises(ValidationError, match="shares of the picture"):
-            CameraDevice(body=["parent"], ignore=[(0.5, 0.0, 0.4, 1.0)])
+            SetupSection(cameras=cameras, ignore={"a": [(0.5, 0.0, 0.4, 1.0)]})
+        with pytest.raises(ValidationError, match="b, which is no camera of this setup"):
+            SetupSection(cameras=cameras, ignore={"b": [(0.5, 0.0, 0.6, 1.0)]})
+
+    def test_marking_one_changes_the_key_of_the_naming_alone(self, tmp_path):
+        from macaw.config.hashing import hash_extractor_config
+        from macaw.config.loader import resolve_config, scaffold_project_config
+        from macaw.project.setup import write_setup
+
+        (tmp_path / "raw").mkdir()
+        path = tmp_path / "project.yaml"
+        scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        cameras = {"room": CameraDevice(body=["parent", "child"])}
+        steps = ("prep.media", "pose.detect", "pose.keypoints", "pose.review", "motion.mea", "pose.kinematics", "face.au")
+        keys = []
+        for ignore in ({}, {"room": [(0.75, 0.0, 1.0, 0.5)]}):
+            written = write_setup(tmp_path / "setups" / "main.yaml", SetupSection(cameras=cameras, ignore=ignore))
+            assert ("ignore" in written.read_text(encoding="utf-8")) == bool(ignore)
+            config = resolve_config(path)
+            assert config.setup.ignore == ignore
+            keys.append({step: hash_extractor_config(config, step) for step in steps})
+        assert [step for step in steps if keys[0][step] != keys[1][step]] == ["pose.keypoints"]
 
 
 class Looker:

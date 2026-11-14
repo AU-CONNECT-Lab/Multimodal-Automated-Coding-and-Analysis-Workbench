@@ -30,6 +30,9 @@ def setup_content(setup: SetupSection) -> dict:
     """What a setup file holds: everything but its name, which is the file's, and nothing the room leaves blank."""
     data = setup.model_dump(mode="json", exclude={"name", "room"})
     data["cameras"] = {name: {key: value for key, value in camera.items() if value} for name, camera in data["cameras"].items()}
+    data["ignore"] = {name: [_plain(list(area)) for area in areas] for name, areas in data["ignore"].items() if areas}
+    if not data["ignore"]:
+        del data["ignore"]
     room = setup.room.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
     room = {kind: _plain(placed) if kind == "size" else {name: _plain(place) for name, place in placed.items() if place} for kind, placed in room.items()}
     room = {kind: placed for kind, placed in room.items() if placed}

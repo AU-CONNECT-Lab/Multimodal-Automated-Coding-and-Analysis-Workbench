@@ -112,11 +112,11 @@ def analysed_part(config, recording_id: str, camera: str) -> tuple[float, float]
 
 def ignored_areas(config, camera: str, video: dict | None) -> list[tuple[float, float, float, float]]:
     """The parts of a camera's picture the setup says to ignore, in the pixels the keypoints are in."""
-    device = config.setup.cameras.get(camera)
-    if device is None or not device.ignore or not video:
+    areas = config.setup.ignore.get(camera)
+    if not areas or not video:
         return []
     width, height = video.get("prepared_size") or video["size"]
-    return [(left * width, top * height, right * width, bottom * height) for left, top, right, bottom in device.ignore]
+    return [(left * width, top * height, right * width, bottom * height) for left, top, right, bottom in areas]
 
 
 def camera_people(item) -> list[str]:
@@ -151,6 +151,7 @@ DETECTIONS_NAME = "detections.parquet"
 LOOK_NAME = "look_names.json"
 LOOKER = "the picture-reading model"
 SWAPS_NAME = "swaps.json"
+IGNORED_NAME = "ignored.json"
 BACKEND_NAME = "backend.json"
 
 _DETECT_SPECS = {
@@ -319,7 +320,7 @@ class PoseExtractor(Extractor):
     version = "0.9.1"
     scale = Scale.FRAME
     group = "pose"
-    config_sections = ("pose", "setup.cameras")
+    config_sections = ("pose", "setup.cameras", "setup.ignore")
     requires = (PoseDetectExtractor.name,)
 
     def check_available(self) -> None:
@@ -347,6 +348,7 @@ class PoseExtractor(Extractor):
         owners: dict[str, dict] = {}
         pieces: list[pd.DataFrame] = []
         swaps_by_file: dict[str, list] = {}
+        ignored: dict[str, dict] = {}
         cameras = [item for item in recording.cameras() if not detections[detections["video"] == item.name].empty]
         # cameras a person named first, so a suggestion elsewhere can follow the heads named there
         cameras.sort(key=lambda item: not (names.get(item.name) or item.subject_id is not None))
@@ -372,6 +374,7 @@ class PoseExtractor(Extractor):
                 left_out, piece = piece[away].assign(subject_id=None), piece[~away]
                 tracks = sorted(int(track) for track in left_out["track_id"].unique())
                 frames = int(left_out.groupby("track_id")["frame"].nunique().sum())
+                ignored[item.name] = {"tracks": tracks, "frames": frames, "seconds": frames / item.fps if item.fps else None}
                 warnings.append(self._warning(recording, None, "info", (
                     f"{item.name}: tracks {tracks[:5]}{f' and {len(tracks) - 5} more' if len(tracks) > 5 else ''}, in view "
                     f"{f'{frames / item.fps:.0f} s' if item.fps else f'{frames} frames'} in all, lie in a part of the picture "
@@ -407,7 +410,7 @@ class PoseExtractor(Extractor):
         keypoints["source"] = self.name
         keypoints = coerce_frame(keypoints, KEYPOINT_SCHEMA, "keypoints")
 
-        artifacts = {**self._write_swaps(workspace, swaps_by_file), **self._write_looks(workspace)}
+        artifacts = {**self._write_swaps(workspace, swaps_by_file), **self._write_looks(workspace), **self._write_ignored(workspace, ignored)}
         if owners:
             artifacts["owners"] = self._write_json(workspace, "owners.json", owners)
         rows = self._rows(recording, keypoints, swaps_by_file, warnings)
@@ -597,6 +600,10 @@ class PoseExtractor(Extractor):
         where = f" (look at {spans})" if spans else ""
         subject = next(iter(owner["people"])) if len(owner["people"]) == 1 else None
         return self._warning(recording, subject, "warn", f"{file_name}: {owner['doubt']}{where}")
+
+    def _write_ignored(self, workspace: Path, ignored: dict[str, dict]) -> dict[str, Path]:
+        """What was left out for lying in an area to ignore, per camera, for a person to look over."""
+        return {IGNORED_NAME: self._write_json(workspace, IGNORED_NAME, ignored)} if ignored else {}
 
     def _write_swaps(self, workspace: Path, swaps_by_file: dict[str, list]) -> dict[str, Path]:
         """Evidence for the identity review step, not an input to anything computed."""
