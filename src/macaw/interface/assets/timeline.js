@@ -367,7 +367,26 @@
       strips.set(root, made);
     });
     for (const api of strips.values()) api.readTicks();
+    pin();
   }
+
+  // a player slot whose video is mostly under the tabs pins its card small there, keeping its height in the page
+  function pin() {
+    const bar = document.getElementById('topbar');
+    const top = bar ? bar.getBoundingClientRect().bottom : 0;
+    document.querySelectorAll('.player-slot').forEach((slot) => {
+      const card = slot.firstElementChild, was = slot.classList.contains('away');
+      if (!card) return;
+      if (!was) slot.dataset.full = slot.offsetHeight;
+      const full = +slot.dataset.full || 0, r = slot.getBoundingClientRect();
+      const away = !!slot.querySelector('video.player') && slot.offsetParent !== null && r.top + full * 0.6 < top;
+      if (away !== was) { slot.classList.toggle('away', away); slot.style.height = away ? `${full}px` : ''; }
+      if (away) Object.assign(card.style, { top: `${top}px`, left: `${r.left}px`, width: `${r.width}px` });
+      else if (was) Object.assign(card.style, { top: '', left: '', width: '' });
+    });
+  }
+  addEventListener('scroll', pin, { passive: true });
+  addEventListener('resize', pin);
 
   const first = () => strips.values().next().value;
   window.macawStrip = {

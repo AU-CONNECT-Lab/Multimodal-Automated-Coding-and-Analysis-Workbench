@@ -172,14 +172,15 @@ def _player(config, recording, camera: str | None):
     camera = camera if camera in cameras else cameras[0]
     rid = recording.recording_id
     picker = dcc.Dropdown(cameras, camera, id=_one(CAMERA), clearable=False, searchable=False, className="quiet")
-    return ui.card(
+    # the slot keeps the card's place while it is pinned small under the tabs (assets/timeline.js)
+    return html.Div(ui.card(
         "Play",
         html.Div(player_box(config, rid, camera), id=_one(PLAYER_BOX)),
         dcc.Store(id={"type": TIME, "key": rid}),
         desc="Every time on this page plays from here.",
         actions=quiet_pick("camera", picker) if len(cameras) > 1 else html.Div(picker, hidden=True),
         id="review-play",
-    )
+    ), className="player-slot")
 
 
 def player_box(config, rid: str, camera: str, at_s: float | None = None):
@@ -216,7 +217,7 @@ def player_box(config, rid: str, camera: str, at_s: float | None = None):
         html.Video(src=f"{file_url(path)}?v={int(path.stat().st_mtime)}", id=PLAYER, preload="metadata", className="player"),
         strip,
         *([ui.note(" ".join(notes))] if notes else []),
-    ])
+    ], className="player-wrap")
 
 
 def names_box(config, rid: str, camera: str, people: list[str]):

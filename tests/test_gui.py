@@ -1341,6 +1341,8 @@ def test_the_review_player_strip_holds_the_page_time(project):
     assert shown["ticks"] == "#review-body .seek" and shown["video"] is None
     page = text_of(review.body(project, "003"))
     assert "the camera playing" in page and "scale-at-wrap" in page and "gaze-random" in page and '"type": "gaze-video"' not in page
+    # timeline.js pins the card small by its slot
+    assert "player-slot" in page
 
 
 def test_a_scale_on_the_camera_playing_is_measured_where_the_player_stands(project, monkeypatch):

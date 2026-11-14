@@ -546,9 +546,15 @@ table.standing .cell { width: var(--cell); height: var(--cell); border-radius: c
 
 /* Review page: a wide recording picker, the player that stays in view, times that play from there */
 .picker.wide { min-width: 22rem; }
-/* pinned only once it holds a video to play */
-#review-play:has(video.player) { position: sticky; top: 8.5rem; z-index: 5; }
 #review-play .player { max-height: 28vh; }
+/* scrolled past its place, the player shrinks to its strip and a small picture under the tabs */
+.player-slot { display: flow-root; }
+.player-slot.away > .card { position: fixed; z-index: 5; margin: 0; border-radius: 0 0 var(--radius-card) var(--radius-card); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3); }
+.player-slot.away .card-head, .player-slot.away .player-wrap > .note { display: none; }
+.player-slot.away .card-body { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+.player-slot.away .player-wrap { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 0 1.1rem; align-items: center; }
+.player-slot.away .player-wrap .player { width: 11rem; height: 6.2rem; max-height: none; object-fit: contain; background: #000; border-radius: 8px; }
+.player-slot.away .time-strip { margin: 0; }
 .seek { border: none; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted; }
 .clip { display: flex; align-items: center; gap: 0.5rem; }
 .swatch { display: inline-block; width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; border-radius: 50%; vertical-align: -0.1rem; }
