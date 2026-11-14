@@ -710,6 +710,11 @@ def _prompt_extras(params: dict) -> str:
         text += " The model was asked to name in a few words what each code rested on."
     if params.get("think") is not None:
         text += f" The model's reasoning before answering was turned {'on' if params['think'] else 'off'}."
+    if params.get("concurrency", 1) > 1:
+        text += (
+            f" Requests were sent {_count(params['concurrency'])} at a time, so the server may have answered them in batches "
+            "and the seeds do not fix the answers word for word."
+        )
     return text
 
 
@@ -808,6 +813,7 @@ def _judge_version(config, params: dict, spec) -> str:
         "n_examples": own is not None and own.examples is not None,
         "reasons": params.get("reasons") != base.reasons,
         "think": params.get("think") != base.think,
+        "concurrency": True,
     }
     extras = _prompt_extras({key: value for key, value in params.items() if changed.get(key)})
     # the version is said by what it changes, so a note it leaves out is said too

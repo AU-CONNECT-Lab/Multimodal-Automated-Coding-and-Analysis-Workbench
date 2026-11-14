@@ -531,6 +531,21 @@ class TestAtOnce:
         assert "coding.rate.full keeps 4 requests under way per recording, up to 16 in all with 4 tasks side by side (run -j). Ollama answers" in shown
         assert "OLLAMA_NUM_PARALLEL" in shown and "coding.rate.single keeps" not in shown
 
+    def test_the_methods_say_that_requests_went_several_at_a_time(self, tmp_path):
+        from macaw.project.manifest import FeatureManifest
+        from macaw.qc.boilerplate import describe
+
+        path = project(tmp_path, {"fast": {"scales": "names.yaml"}, "single": {"scales": "names.yaml", "concurrency": 1}}, llm={"model": "tiny", "concurrency": 4})
+        resolved = resolve_config(path)
+        said = {}
+        for name in ("fast", "single"):
+            step = module._VERSIONS[name](resolved)
+            manifest = FeatureManifest()
+            manifest.extend(step._specs(step.scale_set(), build_recording("r1", resolved)))
+            said[name] = " ".join(describe(manifest, resolved)["Ratings"])
+        assert "Requests were sent four at a time, so the server may have answered them in batches" in said["fast"]
+        assert "at a time" not in said["single"]
+
 
 TASKS = ("f1_task_a", "f1_task_b", "f2_task_a")
 NOTES = {"notes": "A is the parent.", "notes_by": {"task": {"task_a": "They build a tower.", "task_b": ""}}}
