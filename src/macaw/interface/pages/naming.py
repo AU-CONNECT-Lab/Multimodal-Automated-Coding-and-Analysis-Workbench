@@ -111,8 +111,8 @@ def areas_kept(config, camera: str, take_back=None):
     ])
 
 
-def editor(config, rid: str, camera: str, people: list[str], take_back=None, take_back_area=None):
-    """The frame of the camera where the Review player stands, with whom a click names on it."""
+def editor(config, rid: str, camera: str, people: list[str], take_back=None, take_back_area=None, side=()):
+    """The frame of the camera where the Review player stands, with whom a click names on it; side goes beside the frame."""
     options = [{"label": swatch(person, people), "value": person} for person in people]
     options.append({"label": html.Span([html.Span(className="swatch area"), "area to ignore"], className="person"), "value": AREA})
     part = analysed(config, rid, camera)
@@ -120,12 +120,14 @@ def editor(config, rid: str, camera: str, people: list[str], take_back=None, tak
         [
             saved(config, rid, camera, people, part, take_back),
             areas_kept(config, camera, take_back_area),
-            html.Div(
-                [dcc.RadioItems(options, people[0] if people else None, id=PERSON, inline=True, className="on-frame"),
-                 dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False})],
-                className="frame-wrap",
-            ),
-            html.Div(id=NOTE),
+            html.Div([
+                html.Div(
+                    [dcc.RadioItems(options, people[0] if people else None, id=PERSON, inline=True, className="on-frame"),
+                     dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False})],
+                    className="frame-wrap",
+                ),
+                html.Div([html.Div(id=NOTE), *side], className="frame-controls"),
+            ], className="frame-side"),
             dcc.Store(id=MARKS, data={}),
             dcc.Store(id=CORNERS, data=[]),
             dcc.Store(id=FRAME, data=None),

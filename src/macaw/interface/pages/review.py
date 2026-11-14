@@ -19,7 +19,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.project.scale import HAND, calibration_clips, clip_frame, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
-from macaw.qc.look import RIGHT, describe, read_checks, read_look, summary, to_check, verdict
+from macaw.qc.look import RIGHT, WRONG, describe, read_checks, read_look, summary, to_check, verdict
 from macaw.store.annotations import read_annotations
 from macaw.qc.align_clip import clip_path
 from macaw.qc.report import _alignment, _cameras, _waiting
@@ -225,7 +225,12 @@ def names_box(config, rid: str, camera: str, people: list[str]):
 
     if not people:
         return ui.note(f"Nobody is read on {camera}; play another camera to name people.")
-    return naming.editor(config, rid, camera, people, _take_back, _take_back_area)
+    side = html.Div([
+        _button("Save the names", "name-people", primary=True),
+        _button("Clear this camera's names", "clear-names"),
+        _button("Ignore this area", "ignore-area"),
+    ], className="buttons")
+    return naming.editor(config, rid, camera, people, _take_back, _take_back_area, side=[side])
 
 
 def _people_on_camera(config, layout, results, recording, camera: str | None):
@@ -253,16 +258,7 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
             )
         )
     camera = camera if camera in people else next(iter(people))
-    editor = html.Div(
-        [
-            html.Div(names_box(config, rid, camera, people[camera]), id=_one(NAMES_BOX)),
-            html.Div([
-                _button("Save the names", "name-people", primary=True),
-                _button("Clear this camera's names", "clear-names"),
-                _button("Ignore this area", "ignore-area"),
-            ], className="buttons"),
-        ],
-    )
+    editor = html.Div(names_box(config, rid, camera, people[camera]), id=_one(NAMES_BOX))
     index = layout.renders_dir(rid) / "index.csv"
     shots = pd.read_csv(index) if index.is_file() else pd.DataFrame(columns=["file", "reason", "t", "video"])
     thumbs = [
@@ -274,7 +270,7 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
         "Who is on camera",
         *blocks,
         editor,
-        html.Div(_button("Draw review frames", "render"), className="buttons"),
+        html.Div([html.Span("Review frames", className="small-caps"), _button("Draw review frames", "render", small=True)], className="sub-head"),
         html.Div(thumbs, className="thumbs"),
         desc="Stop the player where everyone is in view, then click each person.",
     )
@@ -299,8 +295,10 @@ def _model_look(config, layout, rid):
             html.A(html.Img(src=file_url(renders / entry["file"])), href=file_url(renders / entry["file"]), target="_blank"),
             html.Figcaption([
                 f"{entry['t']:.1f} s, {entry['video']}: {said} ",
-                ui.pill("the model was right", "ok") if decided == RIGHT else ui.pill("the model was wrong", "warn") if decided else "",
-                html.Div([_button("Right", "look-right", entry["file"], small=True), _button("Wrong", "look-wrong", entry["file"], small=True)], className="buttons"),
+                html.Div(
+                    [_button("Right", "look-right", entry["file"], small=True), _button("Wrong", "look-wrong", entry["file"], small=True)],
+                    className="buttons verdict" + {RIGHT: " said-right", WRONG: " said-wrong"}.get(decided, ""), title="Was the model right?",
+                ),
             ]),
         ]))
     return ui.card(
@@ -344,10 +342,7 @@ def _voices(config, layout, recording):
                 f"{voice.get('speech_s', 0.0):.0f} s",
                 "" if median is None else f"{median:.0f} Hz",
                 html.Div([*(html.Div(f"“{line}”") for line in telling_lines(lines, label)), every]),
-                html.Div([
-                    html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True), seek(clip["t_start"], "on video")], className="clip")
-                    for clip in voice.get("clips", [])
-                ], className="clips"),
+                html.Div([_clip(directory, clip) for clip in voice.get("clips", [])], className="clips"),
                 why.get(label, ""),
                 dcc.Dropdown([*subjects, NO_ONE], current, id={"type": "voice-pick", "label": label}, clearable=False, className="picker small"),
             ]
@@ -367,6 +362,15 @@ def _voices(config, layout, recording):
         html.Div(_button("Save these names", "accept-voices", primary=True), className="buttons"),
         desc="Pick whose voice each is" + ("; none counts as other in turn-taking." if others_take_turns(config) else "; none leaves it out."),
     )
+
+
+def _clip(directory: Path, clip: dict):
+    """A voice's clip with a play button (assets/clips.js) and the same moment on the video."""
+    return html.Div([
+        html.Audio(src=file_url(directory / clip["file"]), preload="none"),
+        html.Button(className="clip-play", title="Play this clip"),
+        seek(clip["t_start"], "on video"),
+    ], className="clip")
 
 
 def _mouth_doubts(config, recording):
@@ -398,10 +402,7 @@ def _further_voice(config, layout, rid: str, directory: Path) -> list:
         return [ui.note(f"A further voice was found ({describe_further_voice(found)}); {heard['by'].split(' ')[0]} heard nobody else.", "ok")]
     return [
         ui.note(f"Someone else may speak here: {describe_further_voice(found)}. Listen, then choose.", "warn"),
-        html.Div([
-            html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True), seek(clip["t_start"], "on video")], className="clip")
-            for clip in found.get("clips", [])
-        ], className="clips"),
+        html.Div([_clip(directory, clip) for clip in found.get("clips", [])], className="clips"),
         html.Div([
             dcc.Link("Cut that part out", href=f"/segments?{urlencode({'recording': rid})}", className="button"),
             _button("Keep it as a voice of its own", "further-own"),
@@ -425,7 +426,7 @@ def _lines(config, layout, recording):
     people = [*(subject.subject_id for subject in recording.subjects), NO_ONE]
 
     def row(line):
-        doubt = html.Span([ui.pill("sure" if line.sure else "doubt", "warn"), f" {line.suggested or 'not ' + line.base}: {line.doubt}"]) if line.doubt else ""
+        doubt = html.Span([ui.pill("sure", "warn") if line.sure else ui.pill("doubt", "info"), f" {line.suggested or 'not ' + line.base}: {line.doubt}"]) if line.doubt else ""
         pick = dcc.Dropdown(people, line.person, id={"type": LINE_PICK, "t": f"{line.t_start:.3f}"}, clearable=False, className="picker small")
         return [seek(line.t_start), line.base, line.text, doubt, pick]
 
@@ -447,7 +448,7 @@ def _lines(config, layout, recording):
     if len(lines) > _MAX_LINES:
         parts.append(ui.note(f"Showing the first {_MAX_LINES} of {len(lines)} lines; the rest are changed from a csv."))
     parts.append(html.Div([
-        ui.field("While playing: from the player's moment to the end of that line it is", dcc.Dropdown(people, None, id=_one(LINE_PERSON), placeholder="speaker", className="picker small")),
+        ui.field("From the player's moment to the line's end", dcc.Dropdown(people, None, id=_one(LINE_PERSON), placeholder="speaker", className="picker small")),
         ui.button("Split there", _one(LINE_HERE)),
         dcc.Store(id=_one(LINE_AT)),
     ], className="toolbar"))
@@ -502,30 +503,31 @@ def _scale(config, layout, recording):
     remove += [_button(f"Remove the measurements of {clip}", "clear-scale", CLIP + clip)] if from_clip else []
     return ui.card(
         f"Pixels to {UNIT_NAMES[units]}",
-        ui.note(
-            "A scale holds only at the object's distance from the camera, so measure where each person sits.",
-            "warn",
-        ),
         ui.table(
             ["Measured on", "At (s)", "Whose place", "What", "Length", "Pixels", f"{units} per pixel", "By"], rows,
             numeric={"At (s)", "Length", "Pixels", f"{units} per pixel"},
         ) if rows else None,
-        status,
-        html.Div(ui.field("At (s) of the clip", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=0, debounce=True)),
-                 id={"type": SCALE_AT_WRAP, **key}, className="toolbar", style=None if chosen.startswith(CLIP) else HIDDEN),
-        html.Div(id={"type": SCALE_NOTE, **key}),
-        dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
+        html.Div([
+            dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
+            html.Div([
+                ui.note("A scale holds only at the object's distance from the camera, so measure where each person sits.", "warn"),
+                *(status if isinstance(status, list) else [status]),
+                html.Div(ui.field("At (s) of the clip", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=0, debounce=True)),
+                         id={"type": SCALE_AT_WRAP, **key}, className="toolbar", style=None if chosen.startswith(CLIP) else HIDDEN),
+                html.Div(id={"type": SCALE_NOTE, **key}),
+                html.Div(
+                    [
+                        ui.field(f"Length ({units})", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
+                        ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="ruler")),
+                        ui.field("Whose place", dcc.Dropdown([EVERYONE, *config.project.roles], EVERYONE, id={"type": SCALE_PERSON, **key}, clearable=False, className="picker small")),
+                    ],
+                    className="toolbar",
+                ),
+                html.Div([_button("Save this measurement", "set-scale", primary=True), *remove], className="buttons"),
+            ], className="frame-controls"),
+        ], className="frame-side"),
         dcc.Store(id={"type": SCALE_POINTS, **key}, data=[]),
         dcc.Store(id={"type": SCALE_FRAME, **key}, data=None),
-        html.Div(
-            [
-                ui.field(f"Length ({units})", dcc.Input(id={"type": SCALE_LENGTH, **key}, type="number", min=0)),
-                ui.field("What it is", dcc.Input(id={"type": SCALE_OBJECT, **key}, placeholder="ruler")),
-                ui.field("Whose place", dcc.Dropdown([EVERYONE, *config.project.roles], EVERYONE, id={"type": SCALE_PERSON, **key}, clearable=False, className="picker small")),
-            ],
-            className="toolbar",
-        ),
-        html.Div([_button("Save this measurement", "set-scale", primary=True), *remove], className="buttons"),
         desc="Click the two ends of something of known length.",
         actions=quiet_pick("on", picker) if len(sources) > 1 else html.Div(picker, hidden=True),
     )
@@ -552,14 +554,18 @@ def _gaze(config, layout, recording):
         "Where people look",
         ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}, fit=True) if rows else None,
         *[ui.note(f"{item.subject_id}: {item.message}", "warn" if item.severity == "warn" else "ok") for item in checked],
-        html.Div(id={"type": GAZE_NOTE, **key}),
-        dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
+        html.Div([
+            dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
+            html.Div([
+                html.Div(id={"type": GAZE_NOTE, **key}),
+                html.Div(
+                    [ui.field(f"{person} looks at", dcc.Dropdown(choices[person], None, id={"type": GAZE_PICK, "key": person}, className="picker small")) for person in roles],
+                    className="toolbar",
+                ),
+                html.Div([_button("Save what they look at", "label-gaze", primary=True)], className="buttons"),
+            ], className="frame-controls"),
+        ], className="frame-side"),
         dcc.Store(id={"type": GAZE_T, **key}, data=None),
-        html.Div(
-            [ui.field(f"{person} looks at", dcc.Dropdown(choices[person], None, id={"type": GAZE_PICK, "key": person}, className="picker small")) for person in roles],
-            className="toolbar",
-        ),
-        html.Div([_button("Save what they look at", "label-gaze", primary=True)], className="buttons"),
         desc="Say whom or what each person looks at.",
         actions=html.Button(id={"type": GAZE_RANDOM, **key}, className="icon-button icon-dice", title="Go to a moment at random"),
     )
