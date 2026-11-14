@@ -322,6 +322,11 @@ textarea.yaml:focus { outline: none; border-color: var(--ink); }
 .step { grid-template-columns: auto 1fr auto; }
 .step .run-one { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
 
+/* the recording picker in the header, on the pages that show one recording */
+.recording-box { display: flex; align-items: center; gap: 0.35rem; margin-left: 1.2rem; }
+.recording-box .picker { width: 20rem; }
+.recording-box .button { padding: 0.45rem 0.7rem; }
+
 /* overview */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .tile { display: block; background: var(--panel); border-radius: var(--radius-tile); box-shadow: var(--card); padding: 0.95rem 1.4rem 1rem; color: var(--ink); text-decoration: none; }

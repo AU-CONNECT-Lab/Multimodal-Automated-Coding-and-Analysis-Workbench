@@ -326,6 +326,18 @@ def test_pages_open_by_their_address():
     ]
 
 
+def test_the_recording_picker_shows_only_on_pages_of_one_recording(project):
+    app = create_app(project)
+    show = callback(app, "..page-overview.className")
+    shown = {page: show(f"/{page}")[-1] for page in ("overview", "setup", "run", "review", "agreement", "segments", "results", "settings")}
+    assert [page for page, style in shown.items() if style is None] == ["setup", "review", "segments", "results"]
+    assert '"id": "recording"' in text_of(build_layout(project)) and '"recording-box"' in text_of(build_layout(project))
+    hand_over = callback(app, "..setup-recording-shown.data")
+    assert hand_over("003", "/review", [None] * 4) == [no_update, "003", no_update, no_update]
+    assert hand_over("003", "/review", [None, "003", None, None]) == [no_update] * 4
+    assert hand_over("003", "/run", [None] * 4) == [no_update] * 4
+
+
 def test_each_step_has_a_run_button_of_its_own(project):
     order, _, counts, needs = run.step_states(project, ["003"])
     shown = text_of(run._step_label("prep.media", counts["prep.media"], needs["prep.media"], 1))
@@ -371,7 +383,7 @@ def callback(app, output: str):
 
 
 def review_update(app):
-    return callback(app, "..review-body.children...review-message.children...review-recording.options")
+    return callback(app, "..review-body.children...review-message.children...recording.options")
 
 
 # the states after the recording, the clicks, the uploads and the split: name, voices, acts, gaze, scale, camera, names, note, mixed, lines, picker
@@ -382,10 +394,11 @@ def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=Non
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
     app = create_app(project)
-    assert callback(app, "review-recording.value")("/review", "?recording=003") == "003"
-    assert callback(app, "results-recording.value")("/results", "?recording=003&step=x") == "003"
-    for page, search in (("/review", "?recording=nowhere"), ("/run", "?recording=003")):
-        assert callback(app, "review-recording.value")(page, search) is no_update
+    linked = callback(app, "recording.value")
+    assert linked("/review", "?recording=003") == "003" and linked("/results", "?recording=003&step=x") == "003"
+    assert linked("/segments", "?recording=003") == "003" and linked("/setup", "?recording=003") == "003"
+    for page, search in (("/review", "?recording=nowhere"), ("/run", "?recording=003"), ("/overview", "?recording=003")):
+        assert linked(page, search) is no_update
     assert results.chosen_source(["text.asr", "turns.structure"], "turns.structure", "text.asr") == "turns.structure"
     assert results.chosen_source(["text.asr", "turns.structure"], "prep.video", "turns.structure") == "turns.structure"
     assert results.chosen_source(["text.asr"], None, None) == "text.asr" and results.chosen_source([], "x", None) is None

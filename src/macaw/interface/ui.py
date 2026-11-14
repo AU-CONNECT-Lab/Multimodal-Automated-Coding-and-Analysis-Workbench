@@ -87,6 +87,13 @@ def command(argv: list[str]):
     return html.Pre(" ".join(f'"{part}"' if " " in part else part for part in argv), className="command")
 
 
+# the recording the one-recording pages show, picked in the header
+RECORDING, PREVIOUS, NEXT = "recording", "recording-previous", "recording-next"
+ONE_RECORDING_PAGES = ("setup", "review", "segments", "results")
+# the recording each of those pages was last drawn for
+SHOWN = {page: f"{page}-recording-shown" for page in ONE_RECORDING_PAGES}
+
+
 def note(text, kind: str = "info"):
     return html.Div(text, className=f"note {kind}-note")
 

@@ -18,7 +18,7 @@ from macaw.interface.files import file_url
 from macaw.interop.coding_files import SUFFIXES as CODING_SUFFIXES
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
-from macaw.project.scale import CALIBRATION, HAND, calibration_clips, clip_frame, read_measurements, recording_scale
+from macaw.project.scale import HAND, calibration_clips, clip_frame, read_measurements, recording_scale
 from macaw.qc.checks import RecordingResults
 from macaw.qc.look import RIGHT, describe, read_checks, read_look, summary, to_check, verdict
 from macaw.store.annotations import read_annotations
@@ -49,7 +49,7 @@ LINE_PICK, LINE_PERSON, LINE_HERE, LINE_AT = "line-pick", "line-split-person", "
 # more lines than this are changed from a csv with macaw line-speakers --apply
 _MAX_LINES = 400
 EVERYONE = "everyone"
-RECORDING, PREVIOUS, NEXT = "review-recording", "review-previous", "review-next"
+RECORDING, PREVIOUS, NEXT = ui.RECORDING, ui.PREVIOUS, ui.NEXT
 PLAYER, SEEK, SEEKED = "review-player", "review-seek", "review-seeked"
 # parts only some recordings have, so callbacks reach them by pattern and find none where they are missing
 CAMERA, PLAYER_BOX, TIMING, NAMES_BOX = "review-camera", "review-player-box", "review-timing", "review-names-box"
@@ -60,18 +60,11 @@ _MAX_ACTS = 200
 
 
 def layout(config_path: Path):
-    recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
             ui.page_head("Review", "What the software decided, for a person to check."),
             html.Div(
                 [
-                    ui.button("◀", PREVIOUS, title="The recording before"),
-                    ui.field("Recording", dcc.Dropdown(
-                        recordings, recordings[0] if recordings else None, id=RECORDING, clearable=False, maxHeight=480,
-                        className="picker wide",
-                    )),
-                    ui.button("▶", NEXT, title="The recording after"),
                     # kept in this browser, so a person types it once
                     ui.field("Your name", dcc.Input(id="review-by", value="", placeholder="needed to save", persistence=True, persistence_type="local")),
                 ],
@@ -940,7 +933,8 @@ def register(app, config_path: Path) -> None:
     @app.callback(Output(RECORDING, "value"), Input("url", "pathname"), Input("url", "search"))
     def linked_recording(pathname, search):
         rid = ui.asked(search).get("recording")
-        if (pathname or "/").rstrip("/") != f"/{LABEL.lower()}" or rid not in resolve_recordings(resolve_config(config_path), None):
+        page = (pathname or "/").strip("/").lower()
+        if page not in ui.ONE_RECORDING_PAGES or rid not in resolve_recordings(resolve_config(config_path), None):
             return no_update
         return rid
 
@@ -1042,7 +1036,7 @@ def register(app, config_path: Path) -> None:
         Output("review-body", "children"),
         Output("review-message", "children"),
         Output(RECORDING, "options", allow_duplicate=True),
-        Input(RECORDING, "value"),
+        Input(ui.SHOWN["review"], "data"),
         Input({"type": ACT, "action": ALL, "target": ALL}, "n_clicks"),
         Input({"type": UPLOAD, "kind": ALL}, "contents"),
         Input({"type": LINE_AT, "key": ALL}, "data"),

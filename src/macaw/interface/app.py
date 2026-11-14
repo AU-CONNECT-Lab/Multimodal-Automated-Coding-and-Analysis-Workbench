@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from dash import Dash, Input, Output, dcc, html
+from dash import Dash, Input, Output, State, dcc, html, no_update
 from flask import abort, send_file
 
 from macaw.config.loader import resolve_config
@@ -71,13 +71,26 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
 
-def _header(title: str, subtitle: str, *, folder: Path | None = None, tabs=TABS):
+def _picker(recordings: list[str]):
+    return html.Div(
+        [
+            ui.button("◀", ui.PREVIOUS, title="The recording before"),
+            dcc.Dropdown(recordings, recordings[0] if recordings else None, id=ui.RECORDING, clearable=False, maxHeight=480,
+                         className="picker", placeholder="recording"),
+            ui.button("▶", ui.NEXT, title="The recording after"),
+        ],
+        id="recording-box", className="recording-box", style={"display": "none"},
+    )
+
+
+def _header(title: str, subtitle: str, *, folder: Path | None = None, tabs=TABS, recordings: list[str] | None = None):
     return html.Header(
         [
             html.Div(
                 [
                     html.Span(title, className="title"),
                     html.Span(subtitle, className="subtitle"),
+                    _picker(recordings or []),
                     html.Div(
                         [
                             *([ui.button("Open folder", "app-open-folder", icon_name="open", title=str(folder))] if folder else []),
@@ -116,13 +129,15 @@ def build_layout(config_path: Path, *, local: bool = True):
                 html.Main([ui.note(str(error), "bad"), html.Div(settings.layout(config_path), id="page-settings", className="page shown")]),
             ]
         )
-    count = len(resolve_recordings(config, None))
+    recordings = resolve_recordings(config, None)
+    count = len(recordings)
     return html.Div(
         [
             dcc.Location(id="url"),
             _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}",
-                    folder=config_path.parent if local else None, tabs=shown_tabs(config)),
+                    folder=config_path.parent if local else None, tabs=shown_tabs(config), recordings=recordings),
             html.Main([html.Div(page.layout(config_path), id=f"page-{page.LABEL.lower()}", className="page") for page in PAGES]),
+            *[dcc.Store(id=store) for store in ui.SHOWN.values()],
         ]
     )
 
@@ -149,14 +164,25 @@ def _register_navigation(app: Dash, config_path: Path) -> None:
 
     @app.callback(
         [Output(f"page-{name}", "className") for name in names]
-        + [Output(f"nav-{name}", "className") for name in names],
+        + [Output(f"nav-{name}", "className") for name in names] + [Output("recording-box", "style")],
         Input("url", "pathname"),
     )
     def show(pathname):
         shown = page_for(pathname)
         pages = ["page shown" if name == shown else "page" for name in names]
         links = [("gear active" if shown == name else "gear") if name == "settings" else ("active" if shown == name else "") for name in names]
-        return pages + links
+        # the picker shows only where one recording is shown, and keeps its choice elsewhere
+        return pages + links + [None if shown in ui.ONE_RECORDING_PAGES else {"display": "none"}]
+
+    pages = list(ui.SHOWN)
+
+    @app.callback(
+        [Output(ui.SHOWN[page], "data") for page in pages],
+        Input(ui.RECORDING, "value"), Input("url", "pathname"), [State(ui.SHOWN[page], "data") for page in pages],
+    )
+    def hand_over(rid, pathname, drawn):
+        shown = page_for(pathname)
+        return [rid if page == shown and before != rid else no_update for page, before in zip(pages, drawn)]
 
     @app.callback(Output("review-badge", "children"), Input("url", "pathname"))
     def badge(_):

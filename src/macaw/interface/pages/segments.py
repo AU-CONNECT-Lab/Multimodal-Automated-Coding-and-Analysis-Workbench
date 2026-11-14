@@ -9,7 +9,6 @@ from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
-from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
 from macaw.media.ffmpeg import make_preview
@@ -23,16 +22,11 @@ ACT, REMOVE, FIELD, HERE = "segments-act", "segments-remove", "segments-field", 
 
 
 def layout(config_path: Path):
-    recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
             ui.page_head(
                 "Segments",
                 "Name parts of a recording, such as free play, to have every measure within each.",
-            ),
-            html.Div(
-                ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="segments-recording", clearable=False, className="picker")),
-                className="toolbar",
             ),
             html.Div(id="segments-message"),
             dcc.Loading(html.Div(id="segments-body")),
@@ -135,17 +129,6 @@ def _time_from_player() -> str:
 
 
 def register(app, config_path: Path) -> None:
-    @app.callback(Output("segments-recording", "options"), Input("url", "pathname"))
-    def recordings(_):
-        return resolve_recordings(resolve_config(config_path), None)
-
-    @app.callback(Output("segments-recording", "value"), Input("url", "pathname"), Input("url", "search"))
-    def linked_recording(pathname, search):
-        rid = ui.asked(search).get("recording")
-        if (pathname or "/").rstrip("/") != f"/{LABEL.lower()}" or rid not in resolve_recordings(resolve_config(config_path), None):
-            return no_update
-        return rid
-
     app.clientside_callback(
         _time_from_player(), Output({"type": FIELD, "name": MATCH}, "value"), Input({"type": HERE, "name": MATCH}, "n_clicks"),
         prevent_initial_call=True,
@@ -154,7 +137,7 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output("segments-body", "children"),
         Output("segments-message", "children"),
-        Input("segments-recording", "value"),
+        Input(ui.SHOWN["segments"], "data"),
         Input({"type": REMOVE, "name": ALL}, "n_clicks"),
         Input({"type": ACT, "action": ALL}, "n_clicks"),
         State({"type": FIELD, "name": ALL}, "value"),

@@ -10,7 +10,6 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
-from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
 from macaw.project.layout import layout_for
@@ -29,14 +28,9 @@ COLOURS = ["#1d4e89", "#d1495b", "#2a9d8f", "#e9a03b", "#6c5b7b", "#57606a"]
 
 
 def layout(config_path: Path):
-    recordings = resolve_recordings(resolve_config(config_path), None)
     return html.Div(
         [
             ui.page_head("Results", "What a run produced: the quality page, and any measure per person."),
-            html.Div(
-                ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="results-recording", clearable=False, className="picker")),
-                className="toolbar",
-            ),
             ui.card(
                 "Quality review",
                 html.Div(id="results-report"),
@@ -247,21 +241,10 @@ def axes_3d(units: str, axis: dict) -> dict:
 
 
 def register(app, config_path: Path) -> None:
-    @app.callback(Output("results-recording", "options"), Input("url", "pathname"))
-    def recordings(_):
-        return resolve_recordings(resolve_config(config_path), None)
-
-    @app.callback(Output("results-recording", "value"), Input("url", "pathname"), Input("url", "search"))
-    def linked_recording(pathname, search):
-        rid = ui.asked(search).get("recording")
-        if (pathname or "/").rstrip("/") != PATH or rid not in resolve_recordings(resolve_config(config_path), None):
-            return no_update
-        return rid
-
     @app.callback(
         Output("results-report", "children"),
         Output("results-report-message", "children"),
-        Input("results-recording", "value"),
+        Input(ui.SHOWN["results"], "data"),
         Input("results-write-report", "n_clicks"),
     )
     def report(rid, _clicks):
@@ -283,7 +266,7 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("results-source", "options"), Output("results-source", "value"),
-        Input("results-recording", "value"), Input("url", "search"), State("url", "pathname"), State("results-source", "value"),
+        Input(ui.SHOWN["results"], "data"), Input("url", "search"), State("url", "pathname"), State("results-source", "value"),
     )
     def pick_source(rid, search, pathname, current):
         if ctx.triggered_id == "url" and (pathname or "/").rstrip("/") != PATH:
@@ -293,7 +276,7 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("results-feature", "options"), Output("results-feature", "value"),
-        Input("results-source", "value"), State("results-recording", "value"),
+        Input("results-source", "value"), State(ui.RECORDING, "value"),
     )
     def pick_feature(source, rid):
         if not source or not rid:
@@ -304,7 +287,7 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("results-view", "children"),
-        Input("results-feature", "value"), State("results-source", "value"), State("results-recording", "value"),
+        Input("results-feature", "value"), State("results-source", "value"), State(ui.RECORDING, "value"),
     )
     def show(feature, source, rid):
         if not (feature and source and rid):
@@ -313,7 +296,7 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("results-3d-time", "min"), Output("results-3d-time", "max"), Output("results-3d-time", "value"),
-        Output("results-3d-slider", "style"), Input("results-recording", "value"),
+        Output("results-3d-slider", "style"), Input(ui.SHOWN["results"], "data"),
     )
     def span_3d(rid):
         points = points_3d(config_path, rid) if rid else None
@@ -322,7 +305,7 @@ def register(app, config_path: Path) -> None:
         start, end = float(points["t"].min()), float(points["t"].max())
         return start, end, fullest_moment(points), {}
 
-    @app.callback(Output("results-3d", "children"), Input("results-3d-time", "value"), State("results-recording", "value"))
+    @app.callback(Output("results-3d", "children"), Input("results-3d-time", "value"), State(ui.RECORDING, "value"))
     def show_3d(at_s, rid):
         if not rid:
             return html.P("No recordings found.", className="none")

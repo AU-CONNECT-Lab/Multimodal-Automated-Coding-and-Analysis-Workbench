@@ -67,7 +67,6 @@ def card(config):
                                 html.Div(
                                     [
                                         dcc.Dropdown([], None, id="room-view-camera", clearable=False, placeholder="camera", className="picker"),
-                                        dcc.Dropdown([], None, id="room-view-recording", clearable=False, placeholder="recording", className="picker"),
                                         ui.field("At (s)", dcc.Input(id="room-view-at", type="number", min=0, step="any", value=0, debounce=True)),
                                     ],
                                     id="room-view-camera-tools", className="room-view-tools", style={"display": "none"},
@@ -756,22 +755,18 @@ def register(app, config_path: Path) -> None:
         return draw_figure(config_path, name)
 
     @app.callback(
-        Output("room-view-camera-tools", "style"), Output("room-view-camera", "value"), Output("room-view-recording", "options"),
-        Output("room-view-recording", "value"),
-        Input("room-view-mode", "value"), State("room-view-camera", "value"), State("room-view-camera", "options"), State("room-view-recording", "value"),
+        Output("room-view-camera-tools", "style"), Output("room-view-camera", "value"),
+        Input("room-view-mode", "value"), State("room-view-camera", "value"), State("room-view-camera", "options"),
     )
-    def view_tools(mode, camera, cameras, rid):
-        from macaw.execution.runner import resolve_recordings
-
+    def view_tools(mode, camera, cameras):
         if mode != "camera":
-            return {"display": "none"}, no_update, no_update, no_update
-        rids = resolve_recordings(resolve_config(config_path), None)
+            return {"display": "none"}, no_update
         names = [item if isinstance(item, str) else item.get("value") for item in (cameras or [])]
-        return {}, camera if camera in names else (names[0] if names else None), rids, rid if rid in rids else (rids[0] if rids else None)
+        return {}, camera if camera in names else (names[0] if names else None)
 
     @app.callback(
         Output("room-frame", "data"), Output("room-view-note", "children"), Output("room-selected", "data", allow_duplicate=True),
-        Input("room-view-mode", "value"), Input("room-view-camera", "value"), Input("room-view-recording", "value"), Input("room-view-at", "value"),
+        Input("room-view-mode", "value"), Input("room-view-camera", "value"), Input(ui.SHOWN["setup"], "data"), Input("room-view-at", "value"),
         prevent_initial_call=True,
     )
     def frame(mode, camera, rid, at):
