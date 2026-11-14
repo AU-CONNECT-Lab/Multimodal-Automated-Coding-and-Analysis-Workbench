@@ -54,6 +54,7 @@ vision = [
   "opencv-python>=4.9",
   "mediapipe>=0.10",
   "py-feat>=0.6",
+  "python_speech_features>=0.6",  # the sound features face.speaking reads
 ]
 
 gui = [
@@ -98,7 +99,7 @@ where = ["src"]
 include = ["macaw*"]
 
 [tool.setuptools.package-data]
-"macaw" = ["config/*.yaml", "qc/templates/*", "qc/references.yaml", "extractors/audio/content/english_stopwords.txt", "interface/assets/*", "interface/assets/room/*", "interface/assets/room/three/*", "interface/assets/fonts/*"]
+"macaw" = ["config/*.yaml", "qc/templates/*", "qc/references.yaml", "extractors/audio/content/english_stopwords.txt", "interface/assets/*", "interface/assets/room/*", "interface/assets/room/three/*", "interface/assets/fonts/*", "extractors/video/face/light_asd/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
