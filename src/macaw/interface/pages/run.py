@@ -72,7 +72,7 @@ def _step_label(name: str, counts: Counter, needs: list[str], n_recordings: int)
     worst = present[0] if present else "new"
     return html.Div(
         [
-            html.Span(className=f"dot {STATE_KIND[worst] if worst != 'new' else ''}"),
+            html.Span(className=f"dot {'stale' if worst == 'stale' else STATE_KIND[worst] if worst != 'new' else ''}"),
             html.Span([name, *pills], className="name"),
             *([html.Span("needs " + ", ".join(needs), className="meta")] if needs else []),
             # a button inside the row's label runs the step without ticking it
