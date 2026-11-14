@@ -495,13 +495,15 @@ def test_the_run_page_says_beside_its_title_when_a_run_from_here_goes(project, m
     assert "stopped, exit 1" in text_of(run.live(project))
 
 
-def test_the_setup_page_shows_cameras_for_3d_only_where_two_cameras_film(project):
-    from macaw.interface.pages import setup
+def test_the_3d_page_has_its_tab_only_where_two_cameras_film(project):
+    from macaw.interface import app as workbench
+    from macaw.interface.pages import cameras, setup
 
-    assert "Cameras for three dimensions" not in text_of(setup.layout(project))
+    assert cameras not in workbench.shown_tabs(resolve_config(project)) and "nothing to set here" in text_of(cameras.layout(project))
     put(project.parent / "raw", "003", "side", "a.mp4")
     write_devices(project, cameras={"room": setup_camera(), "side": setup_camera(uses=("body",))}, microphones=mics())
-    assert "Cameras for three dimensions" in text_of(setup.layout(project))
+    assert cameras in workbench.shown_tabs(resolve_config(project)) and "Board" in text_of(cameras.layout(project))
+    assert "Cameras for three dimensions" not in text_of(setup.layout(project))
 
 
 def calibrated(project, notes=(), together=40):

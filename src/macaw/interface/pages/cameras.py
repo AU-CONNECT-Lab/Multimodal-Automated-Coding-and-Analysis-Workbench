@@ -1,4 +1,4 @@
-"""The Setup page's section on cameras for 3D: print the board, find the cameras of each calibration from its board
+"""The page on cameras for 3D, shown only for a project that can use them: print the board, find the cameras of each calibration from its board
 clips, see how well they fit and where they stand, and choose the calibration the project uses. Every button runs the
 macaw command shown with it."""
 
@@ -25,7 +25,8 @@ from macaw.project.recording import build_recording, camera_clips
 from macaw.project.room import CM_PER_UNIT, DECIMALS
 from macaw.project.scale import CM_PER_METRE
 
-PATH = "/setup"
+LABEL = "3D"
+PATH = "/3d"
 PAPERS = ("A4", "A3", "A2", "A1")
 # one calibration at a time per project, like a run
 _CURRENT: dict[str, cli_bridge.LaunchedCommand] = {}
@@ -64,16 +65,16 @@ def _clips(folder: Path) -> dict[str, Path]:
         return {}
 
 
-def section(config_path: Path):
-    """Shown for projects that can use it: a calibration named or present already, or a recording filmed by two cameras."""
+def layout(config_path: Path):
     config = resolve_config(config_path)
+    head = ui.page_head("Cameras for three dimensions", "Find where calibrated cameras stand, to place people in three dimensions.")
     if not wanted(config):
-        return None
+        return html.Div([head, ui.note("This project has no recording filmed by two cameras and no calibration, so it has nothing to set here.")])
     names = setups(config)
     chosen = config.pose3d.calibration if config.pose3d.calibration in names else (names[0] if names else None)
     return html.Div(
         [
-            html.H2("Cameras for three dimensions", className="section-title"),
+            head,
             html.Div(id="cameras-message"),
             ui.card(
                 "Board",

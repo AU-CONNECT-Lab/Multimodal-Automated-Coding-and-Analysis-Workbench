@@ -13,7 +13,7 @@ from macaw.config.schema import DEVICE_NAME
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
-from macaw.interface.pages import cameras, room
+from macaw.interface.pages import room
 from macaw.project.recording import build_recording
 from macaw.project.setup import setup_path
 
@@ -29,7 +29,6 @@ def setup_names(config) -> list[str]:
 
 def layout(config_path: Path):
     config = resolve_config(config_path)
-    three_d = cameras.section(config_path)
     sections = [("The setup", "setup-room"), ("What each recording holds", "setup-holds")]
     return html.Div(
         [
@@ -37,7 +36,7 @@ def layout(config_path: Path):
                 "Setup",
                 "Who and what is recorded, and where. Nothing runs until the setup is saved.",
             ),
-            ui.jumps([*sections, *([("Cameras for three dimensions", "setup-3d")] if three_d is not None else [])]),
+            ui.jumps(sections),
             html.Div(
                 [
                     ui.field("Setup", dcc.Dropdown(setup_names(config), config.setup.name, id="setup-pick", clearable=False, className="picker")),
@@ -55,7 +54,6 @@ def layout(config_path: Path):
                 desc="The file found in each device's folder.",
                 id="setup-holds",
             ),
-            *([html.Div(three_d, id="setup-3d")] if three_d is not None else []),
         ]
     )
 
@@ -84,7 +82,6 @@ def holdings(config_path: Path):
 
 def register(app, config_path: Path) -> None:
     room.register(app, config_path)
-    cameras.register(app, config_path)
 
     @app.callback(Output("setup-status", "children"), Input("setup-pick", "value"), Input("room-saved", "data"))
     def status(name, _saved):

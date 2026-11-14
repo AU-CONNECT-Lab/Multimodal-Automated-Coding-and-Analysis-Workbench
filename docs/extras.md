@@ -720,11 +720,11 @@ Four conditions must be met:
 Placing participants in three dimensions has been validated on simulated cameras and on a public four-camera recording of an adult and a toddler, against that recording's own reconstruction. Finding the cameras from a board has been validated on simulated cameras only.
 :::
 
-The section *Cameras for three dimensions* at the end of the Setup page covers every step below. It appears once the setup has two or more cameras, or once a calibration exists in the `calibration` folder.
+The *3D* page of the workbench covers every step below. Its tab appears once the setup has two or more cameras, or once a calibration exists in the `calibration` folder.
 
 ### 1. Print the board
 
-*Draw the board* in that section (or `macaw calibration-board`) writes a ChArUco board, a chessboard with small markers in its white squares, as an image in the `calibration` folder. The board sits in the lower left corner of the page, and an arrow in the margin starts at its marked corner, 15 mm from the page's left and bottom edges, and runs along its lower edge. Print it at 100%, mount it flat on a rigid backing such as foam board with the page's edges along the backing's, and measure one square with a ruler. Enter that length, in the project's unit, and press **Save the square**. The default board fills an A2 sheet. For A3, set smaller squares before drawing the board (here in centimetres; the markers keep their share of the square), then draw it with `macaw calibration-board --paper A3`:
+*Draw the board* on that page (or `macaw calibration-board`) writes a ChArUco board, a chessboard with small markers in its white squares, as an image in the `calibration` folder. The board sits in the lower left corner of the page, and an arrow in the margin starts at its marked corner, 15 mm from the page's left and bottom edges, and runs along its lower edge. Print it at 100%, mount it flat on a rigid backing such as foam board with the page's edges along the backing's, and measure one square with a ruler. Enter that length, in the project's unit, and press **Save the square**. The default board fills an A2 sheet. For A3, set smaller squares before drawing the board (here in centimetres; the markers keep their share of the square), then draw it with `macaw calibration-board --paper A3`:
 
 ```yaml
 pose3d:
@@ -740,7 +740,7 @@ At the end of the clips, lay the board flat and still, face up, on the floor or 
 
 ### 3. Find the cameras
 
-Select the calibration in that section and press **Find the cameras** (or run `macaw calibrate-cameras lab`). This takes a few minutes and reports, for each camera, how far the board's corners fall from where the camera saw them (below 1 to 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, in the project's unit and drawn in three dimensions. The page also indicates when a clip or the board size has changed since, so that the cameras need to be found again. Then press **Use for this project**. When some sessions used another calibration, name it in those recordings' own files:
+Select the calibration on that page and press **Find the cameras** (or run `macaw calibrate-cameras lab`). This takes a few minutes and reports, for each camera, how far the board's corners fall from where the camera saw them (below 1 to 2 pixels is good), how often each pair of cameras saw the board together, and where the cameras stand, in the project's unit and drawn in three dimensions. The page also indicates when a clip or the board size has changed since, so that the cameras need to be found again. Then press **Use for this project**. When some sessions used another calibration, name it in those recordings' own files:
 
 ```yaml
 pose3d:

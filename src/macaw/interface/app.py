@@ -17,11 +17,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import agreement, overview, results, review, run, segments, settings, setup
+from macaw.interface.pages import agreement, cameras, overview, results, review, run, segments, settings, setup
 
-PAGES = (overview, setup, run, review, agreement, segments, results, settings)
-# the tabs along the top; settings is reached by the gear
-TABS = (overview, setup, run, review, agreement, segments, results)
+PAGES = (overview, setup, cameras, run, review, agreement, segments, results, settings)
+# the tabs along the top; settings is reached by the gear, and 3D shows only where a project can use it
+TABS = (overview, setup, cameras, run, review, agreement, segments, results)
 # module scripts load only when served as JavaScript, which some Windows registries do not say of .js
 mimetypes.add_type("text/javascript", ".js")
 
@@ -71,7 +71,7 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
 
-def _header(title: str, subtitle: str, *, folder: Path | None = None):
+def _header(title: str, subtitle: str, *, folder: Path | None = None, tabs=TABS):
     return html.Header(
         [
             html.Div(
@@ -91,8 +91,10 @@ def _header(title: str, subtitle: str, *, folder: Path | None = None):
             ),
             html.Nav(
                 [
+                    # a tab left out is kept hidden, as the navigation sets every tab's class
                     dcc.Link([page.LABEL, *([html.Span(id="review-badge", className="badge")] if page is review else [])],
-                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}")
+                             href=f"/{page.LABEL.lower()}", id=f"nav-{page.LABEL.lower()}",
+                             style=None if page in tabs else {"display": "none"})
                     for page in TABS
                 ],
                 className="tabs",
@@ -119,10 +121,14 @@ def build_layout(config_path: Path, *, local: bool = True):
         [
             dcc.Location(id="url"),
             _header(config.project.name, f"{count} recording{'s' if count != 1 else ''} · {config_path}",
-                    folder=config_path.parent if local else None),
+                    folder=config_path.parent if local else None, tabs=shown_tabs(config)),
             html.Main([html.Div(page.layout(config_path), id=f"page-{page.LABEL.lower()}", className="page") for page in PAGES]),
         ]
     )
+
+
+def shown_tabs(config) -> tuple:
+    return tuple(page for page in TABS if page is not cameras or cameras.wanted(config))
 
 
 def page_for(pathname: str | None) -> str:
