@@ -226,6 +226,7 @@ qc:
     timeout_s: 300
     people: {}                       # what each role looks like, e.g. {parent: an adult, child: a young child}
     random_check: 5                  # passed frames per recording drawn for a person to check
+    concurrency: 1                   # requests sent at once to this server
 
 # Cluster resources are not configured here. They describe the machine rather than the
 # study, so they live in a separate hpc.yaml that never enters the config hash.
