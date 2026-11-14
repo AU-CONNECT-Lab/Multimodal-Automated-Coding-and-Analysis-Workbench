@@ -103,6 +103,9 @@ class PoseBackend(Backend):
     # what the backend sends out while it runs that no setting here can stop; shown before a run
     reporting: str | None = None
 
+    def check_model(self, model: str | Path | None) -> None:
+        """Stops before a run when the weights it would read are not there."""
+
     def infer(
         self,
         video_path: Path,
@@ -244,6 +247,9 @@ class MediaPipeBackend(PoseBackend):
                 "The 'mediapipe' backend needs mediapipe and opencv: "
                 'pip install "pymacaw[vision]"'
             ) from error
+
+    def check_model(self, model: str | Path | None) -> None:
+        self._model_path(model)
 
     def _model_path(self, model: str | Path | None) -> Path:
         """Task files are not shipped with the wheel and are not downloaded on demand, so the
@@ -454,6 +460,13 @@ class YOLOPoseBackend(PoseBackend):
 
     def check_available(self) -> None:
         self._executable()
+
+    def check_model(self, model: str | Path | None) -> None:
+        if model is None or not Path(model).is_file():
+            raise BackendNotAvailableError(
+                "The 'yolo' backend needs pose.model to point at a pose weights file you have downloaded, "
+                f"such as yolo11x-pose.pt; nothing is fetched while it runs (got {model})"
+            )
 
     def infer(
         self,

@@ -27,6 +27,7 @@ from macaw.extractors.audio.content.diarization import (
 )
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
+from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -144,6 +145,15 @@ def _empty_parts() -> tuple[pd.DataFrame, pd.DataFrame]:
     return utterances, words
 
 
+def whisper_repo(model: str) -> str:
+    """The hub repository a whisper model name stands for, as the recogniser looks it up."""
+    try:
+        from faster_whisper.utils import _MODELS
+    except ImportError:
+        return model
+    return _MODELS.get(model, model)
+
+
 @register_backend(BACKEND_GROUP)
 class WhisperXBackend(ASRBackend):
     name = "whisperx"
@@ -161,6 +171,7 @@ class WhisperXBackend(ASRBackend):
                 "whisperx is not installed. Install PyTorch for your CUDA version first, "
                 'then `pip install "pymacaw[asr]"`.'
             ) from None
+        check_hub_model(whisper_repo(self.model), "text.asr_model")
 
     def _load(self):
         if self._model is None:

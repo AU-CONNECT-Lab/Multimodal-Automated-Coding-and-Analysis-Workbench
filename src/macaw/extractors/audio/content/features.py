@@ -14,6 +14,7 @@ from macaw.extractors.audio.content.asr import (
 )
 from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult
+from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -128,6 +129,9 @@ class TextFeatureExtractor(Extractor):
             import sentence_transformers  # noqa: F401
         except ImportError as error:
             raise BackendNotAvailableError(_INSTALL) from error
+        name = self.config.text.embedding_model
+        # a bare name is one of sentence-transformers' own models
+        check_hub_model(name if "/" in name or Path(name).expanduser().is_dir() else f"sentence-transformers/{name}", "text.embedding_model")
 
     def backend_info(self) -> tuple[str | None, str | None]:
         if self.config.text.embedding_model is None:

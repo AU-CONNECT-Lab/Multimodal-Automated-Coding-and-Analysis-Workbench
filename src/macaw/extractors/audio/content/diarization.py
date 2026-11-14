@@ -15,6 +15,7 @@ from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.prosody.backends import load_audio
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -101,6 +102,7 @@ class PyannoteBackend(DiarizationBackend):
                 f'`pip install "pymacaw[asr]"`; accept the terms for {self.model} on HuggingFace and log in '
                 "with `hf auth login`."
             ) from None
+        check_hub_model(self.model, "text.diarization_model")
 
     def _load(self):
         if self._pipeline is None:

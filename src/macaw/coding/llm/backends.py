@@ -122,12 +122,23 @@ class OpenAICompatibleBackend(LLMBackend):
                 )
             return
         try:
-            _get(f"{self.base_url}/models", self._headers())
+            listed = _get(f"{self.base_url}/models", self._headers()).get("data") or []
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as error:
             raise BackendNotAvailableError(
                 f"No {self.name} server answering at {self.base_url} ({error}). Start it first, "
                 f"or set {self.settings}.base_url to where it listens."
             ) from None
+        served = [str(entry.get("id")) for entry in listed if isinstance(entry, dict) and entry.get("id")]
+        if not self._serves(served):
+            raise BackendNotAvailableError(
+                f"The {self.name} server at {self.base_url} has no model {self.cfg.model} ({self.settings}.model); "
+                f"it has {', '.join(served) or 'none'}. {self.fetch_hint}"
+            )
+
+    fetch_hint = "Start the server with that model, or name one it has."
+
+    def _serves(self, served: list[str]) -> bool:
+        return not served or self.cfg.model in served
 
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
         content = user if not images else [
@@ -189,6 +200,12 @@ class OllamaBackend(OpenAICompatibleBackend):
     # 127.0.0.1, not localhost: Windows tries ::1 first and waits on each refused connection before it falls back
     default_base_url = "http://127.0.0.1:11434/v1"
 
+    fetch_hint = "Fetch it with `ollama pull`, or name one it has."
+
+    def _serves(self, served: list[str]) -> bool:
+        # a tag left out means latest
+        return any(self.cfg.model in (name, name.removesuffix(":latest")) for name in served)
+
     def _think_fields(self, think: bool) -> dict:
         # its chat completions endpoint reads reasoning_effort and ignores a think field
         return {"reasoning_effort": "medium" if think else "none"}
@@ -232,6 +249,10 @@ class LlamaCppBackend(OpenAICompatibleBackend):
     name = "llamacpp"
     is_local = True
     default_base_url = "http://127.0.0.1:8080/v1"
+
+    def _serves(self, served: list[str]) -> bool:
+        # it answers with the model it was started with, whatever the request names
+        return True
 
     def _think_fields(self, think: bool) -> dict:
         return {"chat_template_kwargs": {"enable_thinking": think}}

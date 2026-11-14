@@ -168,7 +168,9 @@ class PoseDetectExtractor(Extractor):
         return (backend.name, backend.version)
 
     def check_available(self) -> None:
-        self.backend().check_available()
+        backend = self.backend()
+        backend.check_available()
+        backend.check_model(self.config.pose.model)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         """The offset table moves every frame on the recording clock, so it is an input too."""

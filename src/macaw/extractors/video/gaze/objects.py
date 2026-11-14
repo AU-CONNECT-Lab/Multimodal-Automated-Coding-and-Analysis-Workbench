@@ -10,6 +10,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError, UnreadableMediaError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
+from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.layout import layout_for
@@ -155,7 +156,10 @@ class GazeObjectsExtractor(Extractor):
         return (backend.name, backend.version)
 
     def check_available(self) -> None:
-        self.backend()
+        backend = self.backend()
+        backend.check_available()
+        if getattr(backend, "default_model", None):
+            check_hub_model(self.config.gaze.object_model or backend.default_model, "gaze.object_model")
 
     def prefetch(self) -> None:
         self.backend().prefetch(model=self.config.gaze.object_model)
