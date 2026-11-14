@@ -204,17 +204,19 @@ def frame_difference_energy(
             ok, image = capture.read()
             if not ok:
                 break
-            grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.int16)
+            grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             row = {"frame": index}
             if previous is None:
                 row.update({subject: np.nan for subject in boxes}, whole_picture=np.nan, identical=False)
             else:
-                change = np.abs(grey - previous)
-                moved = change > threshold
-                row["whole_picture"] = float(moved.mean())
-                row["identical"] = not change.any()
+                # OpenCV's own loops on the 8-bit picture, several times faster than the same sums in numpy
+                change = cv2.absdiff(grey, previous)
+                moved = cv2.threshold(change, threshold, 1, cv2.THRESH_BINARY)[1]
+                row["whole_picture"] = cv2.countNonZero(moved) / moved.size
+                row["identical"] = cv2.countNonZero(change) == 0
                 for subject, (x0, y0, x1, y1) in boxes.items():
-                    row[subject] = float(moved[y0:y1, x0:x1].mean())
+                    region = moved[y0:y1, x0:x1]
+                    row[subject] = cv2.countNonZero(region) / region.size if region.size else np.nan
             rows.append(row)
             previous = grey
             index += 1

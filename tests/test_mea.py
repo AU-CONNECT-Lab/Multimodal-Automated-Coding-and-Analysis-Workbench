@@ -53,6 +53,22 @@ class TestFrameDifference:
         energy, _ = frame_difference_energy(video, {"a": (0, 0, 160, 240)}, threshold=10)
         assert energy["a"].iloc[1:].median() == pytest.approx(1600 / (160 * 240), rel=0.15)
 
+    @pytest.mark.parametrize("threshold", [0, 10, 40])
+    def test_the_shares_are_those_of_the_plain_sums(self, tmp_path, threshold):
+        rng = np.random.default_rng(threshold)
+        video = write_video(tmp_path / "room.avi", lambda frame, image: image.__setitem__(slice(None), rng.integers(0, 256, image.shape, dtype=np.uint8)), n_frames=6)
+        boxes = {"a": (0, 0, 160, 240), "b": (100, 50, 120, 90)}
+        energy, _ = frame_difference_energy(video, boxes, threshold=threshold)
+        capture, expected, previous = cv2.VideoCapture(str(video)), [], None
+        while (read := capture.read())[0]:
+            grey = cv2.cvtColor(read[1], cv2.COLOR_BGR2GRAY).astype(np.int16)
+            if previous is not None:
+                moved = np.abs(grey - previous) > threshold
+                expected.append([moved.mean(), moved[0:240, 0:160].mean(), moved[50:140, 100:220].mean()])
+            previous = grey
+        capture.release()
+        assert energy[["whole_picture", "a", "b"]].iloc[1:].to_numpy().tolist() == expected
+
     def test_a_repeated_picture_is_marked_identical(self, tmp_path):
         video = write_video(tmp_path / "room.avi", lambda frame, image: None)
         energy, _ = frame_difference_energy(video, {"a": (0, 0, 160, 240)}, threshold=10)
