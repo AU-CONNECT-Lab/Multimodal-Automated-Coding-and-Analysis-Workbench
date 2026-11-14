@@ -207,3 +207,21 @@ def test_a_frame_taken_at_a_time_is_the_frame_shown_then(numbered_video, tmp_pat
     path, _ = numbered_video
     still = extract_frame(path, first * 1001 / 30000, tmp_path / "still.png")
     assert numbers_shown(still) == [first]
+
+
+def test_the_yolo_version_is_asked_once_per_process(monkeypatch):
+    from types import SimpleNamespace
+
+    from macaw.extractors.video.pose import backends
+
+    asked = []
+
+    def run(command, **kwargs):
+        asked.append(command)
+        return SimpleNamespace(returncode=0, stdout="Ultralytics banner\n8.3.0\n")
+
+    backends._yolo_version.cache_clear()
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    assert [backends._yolo_version("C:/yolo.exe") for _ in range(3)] == ["8.3.0"] * 3
+    assert asked == [["C:/yolo.exe", "version"]]
+    backends._yolo_version.cache_clear()

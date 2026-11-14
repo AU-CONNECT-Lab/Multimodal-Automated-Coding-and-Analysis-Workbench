@@ -388,3 +388,34 @@ def test_people_measured_on_cameras_of_their_own_are_each_seen_from_theirs(tmp_p
     config = SimpleNamespace(gaze=GazeSection(backend="angles", tolerance_deg=20), setup=SimpleNamespace(room=room))
     result = GazeTargetExtractor(config).run(recording, tmp_path)
     assert {who: set(group.label) for who, group in result.annotations.groupby("subject_id")} == {"child": {"parent"}, "parent": {"child"}}
+
+
+def test_the_gaze_and_object_models_are_loaded_once_per_setting(monkeypatch):
+    import sys
+
+    from macaw.extractors.video.gaze.backends import GazeLLEBackend
+    from macaw.extractors.video.gaze.objects import GroundingDinoBackend
+
+    loaded = []
+    monkeypatch.setattr(GazeLLEBackend, "_load", lambda self, model, device: loaded.append((model, device)) or object())
+    gaze = GazeLLEBackend()
+    assert gaze.network(None, "cuda") is gaze.network(GazeLLEBackend.default_model, "cuda")
+    gaze.network(None, "cpu")
+    assert loaded == [(GazeLLEBackend.default_model, "cuda"), (GazeLLEBackend.default_model, "cpu")]
+
+    class Net:
+        def eval(self):
+            return self
+
+        def to(self, device):
+            loaded.append(device)
+            return self
+
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoProcessor=SimpleNamespace(from_pretrained=lambda name: name),
+        AutoModelForZeroShotObjectDetection=SimpleNamespace(from_pretrained=lambda name: Net()),
+    ))
+    loaded.clear()
+    objects = GroundingDinoBackend()
+    assert objects.network(None, "cuda") is objects.network(None, "cuda")
+    assert loaded == ["cuda"]

@@ -128,6 +128,7 @@ class ASRBackend(Backend):
         self.device = resolve_device(device)
         self.compute_type = resolve_compute_type(compute_type, self.device)
         self._model = None
+        self._aligners: dict = {}
 
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
@@ -183,12 +184,18 @@ class WhisperXBackend(ASRBackend):
             )
         return self._model
 
-    def prefetch(self, *, language: str, align: bool) -> None:
-        import whisperx
+    def _aligner(self, language: str):
+        """(model, metadata) for word timing in this language, loaded once for all the tracks of a task."""
+        if language not in self._aligners:
+            import whisperx
 
+            self._aligners[language] = whisperx.load_align_model(language_code=language, device=self.device)
+        return self._aligners[language]
+
+    def prefetch(self, *, language: str, align: bool) -> None:
         self._load()
         if align:
-            whisperx.load_align_model(language_code=language, device=self.device)
+            self._aligner(language)
 
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
@@ -205,9 +212,7 @@ class WhisperXBackend(ASRBackend):
 
         segments = result.get("segments") or []
         if word_timestamps and segments:
-            model, metadata = whisperx.load_align_model(
-                language_code=detected, device=self.device
-            )
+            model, metadata = self._aligner(detected)
             segments = whisperx.align(
                 segments, model, metadata, audio, self.device, return_char_alignments=False
             )["segments"]

@@ -67,10 +67,14 @@ class GroundingDinoBackend(ObjectBackend):
         self.network(model, "cpu")
 
     def network(self, model: str | None, device: str):
+        """(processor, model), loaded once per setting for all the cameras of a task."""
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
         name = model or self.default_model
-        return AutoProcessor.from_pretrained(name), AutoModelForZeroShotObjectDetection.from_pretrained(name).eval().to(device)
+        loaded = self.__dict__.setdefault("_networks", {})
+        if (name, device) not in loaded:
+            loaded[name, device] = (AutoProcessor.from_pretrained(name), AutoModelForZeroShotObjectDetection.from_pretrained(name).eval().to(device))
+        return loaded[name, device]
 
     def infer(self, video_path, *, frames, step, names, device, model, batch_size, min_score):
         import cv2

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shutil
@@ -431,6 +432,14 @@ def yolo_device(device: str) -> str | None:
     return name
 
 
+@functools.lru_cache(maxsize=None)
+def _yolo_version(executable: str) -> str:
+    """Asked once per process: each ask starts the command, which imports its whole library."""
+    result = subprocess.run([executable, "version"], capture_output=True, text=True, env=quiet_environment())
+    lines = result.stdout.strip().splitlines()
+    return lines[-1].strip() if result.returncode == 0 and lines else "unknown"
+
+
 @register_backend(BACKEND_GROUP)
 class YOLOPoseBackend(PoseBackend):
     """Runs the ultralytics `yolo` command from its own environment and reads the label files it
@@ -440,11 +449,7 @@ class YOLOPoseBackend(PoseBackend):
 
     @property
     def version(self) -> str:
-        result = subprocess.run(
-            [self._executable(), "version"], capture_output=True, text=True, env=quiet_environment()
-        )
-        lines = result.stdout.strip().splitlines()
-        return lines[-1].strip() if result.returncode == 0 and lines else "unknown"
+        return _yolo_version(self._executable())
 
     def _executable(self) -> str:
         configured = os.environ.get(YOLO_ENV_VAR)

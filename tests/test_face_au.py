@@ -282,3 +282,22 @@ def test_pyfeat_gets_each_frame_once_in_chunks_of_at_least_a_batch(tmp_path, mon
     assert seen == sizes
     assert found["frame"].tolist() == list(range(10, 150))
     assert np.allclose(found["AU01"], shown[10:150])
+
+
+def test_the_pyfeat_detector_is_built_once_per_setting(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from macaw.extractors.video.face.backends import PyFeatBackend
+
+    built = []
+    monkeypatch.setitem(sys.modules, "feat", SimpleNamespace(
+        Detectorv1=lambda **kwargs: built.append(("v1", kwargs["device"], kwargs["gaze_model"])) or object(),
+        Detectorv2=lambda **kwargs: built.append(("v2", kwargs["device"], None)) or object(),
+    ))
+    backend = PyFeatBackend()
+    first = backend.detector(None, "cuda")
+    assert backend.detector("v1", "cuda") is first
+    backend.detector("v1", "cuda", gaze=True)
+    backend.detector("v2", "cuda")
+    assert built == [("v1", "cuda", None), ("v1", "cuda", "l2cs"), ("v2", "cuda", None)]

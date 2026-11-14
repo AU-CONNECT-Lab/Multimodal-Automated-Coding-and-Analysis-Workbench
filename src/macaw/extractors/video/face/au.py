@@ -146,7 +146,7 @@ class FaceExtractor(Extractor):
         """Emits a warning on child data: AU models are trained on adults."""
         cfg = self.config.face
         backend = self.backend()
-        per_subject, seen_frames, views = self.faces(recording, model=cfg.model, landmarks=cfg.landmarks, gaze=cfg.gaze)
+        per_subject, seen_frames, views = self.faces(recording, model=cfg.model, landmarks=cfg.landmarks, gaze=cfg.gaze, backend=backend)
         warnings: list[QCWarning] = []
         if cfg.action_units and not getattr(backend, "provides_action_units", True):
             warnings.append(self._warning(recording, None, "info", f"face.backend {backend.name} gives no action units, only head angles and landmarks"))

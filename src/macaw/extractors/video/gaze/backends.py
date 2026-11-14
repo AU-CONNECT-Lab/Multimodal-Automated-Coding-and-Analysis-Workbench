@@ -61,11 +61,18 @@ class GazeLLEBackend(GazeBackend):
         self.network(model, "cpu")
 
     def network(self, model: str | None, device: str):
-        import torch
-
+        """Loaded once per setting, for all the cameras of a task."""
         model = model or self.default_model
         if model not in self.models:
             raise BackendNotAvailableError(f"gaze.model for gazelle is one of {', '.join(self.models)}, not {model}")
+        loaded = self.__dict__.setdefault("_networks", {})
+        if (model, device) not in loaded:
+            loaded[model, device] = self._load(model, device)
+        return loaded[model, device]
+
+    def _load(self, model: str, device: str):
+        import torch
+
         try:
             net, _ = torch.hub.load(self.hub_repo, model.removesuffix("_childplay"), pretrained=False, trust_repo=True, skip_validation=True)
             net.load_gazelle_state_dict(torch.hub.load_state_dict_from_url(self.weights_url.format(model=model), map_location="cpu"))

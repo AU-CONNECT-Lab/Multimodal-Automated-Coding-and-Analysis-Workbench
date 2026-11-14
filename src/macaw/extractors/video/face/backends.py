@@ -73,15 +73,20 @@ class PyFeatBackend(FaceBackend):
         self.detector(model, "cpu", gaze)
 
     def detector(self, model: str | None, device: str, gaze: bool = False):
+        """Built once per setting, for all the cameras of a task."""
         from feat import Detectorv1, Detectorv2
 
         model = model or "v1"
         if model not in self.models:
             raise BackendNotAvailableError(f"face.model for pyfeat is one of {', '.join(self.models)}, not {model}")
-        # identity embeddings are never needed: who is who comes from pose; v2 has gaze built in
-        if model == "v2":
-            return Detectorv2(device=device, identity_model=None)
-        return Detectorv1(device=device, identity_model=None, gaze_model="l2cs" if gaze else None, emotion_model=None)
+        built = self.__dict__.setdefault("_detectors", {})
+        if (model, device, gaze) not in built:
+            # identity embeddings are never needed: who is who comes from pose; v2 has gaze built in
+            if model == "v2":
+                built[model, device, gaze] = Detectorv2(device=device, identity_model=None)
+            else:
+                built[model, device, gaze] = Detectorv1(device=device, identity_model=None, gaze_model="l2cs" if gaze else None, emotion_model=None)
+        return built[model, device, gaze]
 
     def infer(self, video_path, *, frames, device, model, batch_size, landmarks, gaze=False):
         import cv2
