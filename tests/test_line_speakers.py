@@ -389,7 +389,7 @@ class TestShown:
         monkeypatch.setattr("macaw.extractors.audio.content.line_speakers.suggested_lines", lambda config, recording: suggested)
         shown = self.shown(project)
         assert "Who speaks each line" in shown and "Not checked yet." in shown and "no I want red" in shown
-        assert "Give the 1 sure ones to the person suggested" in shown and "the other 2 lines" in shown
+        assert "Give the 1 sure ones to the person suggested" in shown and "the other 2 lines" in shown and "listen to these too" in shown
         picks = review.lines_file(project.config, "003", {"14.200": "child"})
         argv = review.action_command(project.config, "003", "lines-apply", str(picks), "ann", {})
         assert CliRunner().invoke(app, argv[1:]).exit_code == 0

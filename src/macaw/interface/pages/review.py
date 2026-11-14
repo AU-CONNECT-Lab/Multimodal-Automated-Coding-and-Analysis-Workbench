@@ -425,7 +425,8 @@ def _lines(config, layout, recording):
         parts.append(ui.table(columns, [row(line) for line in doubted.itertuples(index=False)], numeric={"At (s)"}))
     if not rest.empty:
         table = ui.table(columns, [row(line) for line in rest.itertuples(index=False)], numeric={"At (s)"})
-        parts.append(html.Details([html.Summary(f"the other {len(rest)} lines"), table], open=doubted.empty))
+        summary = f"the other {len(rest)} lines" + ("; mouth movement misses many misplaced lines, so listen to these too" if not doubted.empty else "")
+        parts.append(html.Details([html.Summary(summary), table], open=doubted.empty))
     if len(lines) > _MAX_LINES:
         parts.append(ui.note(f"Showing the first {_MAX_LINES} of {len(lines)} lines; the rest are changed from a csv."))
     parts.append(html.Div([
