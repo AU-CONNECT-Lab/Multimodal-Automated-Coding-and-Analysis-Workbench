@@ -731,9 +731,9 @@ def test_the_form_hints_come_from_the_packaged_comments():
 
 
 def test_the_latest_run_is_named_by_when_it_began(project, monkeypatch):
-    assert overview.latest_run(project) == "Nothing has run yet."
+    assert cli_bridge.latest_run(project) == "Nothing has run yet."
     monkeypatch.setattr(cli_bridge, "poll_status", lambda config_path: ("20261031-214220-e17d5e", {"done": 36, "failed": 0}))
-    assert overview.latest_run(project) == "Latest run 2026-10-31 21:42: 36 done"
+    assert cli_bridge.latest_run(project) == "Latest run 2026-10-31 21:42: 36 done"
 
 
 def test_the_segments_page_plays_a_copy_and_saves_what_is_marked(project):

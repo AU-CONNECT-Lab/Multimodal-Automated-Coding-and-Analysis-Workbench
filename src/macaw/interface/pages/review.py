@@ -166,7 +166,7 @@ def _player(config, recording, camera: str | None):
         "Play",
         html.Div(ui.field("Camera", dcc.Dropdown(cameras, camera, id=_one(CAMERA), clearable=False, className="picker")), className="toolbar"),
         html.Div(player_box(config, recording.recording_id, camera), id=_one(PLAYER_BOX)),
-        desc="Times on this page play from that moment.",
+        desc="The recording's video; once copied it stays in view, and any time on this page plays from there.",
         id="review-play",
     )
 

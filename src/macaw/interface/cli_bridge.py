@@ -4,6 +4,7 @@ progress is read back from job_db and the log files."""
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -106,3 +107,13 @@ def failed_last_time(config_path: Path) -> set[str]:
     database = JobDB(layout_for(resolve_config(config_path), create=False).job_db_path)
     known = database.executions()
     return {record.task_id for record in database.failed(known[-1])} if known else set()
+
+
+def latest_run(config_path: Path) -> str:
+    execution, counts = poll_status(config_path)
+    if execution is None:
+        return "Nothing has run yet."
+    # execution ids start with when they began, 20261031-214220-...
+    stamp = re.match(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", execution)
+    when = f"{stamp[1]}-{stamp[2]}-{stamp[3]} {stamp[4]}:{stamp[5]}" if stamp else execution
+    return f"Latest run {when}: " + ", ".join(f"{count} {name}" for name, count in counts.items() if count)

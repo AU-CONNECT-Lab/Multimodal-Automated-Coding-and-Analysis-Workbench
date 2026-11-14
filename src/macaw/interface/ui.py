@@ -28,14 +28,15 @@ def pill(text: str, kind: str = "info"):
     return html.Span(text, className=f"pill {PILL_CLASS.get(kind, 'info')}")
 
 
-def card(title: str, *children, desc: str | None = None, actions=None, flush: bool = False, **kwargs):
+def card(title: str, *children, desc: str | None = None, actions=None, flush: bool = False, waits: bool = False, **kwargs):
+    """waits: until its body holds more than a line marked empty, the card shows as that line alone."""
     head = [html.Div([html.H2(title), *([html.P(desc)] if desc else [])])]
     if actions:
         head.append(html.Div(actions, className="actions"))
     body = [child for child in children if child is not None]
     return html.Section(
         [html.Div(head, className="card-head"), html.Div(body, className="card-body flush" if flush else "card-body")],
-        className="card", **kwargs,
+        className="card waits" if waits else "card", **kwargs,
     )
 
 
@@ -92,6 +93,10 @@ RECORDING, PREVIOUS, NEXT = "recording", "recording-previous", "recording-next"
 ONE_RECORDING_PAGES = ("setup", "review", "segments", "results")
 # the recording each of those pages was last drawn for
 SHOWN = {page: f"{page}-recording-shown" for page in ONE_RECORDING_PAGES}
+
+
+def empty(text: str):
+    return html.P(text, className="none empty")
 
 
 def note(text, kind: str = "info"):

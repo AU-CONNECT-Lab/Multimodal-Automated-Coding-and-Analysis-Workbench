@@ -114,7 +114,7 @@ def layout(config_path: Path):
                 desc="Drag to when the board lay flat; where its marked corner lay, if known, places the cameras without measuring them.",
                 actions=[ui.button("Save the moment", "cameras-floor-save")],
             ),
-            ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state")),
+            ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state"), waits=True),
         ]
     )
 
@@ -357,7 +357,7 @@ def save_floor(config_path: Path, name: str | None, at, on: str, x=None, y=None,
 def progress(config_path: Path):
     current = _CURRENT.get(str(config_path))
     if current is None:
-        return html.P("Nothing started from this window yet.", className="none")
+        return ui.empty("Nothing started from this window yet.")
     code = cli_bridge.exit_code(current)
     state = ui.pill("running", "warn") if code is None else ui.pill("finished" if code == 0 else f"stopped, exit {code}", "ok" if code == 0 else "bad")
     return [

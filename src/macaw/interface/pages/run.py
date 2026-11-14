@@ -126,7 +126,7 @@ def layout(config_path: Path):
                     ),
                 ]),
                 html.Div(
-                    ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state"), id="run-progress-card"),
+                    ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state"), id="run-progress-card", waits=True),
                     className="side",
                 ),
             ], className="run-columns"),
@@ -137,17 +137,14 @@ def layout(config_path: Path):
 def progress(config_path: Path):
     current = _CURRENT.get(str(config_path))
     execution, counts = cli_bridge.poll_status(config_path)
-    parts = []
     if current is None:
-        parts.append(html.P("Nothing started from this window yet.", className="none"))
-    else:
-        code = cli_bridge.exit_code(current)
-        state = ui.pill("running", "warn") if code is None else ui.pill("finished" if code == 0 else f"stopped, exit {code}", "ok" if code == 0 else "bad")
-        parts += [html.P([state, f" started {current.started_at}"]), ui.command(current.argv)]
+        return ui.empty("Nothing started from this window yet. " + cli_bridge.latest_run(config_path))
+    code = cli_bridge.exit_code(current)
+    state = ui.pill("running", "warn") if code is None else ui.pill("finished" if code == 0 else f"stopped, exit {code}", "ok" if code == 0 else "bad")
+    parts = [html.P([state, f" started {current.started_at}"]), ui.command(current.argv)]
     if execution:
         parts.append(html.P(f"Latest execution {execution}: " + ", ".join(f"{count} {name}" for name, count in counts.items() if count), className="hint"))
-    if current is not None:
-        parts.append(html.Pre("\n".join(cli_bridge.tail_log(current.log_path, n_lines=60)) or "(no output yet)", className="log"))
+    parts.append(html.Pre("\n".join(cli_bridge.tail_log(current.log_path, n_lines=60)) or "(no output yet)", className="log"))
     return parts
 
 

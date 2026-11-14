@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -374,16 +373,6 @@ def grid(found: Standing):
     return html.Div([wrap, side], className="standing-card")
 
 
-def latest_run(config_path: Path) -> str:
-    execution, counts = cli_bridge.poll_status(config_path)
-    if execution is None:
-        return "Nothing has run yet."
-    # execution ids start with when they began, 20261031-214220-...
-    stamp = re.match(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", execution)
-    when = f"{stamp[1]}-{stamp[2]}-{stamp[3]} {stamp[4]}:{stamp[5]}" if stamp else execution
-    return f"Latest run {when}: " + ", ".join(f"{count} {name}" for name, count in counts.items() if count)
-
-
 def layout(config_path: Path):
     return html.Div(
         [
@@ -421,5 +410,5 @@ def register(app, config_path: Path) -> None:
         try:
             found = standing(config_path)
         except Exception as error:   # the page still opens; the Run page and the run itself say what is wrong
-            return latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], None
-        return latest_run(config_path), setup_message(found), tiles(config, found), grid(found), workflow_data(found)
+            return cli_bridge.latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], None
+        return cli_bridge.latest_run(config_path), setup_message(found), tiles(config, found), grid(found), workflow_data(found)

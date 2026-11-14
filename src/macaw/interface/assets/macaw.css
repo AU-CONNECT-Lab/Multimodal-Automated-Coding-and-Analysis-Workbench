@@ -224,10 +224,17 @@ p.none { color: var(--faint); }
 .dot.state-failed { background: var(--state-failed); }
 .dot.state-held { background: var(--state-waiting); }
 .dot.state-new { background: var(--state-new); }
-.note { padding: 0.5rem 0.9rem; margin: 0.5rem 0; border-radius: var(--radius-box); background: var(--code); color: var(--ink); }
-.note.ok-note { background: var(--ok-soft); color: var(--ok); }
-.note.warn-note { background: var(--warn-soft); color: var(--warn); }
-.note.bad-note { background: var(--bad-soft); color: var(--bad); white-space: pre-wrap; }
+/* a note is a plain line; a warning or a failure gets a bar of its state's colour at its left */
+.note { margin: 0.5rem 0; color: var(--muted); }
+.note.ok-note { color: var(--ink); }
+.note.warn-note, .note.bad-note { padding: 0.1rem 0 0.1rem 0.8rem; border-left: 3px solid var(--state-waiting); color: var(--ink); }
+.note.bad-note { border-left-color: var(--state-failed); white-space: pre-wrap; }
+/* outside a card a note lines up with the page heading */
+.page .note:not(.card .note), main > .note { margin-left: 0.25rem; margin-right: 0.25rem; }
+/* a card that waits for something to show is one muted line until then */
+.card.waits:has(.card-body > * > .empty:only-child), .card.waits:has(.card-body > .empty:only-child) { background: none; box-shadow: none; }
+.card.waits:has(.card-body > * > .empty:only-child) .card-head, .card.waits:has(.card-body > .empty:only-child) .card-head { display: none; }
+.card.waits:has(.card-body > * > .empty:only-child) .card-body, .card.waits:has(.card-body > .empty:only-child) .card-body { padding: 0 0.25rem; }
 
 /* labelled fields: the label sits inside the box, the hint under it */
 .field-wrap { margin-bottom: 0.9rem; min-width: 0; }
@@ -539,7 +546,8 @@ table.standing .cell { width: var(--cell); height: var(--cell); border-radius: c
 
 /* Review page: a wide recording picker, the player that stays in view, times that play from there */
 .picker.wide { min-width: 22rem; }
-#review-play { position: sticky; top: 8.5rem; z-index: 5; }
+/* pinned only once it holds a video to play */
+#review-play:has(video.player) { position: sticky; top: 8.5rem; z-index: 5; }
 #review-play .player { max-height: 34vh; }
 .window-bar { position: relative; height: 6px; margin: 0.35rem 0 0; border-radius: 3px; background: var(--rule); }
 .window-bar span { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }

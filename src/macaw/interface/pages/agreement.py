@@ -154,7 +154,7 @@ def layout(config_path: Path):
                 ),
                 html.Div(id="agreement-command", className="spaced"),
             ),
-            dcc.Loading(ui.card("Result", html.Div(html.P("Nothing compared yet.", className="none"), id="agreement-result"))),
+            dcc.Loading(ui.card("Result", html.Div(ui.empty("Nothing compared yet."), id="agreement-result"), waits=True)),
             ui.card(
                 "A clearer codebook",
                 html.Div(
