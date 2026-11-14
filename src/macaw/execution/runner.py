@@ -420,11 +420,10 @@ def _run(
         backend.wait(backend.submit(specs))
         n_tasks += len(specs)
         attempted |= {spec.task_id for spec in specs}
-        finished |= {
-            record.task_id
-            for record in database.query(execution_id=execution_id)
-            if record.status in ("done", "cached")
-        }
+        records = database.query(execution_id=execution_id)
+        finished |= {record.task_id for record in records if record.status in ("done", "cached")}
+        # weights deleted since they were found would fail every run after; the next run looks again
+        models.forget(layout.work_dir, {record.extractor for record in records if record.status == "failed"} & fetched)
 
     # the elements of a cluster run share one execution id, so only what this run tried counts
     counts: dict[str, int] = {}

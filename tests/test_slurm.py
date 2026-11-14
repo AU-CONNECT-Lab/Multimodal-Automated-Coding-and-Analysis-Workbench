@@ -263,6 +263,43 @@ class TestFetchBeforeTheRun:
         assert fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=shown.append) == ["text.asr"]
         assert shown == ["failed text.asr: no connection and not in the cache"]
 
+    def test_weights_found_once_are_not_loaded_again_offline(self, project, monkeypatch):
+        from macaw.execution.models import fetch_models, forget
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        calls = []
+        monkeypatch.setattr(ASRExtractor, "check_available", lambda self: None)
+        monkeypatch.setattr(ASRExtractor, "prefetch", lambda self: calls.append(1))
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        work_dir = runner_module.layout_for(project.resolved()).work_dir
+        for _ in range(2):
+            shown = []
+            assert fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=shown.append) == []
+            assert shown == ["fetched text.asr"]
+        assert len(calls) == 1
+        monkeypatch.setenv("HF_HOME", "D:/elsewhere")
+        fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=lambda line: None)
+        assert len(calls) == 2
+        forget(work_dir, {"text.asr"})
+        fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=lambda line: None)
+        assert len(calls) == 3
+        monkeypatch.delenv("HF_HUB_OFFLINE")
+        fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=lambda line: None)
+        assert len(calls) == 4
+
+    def test_a_failed_load_is_not_remembered(self, project, monkeypatch):
+        from macaw.execution.models import fetch_models
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        def offline(self):
+            raise OSError("not in the cache")
+
+        monkeypatch.setattr(ASRExtractor, "check_available", lambda self: None)
+        monkeypatch.setattr(ASRExtractor, "prefetch", offline)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        for _ in range(2):
+            assert fetch_models(project.config, ["text.asr"], ["003"], strict=False, echo=lambda line: None) == ["text.asr"]
+
     def fetch(self, project, monkeypatch, *answers, already=frozenset()):
         """answers: (output, exit code) of each fetch-models process in turn, the offline pass first."""
         from macaw.execution.dag import build_dag
