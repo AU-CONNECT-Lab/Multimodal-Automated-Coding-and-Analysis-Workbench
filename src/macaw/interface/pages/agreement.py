@@ -113,7 +113,8 @@ def compare(config_path: Path, argv: list[str], folder: str | None):
     report = where / "report.json"
     if code != 0 or not report.is_file():
         return [ui.command(argv), ui.output(code, printed)]
-    return [ui.command(argv), *result_view(json.loads(report.read_text(encoding="utf-8")), where, printed)]
+    # the command is shown above the button already
+    return result_view(json.loads(report.read_text(encoding="utf-8")), where, printed)
 
 
 def layout(config_path: Path):
