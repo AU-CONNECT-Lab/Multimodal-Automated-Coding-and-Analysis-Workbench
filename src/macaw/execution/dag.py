@@ -41,10 +41,16 @@ class DAG:
         """Pull in each requested extractor plus everything it requires, transitively."""
         queue = list(requested)
         while queue:
-            name = queue.pop()
-            if name in self.nodes:
-                continue
-            queue.extend(self.add(name).depends_on)
+            while queue:
+                name = queue.pop()
+                if name in self.nodes:
+                    continue
+                queue.extend(self.add(name).depends_on)
+            # a step brought along joins only where it needs nothing the run lacks
+            queue = [
+                extra for node in list(self.nodes) for extra in get_extractor(node).brings_along(self.config)
+                if extra not in self.nodes and set(get_extractor(extra).dependencies(self.config)) <= set(self.nodes)
+            ]
         for name, node in self.nodes.items():
             node.depends_on |= set(get_extractor(name).ordered_after(self.config)) & set(self.nodes)
 

@@ -79,6 +79,11 @@ class Extractor(ABC):
         return cls.runs_after
 
     @classmethod
+    def brings_along(cls, config: MacawConfig) -> tuple[str, ...]:
+        """Steps added to a run that has this one, wherever everything they need is in the run already."""
+        return ()
+
+    @classmethod
     def wanted_by_default(cls, config: MacawConfig) -> bool:
         """Whether a run that names no steps includes this one."""
         return True

@@ -289,7 +289,7 @@ From the command line, the same is done with `macaw name-people -r dyad01 --came
 
 {bdg-secondary-line}`always`
 
-MACAW separates the voices. Read what each voice says, listen to its clips, and assign it to a participant. A voice that belongs to none of the participants, such as an experimenter's, is assigned *none*. By default no participant is proposed, and every shared microphone waits for this assignment. With *Voices on a shared microphone* set to wait only when uncertain, MACAW proposes a participant for each voice from the participants' own microphones, mouth movement and, where set, what each voice says and how high it is ({ref}`voice-hints`), and waits only when the proposal is uncertain.
+MACAW separates the voices. Read what each voice says, listen to its clips, and assign it to a participant. A voice that belongs to none of the participants, such as an experimenter's, is assigned *none*. By default no participant is proposed, and every shared microphone waits for this assignment. With *Voices on a shared microphone* set to wait only when uncertain, MACAW proposes a participant for each voice from the participants' own microphones, mouth movement and, where set, what each voice says and how high it is ({ref}`voice-hints`), and waits only when the proposal is uncertain. Mouth movement (`face.movement`) is then read from the faces by itself whenever the run reads the faces (`face.au`).
 
 (transcript)=
 ### Transcript

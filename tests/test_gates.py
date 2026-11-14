@@ -184,6 +184,10 @@ def fake_line(monkeypatch, tmp_path):
         def ordered_after(cls, config):
             return cls.runs_after
 
+        @classmethod
+        def brings_along(cls, config):
+            return ()
+
         def pending(self, recording):
             return "look at it" if recording.recording_id == "rec2" else None
 
@@ -195,7 +199,7 @@ def fake_line(monkeypatch, tmp_path):
 
     def plain(name, requires, phase):
         return type(name, (), {"name": name, "requires": requires, "phase": phase, "config_sections": (), "dependencies": classmethod(lambda cls, config: cls.requires), "runs_after": (), "wanted_by_default": classmethod(lambda cls, config: True),
-                                 "ordered_after": classmethod(lambda cls, config: cls.runs_after)})
+                                 "ordered_after": classmethod(lambda cls, config: cls.runs_after), "brings_along": classmethod(lambda cls, config: ())})
 
     registry = {
         "prep": plain("prep", (), Phase.PREP),
