@@ -22,8 +22,11 @@ SHOWN_SIDE = 1280
 COLOURS = ("#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f59f00", "#0c8599", "#c2255c", "#5c940d")
 _UNNAMED = "#adb5bd"
 AT, TIMELINE, FROM_PLAYER, PERSON, GRAPH, NOTE = "names-at", "names-timeline", "names-from-player", "names-person", "names-graph", "names-note"
-# the moment shown first, or the middle of a shorter file
+WINDOW = "names-window"
+# the moment shown first before the analysed part is known, or the middle of a shorter file
 FIRST_AT_S = 10.0
+# otherwise this share of the way into the analysed part
+FIRST_SHARE = 0.2
 # the Review page's save reads these by pattern, as a recording without cameras has none
 MARKS, FRAME = {"type": "names-marks", "key": "one"}, {"type": "names-frame", "key": "one"}
 
@@ -50,15 +53,35 @@ def cameras_of(config, rid: str | None) -> dict[str, list[str]]:
     return {item.name: sorted(camera_people(item), key=lambda person: (person not in roles, roles.index(person) if person in roles else 0, person)) for item in recording.cameras()}
 
 
-def saved(config, rid: str, camera: str, people: list[str]):
+def saved(config, rid: str, camera: str, people: list[str], part: tuple[float, float] | None = None, take_back=None):
+    """Every click kept for the camera, those outside the analysed part marked; take_back(target) draws a row's button."""
     clicks = read_names(layout_for(config, create=False).names_path(rid)).get(camera, [])
     if not clicks:
         return ui.note(f"Nobody is named on {camera} yet.")
-    rows = [
-        [swatch(click["person"], people), f"{float(click['at']):g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "").split(" ")[0]]
-        for click in sorted(clicks, key=lambda click: (float(click["at"]), click["person"]))
-    ]
-    return ui.table(["Person", "At (s)", "Where", "By"], rows, numeric={"At (s)"}, fit=True)
+    rows = []
+    for click in sorted(clicks, key=lambda click: (float(click["at"]), click["person"])):
+        at = float(click["at"])
+        used = "yes" if outside(at, part) is None else "no, outside the analysed part"
+        row = [swatch(click["person"], people), f"{at:g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "").split(" ")[0]]
+        rows.append(row + ([used] if part else []) + ([take_back(f"{at:g}|{click['person']}")] if take_back else []))
+    columns = ["Person", "At (s)", "Where", "By"] + (["Used"] if part else []) + ([""] if take_back else [])
+    return html.Div([html.P(f"Clicks kept on {camera}; each one counts until taken back."), ui.table(columns, rows, numeric={"At (s)"}, fit=True)])
+
+
+def analysed(config, rid: str, camera: str) -> tuple[float, float] | None:
+    from macaw.extractors.video.pose.keypoints import analysed_part
+
+    try:
+        return analysed_part(config, rid, camera)
+    except (MacawError, ValueError):
+        return None
+
+
+def outside(at_s: float, part) -> str | None:
+    """Why a moment names nobody in a run, or None when it is inside the analysed part."""
+    if not part or part[0] <= at_s <= part[1]:
+        return None
+    return f"{at_s:g} s is outside the analysed part of this file ({part[0]:.1f} to {part[1]:.1f} s): a run leaves clicks here out."
 
 
 def file_length(config, rid: str, camera: str) -> float | None:
@@ -70,19 +93,28 @@ def file_length(config, rid: str, camera: str) -> float | None:
         return None
 
 
-def editor(config, rid: str, camera: str, people: list[str]):
+def first_moment(part: tuple[float, float] | None, length: float | None) -> float:
+    if part is not None and part[1] > part[0]:
+        return round(part[0] + FIRST_SHARE * (part[1] - part[0]), 1)
+    return FIRST_AT_S if not length or length > FIRST_AT_S else round(length / 2, 1)
+
+
+def editor(config, rid: str, camera: str, people: list[str], take_back=None):
     """A frame of the camera at the moment on the timeline, typed, or taken from the player; Save and Clear are the
     Review page's buttons."""
     options = [{"label": swatch(person, people), "value": person} for person in people]
     length = file_length(config, rid, camera)
-    first = FIRST_AT_S if not length or length > FIRST_AT_S else round(length / 2, 1)
+    part = analysed(config, rid, camera)
+    first = first_moment(part, length)
+    edges = {edge: f"{edge:g} s" for edge in part if 0 <= edge <= length} if part and length else None
     timeline = dcc.Slider(
-        0, round(length, 1), value=first, id={"type": TIMELINE, "key": "one"}, updatemode="mouseup", marks=None,
+        0, round(length, 1), value=first, id={"type": TIMELINE, "key": "one"}, updatemode="mouseup", marks=edges or None,
         tooltip={"placement": "bottom", "always_visible": False},
     ) if length else None
     return html.Div(
         [
-            saved(config, rid, camera, people),
+            saved(config, rid, camera, people, part, take_back),
+            ui.note(f"Analysed: {part[0]:.1f} to {part[1]:.1f} s of this file; click at a moment inside it.") if part else None,
             html.Div(
                 [
                     ui.field("At (s) of its file", dcc.Input(id=AT, type="number", min=0, step="any", value=first, debounce=True)),
@@ -96,6 +128,7 @@ def editor(config, rid: str, camera: str, people: list[str]):
             dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False}),
             dcc.Store(id=MARKS, data={}),
             dcc.Store(id=FRAME, data=None),
+            dcc.Store(id=WINDOW, data=list(part) if part else None),
         ],
         className="naming",
     )
@@ -243,6 +276,13 @@ def name_command(config_path: Path, frame: dict, marks: dict, by: str) -> list[s
     )
 
 
+def take_back_command(config_path: Path, rid: str, camera: str, target: str) -> list[str]:
+    at, _, person = target.partition("|")
+    return cli_bridge.build_command(
+        ["name-people"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--remove", "--at", at, "--person", person],
+    )
+
+
 def clear_command(config_path: Path, rid: str, camera: str) -> list[str]:
     return cli_bridge.build_command(["name-people"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--clear"])
 
@@ -260,9 +300,9 @@ def register(app, config_path: Path, player: str, recording: str, camera: dict) 
         Output(AT, "value"), Output({"type": TIMELINE, "key": ALL}, "value"),
         Input(AT, "value"), Input({"type": TIMELINE, "key": ALL}, "value"), Input(GRAPH, "clickData"),
         State(recording, "value"), State(camera, "value"),
-        State(PERSON, "value"), State(PERSON, "options"), State(MARKS, "data"), State(FRAME, "data"),
+        State(PERSON, "value"), State(PERSON, "options"), State(MARKS, "data"), State(FRAME, "data"), State(WINDOW, "data"),
     )
-    def frame(at, moved, click, rid, chosen, person, options, marks, shown):
+    def frame(at, moved, click, rid, chosen, person, options, marks, shown, part):
         people = [option["value"] for option in options or []]
         if ctx.triggered_id != GRAPH:
             # the timeline and the typed moment follow each other; either shows its frame
@@ -273,11 +313,14 @@ def register(app, config_path: Path, player: str, recording: str, camera: dict) 
             if problem:
                 return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn"), at, [at] * len(moved)
             hint = " The people found are drawn grey until a click names them." if found["detected"] else ""
-            note = ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
+            away = outside(found["at"], part)
+            note = ui.note(away, "warn") if away else ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
             return marks_figure(found, {}, people), {}, found, note, at, [at] * len(moved)
         if not shown or not click or not person:
             return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved)
         marks = marked(marks or {}, person, click, shown)
         left = [name for name in people if name not in marks]
         note = (f"Still to click: {', '.join(left)}." if left else "Everyone is clicked: save the names, or click again to move one.")
-        return marks_figure(shown, marks, people), marks, no_update, ui.note(note + where_they_landed(shown, marks)), no_update, [no_update] * len(moved)
+        away = outside(shown["at"], part)
+        said = ui.note(f"{away} {note}{where_they_landed(shown, marks)}", "warn") if away else ui.note(note + where_they_landed(shown, marks))
+        return marks_figure(shown, marks, people), marks, no_update, said, no_update, [no_update] * len(moved)

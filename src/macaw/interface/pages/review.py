@@ -110,6 +110,10 @@ def _button(label: str, action: str, target: str = "", primary: bool = False, sm
     return ui.button(label, {"type": ACT, "action": action, "target": target}, primary=primary, small=small)
 
 
+def _take_back(target: str):
+    return _button("Take back", "take-back-click", target, small=True)
+
+
 def _upload(label: str, kind: str, accept: str):
     return dcc.Upload(ui.button(label, icon_name="upload"), id={"type": UPLOAD, "kind": kind}, accept=accept)
 
@@ -232,7 +236,7 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
     editor = html.Div(
         [
             html.H3("Name the people on the camera playing"),
-            html.Div(naming.editor(config, rid, camera, people[camera]), id=_one(NAMES_BOX)),
+            html.Div(naming.editor(config, rid, camera, people[camera], _take_back), id=_one(NAMES_BOX)),
             html.Div([
                 _button("Save the names", "name-people", primary=True),
                 _button("Clear this camera's names", "clear-names"),
@@ -838,7 +842,7 @@ def register(app, config_path: Path) -> None:
         own = resolve_config(config_path, recording_id=rid)
         camera = cameras[0]
         people = naming.cameras_of(own, rid)
-        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, [])) for _ in boxes]
+        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, []), _take_back) for _ in boxes]
 
     app.clientside_callback(
         """function (clicks, timing) {
@@ -973,6 +977,8 @@ def register(app, config_path: Path) -> None:
                 argv = note_command(config_path, rid, list(tags[0] or []), text[0] or "", by)
             elif action == "clear-names":
                 argv = action_command(config_path, rid, action, camera, by, {})
+            elif action == "take-back-click":
+                argv = naming.take_back_command(config_path, rid, camera, target)
             elif action == "prepare-all":
                 argv = cli_bridge.build_command(["previews"], config_path=config_path)
                 log = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "previews.log"

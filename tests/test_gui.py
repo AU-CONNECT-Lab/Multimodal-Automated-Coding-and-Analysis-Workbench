@@ -846,6 +846,14 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     assert "on room, child at 1 s, parent at 1 s" in text_of(said)
     listed = text_of(naming.saved(resolve_config(project), "003", "room", people))
     assert "25% across, 50% down" in listed and "100% across, 25% down" in listed
+    marked = text_of(naming.saved(resolve_config(project), "003", "room", people, (2.0, 3.0)))
+    assert "no, outside the analysed part" in marked
+    taking = {"type": review.ACT, "action": "take-back-click", "target": "1|child"}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=taking, triggered=[{"value": 1}]))
+    body, said, _ = update("003", [1], [], [], *review_states("", ["room"]))
+    assert "took back 1 click on room at 1 s" in text_of(said)
+    left = text_of(naming.saved(resolve_config(project), "003", "room", people))
+    assert "25% across, 50% down" in left and "100% across, 25% down" not in left and "take-back-click" in text_of(body)
     clearing = {"type": review.ACT, "action": "clear-names", "target": ""}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=clearing, triggered=[{"value": 1}]))
     _, said, _ = update("003", [1], [], [], *review_states("", ["room"]))
@@ -1129,13 +1137,24 @@ def test_the_naming_frame_follows_the_timeline_and_the_typed_moment(project, mon
     shown = text_of(naming.editor(resolve_config(project, recording_id="003"), "003", "room", ["parent", "child"]))
     assert "names-timeline" in shown and "Show frame" not in shown and '"value": 3.0' in shown
     frame = callback(create_app(project), "..names-graph.figure")
-    states = ("003", "room", "parent", [{"value": "parent"}, {"value": "child"}], {}, None)
+    states = ("003", "room", "parent", [{"value": "parent"}, {"value": "child"}], {}, None, None)
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id={"type": naming.TIMELINE, "key": "one"}))
     figure, marks, found, note, at, moved = frame(3.0, [4.5], None, *states)
     assert at == 4.5 and moved == [4.5] and found["at"] == 4.5 and "Frame at 4.5 s of room" in text_of(note)
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.AT))
     *_, at, moved = frame(1.25, [4.5], None, *states)
     assert at == 1.25 and moved == [1.25]
+    *_, note, _, _ = frame(1.25, [4.5], None, *states[:-1], [2.0, 5.0])
+    assert "1.25 s is outside the analysed part of this file (2.0 to 5.0 s)" in text_of(note)
+
+
+def test_the_first_moment_shown_is_inside_the_analysed_part():
+    from macaw.interface.pages import naming
+
+    assert naming.first_moment((25.0, 300.0), 400.0) == 80.0
+    assert naming.first_moment(None, 400.0) == naming.FIRST_AT_S and naming.first_moment(None, 6.0) == 3.0
+    assert naming.outside(30.0, (25.0, 300.0)) is None and naming.outside(10.0, None) is None
+    assert "10 s is outside the analysed part" in naming.outside(10.0, (25.0, 300.0))
 
 
 def test_the_workflow_draws_each_step_after_what_it_needs_and_links_to_it():
