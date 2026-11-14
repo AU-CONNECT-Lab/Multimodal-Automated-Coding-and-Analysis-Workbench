@@ -30,6 +30,16 @@ def add_clicks(path: Path, camera: str, at_s: float, points: dict[str, tuple[flo
     return names
 
 
+def remove_clicks(path: Path, camera: str, at_s: float, person: str | None = None) -> int:
+    """Takes back the clicks at one moment of a camera, or only that person's; returns how many were taken back."""
+    names = read_names(path)
+    clicks = names.get(camera, [])
+    kept = [click for click in clicks if not (float(click["at"]) == at_s and person in (None, click["person"]))]
+    names[camera] = kept
+    write_names(path, names)
+    return len(clicks) - len(kept)
+
+
 def clear_clicks(path: Path, camera: str) -> dict[str, list[dict]]:
     names = read_names(path)
     names.pop(camera, None)

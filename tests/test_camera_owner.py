@@ -314,6 +314,17 @@ class TestNamePeople:
         assert self.name(project, "--camera", "room", "--clear").exit_code == 0
         assert not layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8").strip("{}\n ")
 
+    def test_one_click_is_taken_back_and_the_others_stay(self, project):
+        self.name(project, "--camera", "room", "--at", "2.5", "--person", "parent=0.25,0.4", "--person", "child=0.7,0.45")
+        self.name(project, "--camera", "room", "--at", "9", "--person", "child=0.6,0.5")
+        outcome = self.name(project, "--camera", "room", "--remove", "--at", "2.5", "--person", "child")
+        assert outcome.exit_code == 0 and "took back 1 click on room at 2.5 s" in outcome.output, outcome.output
+        clicks = json.loads(layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8"))["room"]
+        assert [(c["person"], c["at"]) for c in clicks] == [("parent", 2.5), ("child", 9.0)]
+        assert "took back 1 click" in self.name(project, "--camera", "room", "--remove", "--at", "2.5").output
+        missing = self.name(project, "--camera", "room", "--remove", "--at", "4")
+        assert missing.exit_code != 0 and "no click on room at 4 s" in str(missing.exception)
+
     @pytest.mark.parametrize("args, reason", [
         (["--camera", "nope", "--at", "1", "--person", "parent=0.1,0.1"], "not a camera of 003"),
         (["--camera", "parent_cam", "--at", "1", "--person", "child=0.1,0.1"], "reads parent_cam for parent, not child"),

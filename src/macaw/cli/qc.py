@@ -194,12 +194,15 @@ def name_people(
         None, "--person", help="ROLE=X,Y: where that person is in the picture, as shares of its width and height. Repeatable."
     ),
     clear: bool = typer.Option(False, "--clear", help="Take back every click on this camera."),
+    remove: bool = typer.Option(
+        False, "--remove", help="Take back the clicks at --at, or only those of each --person ROLE given."
+    ),
     by: str = typer.Option(None, "--by", help="Who clicked. Default: the login name."),
 ) -> None:
     """Say who is who on a camera: at one moment of its file, where each person is in the picture. pose.keypoints
     names whoever is there and follows them through the recording; click again at another moment where it lost someone."""
-    from macaw.extractors.video.pose.keypoints import camera_people
-    from macaw.project.names import add_clicks, clear_clicks
+    from macaw.extractors.video.pose.keypoints import analysed_part, camera_people
+    from macaw.project.names import add_clicks, clear_clicks, remove_clicks
 
     resolved = resolve_config(config, recording_id=recording)
     built = build_recording(recording, resolved)
@@ -213,6 +216,14 @@ def name_people(
             raise MacawError("--clear takes back every click on the camera; give it alone")
         clear_clicks(path, camera)
         typer.echo(f"{recording}: no clicks on {camera} now; apply it with `macaw run -r {recording} -e pose.keypoints`")
+        return
+    if remove:
+        if at is None or any("=" in given for given in person or []):
+            raise MacawError("--remove takes --at, the moment of the clicks, and optionally a --person ROLE for each person whose click goes")
+        taken = sum(remove_clicks(path, camera, at, given) for given in person) if person else remove_clicks(path, camera, at)
+        if not taken:
+            raise MacawError(f"no click on {camera} at {at:g} s{' of ' + ', '.join(person) if person else ''} to take back")
+        typer.echo(f"{recording}: took back {taken} click{'s' if taken > 1 else ''} on {camera} at {at:g} s; apply it with `macaw run -r {recording} -e pose.keypoints`")
         return
     if at is None or at < 0 or not person:
         raise MacawError("give --at, the moment from the camera's first picture, and a --person ROLE=X,Y for each person clicked")
@@ -234,6 +245,12 @@ def name_people(
     names = add_clicks(path, camera, at, points, by or getpass.getuser())
     clicked = ", ".join(f"{click['person']} at {click['at']:g} s" for click in names[camera])
     typer.echo(f"{recording}: on {camera}, {clicked}; apply it with `macaw run -r {recording} -e pose.keypoints`")
+    part = analysed_part(resolved, recording, camera)
+    if part is not None and not part[0] <= at <= part[1]:
+        typer.echo(
+            f"note: {at:g} s is outside the analysed part of {camera} ({part[0]:.1f} to {part[1]:.1f} s of its file), "
+            "so pose.keypoints leaves these clicks out while the analysed part stays where it is"
+        )
 
 
 @app.command("accept-owner")
