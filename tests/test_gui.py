@@ -340,7 +340,7 @@ def test_the_overview_counts_what_there_is_and_what_waits(project):
     tiles = text_of(overview.tiles(resolve_config(project), found))
     assert "parent, child" in tiles and "known once prep.media has run" in tiles and "0 of" in tiles
     items = text_of(overview.next_up(found))
-    assert "1 check waits for a person" in items and '"/review"' in items
+    assert "Check: file offsets waits on 1 recording" in items and '"/review"' in items
     grid = text_of(overview.grid(found))
     assert "cell held" in grid and "003, Sound and timing (prep.media): waiting for a person" in grid
     assert found.checks["003", "align.review"] == "waiting" and "cell check waiting" in grid and "Check: file offsets" in grid
@@ -352,7 +352,7 @@ def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
     found = overview.standing(project)
     assert found.grid["003", "prep.media"] == "failed"
     first = text_of(overview.next_up(found)[0])
-    assert "Sound and timing failed" in first and "prep.media, for 003" in first and '"/run"' in first
+    assert "Sound and timing failed" in first and "003" in first and '"/run"' in first
 
 
 def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
@@ -399,11 +399,11 @@ def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monke
     assert kept[3] == ["text.asr"]
 
 
-def test_steps_left_to_run_are_listed_after_the_rest_are_counted():
+def test_steps_left_to_run_are_one_line_with_how_many_recordings_each():
     steps = [f"step{k}" for k in range(9)]
     found = overview.Standing(["a", "b"], steps, {(rid, step): "current" if step == "step0" else "stale" for rid in "ab" for step in steps})
     items = [text_of(item) for item in overview.next_up(found)]
-    assert len(items) == overview.NEXT_STEPS + 1 and "2 to run again" in items[0] and "and 2 more steps" in items[-1]
+    assert len(items) == 1 and "8 steps to run" in items[0] and "step1 2, step2 2" in items[0]
     fresh = overview.Standing(["a"], steps, {("a", step): "new" for step in steps})
     assert ["Nothing has run yet" in text_of(item) for item in overview.next_up(fresh)] == [True]
 
@@ -1136,3 +1136,16 @@ def test_the_naming_frame_follows_the_timeline_and_the_typed_moment(project, mon
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.AT))
     *_, at, moved = frame(1.25, [4.5], None, *states)
     assert at == 1.25 and moved == [1.25]
+
+
+def test_the_workflow_draws_each_step_after_what_it_needs_and_links_to_it():
+    steps = ["prep.media", "align.review", "pose.detect", "text.asr"]
+    grid = {("a", step): state for step, state in (("prep.media", "current"), ("pose.detect", "failed"), ("text.asr", "stale"))}
+    found = overview.Standing(["a"], ["prep.media", "pose.detect", "text.asr"], grid, columns=steps, checks={("a", "align.review"): "waiting"},
+                              needs={"align.review": [], "prep.media": ["align.review"], "pose.detect": ["prep.media"], "text.asr": ["prep.media"]})
+    figure = overview.workflow_figure(found)
+    squares, rounds = figure.data[1], figure.data[2]
+    assert list(squares.x) == [1, 2, 2] and list(squares.y) == [0, 0, -1] and list(rounds.x) == [0]
+    assert list(squares.marker.color) == [overview.FLOW_COLOURS[state] for state in ("current", "failed", "stale")]
+    assert rounds.marker.color[0] == overview.FLOW_COLOURS["waiting"] and rounds.customdata[0] == "/review"
+    assert squares.customdata[1] == "/run?step=pose.detect" and "Find people" in squares.text[1]

@@ -679,12 +679,15 @@ def body(config_path: Path, rid: str | None, camera: str | None = None):
     waiting = _waiting(config, recording)
     parts = [
         _player(own, build_recording(rid, own), camera),
-        ui.card(
-            "Waiting for a person",
-            html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(ui.with_code(message), className="value")], className="what")]) for gate, message in waiting], className="status-list")
-            if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
-        ),
-        _notes(config, layout, rid),
+        # two short cards side by side rather than each across the page
+        html.Div([
+            ui.card(
+                "Waiting for a person",
+                html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(ui.with_code(message), className="value")], className="what")]) for gate, message in waiting], className="status-list")
+                if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
+            ),
+            _notes(config, layout, rid),
+        ], className="card-pair"),
         _offsets(config, layout, rid),
         _people_on_camera(own, layout, results, recording, camera),
         _model_look(config, layout, rid),

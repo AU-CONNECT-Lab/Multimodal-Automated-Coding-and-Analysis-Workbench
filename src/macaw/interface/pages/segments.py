@@ -79,12 +79,14 @@ def body(config_path: Path, rid: str | None):
     )
     return [
         ui.card("Play", player, desc=f"{source.name}, on the recording's clock."),
-        ui.card(
-            "Mark a part", marking,
-            actions=[ui.button("Save as a segment", {"type": ACT, "action": "save"}, primary=True),
-                     ui.button("Analyse only this part", {"type": ACT, "action": "window"})],
-        ),
-        ui.card("This recording's segments", _listed(config, own, rid), desc=f"Kept in {segments_path(config).name}, which can be edited by hand."),
+        html.Div([
+            ui.card(
+                "Mark a part", marking,
+                actions=[ui.button("Save as a segment", {"type": ACT, "action": "save"}, primary=True),
+                         ui.button("Analyse only this part", {"type": ACT, "action": "window"})],
+            ),
+            ui.card("This recording's segments", _listed(config, own, rid), desc=f"Kept in {segments_path(config).name}, which can be edited by hand."),
+        ], className="card-pair"),
     ]
 
 

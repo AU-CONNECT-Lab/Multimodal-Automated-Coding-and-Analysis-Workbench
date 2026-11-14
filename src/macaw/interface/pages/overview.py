@@ -19,9 +19,8 @@ from macaw.interface.step_labels import label
 from macaw.project.setup import setup_path
 
 LABEL = "Overview"
+FLOW = "overview-flow"
 PATH = "/overview"
-# steps listed under Next up before the rest are counted as "and N more"
-NEXT_STEPS = 6
 REVIEW_PATH = f"/{review.LABEL.lower()}"
 # the grid's key, in the order a project moves through
 LEGEND = ("current", "stale", "new", "held", "failed")
@@ -45,6 +44,7 @@ class Standing:
     # the steps and the checks by a person in run order, and each check's state per recording
     columns: list[str] = field(default_factory=list)
     checks: dict[tuple[str, str], str] = field(default_factory=dict)
+    needs: dict[str, list[str]] = field(default_factory=dict)
 
 
 def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
@@ -83,13 +83,13 @@ def standing(config_path: Path) -> Standing:
         except MacawError:
             continue
         prepared += 1
-    columns, checks = check_states(config_path, recordings, grid, gates)
-    return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file(), columns, checks)
+    columns, checks, needs = check_states(config_path, recordings, grid, gates)
+    return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file(), columns, checks, needs)
 
 
-def check_states(config_path: Path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str]]:
-    """The project's steps with its checks by a person among them, and per recording whether each check waits, who
-    decided it, or that it has not been reached."""
+def check_states(config_path: Path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
+    """The project's steps with its checks by a person among them, per recording whether each check waits, who
+    decided it, or that it has not been reached, and what each column needs."""
     from macaw.coding.review_queue import export_review
     from macaw.execution.dag import build_dag
     from macaw.extractors import get_extractor
@@ -131,7 +131,11 @@ def check_states(config_path: Path, recordings: list[str], grid: dict, gates: di
                 "waiting" if rid in waiting_units else "new" if grid.get((rid, "coding.judge")) != "current"
                 else "person" if layout.reviewed_codes_path(rid).is_file() else "software"
             )
-    return [name for name in columns if name in names or name == SPEECH_ACTS or (recordings and (recordings[0], name) in grid)], states
+    shown = [name for name in columns if name in names or name == SPEECH_ACTS or (recordings and (recordings[0], name) in grid)]
+    needs = {name: sorted(set(dag.dependencies(name)) & set(shown)) for name in shown if name != SPEECH_ACTS}
+    if judged:
+        needs[SPEECH_ACTS] = ["coding.judge"]
+    return shown, states, needs
 
 
 def column_label(name: str) -> str:
@@ -178,20 +182,22 @@ def _item(kind: str, text: str, detail: str | None, href: str, where: str):
 
 
 def next_up(found: Standing) -> list:
-    """What failed, what waits for a person, then what is left to run, each linked to the page that deals with it."""
+    """What failed, what waits for a person by kind of check, then the steps left to run, each one line and linked to
+    the page that deals with it."""
     items = []
     if not found.setup_saved:
-        items.append(_item("bad", "Describe the setup", "the cameras and microphones; nothing runs before it is saved", setup.PATH, setup.LABEL))
+        items.append(_item("bad", "Describe the setup", "nothing runs before it is saved", setup.PATH, setup.LABEL))
     for step in found.steps:
         failed = [rid for rid in found.recordings if found.grid[rid, step] == "failed"]
         if failed:
-            items.append(_item("bad", f"{label(step)} failed", f"{step}, for {_names(failed)}", run.PATH, "Run"))
-    if found.waiting:
-        n_checks = sum(len(gates) for gates in found.waiting.values())
-        detail = "; ".join(f"{rid}: {', '.join(label(name) for name, _ in gates)}" for rid, gates in list(found.waiting.items())[:4])
-        more = len(found.waiting) - 4
-        items.append(_item("warn", f"{n_checks} check{'s wait' if n_checks != 1 else ' waits'} for a person",
-                           detail + (f"; and {more} more recordings" if more > 0 else ""), REVIEW_PATH, "Review"))
+            items.append(_item("bad", f"{label(step)} failed", f"{_names(failed)}", run.PATH, "Run"))
+    by_check: dict[str, list[str]] = {}
+    for rid, gates in found.waiting.items():
+        for name, _ in gates:
+            by_check.setdefault(name, []).append(rid)
+    for name, rids in by_check.items():
+        many = f"{len(rids)} recording{'s' if len(rids) != 1 else ''}"
+        items.append(_item("warn", f"{column_label(name)} waits on {many}", _names(rids), REVIEW_PATH, "Review"))
     if found.units_waiting:
         items.append(_item("warn", f"{found.units_waiting} coded unit{'s wait' if found.units_waiting != 1 else ' waits'} for review",
                            None, REVIEW_PATH, "Review"))
@@ -202,13 +208,97 @@ def next_up(found: Standing) -> list:
     left = []
     for step in found.steps:
         counts = Counter(found.grid[rid, step] for rid in found.recordings)
-        parts = [f"{counts[state]} {run.STATE_TEXT[state]}" for state in ("stale", "new") if counts[state]]
-        if parts:
-            left.append(_item("", label(step), f"{step}: " + ", ".join(parts), run.PATH, "Run"))
-    items += left[:NEXT_STEPS]
-    if len(left) > NEXT_STEPS:
-        items.append(_item("", f"and {len(left) - NEXT_STEPS} more steps to run", None, run.PATH, "Run"))
+        todo = counts["stale"] + counts["new"]
+        if todo:
+            left.append(f"{label(step)} {todo}")
+    if left:
+        items.append(_item("", f"{len(left)} step{'s' if len(left) != 1 else ''} to run", ", ".join(left), run.PATH, "Run"))
     return items
+
+
+# a step's colour in the workflow, by what is most pressing among its recordings
+FLOW_COLOURS = {"failed": "#d92d20", "held": "#b54708", "waiting": "#b54708", "stale": "#eab308", "new": "#d0d5dd",
+                "current": "#079455", "person": "#079455", "software": "#7fc4a4", "none": "#e4e7ec"}
+FLOW_ORDER = ("failed", "held", "waiting", "stale", "new", "software", "none", "person", "current")
+
+
+def _flow_state(found: Standing, name: str) -> tuple[str, Counter]:
+    is_check = bool(found.recordings) and (found.recordings[0], name) in found.checks
+    counts = Counter((found.checks if is_check else found.grid)[rid, name] for rid in found.recordings)
+    worst = next((state for state in FLOW_ORDER if counts.get(state)), "new")
+    return worst, counts
+
+
+def _flow_text(found: Standing, name: str, counts: Counter) -> str:
+    is_check = bool(found.recordings) and (found.recordings[0], name) in found.checks
+    words = CHECK_TEXT if is_check else run.STATE_TEXT
+    return "<br>".join(f"{count} {words[state]}" for state, count in counts.most_common())
+
+
+def _wrapped(text: str, width: int = 14) -> str:
+    lines, line = [], ""
+    for word in text.split():
+        if line and len(line) + 1 + len(word) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    return "<br>".join([*lines, line])
+
+
+def workflow_figure(found: Standing):
+    """The project's steps and checks left to right in the order they run, each coloured by its most pressing state."""
+    import plotly.graph_objects as go
+
+    columns = found.columns or found.steps
+    level: dict[str, int] = {}
+
+    def depth(name: str) -> int:
+        if name not in level:
+            level[name] = 1 + max((depth(need) for need in found.needs.get(name, []) if need in columns), default=-1)
+        return level[name]
+
+    for name in columns:
+        depth(name)
+    rows: dict[int, int] = Counter()
+    where = {}
+    # column by column, each step placed near the steps it needs, so fewer lines cross
+    for depth_now in sorted(set(level.values())):
+        here = [name for name in columns if level[name] == depth_now]
+        here.sort(key=lambda name: sum(where[need][1] for need in found.needs.get(name, []) if need in where)
+                  / max(1, sum(need in where for need in found.needs.get(name, []))))
+        for name in here:
+            where[name] = (depth_now, rows[depth_now])
+            rows[depth_now] += 1
+    edge_x, edge_y = [], []
+    for name in columns:
+        for need in found.needs.get(name, []):
+            (x0, y0), (x1, y1) = where[need], where[name]
+            edge_x += [x0, (x0 + x1) / 2, (x0 + x1) / 2, x1, None]
+            edge_y += [-y0, -y0, -y1, -y1, None]
+    figure = go.Figure(go.Scatter(x=edge_x, y=edge_y, mode="lines", line={"color": "#c4c9d2", "width": 1.2}, hoverinfo="skip"))
+    for is_check in (False, True):
+        names = [name for name in columns if (bool(found.recordings) and (found.recordings[0], name) in found.checks) == is_check]
+        if not names:
+            continue
+        states = [_flow_state(found, name) for name in names]
+        figure.add_trace(go.Scatter(
+            x=[where[name][0] for name in names], y=[-where[name][1] for name in names], mode="markers+text",
+            marker={"size": 22, "symbol": "circle" if is_check else "square", "color": [FLOW_COLOURS[state] for state, _ in states],
+                    "line": {"color": "white", "width": 2}},
+            text=[_wrapped(column_label(name)) for name in names], textposition="bottom center", textfont={"size": 11, "color": "#667085"},
+            customdata=[f"{REVIEW_PATH}" if is_check else f"{run.PATH}?{urlencode({'step': name})}" for name in names],
+            hovertext=[f"<b>{column_label(name)}</b> ({name})<br>{_flow_text(found, name, counts)}" for name, (_, counts) in zip(names, states)],
+            hovertemplate="%{hovertext}<extra></extra>",
+        ))
+    deepest = max(rows.values(), default=1)
+    figure.update_layout(
+        margin={"l": 10, "r": 10, "t": 10, "b": 0}, showlegend=False, dragmode=False, height=70 + 92 * deepest,
+        xaxis={"visible": False, "range": [-0.6, max(level.values(), default=0) + 0.6]},
+        yaxis={"visible": False, "range": [-(deepest - 1) - 0.75, 0.35]},
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hoverlabel={"align": "left"},
+    )
+    return figure
 
 
 def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
@@ -268,7 +358,14 @@ def layout(config_path: Path):
             dcc.Loading(
                 [
                     html.Div(id="overview-tiles", className="tiles"),
-                    ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
+                    html.Div(
+                        [
+                            ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
+                            ui.card("Workflow", dcc.Graph(id=FLOW, config={"displayModeBar": False}, figure=_empty_flow()),
+                                    desc="Each step in run order, coloured by its most pressing state; click one to go there.", flush=True),
+                        ],
+                        className="overview-row",
+                    ),
                     ui.card("Where each recording stands", html.Div(id="overview-grid"),
                             desc="Point at a square for its state, click it to go there. Round ones are checks by a person.",
                             flush=True),
@@ -279,19 +376,40 @@ def layout(config_path: Path):
     )
 
 
+def _empty_flow():
+    import plotly.graph_objects as go
+
+    figure = go.Figure()
+    figure.update_layout(height=40, margin={"l": 0, "r": 0, "t": 0, "b": 0}, xaxis={"visible": False}, yaxis={"visible": False},
+                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    return figure
+
+
 def register(app, config_path: Path) -> None:
+    # a click on a step opens its page without reloading the workbench
+    app.clientside_callback(
+        """function (click) {
+            const href = click && click.points && click.points[0] && click.points[0].customdata;
+            if (!href) { return window.dash_clientside.no_update; }
+            window.history.pushState({}, '', href);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+            return href;
+        }""",
+        Output(FLOW, "className"), Input(FLOW, "clickData"), prevent_initial_call=True,
+    )
+
     @app.callback(
         Output("overview-summary", "children"), Output("overview-message", "children"), Output("overview-tiles", "children"),
-        Output("overview-next", "children"), Output("overview-grid", "children"),
+        Output("overview-next", "children"), Output("overview-grid", "children"), Output(FLOW, "figure"),
         Input("url", "pathname"),
     )
     def fill(pathname):
         if (pathname or "/").rstrip("/") not in ("", PATH):
-            return (no_update,) * 5
+            return (no_update,) * 6
         config = resolve_config(config_path)
         try:
             found = standing(config_path)
         except Exception as error:   # the page still opens; the Run page and the run itself say what is wrong
-            return latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], []
+            return latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], [], _empty_flow()
         items = next_up(found) or [html.Li(html.P("Nothing to do: every step is up to date and nothing waits for a person.", className="none"))]
-        return latest_run(config_path), None, tiles(config, found), items, grid(found)
+        return latest_run(config_path), None, tiles(config, found), items, grid(found), workflow_figure(found)

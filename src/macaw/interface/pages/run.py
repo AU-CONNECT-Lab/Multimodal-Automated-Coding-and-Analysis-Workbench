@@ -109,19 +109,27 @@ def layout(config_path: Path):
             ),
             *_unsaved_setup(config_path),
             html.Div(id="run-message"),
-            ui.card("Recordings", dcc.Checklist([], None, id="run-recordings", className="chips", inline=True), desc="Which recordings to run."),
-            ui.card(
-                "Steps",
-                dcc.Checklist([], None, id="run-steps", className="steps"),
-                html.Details(
-                    [html.Summary(id="run-more-summary"), dcc.Checklist([], None, id="run-more", className="steps")],
-                    className="more",
+            # what to run on the left, how it goes on the right, so a wide window is used
+            html.Div([
+                html.Div([
+                    ui.card("Recordings", dcc.Checklist([], None, id="run-recordings", className="chips", inline=True), desc="Which recordings to run."),
+                    ui.card(
+                        "Steps",
+                        dcc.Checklist([], None, id="run-steps", className="steps"),
+                        html.Details(
+                            [html.Summary(id="run-more-summary"), dcc.Checklist([], None, id="run-more", className="steps")],
+                            className="more",
+                        ),
+                        html.Div(html.Div(id="run-command"), className="card-body"),
+                        desc="In the order they run; what a step needs runs too.",
+                        flush=True,
+                    ),
+                ]),
+                html.Div(
+                    ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state"), id="run-progress-card"),
+                    className="side",
                 ),
-                html.Div(html.Div(id="run-command"), className="card-body"),
-                desc="In the order they run; what a step needs runs too.",
-                flush=True,
-            ),
-            ui.card("Progress", html.Div(id="run-progress"), dcc.Interval(id="run-poll", interval=2000), dcc.Store(id="run-state"), id="run-progress-card"),
+            ], className="run-columns"),
         ]
     )
 
