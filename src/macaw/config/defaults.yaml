@@ -37,8 +37,8 @@ setup:
   room: {}                           # where things are, in project.units, seen from above with x across and y along the room: {size: [across, along] of the walls from the zero corner, people: {role: {at: [x, y], eyes: h, facing: deg}}, cameras: {name: {at, height, facing, tilt, lens}}, microphones: {name: {at, height}}, things: {name: {at, height, size: [w, d]}}}
 
 identity:
-  voice_hints: []                    # shared microphone, with text.voice_review flagged or skip: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
-  pitch_order: []                    # shared microphone, with text.voice_review flagged or skip: roles from the lowest voice to the highest, e.g. [mother, child]
+  voice_hints: []                    # shared microphone: [{says: <pattern>, role: <role>}], a voice saying it is likely that role
+  pitch_order: []                    # shared microphone: roles from the lowest voice to the highest, e.g. [mother, child]
 
 segment:
   task_start_s: null                 # s; trims the start. null = from 0
@@ -73,7 +73,7 @@ text:
   diarization: per_track             # per_track: a mic per person | pyannote: one shared mic | none
   diarization_model: pyannote/speaker-diarization-community-1  # HuggingFace pipeline for pyannote; accept its terms first
   extra_voices: 0                    # other voices on a shared mic, e.g. 1 for a researcher
-  voice_review: always               # always | flagged: only when the suggestion is unsure | skip
+  voice_review: always               # always: a person confirms the suggestion | flagged: only when it is unsure | skip
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
   word_timestamps: true              # needed for gesture-speech alignment and MLU
   embedding_model: null              # sentence-transformers name; null disables text embeddings

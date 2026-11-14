@@ -497,7 +497,10 @@ def _voice_hints(config) -> str:
 
 
 _VOICE_NAMING = {
-    "always": "A researcher listened to clips of each voice found and named the participant it belonged to.",
+    "always": (
+        "A researcher listened to clips of each voice found and named the participant it belonged to, shown a suggestion "
+        "from the loudness of the participants' own microphones or their mouth movement where one could be made."
+    ),
     "flagged": (
         "Each voice was named from the loudness of the participants' own microphones or their mouth movement where "
         "that decided every voice, and otherwise by a researcher who listened to clips of each voice."

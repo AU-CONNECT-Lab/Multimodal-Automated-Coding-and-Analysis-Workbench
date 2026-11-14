@@ -311,7 +311,7 @@ def accept_voices(
             suggestion = offered_suggestion(resolved, recording)
             if suggestion is None:
                 raise MacawError(
-                    f"{recording_id}: no suggestion is made (text.voice_review is always, or nobody has a mic of their own or "
+                    f"{recording_id}: no suggestion can be made (nobody has a mic of their own or "
                     "face.movement on a camera); name the voices with --rename"
                 )
             people = suggestion["people"]

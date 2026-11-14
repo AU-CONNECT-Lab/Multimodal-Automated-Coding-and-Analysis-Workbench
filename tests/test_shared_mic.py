@@ -295,17 +295,12 @@ class TestReview:
         gate, recording, path = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
         assert not path.exists() and gate.pending(recording) is not None
 
-    def test_by_default_no_suggestion_is_made_or_shown(self, project, monkeypatch):
+    def test_by_default_the_suggestion_is_shown_and_still_waits_for_a_person(self, project, monkeypatch):
         from macaw.extractors.audio.content import speaker_id
 
-        gate, recording, _ = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
-
-        def refused(config, recording):
-            raise AssertionError("a suggestion was made by default")
-
-        monkeypatch.setattr(speaker_id, "suggest_voices", refused)
-        assert "suggested" not in gate.pending(recording)
-        assert speaker_id.offered_suggestion(project.resolved(), recording) is None
+        gate, recording, path = self.review(project, "always", {"S0": "child", "S1": "parent"}, monkeypatch)
+        assert not path.exists() and "suggested" in gate.pending(recording)
+        assert speaker_id.offered_suggestion(project.resolved(), recording)["people"] == {"S0": "child", "S1": "parent"}
 
     def test_flagged_keeps_a_complete_suggestion_and_says_so(self, project, monkeypatch):
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch)

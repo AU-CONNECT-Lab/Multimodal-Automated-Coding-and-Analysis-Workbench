@@ -368,7 +368,7 @@ A look within `tolerance_deg` of the direction to a person or thing counts as a 
 (voice-hints)=
 ## Assigning voices on a shared microphone
 
-When participants share a microphone and MACAW is set to propose whose voice is which (*Voices on a shared microphone* set to wait only when uncertain, see {ref}`step 6 <review>`), the proposal can draw on what each voice says and on how high it is. MACAW assumes nothing about the participants; the rules are written by the researcher:
+When participants share a microphone, the proposal of whose voice is which ({ref}`step 6 <review>`) can also draw on what each voice says and on how high it is. MACAW assumes nothing about the participants; the rules are written by the researcher:
 
 ```yaml
 identity:

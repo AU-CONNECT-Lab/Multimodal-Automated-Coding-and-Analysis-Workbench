@@ -567,8 +567,8 @@ class SpeakerReviewGate(Gate):
 
     @classmethod
     def brings_along(cls, config) -> tuple[str, ...]:
-        # mouth movement, read off the faces the run reads anyway, suggests whose voice is which where a suggestion is wanted
-        return ("face.movement",) if config.text.diarization == SHARED_MODE and config.text.voice_review != "always" else ()
+        # mouth movement, read off the faces the run reads anyway, suggests whose voice is which
+        return ("face.movement",) if config.text.diarization == SHARED_MODE else ()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return []
