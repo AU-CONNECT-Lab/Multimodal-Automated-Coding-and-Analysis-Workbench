@@ -369,7 +369,9 @@ def grid(found: Standing):
               html.B(str(len(columns) - n_checks)), " steps, ", html.B(str(n_checks)), " checks"]
     side = html.Aside([html.Div(_key(found, columns), className="key"), html.Div(totals, className="totals"),
                        html.Div(INSPECT_HINT, className="inspect")], className="standing-side")
-    return html.Div([html.Div(table, className="standing-wrap"), side], className="standing-card")
+    # the squares take their size from the card's width and the number of columns
+    wrap = html.Div(table, className="standing-wrap", style={"--cols": len(columns), "--gaps": max(0, len(grouped) - 1)})
+    return html.Div([wrap, side], className="standing-card")
 
 
 def latest_run(config_path: Path) -> str:

@@ -410,7 +410,7 @@ def test_the_grid_groups_steps_by_lane_and_folds_the_recordings_with_nothing_lef
     assert [overview.row_summary(found, rid) for rid in "abc"] == ["done", "1 failed", "1 to run"]
     shown = text_of(overview.grid(found))
     assert "1 more recording, everything done" in shown and "done closed" in shown and shown.index('"b"') < shown.index('"a"')
-    assert '"Other"' in shown and "Checks by a person" not in shown
+    assert '"Other"' in shown and "Checks by a person" not in shown and '"--cols": 4' in shown
     everything = overview.Standing(["a"], steps, {("a", step): "current" for step in steps}, columns=steps, needs=needs)
     assert "fold-row" not in text_of(overview.grid(everything))
 
