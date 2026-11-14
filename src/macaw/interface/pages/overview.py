@@ -15,11 +15,12 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.pages import results, review, run, setup
-from macaw.interface.step_labels import label
+from macaw.interface.step_labels import label, short
 from macaw.project.setup import setup_path
 
 LABEL = "Overview"
 FLOW = "overview-flow"
+FLOW_DATA = "overview-flow-data"
 PATH = "/overview"
 REVIEW_PATH = f"/{review.LABEL.lower()}"
 # the grid's key, in the order a project moves through
@@ -29,6 +30,7 @@ CHECK_TEXT = {"waiting": "waits for a person", "person": "checked by a person", 
 CHECK_LEGEND = ("person", "software", "waiting", "none")
 SPEECH_ACTS = "speech acts"
 CHECK_LABELS = {SPEECH_ACTS: "Check: speech acts"}
+CHECK_SHORT = {SPEECH_ACTS: "Acts checked"}
 
 
 @dataclass
@@ -142,163 +144,144 @@ def column_label(name: str) -> str:
     return CHECK_LABELS.get(name) or label(name)
 
 
+def column_short(name: str) -> str:
+    return CHECK_SHORT.get(name) or short(name)
+
+
 def _duration(seconds: float) -> str:
     return f"{seconds / 3600:.1f} h" if seconds >= 5400 else f"{seconds / 60:.0f} min"
 
 
-def _tile(label: str, value: str, sub: str | None = None):
-    return html.Div([html.Div(label, className="label"), html.Div(value, className="value"),
-                     *([html.Div(sub, className="sub")] if sub else [])], className="tile")
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def _tile(label: str, value: str, sub: str | None = None, href: str | None = None, where: str | None = None,
+          kind: str = "", meter: float | None = None):
+    head = html.Div([label, *([html.Span(f"{where} ›")] if where else [])], className="label")
+    body = [head, html.Div(value, className="value"), *([html.Div(sub, className="sub")] if sub else []),
+            *([html.Div(html.I(style={"width": f"{100 * meter:.1f}%"}), className="meter")] if meter is not None else [])]
+    if href:
+        return dcc.Link(body, href=href, className=f"tile {kind}".strip())
+    return html.Div(body, className=f"tile {kind}".strip())
 
 
 def tiles(config, found: Standing):
     n = len(found.recordings)
     tasks = [found.grid[rid, step] for rid in found.recordings for step in found.steps]
     current = sum(state == "current" for state in tasks)
+    people = ", ".join(config.project.roles)
     if not found.n_prepared:
-        time = _tile("Task time", "–", "known once prep.media has run")
+        time = "task time known once prep.media has run"
+    elif found.n_prepared == n:
+        time = f"{_duration(found.task_s)} of task time"
     else:
-        time = _tile("Task time", _duration(found.task_s),
-                     f"over {n} recordings" if found.n_prepared == n else f"over the {found.n_prepared} of {n} recordings prepared")
+        time = f"{_duration(found.task_s)} over the {found.n_prepared} prepared"
+    failed = [(rid, step) for rid in found.recordings for step in found.steps if found.grid[rid, step] == "failed"]
+    checks = sum(len(gates) for gates in found.waiting.values())
+    waits = checks + found.units_waiting
     return [
-        _tile("Recordings", str(n)),
-        _tile("People in each", str(config.project.n_subjects), ", ".join(config.project.roles)),
-        time,
-        _tile("Up to date", f"{round(100 * current / len(tasks))}%" if tasks else "–", f"{current} of {len(tasks)} tasks" if tasks else None),
+        _tile("Recordings", str(n), f"{people} · {time}" if people else time),
+        _tile("Up to date", f"{round(100 * current / len(tasks))}%" if tasks else "–", f"{current} of {len(tasks)} tasks" if tasks else None,
+              run.PATH, "Run", meter=current / len(tasks) if tasks else None),
+        _tile("Failed last time", str(len(failed)),
+              f"{_plural(len({step for _, step in failed}), 'step')}, {_plural(len({rid for rid, _ in failed}), 'recording')}" if failed else "nothing failed",
+              run.PATH, "Run", "bad" if failed else ""),
+        _tile("Waits for you", str(waits), f"{_plural(checks, 'check')}, {_plural(found.units_waiting, 'coded unit')}",
+              REVIEW_PATH, "Review", "warn" if waits else ""),
     ]
 
 
-def _names(recordings: list[str], limit: int = 4) -> str:
-    return ", ".join(recordings[:limit]) + (f" and {len(recordings) - limit} more" if len(recordings) > limit else "")
+def setup_message(found: Standing):
+    if found.setup_saved:
+        return None
+    return ui.note(["Describe the setup first: nothing runs before it is saved. ", dcc.Link("Open Setup", href=setup.PATH)], "warn")
 
 
-def _item(kind: str, text: str, detail: str | None, href: str, where: str):
-    return html.Li(dcc.Link(
-        [html.Span(className=f"dot {kind}"),
-         html.Span([text, *([html.Span(detail, className="detail")] if detail else [])], className="what"),
-         html.Span(where, className="where")],
-        href=href,
-    ))
-
-
-def next_up(found: Standing) -> list:
-    """What failed, what waits for a person by kind of check, then the steps left to run, each one line and linked to
-    the page that deals with it."""
-    items = []
-    if not found.setup_saved:
-        items.append(_item("bad", "Describe the setup", "nothing runs before it is saved", setup.PATH, setup.LABEL))
-    for step in found.steps:
-        failed = [rid for rid in found.recordings if found.grid[rid, step] == "failed"]
-        if failed:
-            items.append(_item("bad", f"{label(step)} failed", f"{_names(failed)}", run.PATH, "Run"))
-    by_check: dict[str, list[str]] = {}
-    for rid, gates in found.waiting.items():
-        for name, _ in gates:
-            by_check.setdefault(name, []).append(rid)
-    for name, rids in by_check.items():
-        many = f"{len(rids)} recording{'s' if len(rids) != 1 else ''}"
-        items.append(_item("warn", f"{column_label(name)} waits on {many}", _names(rids), REVIEW_PATH, "Review"))
-    if found.units_waiting:
-        items.append(_item("warn", f"{found.units_waiting} coded unit{'s wait' if found.units_waiting != 1 else ' waits'} for review",
-                           None, REVIEW_PATH, "Review"))
-    tasks = [found.grid[rid, step] for rid in found.recordings for step in found.steps]
-    if tasks and all(state == "new" for state in tasks):
-        items.append(_item("", "Nothing has run yet", f"{len(found.steps)} steps for {len(found.recordings)} recordings", run.PATH, "Run"))
-        return items
-    left = []
-    for step in found.steps:
-        counts = Counter(found.grid[rid, step] for rid in found.recordings)
-        todo = counts["stale"] + counts["new"]
-        if todo:
-            left.append(f"{label(step)} {todo}")
-    if left:
-        items.append(_item("", f"{len(left)} step{'s' if len(left) != 1 else ''} to run", ", ".join(left), run.PATH, "Run"))
-    return items
-
-
-# a step's colour in the workflow, by what is most pressing among its recordings
-FLOW_COLOURS = {"failed": "#d92d20", "held": "#b54708", "waiting": "#b54708", "stale": "#eab308", "new": "#d0d5dd",
-                "current": "#079455", "person": "#079455", "software": "#7fc4a4", "none": "#e4e7ec"}
+# columns are grouped by what they work on, the group named by the step's first part
+LANES = (("Prepare", ("prep", "align", "segments")), ("Speech", ("text", "turns")), ("Voice", ("prosody",)),
+         ("Body", ("pose", "motion")), ("Face", ("face",)), ("Gaze", ("gaze",)), ("Coding", ("coding",)))
+OTHER_LANE = "Other"
+# a step's state in the workflow, by what is most pressing among its recordings
 FLOW_ORDER = ("failed", "held", "waiting", "stale", "new", "software", "none", "person", "current")
+DONE = ("current", "person", "software", "none")
 
 
-def _flow_state(found: Standing, name: str) -> tuple[str, Counter]:
-    is_check = bool(found.recordings) and (found.recordings[0], name) in found.checks
-    counts = Counter((found.checks if is_check else found.grid)[rid, name] for rid in found.recordings)
-    worst = next((state for state in FLOW_ORDER if counts.get(state)), "new")
-    return worst, counts
+def lane_of(name: str) -> str:
+    if name == SPEECH_ACTS:
+        return "Coding"
+    first = name.split(".")[0]
+    return next((lane for lane, prefixes in LANES if first in prefixes), OTHER_LANE)
 
 
-def _flow_text(found: Standing, name: str, counts: Counter) -> str:
-    is_check = bool(found.recordings) and (found.recordings[0], name) in found.checks
-    words = CHECK_TEXT if is_check else run.STATE_TEXT
-    return "<br>".join(f"{count} {words[state]}" for state, count in counts.most_common())
+def _is_check(found: Standing, name: str) -> bool:
+    return bool(found.recordings) and (found.recordings[0], name) in found.checks
 
 
-def _wrapped(text: str, width: int = 14) -> str:
-    lines, line = [], ""
-    for word in text.split():
-        if line and len(line) + 1 + len(word) > width:
-            lines.append(line)
-            line = word
-        else:
-            line = f"{line} {word}".strip()
-    return "<br>".join([*lines, line])
+def _state(found: Standing, rid: str, name: str) -> str:
+    return found.checks[rid, name] if (rid, name) in found.checks else found.grid[rid, name]
 
 
-def workflow_figure(found: Standing):
-    """The project's steps and checks left to right in the order they run, each coloured by its most pressing state."""
-    import plotly.graph_objects as go
-
-    columns = found.columns or found.steps
+def depths(columns: list[str], needs: dict[str, list[str]]) -> dict[str, int]:
     level: dict[str, int] = {}
 
     def depth(name: str) -> int:
         if name not in level:
-            level[name] = 1 + max((depth(need) for need in found.needs.get(name, []) if need in columns), default=-1)
+            level[name] = 1 + max((depth(need) for need in needs.get(name, []) if need in columns), default=-1)
         return level[name]
 
     for name in columns:
         depth(name)
-    rows: dict[int, int] = Counter()
-    where = {}
-    # column by column, each step placed near the steps it needs, so fewer lines cross
-    for depth_now in sorted(set(level.values())):
-        here = [name for name in columns if level[name] == depth_now]
-        here.sort(key=lambda name: sum(where[need][1] for need in found.needs.get(name, []) if need in where)
-                  / max(1, sum(need in where for need in found.needs.get(name, []))))
-        for name in here:
-            where[name] = (depth_now, rows[depth_now])
-            rows[depth_now] += 1
-    edge_x, edge_y = [], []
-    for name in columns:
-        for need in found.needs.get(name, []):
-            (x0, y0), (x1, y1) = where[need], where[name]
-            edge_x += [x0, (x0 + x1) / 2, (x0 + x1) / 2, x1, None]
-            edge_y += [-y0, -y0, -y1, -y1, None]
-    figure = go.Figure(go.Scatter(x=edge_x, y=edge_y, mode="lines", line={"color": "#c4c9d2", "width": 1.2}, hoverinfo="skip"))
-    for is_check in (False, True):
-        names = [name for name in columns if (bool(found.recordings) and (found.recordings[0], name) in found.checks) == is_check]
-        if not names:
-            continue
-        states = [_flow_state(found, name) for name in names]
-        figure.add_trace(go.Scatter(
-            x=[where[name][0] for name in names], y=[-where[name][1] for name in names], mode="markers+text",
-            marker={"size": 22, "symbol": "circle" if is_check else "square", "color": [FLOW_COLOURS[state] for state, _ in states],
-                    "line": {"color": "white", "width": 2}},
-            text=[_wrapped(column_label(name)) for name in names], textposition="bottom center", textfont={"size": 11, "color": "#667085"},
-            customdata=[f"{REVIEW_PATH}" if is_check else f"{run.PATH}?{urlencode({'step': name})}" for name in names],
-            hovertext=[f"<b>{column_label(name)}</b> ({name})<br>{_flow_text(found, name, counts)}" for name, (_, counts) in zip(names, states)],
-            hovertemplate="%{hovertext}<extra></extra>",
-        ))
-    deepest = max(rows.values(), default=1)
-    figure.update_layout(
-        margin={"l": 10, "r": 10, "t": 10, "b": 0}, showlegend=False, dragmode=False, height=70 + 92 * deepest,
-        xaxis={"visible": False, "range": [-0.6, max(level.values(), default=0) + 0.6]},
-        yaxis={"visible": False, "range": [-(deepest - 1) - 0.75, 0.35]},
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hoverlabel={"align": "left"},
-    )
-    return figure
+    return level
+
+
+def lanes(found: Standing) -> list[tuple[str, list[str]]]:
+    """The columns in their lanes, each lane in run order."""
+    columns = found.columns or found.steps
+    level = depths(columns, found.needs)
+    order = [lane for lane, _ in LANES] + [OTHER_LANE]
+    grouped = {lane: sorted((name for name in columns if lane_of(name) == lane), key=lambda name: (level[name], columns.index(name)))
+               for lane in order}
+    return [(lane, names) for lane, names in grouped.items() if names]
+
+
+def direct_needs(columns: list[str], needs: dict[str, list[str]]) -> dict[str, list[str]]:
+    """What each column needs, leaving out what it needs only through another of its needs."""
+    above: dict[str, set[str]] = {}
+
+    def ancestors(name: str) -> set[str]:
+        if name not in above:
+            above[name] = set()
+            for need in needs.get(name, []):
+                if need in columns:
+                    above[name] |= {need} | ancestors(need)
+        return above[name]
+
+    own = {name: [need for need in needs.get(name, []) if need in columns] for name in columns}
+    return {name: [need for need in mine if not any(other != need and need in ancestors(other) for other in mine)] for name, mine in own.items()}
+
+
+def workflow_data(found: Standing) -> dict:
+    """What the workflow drawing needs: lanes, each step's place and state, and the direct needs between steps."""
+    columns = found.columns or found.steps
+    level = depths(columns, found.needs)
+    grouped = lanes(found)
+    nodes = []
+    for lane, names in grouped:
+        for name in names:
+            is_check = _is_check(found, name)
+            counts = Counter(_state(found, rid, name) for rid in found.recordings)
+            worst = next((state for state in FLOW_ORDER if counts.get(state)), "new")
+            stuck = counts["failed"] or counts["waiting"] + counts["held"]
+            nodes.append({
+                "id": name, "label": column_label(name), "lane": lane, "depth": level[name], "check": is_check, "state": worst,
+                "issue": [stuck, "failed" if counts["failed"] else "waiting"] if stuck else None,
+                "href": REVIEW_PATH if is_check else f"{run.PATH}?{urlencode({'step': name})}",
+                "tip": f"{column_label(name)} ({name})\n" + "\n".join(
+                    f"{count} {(CHECK_TEXT if is_check else run.STATE_TEXT)[state]}" for state, count in counts.most_common()),
+            })
+    edges = [[need, name] for name, needs in direct_needs(columns, found.needs).items() for need in needs]
+    return {"lanes": [lane for lane, _ in grouped], "nodes": nodes, "edges": edges}
 
 
 def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
@@ -310,34 +293,83 @@ def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
     return f"{run.PATH}?{urlencode({'recording': rid, 'step': step})}", run.LABEL
 
 
-def _cell(rid: str, step: str, state: str):
-    href, page = cell_link(rid, step, state)
-    return html.Td(dcc.Link(html.Span(className=f"cell {state}"), href=href, title=f"{rid}, {label(step)} ({step}): {run.STATE_TEXT[state]}. Opens {page}."))
+def _cell(found: Standing, rid: str, name: str):
+    state = _state(found, rid, name)
+    if _is_check(found, name):
+        href, page, text, kind = f"{REVIEW_PATH}?{urlencode({'recording': rid})}", review.LABEL, CHECK_TEXT[state], f"cell check {state}"
+    else:
+        (href, page), text, kind = cell_link(rid, name, state), run.STATE_TEXT[state], f"cell {state}"
+    return html.Td(dcc.Link(html.Span(className=kind), href=href), className="c",
+                   **{"data-col": name, "data-rec": rid, "data-label": column_label(name), "data-state": text, "data-page": page})
 
 
-def _check_cell(rid: str, name: str, state: str):
-    href = f"{REVIEW_PATH}?{urlencode({'recording': rid})}"
-    return html.Td(dcc.Link(html.Span(className=f"cell check {state}"), href=href, title=f"{rid}, {column_label(name)}: {CHECK_TEXT[state]}. Opens Review."))
+def row_summary(found: Standing, rid: str) -> str:
+    states = Counter(_state(found, rid, name) for name in (found.columns or found.steps))
+    waiting, left = states["waiting"] + states["held"], states["new"] + states["stale"]
+    parts = [f"{states['failed']} failed" if states["failed"] else "", f"{waiting} wait" if waiting else "", f"{left} to run" if left else ""]
+    return ", ".join(part for part in parts if part) or "done"
+
+
+INSPECT_HINT = [html.H3("Nothing pointed at"), html.Ul([html.Li("Point at a square: its recording, step and state show here."),
+                                                        html.Li("Click it to go to the page it names.")])]
+
+
+def _key(found: Standing, columns: list[str]) -> list:
+    def entry(kind: str, text: str, state: str, checks: bool) -> list:
+        count = sum(_state(found, rid, name) == state for rid in found.recordings for name in columns if _is_check(found, name) == checks)
+        return [html.Span(className=kind), html.Span(text), html.Span(str(count), className="count")]
+
+    rows = [html.Div("Steps", className="head")]
+    for state in LEGEND:
+        rows += entry(f"cell {state}", run.STATE_TEXT[state], state, False)
+    if found.checks:
+        rows.append(html.Div("Checks by a person", className="head"))
+        for state in CHECK_LEGEND:
+            rows += entry(f"cell check {state}", CHECK_TEXT[state], state, True)
+    return rows
 
 
 def grid(found: Standing):
-    columns = found.columns or found.steps
-    head = html.Tr([html.Th(), *[
-        html.Th(html.Span(column_label(name), title=name), className="step-name check" if (found.recordings and (found.recordings[0], name) in found.checks) else "step-name")
-        for name in columns
-    ]])
-    rows = [
-        html.Tr([html.Th(rid, className="recording"), *[
-            _check_cell(rid, name, found.checks[rid, name]) if (rid, name) in found.checks else _cell(rid, name, found.grid[rid, name])
-            for name in columns
-        ]])
-        for rid in found.recordings
-    ]
-    legend = [html.Span([html.Span(className=f"cell {state}"), run.STATE_TEXT[state]]) for state in LEGEND]
-    if found.checks:
-        legend += [html.Span([html.Span(className=f"cell check {state}"), CHECK_TEXT[state]]) for state in CHECK_LEGEND]
-    return [html.Div(html.Table([html.Thead(head), html.Tbody(rows)], className="standing"), className="standing-wrap"),
-            html.Div(legend, className="legend")]
+    grouped = lanes(found)
+    columns = [name for _, names in grouped for name in names]
+    bands, heads = [html.Th(className="recording")], [html.Th(className="recording")]
+    for k, (lane, names) in enumerate(grouped):
+        if k:
+            bands.append(html.Th(className="gap"))
+            heads.append(html.Th(className="gap"))
+        bands.append(html.Th(lane, colSpan=len(names), className="band"))
+        heads += [html.Th(html.Span(column_short(name), title=f"{column_label(name)} ({name})"),
+                          className="step-name check" if _is_check(found, name) else "step-name", **{"data-col": name}) for name in names]
+    bands.append(html.Th())
+    heads.append(html.Th())
+
+    def row(rid: str):
+        cells = [html.Th(rid, className="recording")]
+        for k, (_, names) in enumerate(grouped):
+            if k:
+                cells.append(html.Td(className="gap"))
+            cells += [_cell(found, rid, name) for name in names]
+        summary = row_summary(found, rid)
+        cells.append(html.Td(summary, className="summary" + (" bad" if "failed" in summary else " warn" if "wait" in summary else "")))
+        return html.Tr(cells)
+
+    done = [rid for rid in found.recordings if all(_state(found, rid, name) in DONE for name in columns)]
+    open_ = [rid for rid in found.recordings if rid not in done]
+    if done and open_:
+        width = len(columns) + len(grouped) + 1
+        body = [html.Tbody([row(rid) for rid in open_]),
+                html.Tbody(html.Tr(html.Th(f"▸ {_plural(len(done), 'more recording')}, everything done", colSpan=width), className="fold-row")),
+                html.Tbody([row(rid) for rid in done], className="done closed")]
+    else:
+        body = [html.Tbody([row(rid) for rid in found.recordings])]
+    table = html.Table([html.Thead(html.Tr(bands)), *body, html.Tfoot(html.Tr(heads))], className="standing")
+    n_checks = sum(_is_check(found, name) for name in columns)
+    totals = [html.B(str(len(open_))), f" recording{'' if len(open_) == 1 else 's'} with something to do", html.Br(),
+              html.B(str(len(done))), " with everything done", html.Br(),
+              html.B(str(len(columns) - n_checks)), " steps, ", html.B(str(n_checks)), " checks"]
+    side = html.Aside([html.Div(_key(found, columns), className="key"), html.Div(totals, className="totals"),
+                       html.Div(INSPECT_HINT, className="inspect")], className="standing-side")
+    return html.Div([html.Div(table, className="standing-wrap"), side], className="standing-card")
 
 
 def latest_run(config_path: Path) -> str:
@@ -355,61 +387,37 @@ def layout(config_path: Path):
         [
             ui.page_head("Overview", html.Span(id="overview-summary")),
             html.Div(id="overview-message"),
-            dcc.Loading(
-                [
-                    html.Div(id="overview-tiles", className="tiles"),
-                    html.Div(
-                        [
-                            ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
-                            ui.card("Workflow", dcc.Graph(id=FLOW, config={"displayModeBar": False}, figure=_empty_flow()),
-                                    desc="Each step in run order, coloured by its most pressing state; click one to go there.", flush=True),
-                        ],
-                        className="overview-row",
-                    ),
-                    ui.card("Where each recording stands", html.Div(id="overview-grid"),
-                            desc="Point at a square for its state, click it to go there. Round ones are checks by a person.",
-                            flush=True),
-                ],
-                delay_show=300,
-            ),
+            dcc.Store(id=FLOW_DATA),
+            dcc.Loading(html.Div(id="overview-tiles", className="tiles"), delay_show=300),
+            ui.card("Workflow", html.Div(id=FLOW, className="flow-canvas"),
+                    desc="Each step where it comes in the run. Point at one to see what it needs; click it to go there."),
+            dcc.Loading(ui.card("Where each recording stands", html.Div(id="overview-grid"),
+                                desc="Recordings with something to do come first.", flush=True), delay_show=300),
         ]
     )
 
 
-def _empty_flow():
-    import plotly.graph_objects as go
-
-    figure = go.Figure()
-    figure.update_layout(height=40, margin={"l": 0, "r": 0, "t": 0, "b": 0}, xaxis={"visible": False}, yaxis={"visible": False},
-                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    return figure
-
-
 def register(app, config_path: Path) -> None:
-    # a click on a step opens its page without reloading the workbench
+    # the workflow is drawn in the browser by assets/overview.js, which also opens a step's page on a click
     app.clientside_callback(
-        """function (click) {
-            const href = click && click.points && click.points[0] && click.points[0].customdata;
-            if (!href) { return window.dash_clientside.no_update; }
-            window.history.pushState({}, '', href);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-            return href;
+        """function (data) {
+            if (window.macawOverview) { window.macawOverview.draw(data); } else { window.macawOverviewPending = data; }
+            return window.dash_clientside.no_update;
         }""",
-        Output(FLOW, "className"), Input(FLOW, "clickData"), prevent_initial_call=True,
+        Output(FLOW, "title"), Input(FLOW_DATA, "data"),
     )
 
     @app.callback(
         Output("overview-summary", "children"), Output("overview-message", "children"), Output("overview-tiles", "children"),
-        Output("overview-next", "children"), Output("overview-grid", "children"), Output(FLOW, "figure"),
+        Output("overview-grid", "children"), Output(FLOW_DATA, "data"),
         Input("url", "pathname"),
     )
     def fill(pathname):
         if (pathname or "/").rstrip("/") not in ("", PATH):
-            return (no_update,) * 6
+            return (no_update,) * 5
         config = resolve_config(config_path)
         try:
             found = standing(config_path)
         except Exception as error:   # the page still opens; the Run page and the run itself say what is wrong
-            return latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], [], _empty_flow()
-        items = next_up(found) or [html.Li(html.P("Nothing to do: every step is up to date and nothing waits for a person.", className="none"))]
-        return latest_run(config_path), None, tiles(config, found), items, grid(found), workflow_figure(found)
+            return latest_run(config_path), ui.note(f"Could not work out where the recordings stand: {error}", "bad"), [], [], None
+        return latest_run(config_path), setup_message(found), tiles(config, found), grid(found), workflow_data(found)

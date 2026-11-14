@@ -339,20 +339,20 @@ def test_the_overview_counts_what_there_is_and_what_waits(project):
     assert found.grid["003", "prep.media"] == "held" and not found.n_prepared
     tiles = text_of(overview.tiles(resolve_config(project), found))
     assert "parent, child" in tiles and "known once prep.media has run" in tiles and "0 of" in tiles
-    items = text_of(overview.next_up(found))
-    assert "Check: file offsets waits on 1 recording" in items and '"/review"' in items
+    assert "Waits for you" in tiles and "1 check, 0 coded units" in tiles and '"/review"' in tiles and "nothing failed" in tiles
     grid = text_of(overview.grid(found))
-    assert "cell held" in grid and "003, Sound and timing (prep.media): waiting for a person" in grid
+    assert "cell held" in grid and '"data-label": "Sound and timing"' in grid and '"data-state": "waiting for a person"' in grid
     assert found.checks["003", "align.review"] == "waiting" and "cell check waiting" in grid and "Check: file offsets" in grid
     assert found.columns.index("align.review") < found.columns.index("prep.media")
 
 
-def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
+def test_a_failed_step_shows_on_its_own_tile_and_row(project, monkeypatch):
     monkeypatch.setattr(cli_bridge, "failed_last_time", lambda config_path: {task_id_for("003", "prep.media")})
     found = overview.standing(project)
     assert found.grid["003", "prep.media"] == "failed"
-    first = text_of(overview.next_up(found)[0])
-    assert "Sound and timing failed" in first and "003" in first and '"/run"' in first
+    failed = text_of(overview.tiles(resolve_config(project), found)[2])
+    assert "Failed last time" in failed and "1 step, 1 recording" in failed and '"/run"' in failed and "tile bad" in failed
+    assert overview.row_summary(found, "003").startswith("1 failed")
 
 
 def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
@@ -360,7 +360,7 @@ def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
     assert overview.cell_link("003", "prep.media", "held") == ("/review?recording=003", "Review")
     assert [overview.cell_link("003", "text.asr", state)[0] for state in ("new", "stale", "failed")] == ["/run?recording=003&step=text.asr"] * 3
     grid = text_of(overview.grid(overview.standing(project)))
-    assert '"href": "/review?recording=003"' in grid and "Opens Review." in grid
+    assert '"href": "/review?recording=003"' in grid and '"data-page": "Review"' in grid
     assert ui.asked("?recording=a%20b&step=text.asr") == {"recording": "a b", "step": "text.asr"} and ui.asked(None) == {}
 
 
@@ -399,13 +399,20 @@ def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monke
     assert kept[3] == ["text.asr"]
 
 
-def test_steps_left_to_run_are_one_line_with_how_many_recordings_each():
-    steps = [f"step{k}" for k in range(9)]
-    found = overview.Standing(["a", "b"], steps, {(rid, step): "current" if step == "step0" else "stale" for rid in "ab" for step in steps})
-    items = [text_of(item) for item in overview.next_up(found)]
-    assert len(items) == 1 and "8 steps to run" in items[0] and "step1 2, step2 2" in items[0]
-    fresh = overview.Standing(["a"], steps, {("a", step): "new" for step in steps})
-    assert ["Nothing has run yet" in text_of(item) for item in overview.next_up(fresh)] == [True]
+def test_the_grid_groups_steps_by_lane_and_folds_the_recordings_with_nothing_left():
+    steps = ["text.asr", "prep.media", "pose.detect", "my.plugin"]
+    needs = {"prep.media": [], "text.asr": ["prep.media"], "pose.detect": ["prep.media"], "my.plugin": ["text.asr"]}
+    grid = {(rid, step): "current" for rid in "abc" for step in steps}
+    grid["b", "text.asr"], grid["c", "pose.detect"] = "failed", "stale"
+    found = overview.Standing(["a", "b", "c"], steps, grid, columns=steps, needs=needs)
+    assert overview.lanes(found) == [("Prepare", ["prep.media"]), ("Speech", ["text.asr"]), ("Body", ["pose.detect"]), ("Other", ["my.plugin"])]
+    assert overview.lane_of(overview.SPEECH_ACTS) == "Coding"
+    assert [overview.row_summary(found, rid) for rid in "abc"] == ["done", "1 failed", "1 to run"]
+    shown = text_of(overview.grid(found))
+    assert "1 more recording, everything done" in shown and "done closed" in shown and shown.index('"b"') < shown.index('"a"')
+    assert '"Other"' in shown and "Checks by a person" not in shown
+    everything = overview.Standing(["a"], steps, {("a", step): "current" for step in steps}, columns=steps, needs=needs)
+    assert "fold-row" not in text_of(overview.grid(everything))
 
 
 def test_the_folder_button_is_only_offered_on_the_machine_that_has_the_folder(project):
@@ -773,9 +780,9 @@ def test_a_segment_is_set_only_on_a_recording_the_project_has(project):
 
 
 def test_the_overview_asks_for_the_setup_first_until_it_is_saved(project):
-    assert "Describe the setup" not in text_of(overview.next_up(overview.standing(project)))
+    assert overview.setup_message(overview.standing(project)) is None
     (project.parent / "setups" / "main.yaml").unlink()
-    first = text_of(overview.next_up(overview.standing(project))[0])
+    first = text_of(overview.setup_message(overview.standing(project)))
     assert "Describe the setup" in first and '"/setup"' in first
     assert "not saved yet" in text_of(run.layout(project))
 
@@ -1222,9 +1229,25 @@ def test_the_workflow_draws_each_step_after_what_it_needs_and_links_to_it():
     grid = {("a", step): state for step, state in (("prep.media", "current"), ("pose.detect", "failed"), ("text.asr", "stale"))}
     found = overview.Standing(["a"], ["prep.media", "pose.detect", "text.asr"], grid, columns=steps, checks={("a", "align.review"): "waiting"},
                               needs={"align.review": [], "prep.media": ["align.review"], "pose.detect": ["prep.media"], "text.asr": ["prep.media"]})
-    figure = overview.workflow_figure(found)
-    squares, rounds = figure.data[1], figure.data[2]
-    assert list(squares.x) == [1, 2, 2] and list(squares.y) == [0, 0, -1] and list(rounds.x) == [0]
-    assert list(squares.marker.color) == [overview.FLOW_COLOURS[state] for state in ("current", "failed", "stale")]
-    assert rounds.marker.color[0] == overview.FLOW_COLOURS["waiting"] and rounds.customdata[0] == "/review"
-    assert squares.customdata[1] == "/run?step=pose.detect" and "Find people" in squares.text[1]
+    flow = overview.workflow_data(found)
+    nodes = {node["id"]: node for node in flow["nodes"]}
+    assert flow["lanes"] == ["Prepare", "Speech", "Body"]
+    assert [nodes[name]["depth"] for name in steps] == [1, 0, 2, 2]
+    assert [nodes[name]["state"] for name in ("prep.media", "pose.detect", "text.asr")] == ["current", "failed", "stale"]
+    assert nodes["align.review"]["check"] and nodes["align.review"]["state"] == "waiting" and nodes["align.review"]["href"] == "/review"
+    assert nodes["align.review"]["issue"] == [1, "waiting"] and nodes["pose.detect"]["issue"] == [1, "failed"]
+    assert nodes["pose.detect"]["href"] == "/run?step=pose.detect" and nodes["pose.detect"]["label"] == "Find people"
+    assert sorted(flow["edges"]) == [["align.review", "prep.media"], ["prep.media", "pose.detect"], ["prep.media", "text.asr"]]
+
+
+def test_every_step_has_a_short_name_for_under_the_grid():
+    from macaw.interface import step_labels
+
+    assert set(step_labels.LABELS) <= set(step_labels.SHORT) and max(map(len, step_labels.SHORT.values())) <= 16
+    assert step_labels.short("coding.judge.v2") == "Acts, v2" and step_labels.short("my.plugin") == "my.plugin"
+    assert overview.column_short(overview.SPEECH_ACTS) == "Acts checked"
+
+
+def test_the_workflow_leaves_out_a_need_reached_through_another():
+    needs = {"a": [], "b": ["a"], "c": ["a", "b"]}
+    assert overview.direct_needs(["a", "b", "c"], needs) == {"a": [], "b": ["a"], "c": ["b"]}

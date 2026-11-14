@@ -23,6 +23,7 @@ LABELS = {
     "face.au_check": "Expressions, second model",
     "face.movement": "Face movement",
     "face.shares": "Expression shares",
+    "face.speaking": "Speaking faces",
     "gaze.target": "Where people look",
     "gaze.objects": "Objects looked at",
     "motion.mea": "Motion energy",
@@ -46,6 +47,22 @@ LABELS = {
 }
 # a version under coding.judges or coding.ratings is named after its version
 PREFIXES = {"coding.judge.": "Speech acts, ", "coding.rate.": "Ratings, "}
+# shorter still, under the group a column stands in on the Overview grid
+SHORT = {
+    "prep.video": "Video", "prep.media": "Sound", "prep.depth": "Depth", "align.review": "Offsets",
+    "pose.detect": "Find people", "pose.keypoints": "Points", "pose.review": "Who is who", "pose.kinematics": "Movement",
+    "pose.kinematics3d": "Movement 3D", "pose.listening": "Listening", "pose.gestures": "Gestures", "pose.gestures3d": "Gestures 3D",
+    "pose.triangulate": "3D", "pose.depth": "Depth", "pose.mesh": "Model", "pose.one_camera": "3D, one camera",
+    "face.au": "Expressions", "face.au_check": "2nd model", "face.movement": "Movement", "face.shares": "Shares", "face.speaking": "Speaking",
+    "gaze.target": "Who looks where", "gaze.objects": "Objects",
+    "motion.mea": "Motion energy",
+    "text.diarize": "Voices", "text.review": "Whose voice", "text.lines": "Line speakers", "text.shared_asr": "Shared sound",
+    "text.asr": "Transcript", "text.features": "Words", "text.syntax": "Sentences",
+    "turns.structure": "Turns", "turns.transitions": "Gaps", "turns.entropy": "Balance",
+    "prosody.frame": "Pitch", "prosody.voice_report": "Quality", "prosody.standard_sets": "Standard sets", "prosody.turn_pairs": "Across turns",
+    "coding.layer_a": "Talk coding", "coding.judge": "Speech acts", "segments.summary": "Summaries",
+}
+SHORT_PREFIXES = {"coding.judge.": "Acts, ", "coding.rate.": "Ratings, "}
 
 
 def label(step: str) -> str:
@@ -55,3 +72,12 @@ def label(step: str) -> str:
         if step.startswith(prefix):
             return name + step[len(prefix):]
     return step
+
+
+def short(step: str) -> str:
+    if step in SHORT:
+        return SHORT[step]
+    for prefix, name in SHORT_PREFIXES.items():
+        if step.startswith(prefix):
+            return name + step[len(prefix):]
+    return label(step)

@@ -16,6 +16,9 @@
   --ok: #079455; --ok-soft: #ecfdf3; --warn: #b54708; --warn-soft: #fffaeb; --bad: #d92d20; --bad-soft: #fef3f2; --stale: #eab308;
   --tile-1: var(--panel); --tile-2: var(--panel); --tile-3: var(--panel); --tile-4: var(--panel);
   --card-head-bg: transparent; --pattern-line: transparent; --canvas-bg: linear-gradient(180deg, #ffffff 0%, #edf1f4 100%);
+  /* states of a step or check, as squares and dots */
+  --state-done: #9ccf83; --state-soft: #d3eac5; --state-stale: #f5cf45; --state-failed: #e8645a; --state-waiting: #f09a4a;
+  --state-held: #f8cfa4; --state-new: var(--rule); --state-failed-ink: #c0574b; --state-waiting-ink: #b8692a;
   /* the room in 3D */
   --room-floor: #eef2f4; --room-grid: #d3dadf; --room-wall: #7a8b99; --room-wall-alpha: 0.12;
   --room-sky: #ffffff; --room-ground: #94a3b8; --room-thing: #c9ced6; --room-stand: #868e96;
@@ -216,6 +219,11 @@ p.none { color: var(--faint); }
 .dot.warn { background: var(--warn); }
 .dot.bad { background: var(--bad); }
 .dot.stale { background: var(--stale); }
+.dot.state-current { background: var(--state-done); }
+.dot.state-stale { background: var(--state-stale); }
+.dot.state-failed { background: var(--state-failed); }
+.dot.state-held { background: var(--state-waiting); }
+.dot.state-new { background: var(--state-new); }
 .note { padding: 0.5rem 0.9rem; margin: 0.5rem 0; border-radius: var(--radius-box); background: var(--code); color: var(--ink); }
 .note.ok-note { background: var(--ok-soft); color: var(--ok); }
 .note.warn-note { background: var(--warn-soft); color: var(--warn); }
@@ -316,38 +324,96 @@ textarea.yaml:focus { outline: none; border-color: var(--ink); }
 
 /* overview */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
-.tile { background: var(--panel); border-radius: var(--radius-tile); box-shadow: var(--card); padding: 0.75rem 1.3rem 0.8rem; }
-.tile .label { color: var(--muted); font-family: var(--label-font); font-size: var(--label-size); text-transform: var(--card-title-case); letter-spacing: var(--card-title-spacing); }
+.tile { display: block; background: var(--panel); border-radius: var(--radius-tile); box-shadow: var(--card); padding: 0.95rem 1.4rem 1rem; color: var(--ink); text-decoration: none; }
+a.tile:hover { box-shadow: var(--card), 0 3px 10px var(--shadow); }
+.tile .label { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--muted); font-family: var(--label-font); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; }
+.tile .label span { font-weight: 500; letter-spacing: 0; text-transform: none; }
 .tiles .tile:nth-child(4n+1) { background: var(--tile-1); }
 .tiles .tile:nth-child(4n+2) { background: var(--tile-2); }
 .tiles .tile:nth-child(4n+3) { background: var(--tile-3); }
 .tiles .tile:nth-child(4n+4) { background: var(--tile-4); }
-.tile .value { font-size: 1.7rem; font-weight: 600; line-height: 1.25; margin-top: 0.15rem; font-variant-numeric: tabular-nums; font-family: var(--number-font); }
-.tile .sub { color: var(--muted); font-size: 0.86rem; }
-.next { list-style: none; margin: 0; padding: 0; }
-.next li + li { border-top: 1px solid var(--rule); }
-.next a { display: flex; align-items: baseline; gap: 0.7rem; padding: 0.45rem 1.4rem; color: var(--ink); text-decoration: none; }
-.next a:hover { background: var(--hover); }
-.next .what { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.next .detail { margin-left: 0.6rem; color: var(--muted); font-size: 0.86rem; }
-.next .where { margin-left: auto; flex: none; color: var(--muted); font-size: 0.86rem; }
-.next p.none { margin: 0; padding: 0.6rem 1.4rem; }
-.standing-wrap { overflow-x: auto; padding: 0.5rem 1.4rem 0.7rem; }
-table.standing { border-collapse: separate; border-spacing: 3px; font-size: 0.86rem; }
-table.standing th { font-weight: 500; color: var(--muted); }
-table.standing th.step-name { vertical-align: bottom; padding: 0 0 0.3rem; }
-table.standing th.step-name span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
-table.standing th.recording { text-align: left; padding-right: 1rem; white-space: nowrap; color: var(--ink); }
-.cell { display: block; width: 1.25rem; height: 1.25rem; border-radius: 4px; border: 1.5px solid var(--border); }
-.cell.current { background: var(--ok); border-color: var(--ok); }
-.cell.stale { background: var(--stale); border-color: var(--stale); }
-.cell.held { background: var(--warn-soft); border-color: var(--warn); }
-.cell.failed { background: var(--bad); border-color: var(--bad); }
-table.standing a { display: block; border-radius: 5px; }
-table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2px solid var(--accent); outline-offset: 1px; }
-.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; padding: 0.6rem 1.4rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.86rem; }
-.legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
-.legend .cell { width: 0.95rem; height: 0.95rem; }
+.tile .value { font-size: 2rem; font-weight: 600; line-height: 1.2; margin-top: 0.35rem; font-variant-numeric: tabular-nums; font-family: var(--number-font); }
+.tile.bad .value { color: var(--state-failed-ink); }
+.tile.warn .value { color: var(--state-waiting-ink); }
+.tile .sub { color: var(--muted); font-size: 0.88rem; margin-top: 0.15rem; }
+.tile .meter { height: 4px; border-radius: 2px; background: var(--rule-soft); margin-top: 0.6rem; overflow: hidden; }
+.tile .meter i { display: block; height: 100%; background: var(--state-done); }
+
+/* the workflow, on a canvas like the room's */
+.flow-canvas { overflow-x: auto; border-radius: var(--radius-box); background: var(--canvas-bg); border: var(--control-border) solid var(--rule); min-height: 3rem; }
+.flow-canvas svg { display: block; }
+.flow .lane-rule { stroke: var(--rule); stroke-width: 1; }
+.flow .lane-label { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; }
+.flow .edge { fill: none; stroke: var(--border); stroke-width: 1.1; opacity: 0.8; transition: opacity 0.12s; }
+.flow.focus .edge { opacity: 0.12; }
+.flow .edge.hot { stroke: var(--accent); opacity: 1; stroke-width: 1.8; }
+.flow .node { cursor: pointer; transition: opacity 0.12s; }
+.flow.focus .node { opacity: 0.3; }
+.flow.focus .node.hot { opacity: 1; }
+.flow .node rect.box { fill: var(--panel); filter: drop-shadow(0 1px 1.5px rgba(16, 24, 40, 0.1)); }
+.flow .node:hover rect.box { stroke: var(--accent); stroke-width: 1.2; }
+.flow .node text { fill: var(--ink); font-size: 12.5px; }
+.flow .node text.issue { font-size: 11.5px; font-weight: 600; }
+.flow .node text.issue.failed { fill: var(--state-failed-ink); }
+.flow .node text.issue.waiting { fill: var(--state-waiting-ink); }
+.flow .mark { fill: var(--state-new); }
+.flow .mark.current, .flow .mark.person { fill: var(--state-done); }
+.flow .mark.software { fill: var(--state-soft); }
+.flow .mark.stale { fill: var(--state-stale); }
+.flow .mark.failed { fill: var(--state-failed); }
+.flow .mark.held, .flow .mark.waiting { fill: var(--state-waiting); }
+.flow .check .mark { stroke: var(--panel); stroke-width: 0; }
+
+/* where each recording stands: the grid, and beside it the square pointed at, the key and the totals */
+.standing-card { display: grid; grid-template-columns: minmax(0, 1fr) 16rem; gap: 2rem; padding: 1.1rem 1.4rem 1rem; align-items: start; }
+.standing-wrap { overflow-x: auto; }
+table.standing { border-collapse: separate; border-spacing: 0; font-size: 0.84rem; }
+table.standing th, table.standing td { padding: 0; }
+table.standing td.c { padding: 2px; }
+table.standing th { font-weight: 400; color: var(--muted); }
+table.standing th.recording { text-align: left; padding: 0 1.1rem 0 0.2rem; white-space: nowrap; font-weight: 500; color: var(--ink); }
+table.standing .gap { width: 14px; min-width: 14px; }
+table.standing th.band { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; text-align: left; padding: 0 0 0.35rem 2px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.standing tfoot th.step-name { position: relative; height: 5.8rem; }
+table.standing th.step-name span { position: absolute; left: 50%; top: 0.35rem; transform-origin: 0 50%; transform: rotate(45deg); white-space: nowrap; font-size: 0.76rem; }
+table.standing th.step-name.check span { color: var(--ink); font-weight: 500; }
+table.standing td.summary { padding-left: 1.1rem; white-space: nowrap; font-size: 0.82rem; color: var(--muted); }
+table.standing td.summary.bad { color: var(--state-failed-ink); }
+table.standing td.summary.warn { color: var(--state-waiting-ink); }
+table.standing a { display: block; }
+table.standing tbody tr:hover th.recording, table.standing th.step-name.hl span { color: var(--accent); font-weight: 600; }
+table.standing tbody tr:hover td.c, table.standing td.c.hl { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+table.standing tbody tr:hover td.c.hl { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+table.standing a:focus-visible .cell { outline: 2px solid var(--accent); outline-offset: 1px; }
+table.standing tr.fold-row th { text-align: left; padding: 0.55rem 0.2rem 0.2rem; cursor: pointer; white-space: nowrap; }
+table.standing tr.fold-row th:hover { color: var(--ink); }
+table.standing tbody.done.closed { display: none; }
+.cell { display: block; width: 1.1rem; height: 1.1rem; border-radius: 3px; background: var(--state-new); }
+.cell.current { background: var(--state-done); }
+.cell.stale { background: var(--state-stale); }
+.cell.held { background: var(--state-held); }
+.cell.failed { background: var(--state-failed); }
+.cell.check { border-radius: 50%; }
+.cell.check.person { background: var(--state-done); }
+.cell.check.software { background: var(--state-soft); }
+.cell.check.waiting { background: var(--state-waiting); }
+.standing-side { position: sticky; top: 8.5rem; display: flex; flex-direction: column; gap: 1.3rem; font-size: 0.88rem; }
+.standing-side .inspect { padding-top: 1.1rem; border-top: 1px solid var(--rule); }
+.standing-side .inspect h3 { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.7rem; }
+.standing-side .inspect ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
+.standing-side .inspect li { margin: 0.2rem 0; }
+.standing-side .inspect dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 0.9rem; }
+.standing-side .inspect dt { color: var(--muted); }
+.standing-side .inspect dd { margin: 0; }
+.standing-side .inspect code { font-size: 0.8rem; color: var(--muted); }
+.standing-side .key { display: grid; grid-template-columns: 1rem 1fr auto; gap: 0.42rem 0.6rem; align-items: center; padding-top: 1.1rem; border-top: 1px solid var(--rule); }
+.standing-side .key .cell { width: 0.95rem; height: 0.95rem; }
+.standing-side .key .count { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.standing-side .key .head { grid-column: 1 / -1; color: var(--muted); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; margin-top: 0.3rem; }
+.standing-side .key .head:first-child { margin-top: 0; }
+.standing-side .totals { padding-top: 1.1rem; border-top: 1px solid var(--rule); color: var(--muted); line-height: 1.7; }
+.standing-side .totals b { color: var(--ink); font-weight: 600; }
+@media (max-width: 1100px) { .standing-card { grid-template-columns: 1fr; } .standing-side { position: static; } }
 
 /* the setup's editor: the list, the room in 3D and the chosen one's settings, three flat views below */
 .room-editor { display: grid; grid-template-columns: 15rem minmax(0, 1fr) 20rem; gap: 1.25rem; align-items: start; }
@@ -471,20 +537,11 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .note-text { width: 100%; min-height: 4rem; margin-top: 0.6rem; padding: 0.5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
 .tags .pill { margin-right: 0.3rem; }
 
-/* Overview grid: a check by a person is round; who decided it sets its fill */
-.cell.check { border-radius: 50%; }
-.cell.check.person { background: var(--ok); border-color: var(--ok); }
-.cell.check.software { background: var(--panel); border-color: var(--ok); border-width: 2.5px; }
-.cell.check.waiting { background: var(--warn); border-color: var(--warn); }
-.cell.check.none { border-style: dashed; border-color: var(--faint); }
-table.standing th.step-name.check span { color: var(--ink); font-weight: 600; }
 .step-id { margin: 0 0.5rem; color: var(--faint); font-size: 0.82rem; font-family: var(--mono, monospace); }
 .timeline { margin: 0 0 0.8rem; }
 
-.overview-row { display: grid; grid-template-columns: minmax(22rem, 2fr) minmax(0, 3fr); gap: 1rem; align-items: start; }
-.overview-row > .card { margin-bottom: 1rem; }
 .card-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 .card-pair > .card { margin-bottom: 1rem; }
 .run-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr); gap: 1rem; align-items: start; }
 .run-columns .side { position: sticky; top: 8.5rem; }
-@media (max-width: 1100px) { .overview-row, .card-pair, .run-columns { grid-template-columns: 1fr; } .run-columns .side { position: static; } }
+@media (max-width: 1100px) { .card-pair, .run-columns { grid-template-columns: 1fr; } .run-columns .side { position: static; } }
