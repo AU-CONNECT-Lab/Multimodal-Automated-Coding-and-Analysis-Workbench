@@ -385,7 +385,7 @@ def _scale(config, layout, recording):
         html.Div(
             [
                 ui.field("Measure on", dcc.Dropdown(sources, chosen, id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
-                ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10)),
+                ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10, debounce=True)),
                 ui.button("Show frame", {"type": SCALE_SHOW, **key}),
             ],
             className="toolbar",
@@ -431,7 +431,7 @@ def _gaze(config, layout, recording):
         html.Div(
             [
                 ui.field("Video", dcc.Dropdown(videos, videos[0], id={"type": GAZE_VIDEO, **key}, clearable=False, className="picker")),
-                ui.field("At (s)", dcc.Input(id={"type": GAZE_AT, **key}, type="number", min=0, value=10)),
+                ui.field("At (s)", dcc.Input(id={"type": GAZE_AT, **key}, type="number", min=0, value=10, debounce=True)),
                 ui.button("Show frame", {"type": GAZE_SHOW, **key}),
                 ui.button("A frame at random", {"type": GAZE_RANDOM, **key}),
             ],
@@ -858,15 +858,16 @@ def register(app, config_path: Path) -> None:
         Output({"type": SCALE_NOTE, "key": MATCH}, "children"),
         Input({"type": SCALE_SHOW, "key": MATCH}, "n_clicks"),
         Input({"type": SCALE_GRAPH, "key": MATCH}, "clickData"),
-        State({"type": SCALE_VIDEO, "key": MATCH}, "value"),
-        State({"type": SCALE_AT, "key": MATCH}, "value"),
+        # a moment typed or another video chosen shows its frame without the button
+        Input({"type": SCALE_VIDEO, "key": MATCH}, "value"),
+        Input({"type": SCALE_AT, "key": MATCH}, "value"),
         State({"type": SCALE_POINTS, "key": MATCH}, "data"),
         State({"type": SCALE_FRAME, "key": MATCH}, "data"),
         prevent_initial_call=True,
     )
     def scale_frame(_show, click, video, at, points, uri):
         trigger = ctx.triggered_id
-        if trigger["type"] == SCALE_SHOW:
+        if trigger["type"] in (SCALE_SHOW, SCALE_VIDEO, SCALE_AT):
             uri, problem = frame_uri(config_path, trigger["key"], video, float(at or 0.0))
             note = ui.note(problem, "warn") if problem else ui.note("Click one end of the object, then the other.")
             return scale_figure(uri, []), [], uri, note
@@ -886,8 +887,8 @@ def register(app, config_path: Path) -> None:
         Output({"type": GAZE_NOTE, "key": MATCH}, "children"),
         Input({"type": GAZE_SHOW, "key": MATCH}, "n_clicks"),
         Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
-        State({"type": GAZE_VIDEO, "key": MATCH}, "value"),
-        State({"type": GAZE_AT, "key": MATCH}, "value"),
+        Input({"type": GAZE_VIDEO, "key": MATCH}, "value"),
+        Input({"type": GAZE_AT, "key": MATCH}, "value"),
         prevent_initial_call=True,
     )
     def show_gaze_frame(_show, _random, video, at):

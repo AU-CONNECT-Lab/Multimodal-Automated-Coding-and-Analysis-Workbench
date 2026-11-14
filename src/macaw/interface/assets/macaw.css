@@ -479,3 +479,4 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .cell.check.none { border-style: dashed; border-color: var(--faint); }
 table.standing th.step-name.check span { color: var(--ink); font-weight: 600; }
 .step-id { margin: 0 0.5rem; color: var(--faint); font-size: 0.82rem; font-family: var(--mono, monospace); }
+.timeline { margin: 0 0 0.8rem; }

@@ -7,7 +7,7 @@ import base64
 from pathlib import Path
 
 import pandas as pd
-from dash import Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
@@ -21,7 +21,9 @@ SHOWN_SIDE = 1280
 # one colour per person, in the order of project.roles, on the frame and beside the names
 COLOURS = ("#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f59f00", "#0c8599", "#c2255c", "#5c940d")
 _UNNAMED = "#adb5bd"
-AT, FROM_PLAYER, SHOW, PERSON, GRAPH, NOTE = "names-at", "names-from-player", "names-show", "names-person", "names-graph", "names-note"
+AT, TIMELINE, FROM_PLAYER, PERSON, GRAPH, NOTE = "names-at", "names-timeline", "names-from-player", "names-person", "names-graph", "names-note"
+# the moment shown first, or the middle of a shorter file
+FIRST_AT_S = 10.0
 # the Review page's save reads these by pattern, as a recording without cameras has none
 MARKS, FRAME = {"type": "names-marks", "key": "one"}, {"type": "names-frame", "key": "one"}
 
@@ -59,20 +61,36 @@ def saved(config, rid: str, camera: str, people: list[str]):
     return ui.table(["Person", "At (s)", "Where", "By"], rows, numeric={"At (s)"}, fit=True)
 
 
+def file_length(config, rid: str, camera: str) -> float | None:
+    from macaw.media.probe import probe
+
+    try:
+        return probe(build_recording(rid, config).media_named(camera).path).duration_s
+    except Exception:   # a file that cannot be read gets a typed moment only
+        return None
+
+
 def editor(config, rid: str, camera: str, people: list[str]):
-    """Shows a frame of the camera at the player's moment or a typed one; Save and Clear are the Review page's buttons."""
+    """A frame of the camera at the moment on the timeline, typed, or taken from the player; Save and Clear are the
+    Review page's buttons."""
     options = [{"label": swatch(person, people), "value": person} for person in people]
+    length = file_length(config, rid, camera)
+    first = FIRST_AT_S if not length or length > FIRST_AT_S else round(length / 2, 1)
+    timeline = dcc.Slider(
+        0, round(length, 1), value=first, id={"type": TIMELINE, "key": "one"}, updatemode="mouseup", marks=None,
+        tooltip={"placement": "bottom", "always_visible": False},
+    ) if length else None
     return html.Div(
         [
             saved(config, rid, camera, people),
             html.Div(
                 [
-                    ui.field("At (s) of its file", dcc.Input(id=AT, type="number", min=0, step="any", value=10)),
+                    ui.field("At (s) of its file", dcc.Input(id=AT, type="number", min=0, step="any", value=first, debounce=True)),
                     ui.button("The player's time", FROM_PLAYER),
-                    ui.button("Show frame", SHOW),
                 ],
                 className="toolbar",
             ),
+            html.Div(timeline, className="timeline"),
             html.Div(ui.field("Click on", dcc.RadioItems(options, people[0] if people else None, id=PERSON, inline=True)), className="toolbar"),
             html.Div(id=NOTE),
             dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False}),
@@ -239,24 +257,27 @@ def register(app, config_path: Path, player: str, recording: str, camera: dict) 
 
     @app.callback(
         Output(GRAPH, "figure"), Output(MARKS, "data"), Output(FRAME, "data"), Output(NOTE, "children"),
-        Input(SHOW, "n_clicks"), Input(GRAPH, "clickData"),
-        State(recording, "value"), State(camera, "value"), State(AT, "value"),
+        Output(AT, "value"), Output({"type": TIMELINE, "key": ALL}, "value"),
+        Input(AT, "value"), Input({"type": TIMELINE, "key": ALL}, "value"), Input(GRAPH, "clickData"),
+        State(recording, "value"), State(camera, "value"),
         State(PERSON, "value"), State(PERSON, "options"), State(MARKS, "data"), State(FRAME, "data"),
-        prevent_initial_call=True,
     )
-    def frame(_show, click, rid, chosen, at, person, options, marks, shown):
+    def frame(at, moved, click, rid, chosen, person, options, marks, shown):
         people = [option["value"] for option in options or []]
-        if ctx.triggered_id == SHOW:
-            if not rid or not chosen:
-                return no_update, no_update, no_update, ui.note("Choose a camera for the player first.", "warn")
-            found, problem = frame_of(config_path, rid, chosen, float(at or 0.0))
+        if ctx.triggered_id != GRAPH:
+            # the timeline and the typed moment follow each other; either shows its frame
+            at = moved[0] if isinstance(ctx.triggered_id, dict) and moved else at
+            if at is None or not rid or not chosen:
+                return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved)
+            found, problem = frame_of(config_path, rid, chosen, float(at))
             if problem:
-                return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn")
+                return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn"), at, [at] * len(moved)
             hint = " The people found are drawn grey until a click names them." if found["detected"] else ""
-            return marks_figure(found, {}, people), {}, found, ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
+            note = ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
+            return marks_figure(found, {}, people), {}, found, note, at, [at] * len(moved)
         if not shown or not click or not person:
-            return no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update, [no_update] * len(moved)
         marks = marked(marks or {}, person, click, shown)
         left = [name for name in people if name not in marks]
         note = (f"Still to click: {', '.join(left)}." if left else "Everyone is clicked: save the names, or click again to move one.")
-        return marks_figure(shown, marks, people), marks, no_update, ui.note(note + where_they_landed(shown, marks))
+        return marks_figure(shown, marks, people), marks, no_update, ui.note(note + where_they_landed(shown, marks)), no_update, [no_update] * len(moved)

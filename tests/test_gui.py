@@ -1116,3 +1116,21 @@ def test_marking_the_analysed_part_replaces_a_length_kept_from_the_end(project):
     segments.set_window(project, "003", 1.5, 20.0)
     own = resolve_config(project, recording_id="003")
     assert (own.segment.task_start_s, own.segment.keep_last_s) == (1.5, None)
+
+
+def test_the_naming_frame_follows_the_timeline_and_the_typed_moment(project, monkeypatch):
+    from macaw.interface.pages import naming
+    from macaw.media.ffmpeg import run_ffmpeg
+
+    video = project.parent / "raw" / "003" / "room" / "a.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "color=gray:s=320x240:r=10:d=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    shown = text_of(naming.editor(resolve_config(project, recording_id="003"), "003", "room", ["parent", "child"]))
+    assert "names-timeline" in shown and "Show frame" not in shown and '"value": 3.0' in shown
+    frame = callback(create_app(project), "..names-graph.figure")
+    states = ("003", "room", "parent", [{"value": "parent"}, {"value": "child"}], {}, None)
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id={"type": naming.TIMELINE, "key": "one"}))
+    figure, marks, found, note, at, moved = frame(3.0, [4.5], None, *states)
+    assert at == 4.5 and moved == [4.5] and found["at"] == 4.5 and "Frame at 4.5 s of room" in text_of(note)
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.AT))
+    *_, at, moved = frame(1.25, [4.5], None, *states)
+    assert at == 1.25 and moved == [1.25]
