@@ -578,7 +578,6 @@ def run_task(
     stamp.unlink(missing_ok=True)
     try:
         extractor = cls(config)
-        extractor.check_available()
         recording = build_recording(recording_id, config)
 
         key = _make_key(config, cls, extractor, recording, config_hash)
@@ -593,6 +592,8 @@ def run_task(
             database.set_status(task_id, "cached", finished_at=now())
             return
 
+        # after the lookup: a hit restores files without the step's heavy libraries
+        extractor.check_available()
         with tempfile.TemporaryDirectory(
             prefix=f"macaw_{_slug(task_id)}_", dir=config.project.scratch_dir or None
         ) as workspace:

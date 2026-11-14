@@ -337,13 +337,13 @@ class TestUncachedSteps:
 
         source = _write(tmp_path / "input.txt", "one")
 
-        def step(cached):
+        def step(cached, check):
             def run(self, recording, workspace):
                 return ExtractorResult(rows=pd.DataFrame(), artifacts={"big.bin": _write(workspace / "big.bin", "frames")})
 
             return type("Step", (Extractor,), {
                 "name": "step", "version": "0.1.0", "scale": Scale.RECORDING, "group": "test", "cached": cached,
-                "check_available": lambda self: None, "inputs_for": lambda self, recording: [source], "run": run,
+                "check_available": check, "inputs_for": lambda self, recording: [source], "run": run,
             })
 
         monkeypatch.setattr(extractors, "_builtins_loaded", True)
@@ -353,8 +353,8 @@ class TestUncachedSteps:
         scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
         config = resolve_config(project)
 
-        def run_step(cached):
-            monkeypatch.setattr(extractors, "_REGISTRY", {"step": step(cached)})
+        def run_step(cached, check=lambda self: None):
+            monkeypatch.setattr(extractors, "_REGISTRY", {"step": step(cached, check)})
             runner.run_task(config, RECORDING, "step", "exec-1")
             layout = runner.layout_for(config)
             entries = list((runner._cache_root(config, layout) / "step").glob("*")) if runner._cache_root(config, layout).is_dir() else []
@@ -393,3 +393,18 @@ class TestUncachedSteps:
         assert len(read_long_table(layout.long_table_path(RECORDING))) == 1
         runner._write_result(layout, RECORDING, EXTRACTOR, SimpleNamespace(**{**vars(result), "rows": pd.DataFrame()}), "exec-2", "cfg-1")
         assert read_long_table(layout.long_table_path(RECORDING)).empty
+
+    def test_a_hit_does_not_check_the_steps_libraries(self, task):
+        def missing(self):
+            raise RuntimeError("the step's libraries are not installed here")
+
+        task(True)
+        layout, _ = task(True, missing)
+        assert (layout.artifacts_dir(RECORDING, "step") / "big.bin").is_file()
+
+    def test_a_miss_still_checks_them(self, task):
+        def missing(self):
+            raise RuntimeError("the step's libraries are not installed here")
+
+        with pytest.raises(RuntimeError, match="not installed"):
+            task(True, missing)
