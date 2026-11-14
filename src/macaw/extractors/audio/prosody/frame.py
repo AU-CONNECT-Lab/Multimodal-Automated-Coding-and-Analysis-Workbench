@@ -65,22 +65,23 @@ _SUMMARY_SPECS = {
 
 UNHEARD = "a person with neither a device that hears them alone nor a voice named as theirs on a shared microphone (text.diarization)"
 _FRAMES = f"Empty for {UNHEARD}, and on a shared microphone in frames where their voice is not the only one."
+_QUIET = "With Praat, a frame counts as silent when it stays below {share} of the track's loud level (the 99.5th percentile of its 10 ms peaks)."
 _PITCHLESS = (
     "Empty in frames where no pitch was found: silence, unvoiced sound, or a voice outside prosody.f0_min_hz to f0_max_hz "
-    f"(or the person's prosody.f0_range_by_role). Also empty for {UNHEARD}, and on a shared microphone in frames where "
-    "their voice is not the only one."
+    f"(or the person's prosody.f0_range_by_role). {_QUIET.format(share='3%')} Also empty for {UNHEARD}, and on a shared "
+    "microphone in frames where their voice is not the only one."
 )
 _MISSING = {
     **dict.fromkeys(("f0_hz", "f0_semitone", "f0_semitone_rel"), _PITCHLESS),
     "voiced": (
         f"{_FRAMES} 0 means no pitch was found in the frame: silence, unvoiced sound, or a voice outside the person's pitch "
-        "range (prosody.f0_min_hz to f0_max_hz, or prosody.f0_range_by_role)."
+        f"range (prosody.f0_min_hz to f0_max_hz, or prosody.f0_range_by_role). {_QUIET.format(share='3%')}"
     ),
     "intensity_db": (
         f"{_FRAMES} Also empty in frames of complete digital silence, such as the padding before a device started or after "
         "it stopped."
     ),
-    "hnr_db": f"{_FRAMES} Also empty in silent frames, where the backend cannot measure it.",
+    "hnr_db": f"{_FRAMES} Also empty in silent frames, where the backend cannot measure it. {_QUIET.format(share='a tenth')}",
     "formant": f"{_FRAMES} Also empty in frames where Praat found no formant of this number.",
     "f0_median_hz": (
         f"Empty for {UNHEARD}, and where no frame of theirs in the span carried pitch. On a shared microphone only frames "
@@ -96,7 +97,7 @@ _MISSING = {
 @register_extractor
 class FrameProsodyExtractor(Extractor):
     name = "prosody.frame"
-    version = "0.2.2"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "prosody"
     config_sections = ("prosody", "segment", "text.diarization")

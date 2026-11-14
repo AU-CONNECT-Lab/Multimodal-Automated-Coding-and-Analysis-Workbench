@@ -15,12 +15,26 @@ BACKEND_GROUP = "prosody"
 # differences within one track are, which is why intensity is not comparable across subjects
 _PRESSURE_REF = 2e-5
 
+# Praat's silence thresholds, taken relative to a loud level of the track rather than its single loudest moment
+PITCH_SILENCE, HNR_SILENCE = 0.03, 0.1
+LOUD_PERCENTILE, PEAK_WINDOW_S = 99.5, 0.01
+
 
 def frame_times(n_samples: int, sr: float, step_s: float) -> np.ndarray:
     """The one grid every backend has to land on, so their columns line up row by row."""
     step = max(step_s, 1e-6)
     count = int(np.floor(n_samples / (step * sr))) + 1
     return np.arange(max(count, 1), dtype=float) * step
+
+
+def loud_share(audio: np.ndarray, sr: float) -> float:
+    """The track's loud level (LOUD_PERCENTILE of its PEAK_WINDOW_S peaks) as a share of its loudest sample, for Praat's gates."""
+    x = np.abs(np.asarray(audio, dtype=float))
+    window = max(1, int(round(PEAK_WINDOW_S * sr)))
+    if x.size < window or not x.max() > 0:
+        return 1.0
+    peaks = x[: x.size // window * window].reshape(-1, window).max(axis=1)
+    return float(np.percentile(peaks, LOUD_PERCENTILE) / x.max())
 
 
 def _to_grid(values: np.ndarray, src_times: np.ndarray, target_times: np.ndarray) -> np.ndarray:
@@ -113,7 +127,8 @@ class ParselmouthBackend(ProsodyBackend):
 
     def f0(self, audio, sr, f0_min, f0_max, step_s):
         pitch = self._sound(audio, sr).to_pitch_ac(
-            time_step=step_s, pitch_floor=f0_min, pitch_ceiling=f0_max
+            time_step=step_s, pitch_floor=f0_min, pitch_ceiling=f0_max,
+            silence_threshold=PITCH_SILENCE * loud_share(audio, sr),
         )
         values = np.asarray(pitch.selected_array["frequency"], dtype=float)
         values[values == 0.0] = np.nan          # the backend marks unvoiced frames as zero
@@ -128,7 +143,7 @@ class ParselmouthBackend(ProsodyBackend):
         return _to_grid(values, np.asarray(contour.xs()), frame_times(audio.size, sr, step_s))
 
     def hnr(self, audio, sr, step_s):
-        harmonicity = self._sound(audio, sr).to_harmonicity_cc(time_step=step_s)
+        harmonicity = self._sound(audio, sr).to_harmonicity_cc(time_step=step_s, silence_threshold=HNR_SILENCE * loud_share(audio, sr))
         values = np.asarray(harmonicity.values[0], dtype=float)
         values[values <= -200.0] = np.nan       # the backend's sentinel for undefined
         return _to_grid(values, np.asarray(harmonicity.xs()), frame_times(audio.size, sr, step_s))

@@ -385,10 +385,15 @@ def _frame(config, spec, names) -> str:
     measured = ["pitch", "intensity"] + (["harmonics-to-noise ratio"] if "hnr_db" in names else [])
     if "f1_hz" in names:
         measured.append("formants F1 to F4")
+    gate = (
+        " Praat's silence thresholds for pitch (3%) and harmonicity (10%) were taken relative to the 99.5th percentile of "
+        "the track's 10 ms peak amplitudes rather than to its maximum, so that a single loud sound did not leave the rest "
+        "of the track below them."
+    ) if spec.backend == "parselmouth" else ""
     return (
         f"On each participant's own track, {_listed(measured)} were measured every "
         f"{config.prosody.frame_step_s * 1000:g} ms with {_backend(_PITCH, spec)}, searching pitch "
-        f"{_f0_range(config.prosody)}. Intensity depends on the distance to the microphone and was only compared "
+        f"{_f0_range(config.prosody)}.{gate} Intensity depends on the distance to the microphone and was only compared "
         "within a speaker."
     )
 
