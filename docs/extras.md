@@ -53,7 +53,7 @@ Ollama may reserve several gigabytes of working memory for a prompt cache, which
 (llm-concurrency)=
 ### Several requests at a time
 
-The requests of one recording are sent one after another by default. A server that can answer several requests together finishes a recording considerably sooner when they are sent together. `coding.llm.concurrency`, in the text part of the settings, gives the number of requests kept under way at a time within one recording; a version under `coding.judges` or `coding.ratings` may set its own.
+The requests of one recording are sent one after another by default. A server that can answer several requests together finishes a recording considerably sooner when they are sent together. `coding.llm.concurrency`, in the text part of the settings, gives the number of requests kept under way at a time within one recording; a version under `coding.judges` or `coding.ratings` may set its own. The transcript check (`macaw transcript check`) and the drafting and refining of a codebook (`macaw codebook`) send their requests to the same server and use the same number. The model that reads pictures has a server of its own, and `qc.look.concurrency` sets the number for it, both for the review frames (`macaw qc --look`) and for naming people from pictures.
 
 ```yaml
 coding:

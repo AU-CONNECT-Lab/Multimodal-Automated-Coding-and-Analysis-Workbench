@@ -108,11 +108,15 @@ def frames_with_place(keypoints):
 
 
 class TestNamedByLook:
-    def ask_about(self, keypoints, answer, monkeypatch):
+    def ask_about(self, keypoints, answer, monkeypatch, concurrency=1):
         import macaw.extractors.video.pose.look_names as module
 
         monkeypatch.setattr(module, "picture_of", lambda image, rows, chain, frame: float(chain.x))
-        return named_by_look(keypoints, ["child", "parent"], frames_with_place(keypoints), answer, "the model")
+        return named_by_look(keypoints, ["child", "parent"], frames_with_place(keypoints), answer, "the model", concurrency=concurrency)
+
+    def test_pictures_asked_about_several_at_a_time_name_the_same_people(self, monkeypatch):
+        alone = self.ask_about(room(), answers_by_place("child", "parent"), monkeypatch)
+        assert self.ask_about(room(), answers_by_place("child", "parent"), monkeypatch, concurrency=4) == alone
 
     def test_a_name_given_on_most_frames_names_the_person(self, monkeypatch):
         choice, record = self.ask_about(room(), answers_by_place("child", "parent"), monkeypatch)

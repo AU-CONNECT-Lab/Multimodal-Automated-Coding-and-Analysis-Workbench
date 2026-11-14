@@ -22,6 +22,8 @@ def _backend(resolved):
     backend.check_available()
     if backend.reporting:
         typer.echo(backend.reporting)
+    if resolved.coding.llm.concurrency > 1 and backend.at_once:
+        typer.echo(f"coding.llm.concurrency is {resolved.coding.llm.concurrency}: {backend.at_once}")
     return backend
 
 
@@ -54,6 +56,7 @@ def refine(
     cfg = resolved.coding.llm
     refined, revisions = refine_codebook(
         backend, codebook, evidence, seed=cfg.seed, per_kind=per_kind, notes=cfg.notes, takes_seed=backend.takes_seed,
+        concurrency=cfg.concurrency,
     )
     write_codebook(refined, out)
     changes = changes_path(out)
@@ -100,6 +103,7 @@ def draft(
     backend = _backend(resolved)
     made = draft_codebook(
         backend, aim, units, name=name or out.stem, unit=unit, batch_size=cfg.batch_size, seed=seed, takes_seed=backend.takes_seed,
+        concurrency=cfg.concurrency,
     )
     if not made.codebook.codes:
         raise MacawError(f"{backend.model_version()} gave no codes; try again with another --seed or a larger model")

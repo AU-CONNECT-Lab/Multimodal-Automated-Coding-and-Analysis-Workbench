@@ -128,6 +128,10 @@ class TestRefine:
         assert "Units the person coded question and the model coded otherwise:" in user
         assert "person: question, model: inform | speaker A (just before, B: it is red): is it red" in user
         assert "## greet" in system and "Rewrite the definition of question only" in system
+        together = Model(revised)
+        refined_together, revisions_together = refine_codebook(together, CODEBOOK, evidence, seed=0, concurrency=3)
+        assert refined_together == refined and sorted(together.requests) == sorted(model.requests)
+        assert all(a.shown.equals(b.shown) for a, b in zip(revisions, revisions_together))
         question = refined.get("question")
         assert question.description == "New question." and question.criteria == ["asks with words, not only with a rising tone"]
         # the example is the unit's own words; the made-up id is dropped
@@ -208,6 +212,10 @@ class TestDraft:
         model = Model(described)
         made = draft_codebook(model, "what parents ask", units, name="acts", unit="utterance", batch_size=2)
         assert len(model.requests) == 5 and "What the codes are for: what parents ask" in model.requests[0][0]
+        together = Model(described)
+        made_together = draft_codebook(together, "what parents ask", units, name="acts", unit="utterance", batch_size=2, concurrency=3)
+        assert made_together.codebook == made.codebook and made_together.gathered == made.gathered
+        assert sorted(together.requests) == sorted(model.requests)
         assert [code.code for code in made.codebook.codes] == ["asks_something", "tells"]
         asks = made.codebook.get("asks_something")
         assert asks.criteria == ["wants an answer"] and sorted(asks.positive_examples) == ["where is it?", "you know where"]

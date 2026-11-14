@@ -518,7 +518,9 @@ class PoseExtractor(Extractor):
             state["used"].add(key)
             return state["answers"][key]
 
-        choice, record = named_by_look(identified, people, lambda frames: read_frames(item.frames_path, frames), ask, LOOKER)
+        choice, record = named_by_look(
+            identified, people, lambda frames: read_frames(item.frames_path, frames), ask, LOOKER, concurrency=look.concurrency,
+        )
         state["cameras"][item.name] = record
         return choice
 

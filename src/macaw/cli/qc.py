@@ -55,6 +55,8 @@ def qc(
         if warning:
             typer.echo(warning, err=True)
         backend = backend_for(resolved.qc.look)
+        if resolved.qc.look.concurrency > 1 and backend.at_once:
+            typer.echo(f"qc.look.concurrency is {resolved.qc.look.concurrency}: {backend.at_once}", err=True)
     for recording_id in resolve_recordings(resolved, recordings):
         # what this recording ran with, its own recordings/<id>.yaml included
         own = resolve_config(config, recording_id=recording_id)

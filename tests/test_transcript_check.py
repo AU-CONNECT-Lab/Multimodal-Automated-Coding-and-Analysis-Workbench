@@ -48,6 +48,14 @@ def test_the_model_sees_letters_lengths_and_context_and_marks_only_real_lines():
     ]
 
 
+def test_batches_sent_several_at_a_time_mark_the_same_lines():
+    lines = transcript_lines(LONGER, ["parent", "child"])
+    alone, together = Model(marks_watching), Model(marks_watching)
+    expected = check_lines(alone, lines, batch_size=1)
+    pd.testing.assert_frame_equal(check_lines(together, lines, batch_size=1, concurrency=3), expected)
+    assert sorted(together.requests) == sorted(alone.requests) and len(together.requests) == 3
+
+
 def test_a_piece_cut_off_is_kept_apart_and_a_made_up_kind_counts_as_misheard():
     lines = transcript_lines(LONGER, ["parent", "child"])
     model = Model(lambda system, user: {"lines": [

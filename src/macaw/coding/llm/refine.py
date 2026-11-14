@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,7 @@ import pandas as pd
 
 from macaw.coding.agreement import NO_CODE, build_units, load_annotations, unit_table
 from macaw.coding.codebook import Codebook, CodeDefinition
-from macaw.coding.llm.backends import LLMBackend
+from macaw.coding.llm.backends import LLMBackend, run_in_order
 from macaw.coding.llm.judge import LAYER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
 from macaw.coding.llm.parsing import whole_answer
 from macaw.coding.llm.prompts import ABSTAIN, codebook_lines
@@ -229,8 +230,14 @@ def refine_code(
     backend: LLMBackend, codebook: Codebook, evidence: Evidence, code: str, *, rng: np.random.Generator,
     per_kind: int = PER_KIND, notes: str = "", seed: int | None = None,
 ) -> Revision:
-    before = codebook.get(code)
     shown = units_for(evidence, code, per_kind=per_kind, rng=rng)
+    return revise_code(backend, codebook, evidence, code, shown, notes=notes, seed=seed)
+
+
+def revise_code(
+    backend: LLMBackend, codebook: Codebook, evidence: Evidence, code: str, shown: pd.DataFrame, *, notes: str = "", seed: int | None = None,
+) -> Revision:
+    before = codebook.get(code)
     unclear = shown["kind"].isin(["missed", "taken", "split"])
     if not unclear.any():
         return Revision(code, before, deepcopy(before), shown=shown)
@@ -263,13 +270,16 @@ def refine_code(
 
 def refine_codebook(
     backend: LLMBackend, codebook: Codebook, evidence: Evidence, *, seed: int = 0, per_kind: int = PER_KIND, notes: str = "",
-    takes_seed: bool = True,
+    takes_seed: bool = True, concurrency: int = 1,
 ) -> tuple[Codebook, list[Revision]]:
+    """The units shown for each code are drawn first, in the codebook's order, so asking several codes at once shows the same ones."""
     rng = np.random.default_rng(seed)
-    revisions = [
-        refine_code(backend, codebook, evidence, definition.code, rng=rng, per_kind=per_kind, notes=notes, seed=seed if takes_seed else None)
-        for definition in codebook.codes
+    shown = [units_for(evidence, definition.code, per_kind=per_kind, rng=rng) for definition in codebook.codes]
+    asks = [
+        functools.partial(revise_code, backend, codebook, evidence, definition.code, units, notes=notes, seed=seed if takes_seed else None)
+        for definition, units in zip(codebook.codes, shown)
     ]
+    revisions = run_in_order(asks, concurrency)
     return Codebook(codebook.name, codebook.unit, [revision.after for revision in revisions], codebook.mutually_exclusive), revisions
 
 

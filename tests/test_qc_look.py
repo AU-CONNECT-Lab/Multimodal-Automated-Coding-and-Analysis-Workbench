@@ -196,6 +196,38 @@ class TestLookAtRecording:
         self.run(drawn, described, people={"parent": "an adult"})
         assert len(described.pictures) == 8
 
+    def test_frames_asked_several_at_a_time_get_the_answers_one_at_a_time_gets(self, drawn, tmp_path):
+        import hashlib
+        import threading
+        import time
+
+        class ByPicture:
+            """Answers from the picture alone, and counts the questions under way at once."""
+
+            def __init__(self):
+                self.lock, self.now, self.most = threading.Lock(), 0, 0
+
+            def model_version(self):
+                return "vision@abc"
+
+            def complete(self, system, user, *, seed=None, images=()):
+                with self.lock:
+                    self.now += 1
+                    self.most = max(self.most, self.now)
+                time.sleep(0.05)
+                with self.lock:
+                    self.now -= 1
+                digit = hashlib.sha1(images[0]).digest()[0]
+                if system == look.COUNT:
+                    return LLMResponse(text=json.dumps({"people": digit % 3}), model="vision@abc")
+                return LLMResponse(text=json.dumps({"person": digit % 2 == 0, "who": "parent"}), model="vision@abc")
+
+        alone = self.run(drawn, ByPicture())["frames"]
+        drawn.layout.look_path(RID).unlink()
+        model = ByPicture()
+        together = self.run(drawn, model, concurrency=3)["frames"]
+        assert together == alone and model.most > 1
+
     def test_the_random_check_draws_only_frames_the_model_passed(self, drawn):
         answers = [{"person": False, "who": "unsure"}, {"person": True, "who": "unsure"}]
         found = self.run(drawn, Model(people=1, persons=answers), random_check=5)

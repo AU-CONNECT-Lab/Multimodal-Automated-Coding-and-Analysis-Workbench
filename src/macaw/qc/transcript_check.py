@@ -3,13 +3,14 @@ check against the recording. The transcript itself is never changed here."""
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from datetime import datetime
 
 import pandas as pd
 
-from macaw.coding.llm.backends import LLMBackend
+from macaw.coding.llm.backends import LLMBackend, run_in_order
 from macaw.coding.llm.parsing import whole_answer
 from macaw.extractors.audio.content.diarization import OTHER
 
@@ -65,13 +66,20 @@ def _line(row) -> str:
     return f"speaker {row.speaker} | {seconds:.1f} s, {len(str(row.text).split())} words: {row.text}"
 
 
-def check_lines(backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, seed: int | None = None) -> pd.DataFrame:
-    """The lines the model marked, each with its kind and why; an id it made up is ignored."""
+def check_lines(
+    backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, seed: int | None = None, concurrency: int = 1,
+) -> pd.DataFrame:
+    """The lines the model marked, each with its kind and why; an id it made up is ignored. The batches go up to
+    concurrency at a time, since each reads the transcript and not an earlier answer."""
     marked: dict[str, tuple[str, str]] = {}
-    for start in range(0, len(lines), batch_size):
+    starts = range(0, len(lines), batch_size)
+    asks = [
+        functools.partial(backend.complete, *check_prompt(lines.iloc[start : start + batch_size], lines.iloc[max(0, start - CONTEXT_LINES) : start]), seed=seed)
+        for start in starts
+    ]
+    for start, response in zip(starts, run_in_order(asks, concurrency)):
         batch = lines.iloc[start : start + batch_size]
-        context = lines.iloc[max(0, start - CONTEXT_LINES) : start]
-        answer = whole_answer(backend.complete(*check_prompt(batch, context), seed=seed))
+        answer = whole_answer(response)
         ids = set(batch["id"])
         for item in answer.get("lines") or []:
             if isinstance(item, dict) and str(item.get("id", "")).strip() in ids:
@@ -85,9 +93,10 @@ def check_lines(backend: LLMBackend, lines: pd.DataFrame, *, batch_size: int, se
 
 def check_transcript(
     backend: LLMBackend, transcript: pd.DataFrame, subjects: list[str], path, *, provider: str, batch_size: int, seed: int | None,
+    concurrency: int = 1,
 ) -> dict:
     lines = transcript_lines(transcript, subjects)
-    marked = check_lines(backend, lines, batch_size=batch_size, seed=seed)
+    marked = check_lines(backend, lines, batch_size=batch_size, seed=seed, concurrency=concurrency)
     found = {
         "model": backend.model_version(), "provider": provider, "asked_at": datetime.now().isoformat(timespec="seconds"),
         "transcript": fingerprint(lines), "n_lines": len(lines), "lines": marked.to_dict("records"),

@@ -3,6 +3,7 @@ descriptions into codes. Choosing and defining the codes in the end is the resea
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.coding.codebook import RESERVED_LABELS, Codebook, CodeDefinition
-from macaw.coding.llm.backends import LLMBackend
+from macaw.coding.llm.backends import LLMBackend, run_in_order
 from macaw.coding.llm.parsing import whole_answer
 
 N_UNITS = 200
@@ -147,13 +148,15 @@ def _merged(backend: LLMBackend, aim: str, codes: list[dict], counts: pd.Series,
     return merged + [code for code in codes if not set(code["labels"]) & placed and code["code"] not in names]
 
 
-def _placed(backend: LLMBackend, aim: str, codes: list[dict], rest: pd.Series, seed) -> dict[str, str]:
+def _placed(backend: LLMBackend, aim: str, codes: list[dict], rest: pd.Series, seed, concurrency: int = 1) -> dict[str, str]:
     """Where the model puts each description gathered into no code; one it calls none, or answers nothing for, is absent."""
     names = {code["code"] for code in codes}
     placed: dict[str, str] = {}
-    for start in range(0, len(rest), PLACE_BATCH):
+    starts = range(0, len(rest), PLACE_BATCH)
+    asks = [functools.partial(backend.complete, *place_prompt(aim, codes, rest.iloc[start : start + PLACE_BATCH]), seed=seed) for start in starts]
+    for start, response in zip(starts, run_in_order(asks, concurrency)):
         batch = rest.iloc[start : start + PLACE_BATCH]
-        answer = whole_answer(backend.complete(*place_prompt(aim, codes, batch), seed=seed))
+        answer = whole_answer(response)
         for item in answer.get("placed") or []:
             if not isinstance(item, dict) or not str(item.get("n", "")).strip().isdigit():
                 continue
@@ -181,12 +184,15 @@ def _listed(text, known: dict[str, list[str]], key=_loose) -> list[str]:
     return known.get(key(plain)) or known.get(key(re.sub(r"\(\d+\)$", "", plain))) or []
 
 
-def describe_units(backend: LLMBackend, aim: str, units: pd.DataFrame, *, batch_size: int, seed: int | None) -> pd.Series:
-    """Each unit's description, blank where the model gave none."""
+def describe_units(
+    backend: LLMBackend, aim: str, units: pd.DataFrame, *, batch_size: int, seed: int | None, concurrency: int = 1,
+) -> pd.Series:
+    """Each unit's description, blank where the model gave none; the batches go up to concurrency at a time."""
     said: dict[str, str] = {}
-    for start in range(0, len(units), batch_size):
-        batch = units.iloc[start : start + batch_size]
-        answer = whole_answer(backend.complete(*describe_prompt(aim, batch), seed=seed))
+    starts = range(0, len(units), batch_size)
+    asks = [functools.partial(backend.complete, *describe_prompt(aim, units.iloc[start : start + batch_size]), seed=seed) for start in starts]
+    for response in run_in_order(asks, concurrency):
+        answer = whole_answer(response)
         for item in answer.get("labels") or []:
             if isinstance(item, dict) and _plain(item.get("label")):
                 said[str(item.get("id", "")).strip()] = _plain(item.get("label"))
@@ -195,11 +201,12 @@ def describe_units(backend: LLMBackend, aim: str, units: pd.DataFrame, *, batch_
 
 def draft_codebook(
     backend: LLMBackend, aim: str, units: pd.DataFrame, *, name: str, unit: str, batch_size: int = 20, seed: int = 0,
-    takes_seed: bool = True,
+    takes_seed: bool = True, concurrency: int = 1,
 ) -> Draft:
+    """Describing the units and placing what is left over go concurrency requests at a time; gathering and merging go alone."""
     rng = np.random.default_rng(seed)
     request_seed = seed if takes_seed else None
-    units = units.assign(description=describe_units(backend, aim, units, batch_size=batch_size, seed=request_seed))
+    units = units.assign(description=describe_units(backend, aim, units, batch_size=batch_size, seed=request_seed, concurrency=concurrency))
     counts = units.loc[units["description"] != "", "description"].value_counts()
     answer = whole_answer(backend.complete(*gather_prompt(aim, counts), seed=request_seed)) if not counts.empty else {}
     known: dict[str, list[str]] = {}
@@ -217,7 +224,7 @@ def draft_codebook(
         codes = sorted(codes, key=lambda code: -_size(code, counts))[:MAX_CODES]
 
     rest = counts[~counts.index.isin([label for code in codes for label in code["labels"]])]
-    placed = _placed(backend, aim, codes, rest, request_seed) if codes and len(rest) else {}
+    placed = _placed(backend, aim, codes, rest, request_seed, concurrency) if codes and len(rest) else {}
     claimed: dict[str, str] = {}
     definitions, gathered = [], {}
     for code in codes:

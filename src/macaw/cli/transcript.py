@@ -101,10 +101,12 @@ def check(
     backend.check_available()
     if backend.reporting:
         typer.echo(backend.reporting)
+    if cfg.concurrency > 1 and backend.at_once:
+        typer.echo(f"coding.llm.concurrency is {cfg.concurrency}: {backend.at_once}")
     subjects = [subject.subject_id for subject in build_recording(recording, resolved).subjects]
     found = check_transcript(
         backend, read_transcript(path), subjects, layout.transcript_check_path(recording), provider=cfg.provider,
-        batch_size=cfg.batch_size, seed=cfg.seed if backend.takes_seed else None,
+        batch_size=cfg.batch_size, seed=cfg.seed if backend.takes_seed else None, concurrency=cfg.concurrency,
     )
     typer.echo(f"{recording}: {describe(found)}")
     for line in found["lines"]:

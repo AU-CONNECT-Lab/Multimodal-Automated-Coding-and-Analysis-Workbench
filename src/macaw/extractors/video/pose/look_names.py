@@ -3,6 +3,7 @@ qc.look.people says each person looks like."""
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from collections import Counter
@@ -53,22 +54,28 @@ def named_by_look(
     read: Callable[[Iterable[int]], Iterator[tuple[int, np.ndarray]]],
     ask: Callable[[bytes], dict | None],
     by: str,
+    concurrency: int = 1,
 ) -> tuple[PeopleChoice, list[dict]]:
     """Each person in view is shown on a few frames and the model says which of the people sought it is. A person
     takes a name the model gave on more than half their frames and no other name; a name given to two people goes
-    to neither. Whoever it does not tell clearly waits for a click. Also returns what it said about each person."""
+    to neither. Whoever it does not tell clearly waits for a click. Also returns what it said about each person.
+    The pictures are asked about up to concurrency at a time."""
+    from macaw.coding.llm.backends import run_in_order
+
     pool = people_to_ask(keypoints, len(people))
     if not pool:
         return PeopleChoice(people={}, doubt="nobody was detected"), []
     asked = {index: frames_to_ask(chain) for index, chain in enumerate(pool)}
-    answers: dict[int, list[dict]] = {index: [] for index in asked}
+    shown: list[tuple[int, int, bytes]] = []
     for frame, image in read(sorted(set().union(*asked.values()))):
         for index, chain in enumerate(pool):
-            if frame not in asked[index] or (picture := picture_of(image, keypoints, chain, frame)) is None:
-                continue
-            said = ask(picture) or {}
-            who = str(said.get("who") or UNSURE).strip()
-            answers[index].append({"frame": frame, "person": said.get("person"), "who": who if who in people else UNSURE})
+            if frame in asked[index] and (picture := picture_of(image, keypoints, chain, frame)) is not None:
+                shown.append((index, frame, picture))
+    answers: dict[int, list[dict]] = {index: [] for index in asked}
+    for (index, frame, _), said in zip(shown, run_in_order([functools.partial(ask, picture) for _, _, picture in shown], concurrency)):
+        said = said or {}
+        who = str(said.get("who") or UNSURE).strip()
+        answers[index].append({"frame": frame, "person": said.get("person"), "who": who if who in people else UNSURE})
 
     named: dict[int, str] = {}
     for index, given in answers.items():

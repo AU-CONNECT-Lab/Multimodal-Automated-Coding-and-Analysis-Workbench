@@ -3,6 +3,7 @@ a person then checks the model on the frames it flagged and on a few it passed."
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import zlib
@@ -13,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
+from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend, run_in_order
 from macaw.coding.llm.parsing import repair_json
 from macaw.config.schema import LookSection
 from macaw.exceptions import MacawError
@@ -168,6 +169,10 @@ def look_at_frame(backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, 
     return {"people_seen": people_seen, "boxes": boxes, "problems": problems(people_seen, boxes, names), "unreadable": unreadable}
 
 
+def _look_at_file(backend, cv2, path, people, subjects, described) -> dict:
+    return look_at_frame(backend, cv2.imread(str(path)), people, subjects, described)
+
+
 def _key(picture: bytes, people: list[dict], model: str, described: dict[str, str]) -> str:
     drawn = [(person["name"], person["track"], [round(value, 1) for value in person["bounds"]]) for person in people]
     text = json.dumps([QUESTIONS, model, described, drawn])
@@ -185,20 +190,22 @@ def look_at_recording(
     model = backend.model_version()
     earlier = {entry["file"]: entry for entry in read_look(layout, rid).get("frames", [])}
     plain = layout.renders_dir(rid) / PLAIN
-    entries = []
+    found, asked = [], []
     for row in index.itertuples():
         path = plain / row.file
         if not path.is_file():
             continue
-        image = cv2.imread(str(path))
         people = keypoints[(keypoints["frame"] == row.frame) & (keypoints["video"] == row.video)]
         key = _key(path.read_bytes(), drawn_people(people), model, described)
         entry = earlier.get(row.file)
         if entry is None or entry.get("key") != key:
-            entry = {"file": row.file, "t": float(row.t), "video": row.video, "frame": int(row.frame), "reason": row.reason, "key": key,
-                     **look_at_frame(backend, image, people, subjects, described)}
-        # read again from the answers, so a changed reading needs no new question
-        entries.append({**entry, "problems": problems(entry["people_seen"], entry["boxes"], list(described)), "random_check": False})
+            entry = {"file": row.file, "t": float(row.t), "video": row.video, "frame": int(row.frame), "reason": row.reason, "key": key}
+            asked.append((entry, functools.partial(_look_at_file, backend, cv2, path, people, subjects, described)))
+        found.append(entry)
+    for (entry, _), answer in zip(asked, run_in_order([job for _, job in asked], cfg.concurrency)):
+        entry.update(answer)
+    # read again from the answers, so a changed reading needs no new question
+    entries = [{**entry, "problems": problems(entry["people_seen"], entry["boxes"], list(described)), "random_check": False} for entry in found]
     passed = [position for position, entry in enumerate(entries) if not entry["problems"] and not entry["unreadable"]]
     rng = np.random.default_rng([seed, zlib.crc32(rid.encode("utf-8"))])
     for position in rng.choice(passed, size=min(cfg.random_check, len(passed)), replace=False) if passed else []:
