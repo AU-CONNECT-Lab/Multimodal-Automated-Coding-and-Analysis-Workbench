@@ -26,7 +26,7 @@ ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
-    "face.movement", "face.shares", "gaze.target",
+    "face.movement", "face.speaking", "face.shares", "gaze.target",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -483,7 +483,8 @@ def _diarize(config, spec, names) -> str:
     )
     return (
         f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
-        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review] + _voice_hints(config)
+        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review].format(faces=_naming_signal(config))
+        + _voice_hints(config)
         + ("" if extra else _further_voice(config)) + _mixed_voices(config)
     )
 
@@ -502,39 +503,64 @@ def _further_voice(config) -> str:
     )
 
 
-def lines_reassigned(config) -> tuple[int, int, int]:
-    """(recordings whose voices a person found mixed, lines given to another speaker there, those changed without listening)."""
+def _recordings(config) -> list[str]:
     from macaw.exceptions import MacawError
     from macaw.execution.runner import resolve_recordings
-    from macaw.extractors.audio.content.diarization import line_changes, voices_mixed
-    from macaw.extractors.audio.content.line_speakers import SUGGESTION
+
+    try:
+        return resolve_recordings(config, None)
+    except MacawError:   # described from a manifest alone, with no recordings to read
+        return []
+
+
+def lines_reassigned(config) -> tuple[int, int, int, set[str]]:
+    """(recordings whose voices a person found mixed, lines given to another speaker there, those changed without listening,
+    what those were changed on: the faces or mouth movement)."""
+    from macaw.extractors.audio.content.diarization import line_changes, read_line_speakers, voices_mixed
+    from macaw.extractors.audio.content.line_speakers import MOUTH, SUGGESTION
 
     mixed = changed = unheard = 0
-    try:
-        recording_ids = resolve_recordings(config, None)
-    except MacawError:   # described from a manifest alone, with no recordings to read
-        return 0, 0, 0
-    for rid in recording_ids:
+    kinds: set[str] = set()
+    for rid in _recordings(config):
         if not voices_mixed(config, rid):
             continue
         changes = line_changes(config, rid)
         mixed += 1
         changed += len(changes)
-        unheard += sum(change.get("by") == SUGGESTION for change in changes)
-    return mixed, changed, unheard
+        here = sum(change.get("by") == SUGGESTION for change in changes)
+        unheard += here
+        if here:
+            kinds.add((read_line_speakers(config, rid) or {}).get("evidence", MOUTH))
+    return mixed, changed, unheard, kinds
+
+
+def _naming_signal(config) -> str:
+    """What a voice was matched to where no microphone of a participant's own said: their face speaking, where face.speaking ran."""
+    from macaw.project.layout import layout_for
+
+    layout = layout_for(config, create=False)
+    ran = any((layout.long_table_path(rid) / "face.speaking.parquet").exists() for rid in _recordings(config))
+    return "how much their face was the one speaking" if ran else "their mouth movement"
 
 
 def _mixed_voices(config) -> str:
-    from macaw.extractors.audio.content.line_speakers import _SURE_MIN_S
+    from macaw.extractors.audio.content.line_speakers import _SPEAKING_ONE_FACE_S, _SPEAKING_SURE, _SURE_MIN_S, FACES, MOUTH
 
-    mixed, changed, unheard = lines_reassigned(config)
+    mixed, changed, unheard, kinds = lines_reassigned(config)
     if not mixed:
         return ""
-    by_mouth = (
-        f", {unheard} of them without listening, from mouth movement: only lines of at least {_SURE_MIN_S:g} s during which both "
-        "participants' mouths were read, where the suggested speaker's mouth moved more and the other's less than on their other lines"
-        if unheard else ""
-    )
+    rules = {
+        MOUTH: (
+            f"from mouth movement, only lines of at least {_SURE_MIN_S:g} s during which both participants' mouths were read, where "
+            "the suggested speaker's mouth moved more and the other's less than on their other lines"
+        ),
+        FACES: (
+            "from the faces, lines in which the suggested speaker's face scored as speaking and the other's as not, by at least "
+            f"{_SPEAKING_SURE:g} between them, or, where only the face of the participant whose voice held the line was seen, lines of "
+            f"at least {_SPEAKING_ONE_FACE_S:g} s in which that face scored below -{_SPEAKING_SURE:g}"
+        ),
+    }
+    by_mouth = f", {unheard} of them without listening, {'; and '.join(rules[kind] for kind in sorted(kinds))}" if unheard else ""
     return (
         f" In {mixed} recording{'s' if mixed > 1 else ''} a researcher found two participants within one voice. There every line "
         f"was shown with the voice it fell in for its speaker to be assigned; {changed} line{'s were' if changed != 1 else ' was'} "
@@ -555,14 +581,14 @@ def _voice_hints(config) -> str:
 _VOICE_NAMING = {
     "always": (
         "A researcher listened to clips of each voice found and named the participant it belonged to, shown a suggestion "
-        "from the loudness of the participants' own microphones or their mouth movement where one could be made."
+        "from the loudness of the participants' own microphones or {faces} where one could be made."
     ),
     "flagged": (
-        "Each voice was named from the loudness of the participants' own microphones or their mouth movement where "
+        "Each voice was named from the loudness of the participants' own microphones or {faces} where "
         "that decided every voice, and otherwise by a researcher who listened to clips of each voice."
     ),
     "skip": (
-        "Each voice was named from the loudness of the participants' own microphones or their mouth movement; "
+        "Each voice was named from the loudness of the participants' own microphones or {faces}; "
         "voices this could not decide were left out."
     ),
 }
@@ -1106,6 +1132,15 @@ def _movement(config, spec, names) -> str:
     )
 
 
+def _speaking(config, spec, names) -> str:
+    return (
+        "Whether each participant's face was the one speaking was scored 25 times a second with Light-ASD [liao2023], a model "
+        "trained on AVA-ActiveSpeaker [roth2020] that reads the lips together with the sound, from a crop of the face placed by "
+        "its landmarks and the sound of the shared microphone (or of the participant's own where there was none), as the mean "
+        "over windows of 1 to 6 s; a score above 0 reads as speaking."
+    )
+
+
 def room_seated(config) -> bool:
     """Whether the room places some camera read for gaze and someone it is read for."""
     from macaw.project.room import seats
@@ -1235,5 +1270,6 @@ _WRITERS = {
     "face.au": _face,
     "face.au_check": _au_check,
     "face.movement": _movement,
+    "face.speaking": _speaking,
     "gaze.target": _gaze,
 }

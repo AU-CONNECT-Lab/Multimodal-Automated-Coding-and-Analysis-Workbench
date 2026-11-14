@@ -39,7 +39,7 @@ Pose, movement speed, interpersonal distance, time spent below a distance the st
 :::
 
 :::{grid-item-card} Face and gaze
-Facial action units, head orientation, mouth movement and blinks; whom each participant looks at, which named objects, mutual gaze, and joint attention to a named object.
+Facial action units, head orientation, mouth movement, blinks and whether each face is the one speaking; whom each participant looks at, which named objects, mutual gaze, and joint attention to a named object.
 :::
 
 :::{grid-item-card} Codes

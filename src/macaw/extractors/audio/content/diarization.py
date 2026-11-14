@@ -691,13 +691,13 @@ class SpeakerReviewGate(Gate):
     group = "text"
     config_sections = ("text.diarization", "text.voice_review")
     requires = (DiarizationExtractor.name,)
-    # with faces read in the same run, the suggestion can use their mouths
-    runs_after = ("face.movement",)
+    # with faces read in the same run, the suggestion can use them
+    runs_after = ("face.movement", "face.speaking")
 
     @classmethod
     def brings_along(cls, config) -> tuple[str, ...]:
-        # mouth movement, read off the faces the run reads anyway, suggests whose voice is which
-        return ("face.movement",) if config.text.diarization == SHARED_MODE else ()
+        # the faces the run reads anyway suggest whose voice is which: whether each speaks, else its mouth movement
+        return ("face.movement", "face.speaking") if config.text.diarization == SHARED_MODE else ()
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return []

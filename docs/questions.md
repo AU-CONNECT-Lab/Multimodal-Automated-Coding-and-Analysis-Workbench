@@ -28,7 +28,7 @@ With a shared microphone or the camera's sound, set *Other voices on a shared mi
 
 ## Two participants sound alike and their speech is mixed. What can be done?
 
-Mark the voices as mixed when reviewing them ({ref}`step 6 <review>`). Every line is then listed for its speaker to be checked, with suggestions from the participants' mouth movement where their faces were read, and a line that holds both participants can be split.
+Mark the voices as mixed when reviewing them ({ref}`step 6 <review>`). Every line is then listed for its speaker to be checked, with suggestions from the participants' faces where their faces were read, and a line that holds both participants can be split.
 
 ## A session contains several tasks. Can they be analysed separately?
 

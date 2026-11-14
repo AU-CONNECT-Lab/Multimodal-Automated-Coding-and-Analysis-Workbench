@@ -127,6 +127,10 @@ class FaceSpeakingExtractor(Extractor):
                     )
                 )
         rows = concat_long_tables(frames)
+        warnings.append(QCWarning(
+            check=self.name, recording_id=rid, subject_id=None, severity="info",
+            message="the speaking model learnt from adults in films; how well it reads young children's faces is not known",
+        ))
         return ExtractorResult(rows=rows, specs=self._specs() if len(rows) else [], warnings=warnings)
 
     @staticmethod

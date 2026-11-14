@@ -297,3 +297,21 @@ bregier2026:
   pages: 170--188
   doi: 10.1007/978-3-032-37314-4_10
   year: 2026
+
+liao2023:
+  type: inproceedings
+  author: "Liao, Junhua and Duan, Haihan and Feng, Kanghui and Zhao, Wanbing and Yang, Yanbing and Chen, Liangyin"
+  title: "A light weight model for active speaker detection"
+  booktitle: "Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)"
+  pages: 22932--22941
+  doi: 10.1109/CVPR52729.2023.02196
+  year: 2023
+
+roth2020:
+  type: inproceedings
+  author: "Roth, Joseph and Chaudhuri, Sourish and Klejch, Ondrej and Marvin, Radhika and Gallagher, Andrew and Kaver, Liat and Ramaswamy, Sharadh and Stopczynski, Arkadiusz and Schmid, Cordelia and Xi, Zhonghua and Pantofaru, Caroline"
+  title: "AVA Active Speaker: An audio-visual dataset for active speaker detection"
+  booktitle: "ICASSP 2020 - 2020 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)"
+  pages: 4492--4496
+  doi: 10.1109/ICASSP40776.2020.9053900
+  year: 2020

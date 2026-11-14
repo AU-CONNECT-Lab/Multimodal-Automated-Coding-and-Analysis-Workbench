@@ -23,7 +23,8 @@ from macaw.extractors.audio.content.diarization import (
     further_voice, read_diarization, voice_sources, with_changes,
 )
 from macaw.extractors.audio.content.line_speakers import (
-    BY_HAND, SUGGESTED, SUGGESTION, LineSpeakersGate, changes_of, keep_suggested, split_at, spoken_lines, with_evidence, with_picks,
+    BY_HAND, FACES, MOUTH, SUGGESTED, SUGGESTION, LineSpeakersGate, changes_of, describe_kept, keep_suggested, split_at, spoken_lines,
+    with_evidence, with_picks,
 )
 from macaw.extractors.base import PERSON, SOFTWARE
 from macaw.extractors.prep import PrepInfo
@@ -163,6 +164,60 @@ class TestEvidence:
         assert [change["by"] for change in changes_of(kept)] == [SUGGESTION]
 
 
+class TestEvidenceOfFaces:
+    """face.speaking's scores, 25 a second: above 0 where a face speaks."""
+
+    lines = TestEvidence.lines
+
+    def face(self, lines, talking: list[int], level=2.0):
+        t = np.arange(0, 32.0, 0.04)
+        value = np.full(t.size, -level)
+        for index in talking:
+            value[(t >= lines["t_start"][index]) & (t <= lines["t_end"][index])] = level
+        return t, value
+
+    def test_the_other_face_speaking_and_the_voices_not_is_sure(self):
+        lines = self.lines()
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3]), "child": self.face(lines, [4, 5, 6, 7])}, FACES)
+        assert found["suggested"].tolist() == [None, None, None, None, "child", None, None, None]
+        assert found["sure"].tolist() == [False] * 4 + [True] + [False] * 3
+        assert found["doubt"][4] == "the face of child speaks and that of parent does not"
+
+    def test_faces_close_together_are_only_doubted(self):
+        lines = self.lines()
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3], 0.3), "child": self.face(lines, [4, 5, 6, 7], 0.3)}, FACES)
+        assert found["suggested"][4] == "child" and not found["sure"].any()
+
+    def test_the_voices_own_face_alone_is_sure_on_a_line_of_a_second_or_more(self):
+        lines = self.lines()
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES)
+        assert found["suggested"][4] == "child" and found["sure"][4] and found["doubt"][4] == "the face of parent does not speak"
+        lines.loc[4, "t_end"] = lines.loc[4, "t_start"] + 0.6
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES)
+        assert found["suggested"][4] == "child" and not found["sure"][4]
+
+    def test_the_other_face_alone_is_only_doubted(self):
+        lines = self.lines()
+        found = with_evidence(lines, {"child": self.face(lines, [4, 5, 6, 7])}, FACES)
+        assert found["suggested"][4] == "child" and not found["sure"].any() and found["doubt"][4] == "the face of child speaks"
+
+    def test_a_line_the_face_was_not_seen_through_says_nothing(self):
+        lines = self.lines()
+        t, value = self.face(lines, [0, 1, 2, 3])
+        hidden = (t > 15.5) & (t < 20)
+        found = with_evidence(lines, {"parent": (t[~hidden], value[~hidden])}, FACES)
+        assert found["suggested"][4] is None and found["doubt"][4] == ""
+
+    def test_the_faces_are_used_where_face_speaking_ran_and_said_so_when_kept(self, project, monkeypatch):
+        import macaw.extractors.audio.content.line_speakers as module
+
+        monkeypatch.setattr(module, "speaking_scores", lambda config, rid: {"child": (np.arange(0, 60, 0.04), np.full(1500, -2.0))})
+        assert module.evidence(project.resolved(), "003")[0] == FACES
+        monkeypatch.setattr(module, "speaking_scores", lambda config, rid: {})
+        assert module.evidence(project.resolved(), "003")[0] == MOUTH
+        assert "by the faces without a person listening" in describe_kept({"evidence": FACES, "n_lines": 2, "changes": [{"by": SUGGESTION}]})
+
+
 class TestChanging:
     def test_a_person_gives_a_line_to_someone_else_and_everything_follows(self, project, tmp_path):
         name_voices(project, "--mixed")
@@ -263,7 +318,7 @@ class TestGate:
         own = shared.model_copy(update={"text": shared.text.model_copy(update={"diarization": "per_track"})})
         for name in ("text.asr", "prosody.frame"):
             assert LINES_GATE in get_extractor(name).dependencies(shared) and LINES_GATE not in get_extractor(name).dependencies(own)
-        assert LineSpeakersGate.brings_along(shared) == ("face.movement",) and LineSpeakersGate.brings_along(own) == ()
+        assert LineSpeakersGate.brings_along(shared) == ("face.movement", "face.speaking") and LineSpeakersGate.brings_along(own) == ()
 
 
 class TestFurtherVoice:

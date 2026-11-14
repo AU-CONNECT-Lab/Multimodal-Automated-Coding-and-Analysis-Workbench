@@ -355,3 +355,26 @@ def test_recordings_run_under_settings_of_their_own_are_named():
     assert settings_by_recording({rid: specs(75, "same") for rid in "abc"}) == ""
     sections = describe(manifest(spec("prosody.frame", "f0_hz", "parselmouth", "0.4.7")), config(), own=said)
     assert sections["Settings of individual recordings"] == [said]
+
+
+def test_scoring_the_faces_speaking_is_described_with_its_model_and_its_data():
+    text, used = render(describe(manifest(spec("face.speaking", "speaking_score", "light_asd", "AVA-ActiveSpeaker")), config()), load_references())
+    assert "Light-ASD (Liao et al., 2023)" in text and "AVA-ActiveSpeaker (Roth et al., 2020)" in text
+    assert {"liao2023", "roth2020"} <= set(used)
+
+
+def test_voices_are_said_to_be_named_by_the_faces_speaking_where_that_ran(monkeypatch):
+    shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
+    monkeypatch.setattr(boilerplate, "_naming_signal", lambda config: "how much their face was the one speaking")
+    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    assert "own microphones or how much their face was the one speaking" in text and "mouth movement" not in text
+
+
+def test_lines_changed_without_listening_are_described_by_what_they_went_on(monkeypatch):
+    from macaw.extractors.audio.content.line_speakers import FACES, MOUTH
+
+    shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
+    for kinds, said, unsaid in (({FACES}, "from the faces, lines in which", "from mouth movement"), ({MOUTH, FACES}, "from mouth movement", "x" * 9)):
+        monkeypatch.setattr(boilerplate, "lines_reassigned", lambda config, kinds=kinds: (1, 5, 3, kinds))
+        text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+        assert "3 of them without listening" in text and said in text and unsaid not in text

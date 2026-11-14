@@ -359,18 +359,18 @@ def _voices(config, layout, recording):
 
 
 def _mouth_doubts(config, recording):
-    """How many lines mouth movement speaks against, as a hint that a voice may hold two people."""
-    from macaw.extractors.audio.content.line_speakers import mouths, spoken_lines, with_evidence
+    """How many lines the faces speak against, as a hint that a voice may hold two people."""
+    from macaw.extractors.audio.content.line_speakers import evidence, speak_against, spoken_lines, with_evidence
 
     try:
-        ranks = mouths(config, recording.recording_id)
-        lines = with_evidence(spoken_lines(config, recording), ranks) if ranks else None
+        kind, found = evidence(config, recording.recording_id)
+        lines = with_evidence(spoken_lines(config, recording), found, kind) if found else None
     except Exception:   # no shared transcript or no faces yet: no hint
         return None
     if lines is None or lines.empty:
         return None
     doubted = int((lines["doubt"] != "").sum())
-    return ui.note(f"Mouth movement speaks against the voice of {doubted} of {len(lines)} lines.", "warn" if doubted else "ok")
+    return ui.note(f"{speak_against(kind)} the voice of {doubted} of {len(lines)} lines.", "warn" if doubted else "ok")
 
 
 def _further_voice(config, layout, rid: str, directory: Path) -> list:
@@ -401,7 +401,7 @@ def _further_voice(config, layout, rid: str, directory: Path) -> list:
 
 def _lines(config, layout, recording):
     from macaw.extractors.audio.content.diarization import read_line_speakers, voices_mixed
-    from macaw.extractors.audio.content.line_speakers import describe_kept, suggested_lines
+    from macaw.extractors.audio.content.line_speakers import FACES, MOUTH, describe_kept, speak_against, suggested_lines
 
     rid = recording.recording_id
     if not voices_mixed(config, rid):
@@ -418,19 +418,20 @@ def _lines(config, layout, recording):
         pick = dcc.Dropdown(people, line.person, id={"type": LINE_PICK, "t": f"{line.t_start:.3f}"}, clearable=False, className="picker small")
         return [seek(line.t_start), line.base, line.text, doubt, pick]
 
-    columns = ["At (s)", "Voice of", "Words", "Mouth movement", "Speaker"]
+    kind = lines.attrs.get("evidence", MOUTH)
+    columns = ["At (s)", "Voice of", "Words", "Faces" if kind == FACES else "Mouth movement", "Speaker"]
     shown = lines.head(_MAX_LINES)
     doubted, rest = shown[shown["doubt"] != ""], shown[shown["doubt"] == ""]
     kept = read_line_speakers(config, rid)
     sure = int((lines["sure"] & lines["suggested"].notna() & (lines["suggested"] != lines["person"])).sum())
     parts = [ui.note(f"{describe_kept(kept)}. Saved by {kept['by'].split(' ')[0]}." if kept else "Not checked yet.", "ok" if kept else "warn")]
     if doubted.empty:
-        parts.append(ui.note("Mouth movement speaks against no line, or no face was read here."))
+        parts.append(ui.note(f"{speak_against(kind)} no line, or no face was read here."))
     else:
         parts.append(ui.table(columns, [row(line) for line in doubted.itertuples(index=False)], numeric={"At (s)"}))
     if not rest.empty:
         table = ui.table(columns, [row(line) for line in rest.itertuples(index=False)], numeric={"At (s)"})
-        summary = f"the other {len(rest)} lines" + ("; mouth movement misses many misplaced lines, so listen to these too" if not doubted.empty else "")
+        summary = f"the other {len(rest)} lines" + (f"; {kind} {'miss' if kind == FACES else 'misses'} some misplaced lines, so listen to these too" if not doubted.empty else "")
         parts.append(html.Details([html.Summary(summary), table], open=doubted.empty))
     if len(lines) > _MAX_LINES:
         parts.append(ui.note(f"Showing the first {_MAX_LINES} of {len(lines)} lines; the rest are changed from a csv."))

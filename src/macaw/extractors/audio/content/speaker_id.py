@@ -18,11 +18,13 @@ def offered_suggestion(config, recording: Recording) -> dict | None:
 
 def suggest_voices(config, recording: Recording) -> dict | None:
     """Which voice on the shared microphone each person is: by their own microphone's loudness where
-    they have one, else by their mouth movement, and a last person left by elimination."""
+    they have one, else by how much their face speaks (face.speaking) or else their mouth movement, and a last person left
+    by elimination."""
     from macaw.exceptions import InputNotFoundError, UnreadableMediaError
     from macaw.extractors.audio.content.diarization import read_diarization
     from macaw.extractors.prep import load_prep
     from macaw.extractors.video.pose.voice_motion import ENERGY_FRAME_S, frame_levels
+    from macaw.extractors.audio.content.line_speakers import speaking_scores
     from macaw.project.layout import layout_for
     from macaw.qc.checks import MOUTH_SOURCE, RecordingResults
 
@@ -38,6 +40,8 @@ def suggest_voices(config, recording: Recording) -> dict | None:
     for subject_id in prep.tracks:
         level = frame_levels(prep.track_path(subject_id))
         signals[subject_id] = (prep.t_origin_s + np.arange(level.size) * ENERGY_FRAME_S, level, OWN_MIC)
+    for subject_id, (t, value) in speaking_scores(config, rid).items():
+        signals.setdefault(subject_id, (t, value, SPEAKING))
     mouth = RecordingResults(layout_for(config, create=False), rid).long_table(MOUTH_SOURCE, features=["mouth_movement"])
     for subject_id, rows in mouth.groupby("subject_id", dropna=True, observed=True):
         if str(subject_id) not in signals:
@@ -50,6 +54,7 @@ def suggest_voices(config, recording: Recording) -> dict | None:
 
 OWN_MIC = "own microphone"
 MOUTH = "mouth movement"
+SPEAKING = "the face speaking"
 ELIMINATION = "elimination"
 WORDS = "words"
 PITCH = "pitch"

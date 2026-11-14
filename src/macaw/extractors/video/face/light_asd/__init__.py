@@ -1,4 +1,4 @@
-"""Light-ASD, a model that tells from a face and the sound whether that face is speaking (Liao et al., CVPR 2023).
+"""Light-ASD, a model that tells from a face and the sound whether that face is speaking.
 
 The network is the published one, laid out under the same names so its weights load; see LICENSE beside this file.
 Nothing here imports the rest of the package, so a check can load this file on its own."""
