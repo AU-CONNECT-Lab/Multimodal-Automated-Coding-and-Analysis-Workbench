@@ -50,6 +50,22 @@ For coding with video frames, use a model that reads images and answers directly
 Ollama may reserve several gigabytes of working memory for a prompt cache, which brings no benefit here because every prompt differs. Starting the server with the environment variable `LLAMA_ARG_CACHE_RAM=0` disables the cache.
 :::
 
+(llm-concurrency)=
+### Several requests at a time
+
+The requests of one recording are sent one after another by default. A server that can answer several requests together finishes a recording considerably sooner when they are sent together. `coding.llm.concurrency`, in the text part of the settings, gives the number of requests kept under way at a time within one recording; a version under `coding.judges` or `coding.ratings` may set its own.
+
+```yaml
+coding:
+  llm: {provider: ollama, model: "qwen3:14b", concurrency: 4}
+```
+
+The codes and scores are stored in the same order whatever the value, each answer keeps its own seed, and changing the value does not code or rate anything again. The first request of each recording is always sent alone, so that a context too short for the prompt, or an answer cut off before it began, stops the step after a single request. Three points determine a sensible value:
+
+- *Recordings at once* in the *Steps* group (`macaw run -j`) runs several recordings side by side, and each sends its own requests, so the server receives up to that number multiplied by `concurrency`. The run plan states the product.
+- The server must be set up to answer that many. Ollama answers as many requests at a time as its environment variable `OLLAMA_NUM_PARALLEL` allows, one by default in current versions; it should be set to at least the product, since further requests only wait in the server's queue. Each request answered in parallel is given a context of its own, so the memory the model needs grows with `OLLAMA_NUM_PARALLEL` multiplied by `OLLAMA_CONTEXT_LENGTH`, and a model that no longer fits in graphics memory runs many times more slowly. vLLM answers requests together without further settings, and the llama.cpp server is started with `--parallel`. With a cloud service (`openai`, `anthropic`), the provider's rate limits apply: a request beyond them is refused and repeated a few times before the step stops, so the value should stay within what the account allows.
+- A server that answers several requests together may compute them as one batch, in which case the same seed no longer guarantees the same answer word for word. A coding or rating that must be reproducible to the letter is run with `concurrency: 1`. A value above 1 is kept with the settings in the data dictionary and noted in the quality report.
+
 ### Whose speech is coded
 
 By default, every participant's speech is coded. *People to code* restricts coding to the roles named, for example the child only. The other participants' speech is still shown to the model around each unit, so that a reply can be told from a new topic, but it is not coded.
@@ -188,7 +204,7 @@ coding:
     full_voice: {scales: scales.yaml, show: [timing, pitch, loudness, rate]}
 ```
 
-The versions run with the rest of the analysis, or alone with `macaw run -e coding.rate.full_text`. Before a run, the plan states how many requests each version sends per recording. Video frames cannot be shown for whole recordings.
+The versions run with the rest of the analysis, or alone with `macaw run -e coding.rate.full_text`. Before a run, the plan states how many requests each version sends per recording; on a server that answers several requests together, they can be sent several at a time ({ref}`llm-concurrency`). Video frames cannot be shown for whole recordings.
 
 Each line of the transcript is given to the model with the role of the person speaking, as named in the project's roles. Roles that use the words of the coding manual (for example `caregiver` and `child`) therefore spare the model a translation. The roles are best chosen before the first run, since voices and cameras are named by them.
 
