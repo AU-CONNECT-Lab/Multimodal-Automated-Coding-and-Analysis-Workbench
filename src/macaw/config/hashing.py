@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -11,6 +12,7 @@ from macaw.config.schema import CONTENT_HASHED_PATHS, MacawConfig
 
 HASH_LENGTH = 12
 _CHUNK = 1 << 20
+_LARGE_BYTES = 8 << 20
 
 
 def canonical(value: Any) -> str:
@@ -36,11 +38,24 @@ def _normalise(value: Any) -> Any:
 
 def hash_referenced_file(path: Path) -> str:
     """Content hash for keys listed in CONTENT_HASHED_PATHS."""
+    stat = Path(path).stat()
+    # every task's key hashes the config, so model weights are read once as they stand; a codebook is read each time
+    if stat.st_size < _LARGE_BYTES:
+        return _content_hash(path)
+    return _large_file_hash(str(path), stat.st_size, stat.st_mtime_ns)
+
+
+def _content_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
             digest.update(chunk)
     return digest.hexdigest()[:HASH_LENGTH]
+
+
+@lru_cache(maxsize=32)
+def _large_file_hash(path: str, size: int, modified_ns: int) -> str:
+    return _content_hash(Path(path))
 
 
 def _digest(text: str) -> str:
