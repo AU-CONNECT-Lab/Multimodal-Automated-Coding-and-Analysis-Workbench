@@ -1,66 +1,45 @@
-"""The Setup page's card where a person says who is who on a camera: a frame of the camera's own file, a click on
-each person. Save runs macaw name-people."""
+"""The Review page's editor where a person says who is who on a camera: a frame of the camera's own file, a click on
+each person. Where pose.detect has run, the people it found are drawn, and a click shows whom it lands on."""
 
 from __future__ import annotations
 
 import base64
 from pathlib import Path
 
+import pandas as pd
 from dash import Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
-from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.project.layout import layout_for
 from macaw.project.names import read_names
 from macaw.project.recording import build_recording
 
-PATH = "/setup"
 # the frame is shown at most this wide; clicks are kept as shares of it, so its size does not matter
 SHOWN_SIDE = 1280
-_MARK = "#e8590c"
+# one colour per person, in the order of project.roles, on the frame and beside the names
+COLOURS = ("#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f59f00", "#0c8599", "#c2255c", "#5c940d")
+_UNNAMED = "#adb5bd"
+AT, FROM_PLAYER, SHOW, PERSON, GRAPH, NOTE = "names-at", "names-from-player", "names-show", "names-person", "names-graph", "names-note"
+# the Review page's save reads these by pattern, as a recording without cameras has none
+MARKS, FRAME = {"type": "names-marks", "key": "one"}, {"type": "names-frame", "key": "one"}
 
 
-def card(config):
-    rids = resolve_recordings(config, None)
-    return ui.card(
-        "Who is who on each camera",
-        html.Div(
-            [
-                ui.field("Recording", dcc.Dropdown(rids, rids[0] if rids else None, id="names-recording", clearable=False, className="picker")),
-                ui.field("Camera", dcc.Dropdown([], None, id="names-camera", clearable=False, className="picker")),
-                ui.field("At (s)", dcc.Input(id="names-at", type="number", min=0, step="any", value=10)),
-                ui.button("Show frame", "names-show"),
-            ],
-            className="toolbar",
-        ),
-        html.Div(id="names-saved"),
-        html.Div(ui.field("Click on", dcc.RadioItems([], None, id="names-person", inline=True)), className="toolbar"),
-        html.Div(id="names-note"),
-        dcc.Graph(id="names-graph", figure=marks_figure(None, {}), config={"displayModeBar": False}),
-        dcc.Store(id="names-marks", data={}),
-        dcc.Store(id="names-frame", data=None),
-        html.Div(
-            [
-                # kept in this browser, as on the Review page
-                ui.field("Your name", dcc.Input(id="names-by", value="", placeholder="needed to save", persistence=True, persistence_type="local")),
-                ui.button("Save the names", "names-save", primary=True), ui.button("Clear this camera's names", "names-clear"),
-            ],
-            className="toolbar",
-        ),
-        html.Div(id="names-result"),
-        desc="Click each person on a frame where all are in view.",
-    )
+def colour_of(person: str, people: list[str]) -> str:
+    return COLOURS[people.index(person) % len(COLOURS)] if person in people else _UNNAMED
 
 
-def cameras_of(config_path: Path, rid: str | None) -> dict[str, list[str]]:
+def swatch(person: str, people: list[str]):
+    return html.Span([html.Span(className="swatch", style={"background": colour_of(person, people)}), person], className="person")
+
+
+def cameras_of(config, rid: str | None) -> dict[str, list[str]]:
     """camera -> the people the setup reads it for, in a recording; empty when it cannot be read."""
     from macaw.extractors.video.pose.keypoints import camera_people
 
     if not rid:
         return {}
-    config = resolve_config(config_path, recording_id=rid)
     try:
         recording = build_recording(rid, config)
     except MacawError:
@@ -69,22 +48,44 @@ def cameras_of(config_path: Path, rid: str | None) -> dict[str, list[str]]:
     return {item.name: sorted(camera_people(item), key=lambda person: (person not in roles, roles.index(person) if person in roles else 0, person)) for item in recording.cameras()}
 
 
-def saved(config_path: Path, rid: str | None, camera: str | None):
-    if not rid or not camera:
-        return None
-    config = resolve_config(config_path, recording_id=rid)
+def saved(config, rid: str, camera: str, people: list[str]):
     clicks = read_names(layout_for(config, create=False).names_path(rid)).get(camera, [])
     if not clicks:
         return ui.note(f"Nobody is named on {camera} yet.")
     rows = [
-        [click["person"], f"{float(click['at']):g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "")]
+        [swatch(click["person"], people), f"{float(click['at']):g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "").split(" ")[0]]
         for click in sorted(clicks, key=lambda click: (float(click["at"]), click["person"]))
     ]
     return ui.table(["Person", "At (s)", "Where", "By"], rows, numeric={"At (s)"}, fit=True)
 
 
+def editor(config, rid: str, camera: str, people: list[str]):
+    """Shows a frame of the camera at the player's moment or a typed one; Save and Clear are the Review page's buttons."""
+    options = [{"label": swatch(person, people), "value": person} for person in people]
+    return html.Div(
+        [
+            saved(config, rid, camera, people),
+            html.Div(
+                [
+                    ui.field("At (s) of its file", dcc.Input(id=AT, type="number", min=0, step="any", value=10)),
+                    ui.button("The player's time", FROM_PLAYER),
+                    ui.button("Show frame", SHOW),
+                ],
+                className="toolbar",
+            ),
+            html.Div(ui.field("Click on", dcc.RadioItems(options, people[0] if people else None, id=PERSON, inline=True)), className="toolbar"),
+            html.Div(id=NOTE),
+            dcc.Graph(id=GRAPH, figure=marks_figure(None, {}, people), config={"displayModeBar": False}),
+            dcc.Store(id=MARKS, data={}),
+            dcc.Store(id=FRAME, data=None),
+        ],
+        className="naming",
+    )
+
+
 def frame_of(config_path: Path, rid: str, camera: str, at_s: float) -> tuple[dict | None, str | None]:
-    """The frame of the camera's own file at_s from its first picture, shaped as the prepared copy is; or why not."""
+    """The frame of the camera's own file at_s from its first picture, shaped as the prepared copy is, with whoever
+    pose.detect found in it; or why not."""
     from macaw.media.ffmpeg import extract_frame
 
     config = resolve_config(config_path, recording_id=rid)
@@ -99,7 +100,59 @@ def frame_of(config_path: Path, rid: str, camera: str, at_s: float) -> tuple[dic
         return None, f"No frame at {at_s:g} s of {camera}: {error}"
     width, height = jpeg_size(dest.read_bytes())
     uri = "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode()
-    return {"uri": uri, "width": width, "height": height, "rid": rid, "camera": camera, "at": at_s}, None
+    try:
+        found = detected_at(config, rid, camera, at_s, (width, height))
+    except Exception:   # the people found are a help; the frame can be named without them
+        found = None
+    return {"uri": uri, "width": width, "height": height, "rid": rid, "camera": camera, "at": at_s,
+            "detected": None if found is None else found.to_dict("records")}, None
+
+
+def detected_at(config, rid: str, camera: str, at_s: float, shown: tuple[int, int]) -> pd.DataFrame | None:
+    """Everyone pose.detect found in the frame nearest a moment of the camera's file, in the pixels of the frame shown;
+    None before it has run."""
+    from macaw.extractors.prep import apply_prep_timing, load_video_prep
+    from macaw.extractors.video.pose.keypoints import PoseExtractor, load_detections
+
+    try:
+        detections, _ = load_detections(config, rid)
+    except MacawError:
+        return None
+    recording = build_recording(rid, config)
+    apply_prep_timing(config, recording)
+    item = recording.media_named(camera)
+    video = load_video_prep(config, rid).get(camera)
+    t = PoseExtractor._click(item, video, {"person": "", "at": at_s, "x": 0.0, "y": 0.0}).t
+    piece = detections[(detections["video"] == camera) & detections["track_id"].notna() & detections["x"].notna()]
+    if piece.empty:
+        return piece[["track_id", "frame", "t", "joint", "x", "y"]]
+    times = piece.groupby("frame")["t"].first()
+    frame = (times - t).abs().idxmin()
+    if abs(times[frame] - t) > (1.0 / item.fps if item.fps else 0.1):
+        return piece.iloc[:0][["track_id", "frame", "t", "joint", "x", "y"]]
+    here = piece[piece["frame"] == frame][["track_id", "frame", "t", "joint", "x", "y"]].copy()
+    width, height = (video.get("prepared_size") or video["size"]) if video else shown
+    here["x"] = here["x"] * shown[0] / width
+    here["y"] = here["y"] * shown[1] / height
+    here["track_id"] = here["track_id"].astype(int)
+    return here.reset_index(drop=True)
+
+
+def landed(detected: list[dict] | None, point: list[float], frame: dict) -> tuple[int | None, str]:
+    """The person found under a click, as pose.keypoints will read it, or why none."""
+    from macaw.extractors.video.pose.track_repair import CLICK_REACH, Click, _clicked_track, _track_boxes
+
+    if not detected:
+        return None, ""
+    here = pd.DataFrame(detected)
+    x, y = point[0] * frame["width"], point[1] * frame["height"]
+    boxes = _track_boxes(here)
+    pad = CLICK_REACH * boxes["size"]
+    inside = boxes[(boxes["x0"] - pad <= x) & (x <= boxes["x1"] + pad) & (boxes["y0"] - pad <= y) & (y <= boxes["y1"] + pad)]
+    if inside.empty:
+        return None, "nobody was found there"
+    track = _clicked_track(here, here["frame"].iloc[0], inside["track_id"].astype(int).tolist(), Click("", 0.0, 0.0, x, y))
+    return (track, "") if track is not None else (None, "this falls on two people; click where they do not overlap")
 
 
 def jpeg_size(data: bytes) -> tuple[int, int]:
@@ -117,19 +170,30 @@ def jpeg_size(data: bytes) -> tuple[int, int]:
     raise MacawError("the frame written is not a JPEG picture")
 
 
-def marks_figure(frame: dict | None, marks: dict[str, list[float]]):
+def marks_figure(frame: dict | None, marks: dict[str, list[float]], people: list[str]):
     import plotly.graph_objects as go
 
     figure = go.Figure()
     if frame:
         # no label on hover, but the picture still reports clicks
         figure.add_trace(go.Image(source=frame["uri"], hoverinfo="none"))
-        if marks:
-            people = sorted(marks)
+        owners = {}
+        for person, point in marks.items():
+            track, _ = landed(frame.get("detected"), point, frame)
+            if track is not None:
+                owners[track] = person
+        detected = pd.DataFrame(frame.get("detected") or [], columns=["track_id", "x", "y"])
+        for track, joints in detected.groupby("track_id"):
+            colour = colour_of(owners[track], people) if track in owners else _UNNAMED
             figure.add_trace(go.Scatter(
-                x=[marks[person][0] * frame["width"] for person in people], y=[marks[person][1] * frame["height"] for person in people],
-                mode="markers+text", text=people, textposition="top center", textfont={"color": _MARK, "size": 15},
-                marker={"size": 14, "color": _MARK, "line": {"color": "white", "width": 2}}, hoverinfo="skip",
+                x=joints["x"], y=joints["y"], mode="markers", hoverinfo="skip",
+                marker={"size": 7, "color": colour, "line": {"color": "white", "width": 1}},
+            ))
+        for person, (x, y) in marks.items():
+            figure.add_trace(go.Scatter(
+                x=[x * frame["width"]], y=[y * frame["height"]], mode="markers+text", text=[person], textposition="top center",
+                textfont={"color": colour_of(person, people), "size": 15}, hoverinfo="skip",
+                marker={"size": 16, "color": colour_of(person, people), "line": {"color": "white", "width": 2}},
             ))
     figure.update_layout(
         margin={"l": 0, "r": 0, "t": 0, "b": 0}, showlegend=False, dragmode=False,
@@ -146,10 +210,11 @@ def marked(marks: dict, person: str, click: dict, frame: dict) -> dict:
     return {**marks, person: [round(x, 4), round(y, 4)]}
 
 
-def next_person(people: list[str], marks: dict, current: str) -> str:
-    """The next person not clicked yet, else the one just clicked."""
-    waiting = [person for person in people if person not in marks]
-    return waiting[0] if waiting else current
+def where_they_landed(frame: dict, marks: dict) -> str:
+    if not frame.get("detected"):
+        return "" if frame.get("detected") is None else " Nobody was found in this frame; try another moment."
+    said = [f"{person}: {why}" for person, point in marks.items() if (why := landed(frame["detected"], point, frame)[1])]
+    return (" " + "; ".join(said) + ".") if said else ""
 
 
 def name_command(config_path: Path, frame: dict, marks: dict, by: str) -> list[str]:
@@ -164,74 +229,34 @@ def clear_command(config_path: Path, rid: str, camera: str) -> list[str]:
     return cli_bridge.build_command(["name-people"], config_path=config_path, recordings=[rid], extra_flags=["--camera", camera, "--clear"])
 
 
-def register(app, config_path: Path) -> None:
-    @app.callback(Output("names-recording", "value"), Input("url", "pathname"), Input("url", "search"))
-    def linked_recording(pathname, search):
-        rid = ui.asked(search).get("recording")
-        if (pathname or "/").rstrip("/") != PATH or rid not in resolve_recordings(resolve_config(config_path), None):
-            return no_update
-        return rid
-
-    @app.callback(
-        Output("names-camera", "options"), Output("names-camera", "value"),
-        Input("names-recording", "value"), Input("url", "search"), State("names-camera", "value"),
+def register(app, config_path: Path, player: str, recording: str, camera: dict) -> None:
+    app.clientside_callback(
+        "function (clicks) { const video = document.getElementById('" + player + "');"
+        " if (!clicks || !video) { return window.dash_clientside.no_update; }"
+        " return Math.round(video.currentTime * 100) / 100; }",
+        Output(AT, "value"), Input(FROM_PLAYER, "n_clicks"), prevent_initial_call=True,
     )
-    def cameras(rid, search, chosen):
-        found = list(cameras_of(config_path, rid))
-        asked = ui.asked(search).get("camera")
-        if asked in found and ui.asked(search).get("recording") == rid:
-            return found, asked
-        return found, chosen if chosen in found else (found[0] if found else None)
 
     @app.callback(
-        Output("names-person", "options"), Output("names-person", "value"), Output("names-saved", "children"),
-        Input("names-camera", "value"), Input("names-result", "children"), State("names-recording", "value"),
-    )
-    def people(camera, _result, rid):
-        found = cameras_of(config_path, rid).get(camera, [])
-        return found, found[0] if found else None, saved(config_path, rid, camera)
-
-    @app.callback(
-        Output("names-graph", "figure"), Output("names-marks", "data"), Output("names-frame", "data"),
-        Output("names-note", "children"), Output("names-person", "value", allow_duplicate=True),
-        Input("names-show", "n_clicks"), Input("names-graph", "clickData"),
-        State("names-recording", "value"), State("names-camera", "value"), State("names-at", "value"),
-        State("names-person", "value"), State("names-person", "options"), State("names-marks", "data"), State("names-frame", "data"),
+        Output(GRAPH, "figure"), Output(MARKS, "data"), Output(FRAME, "data"), Output(NOTE, "children"),
+        Input(SHOW, "n_clicks"), Input(GRAPH, "clickData"),
+        State(recording, "value"), State(camera, "value"), State(AT, "value"),
+        State(PERSON, "value"), State(PERSON, "options"), State(MARKS, "data"), State(FRAME, "data"),
         prevent_initial_call=True,
     )
-    def frame(_show, click, rid, camera, at, person, people, marks, shown):
-        if ctx.triggered_id == "names-show":
-            if not rid or not camera:
-                return no_update, no_update, no_update, ui.note("Choose a recording and a camera first.", "warn"), no_update
-            found, problem = frame_of(config_path, rid, camera, float(at or 0.0))
+    def frame(_show, click, rid, chosen, at, person, options, marks, shown):
+        people = [option["value"] for option in options or []]
+        if ctx.triggered_id == SHOW:
+            if not rid or not chosen:
+                return no_update, no_update, no_update, ui.note("Choose a camera for the player first.", "warn")
+            found, problem = frame_of(config_path, rid, chosen, float(at or 0.0))
             if problem:
-                return marks_figure(None, {}), {}, None, ui.note(problem, "warn"), no_update
-            note = f"Frame at {found['at']:g} s of {camera}. Click on each person: {', '.join(people)}."
-            return marks_figure(found, {}), {}, found, ui.note(note), people[0] if people else None
+                return marks_figure(None, {}, people), {}, None, ui.note(problem, "warn")
+            hint = " The people found are drawn grey until a click names them." if found["detected"] else ""
+            return marks_figure(found, {}, people), {}, found, ui.note(f"Frame at {found['at']:g} s of {chosen}. Choose a person, then click on them.{hint}")
         if not shown or not click or not person:
-            return no_update, no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update
         marks = marked(marks or {}, person, click, shown)
         left = [name for name in people if name not in marks]
-        note = f"Now click {left[0]}." if left else "Everyone is clicked: save the names, or click a person again to move them."
-        return marks_figure(shown, marks), marks, no_update, ui.note(note), next_person(people, marks, person)
-
-    @app.callback(
-        Output("names-result", "children"),
-        Input("names-save", "n_clicks"), Input("names-clear", "n_clicks"),
-        State("names-frame", "data"), State("names-marks", "data"), State("names-recording", "value"), State("names-camera", "value"),
-        State("names-by", "value"),
-        prevent_initial_call=True,
-    )
-    def keep(_save, _clear, shown, marks, rid, camera, by):
-        if ctx.triggered_id == "names-save":
-            if not shown or not marks:
-                return ui.note("Show a frame and click on the people first.", "warn")
-            if not (by or "").strip():
-                return ui.note("Type your name first: the names are kept with who clicked them.", "warn")
-            argv = name_command(config_path, shown, marks, by.strip())
-        else:
-            if not rid or not camera:
-                return ui.note("Choose a recording and a camera first.", "warn")
-            argv = clear_command(config_path, rid, camera)
-        code, text = cli_bridge.run_now(argv, cwd=config_path.parent)
-        return [ui.command(argv), ui.output(code, text)]
+        note = (f"Still to click: {', '.join(left)}." if left else "Everyone is clicked: save the names, or click again to move one.")
+        return marks_figure(shown, marks, people), marks, no_update, ui.note(note + where_they_landed(shown, marks))

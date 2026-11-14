@@ -19,6 +19,7 @@ from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.media.align import describe_drift, drift_flagged, read_offset_table, review_reason
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
+from macaw.project.review_notes import note_tags, read_notes
 from macaw.exceptions import BackendNotAvailableError
 from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
 from macaw.qc.transcript_check import describe as describe_check, read_check
@@ -332,6 +333,15 @@ def _decisions(
         rows.append({
             "what": "Review frames a model looked at", "decided": f"{describe_look(looked)}; macaw check-look -r {recording_id}",
             "by": "person" if settled else "software", "href": "#Frames" if frames else None,
+        })
+    notes = read_notes(layout.review_notes_path(recording_id))
+    if notes:
+        last = notes[-1]
+        tags = note_tags(notes)
+        rows.append({
+            "what": "Notes from review",
+            "decided": f"{len(notes)} note(s)" + (f", tagged {', '.join(tags)}" if tags else "") + f"; the latest: {last['text'] or '(no text)'}",
+            "by": _who_and_when(f"{last['by']} {last['at']}"), "href": None,
         })
     scale = recording_scale(config, layout, recording_id)
     if scale is not None:

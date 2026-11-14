@@ -455,3 +455,18 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .choice-label { font-size: 0.78rem; color: var(--muted); margin: 1rem 0 0.1rem; }
 .card-body > .choice-label:first-child { margin-top: 0; }
 .floor-slider { flex: 1; min-width: 18rem; padding-bottom: 1.6rem; }
+
+/* Review page: a wide recording picker, the player that stays in view, times that play from there */
+.picker.wide { min-width: 22rem; }
+#review-play { position: sticky; top: 8.5rem; z-index: 5; }
+#review-play .player { max-height: 34vh; }
+.window-bar { position: relative; height: 6px; margin: 0.35rem 0 0; border-radius: 3px; background: var(--rule); }
+.window-bar span { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+.seek { border: none; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted; }
+.clip { display: flex; align-items: center; gap: 0.5rem; }
+.swatch { display: inline-block; width: 0.8rem; height: 0.8rem; margin-right: 0.35rem; border-radius: 50%; vertical-align: -0.1rem; }
+.person { white-space: nowrap; }
+.tracks { margin-right: 1rem; }
+.tag-picks label { margin-right: 1rem; }
+.note-text { width: 100%; min-height: 4rem; margin-top: 0.6rem; padding: 0.5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
+.tags .pill { margin-right: 0.3rem; }

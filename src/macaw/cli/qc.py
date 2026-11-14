@@ -153,6 +153,37 @@ def check_look(
     typer.echo(f"{recording}: {describe(summary(layout, recording))}")
 
 
+@app.command("note")
+def note(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recording: str = typer.Option(..., "--recording", "-r"),
+    tag: list[str] = typer.Option(None, "--tag", help="One of qc.note_tags, repeatable."),
+    text: str = typer.Option("", "--text", help="The note in your own words."),
+    remove: str = typer.Option(None, "--remove", help="Take back the note with this id."),
+    by: str = typer.Option(None, "--by", help="Who wrote it. Default: the login name."),
+) -> None:
+    """Note something about a recording while reviewing it, such as a part to cut or a step to run again; it changes nothing by itself."""
+    from macaw.project.review_notes import add_note, remove_note
+
+    resolved = resolve_config(config, recording_id=recording)
+    if recording not in resolve_recordings(resolve_config(config), None):
+        raise MacawError(f"{recording} is not one of this project's recordings")
+    path = layout_for(resolved, create=False).review_notes_path(recording)
+    if remove:
+        if not remove_note(path, remove):
+            raise MacawError(f"{recording} has no note {remove}")
+        typer.echo(f"{recording}: note {remove} taken back")
+        return
+    tags = list(tag or [])
+    unknown = [item for item in tags if item not in resolved.qc.note_tags]
+    if unknown:
+        raise MacawError(f"{', '.join(unknown)} not in qc.note_tags ({', '.join(resolved.qc.note_tags)}); add it there first")
+    if not tags and not text.strip():
+        raise MacawError("give --tag, --text or both")
+    added = add_note(path, tags, text, by or getpass.getuser())
+    typer.echo(f"{recording}: note {added['id']} kept in {path}")
+
+
 @app.command("name-people")
 def name_people(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),

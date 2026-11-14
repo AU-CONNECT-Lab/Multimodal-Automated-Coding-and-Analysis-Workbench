@@ -100,6 +100,10 @@ class Layout:
     def gaze_labels_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "gaze_labels.json"
 
+    # what a person noted while reviewing it, such as a part to cut or a step to run again
+    def review_notes_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "review_notes.json"
+
     # the transcript a person corrected in ELAN; when there, text.asr reads it instead of recognising speech
     def corrected_transcript_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "transcript_corrected.eaf"

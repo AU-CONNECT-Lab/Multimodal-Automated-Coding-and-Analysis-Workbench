@@ -83,7 +83,7 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
     assert "Who is on camera" in shown and "accept-owner" in shown and "Which file is whose" not in shown
     argv = review.action_command(project, "003", "accept-owner", "room", "ann", {})
     assert argv[1] == "accept-owner" and argv[argv.index("--camera") + 1] == "room"
-    assert "/setup?recording=003&amp;camera=room" in shown or "/setup?recording=003&camera=room" in shown
+    assert "Name the people on the camera playing" in shown and "name-people" in shown and "/setup?" not in shown
     voices = review.action_command(project, "003", "accept-voices", "", "ann", {"S1": "child", "S0": "none"})
     assert voices[voices.index("--rename") + 1] == "S0=none,S1=child"
 
@@ -363,7 +363,19 @@ def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
 
 
 def callback(app, output: str):
-    return app.callback_map[output]["callback"].__wrapped__
+    # an output that another callback also sets carries a suffix of its own
+    found = [key for key in app.callback_map if key == output or key.split("@")[0] == output.split("@")[0] or key.startswith(output)]
+    return app.callback_map[found[0]]["callback"].__wrapped__
+
+
+def review_update(app):
+    return callback(app, "..review-body.children...review-message.children...review-recording.options")
+
+
+# the states after the recording, the clicks and the uploads: name, voices, acts, gaze, scale, camera, names, note, picker
+def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None):
+    return [by, [], [], [], [], [], [], [], *([[]] * 6), list(cameras), [marks] if marks else [], [frame] if frame else [],
+            [tags] if tags is not None else [], [text] if text is not None else [], []]
 
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
@@ -427,16 +439,15 @@ def test_your_name_is_taken_as_typed_without_leaving_the_box(project):
 def test_your_name_starts_blank_is_kept_in_the_browser_and_is_needed_for_a_decision(project, monkeypatch):
     name = props_of(review.layout(project), "review-by")
     assert name["value"] == "" and name["persistence"] is True and name["persistence_type"] == "local"
-    update = callback(create_app(project), "..review-body.children...review-message.children..")
-    scale = [[]] * 6
+    update = review_update(create_app(project))
     pressed = {"type": review.ACT, "action": "accept-offset", "target": "mic"}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
-    body, said = update("003", [1], [], [], "  ", [], [], [], [], [], [], [], *scale)
+    body, said, _ = update("003", [1], [], [], *review_states("  "))
     assert body is no_update and "Type your name first" in text_of(said)
     dropped = {"type": review.UPLOAD, "kind": review.CODING_UPLOAD}
     monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=dropped, triggered=[{"value": "data:,"}],
                                                        inputs_list=[None, None, [{"id": dropped}]]))
-    body, said = update("003", [], ["data:,"], ["a.csv"], "", [], [], [], [], [], [], [], *scale)
+    body, said, _ = update("003", [], ["data:,"], ["a.csv"], *review_states(""))
     assert body is no_update and "Type your name first" in text_of(said)
 
 
@@ -765,16 +776,38 @@ def test_the_overview_asks_for_the_setup_first_until_it_is_saved(project):
     assert "not saved yet" in text_of(run.layout(project))
 
 
-def test_the_naming_card_takes_its_recording_and_camera_from_the_review_pages_link(project):
-    app = create_app(project)
-    assert callback(app, "names-recording.value")("/setup", "?recording=003&camera=room") == "003"
-    assert callback(app, "names-recording.value")("/review", "?recording=003") is no_update
-    cameras = callback(app, "..names-camera.options...names-camera.value..")
-    assert cameras("003", "?recording=003&camera=room", None) == (["room"], "room")
-    assert cameras("003", "", "gone") == (["room"], "room")
-    people = callback(app, "..names-person.options...names-person.value...names-saved.children..")
-    found, first, listed = people("room", None, "003")
-    assert found == ["parent", "child"] and first == "parent" and "Nobody is named on room yet" in text_of(listed)
+def test_review_steps_through_the_recordings_and_lists_what_waits_and_the_tags(project):
+    options = [{"label": "a", "value": "a"}, {"label": "b", "value": "b"}, {"label": "c", "value": "c"}]
+    assert review.stepped(options, "b", 1) == "c" and review.stepped(options, "c", 1) == "c"
+    assert review.stepped(options, "a", -1) == "a" and review.stepped(options, "gone", 1) == "a" and review.stepped([], None, 1) is None
+    from macaw.project.review_notes import add_note
+
+    add_note(layout_for(resolve_config(project)).review_notes_path("003"), ["rerun"], "pose again", "ann")
+    assert review.recording_label(resolve_config(project), "003", 2) == "003 · 2 waiting · rerun"
+
+
+def test_a_note_is_kept_with_its_tags_and_can_be_taken_back(project, monkeypatch):
+    from macaw.cli.main import app as cli
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(review.cli_bridge, "run_now", lambda argv, cwd=None, **_: (0, CliRunner().invoke(cli, argv[1:]).output))
+    update = review_update(create_app(project))
+    pressed = {"type": review.ACT, "action": "add-note", "target": ""}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
+    _, said, _ = update("003", [1], [], [], *review_states("ann", tags=[], text=" "))
+    assert "Tick a tag or write the note first" in text_of(said)
+    body, said, _ = update("003", [1], [], [], *review_states("ann", tags=["trim the start"], text="cut the first minute"))
+    assert "kept in" in text_of(said) and "cut the first minute" in text_of(body) and "trim the start" in text_of(body)
+    from macaw.project.review_notes import read_notes
+
+    note = read_notes(layout_for(resolve_config(project)).review_notes_path("003"))[0]
+    assert note["tags"] == ["trim the start"] and note["by"] == "ann"
+    with pytest.raises(Exception, match="not in qc.note_tags"):
+        CliRunner().invoke(cli, ["note", "-c", str(project), "-r", "003", "--tag", "nonsense"], catch_exceptions=False)
+    removed = {"type": review.ACT, "action": "remove-note", "target": note["id"]}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=removed, triggered=[{"value": 1}]))
+    body, said, _ = update("003", [1], [], [], *review_states("ann"))
+    assert "taken back" in text_of(said) and "cut the first minute" not in text_of(body)
 
 
 def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project, monkeypatch):
@@ -788,27 +821,47 @@ def test_a_person_clicks_each_person_on_a_frame_and_the_names_are_saved(project,
     run_ffmpeg(["-f", "lavfi", "-i", "color=gray:s=480x360:r=10:d=3", "-vf", "setsar=4/3", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
     shown, problem = naming.frame_of(project, "003", "room", 1.0)
     assert problem is None and (shown["width"], shown["height"]) == (640, 360) and shown["uri"].startswith("data:image/jpeg")
+    assert shown["detected"] is None
     assert "No frame at 9 s" in naming.frame_of(project, "003", "room", 9.0)[1]
 
+    people = ["parent", "child"]
     marks = naming.marked({}, "parent", {"points": [{"x": 160, "y": 180}]}, shown)
-    assert marks == {"parent": [0.25, 0.5]} and naming.next_person(["parent", "child"], marks, "parent") == "child"
+    assert marks == {"parent": [0.25, 0.5]}
     marks = naming.marked(marks, "child", {"points": [{"x": 700, "y": 90}]}, shown)
-    assert marks["child"] == [1.0, 0.25] and naming.next_person(["parent", "child"], marks, "child") == "child"
-    assert len(naming.marks_figure(shown, marks).data) == 2
+    assert marks["child"] == [1.0, 0.25]
+    figure = naming.marks_figure(shown, marks, people)
+    assert len(figure.data) == 3 and figure.data[1].marker.color != figure.data[2].marker.color
 
-    argv = naming.name_command(project, shown, marks, "ann")
-    assert argv[argv.index("--at") + 1] == "1" and "parent=0.25,0.5" in argv and "child=1,0.25" in argv and argv[argv.index("--by") + 1] == "ann"
-    monkeypatch.setattr(naming.cli_bridge, "run_now", lambda argv, cwd=None: (0, CliRunner().invoke(cli, argv[1:]).output))
-    app = create_app(project)
-    keep = callback(app, "names-result.children")
-    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-save"))
-    assert "Type your name first" in text_of(keep(1, None, shown, marks, "003", "room", " "))
-    assert "on room, child at 1 s, parent at 1 s" in text_of(keep(1, None, shown, marks, "003", "room", "ann"))
-    listed = text_of(naming.saved(project, "003", "room"))
+    monkeypatch.setattr(review.cli_bridge, "run_now", lambda argv, cwd=None, **_: (0, CliRunner().invoke(cli, argv[1:]).output))
+    update = review_update(create_app(project))
+    saving = {"type": review.ACT, "action": "name-people", "target": ""}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=saving, triggered=[{"value": 1}]))
+    _, said, _ = update("003", [1], [], [], *review_states(" ", ["room"], marks, shown))
+    assert "Type your name first" in text_of(said)
+    body, said, _ = update("003", [1], [], [], *review_states("ann", ["room"], marks, shown))
+    assert "on room, child at 1 s, parent at 1 s" in text_of(said)
+    listed = text_of(naming.saved(resolve_config(project), "003", "room", people))
     assert "25% across, 50% down" in listed and "100% across, 25% down" in listed
-    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id="names-clear"))
-    assert "no clicks on room now" in text_of(keep(None, 1, shown, marks, "003", "room", ""))
-    assert "Nobody is named on room yet" in text_of(naming.saved(project, "003", "room"))
+    clearing = {"type": review.ACT, "action": "clear-names", "target": ""}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=clearing, triggered=[{"value": 1}]))
+    _, said, _ = update("003", [1], [], [], *review_states("", ["room"]))
+    assert "no clicks on room now" in text_of(said)
+    assert "Nobody is named on room yet" in text_of(naming.saved(resolve_config(project), "003", "room", people))
+
+
+def test_a_click_shows_whom_it_lands_on_among_the_people_found():
+    from macaw.interface.pages import naming
+
+    joints = ["left_shoulder", "right_shoulder", "left_hip", "right_hip"]
+    detected = [
+        {"track_id": track, "frame": 5, "t": 0.5, "joint": joint, "x": x0 + dx, "y": 100 + dy}
+        for track, x0 in ((1, 100), (2, 400)) for joint, (dx, dy) in zip(joints, [(0, 0), (60, 0), (0, 120), (60, 120)])
+    ]
+    frame = {"width": 640, "height": 360, "detected": detected}
+    assert naming.landed(detected, [130 / 640, 160 / 360], frame) == (1, "")
+    assert naming.landed(detected, [430 / 640, 160 / 360], frame) == (2, "")
+    assert naming.landed(detected, [300 / 640, 20 / 360], frame) == (None, "nobody was found there")
+    assert "parent: nobody was found there" in naming.where_they_landed(frame, {"parent": [300 / 640, 20 / 360]})
 
 
 def placed_project(project):

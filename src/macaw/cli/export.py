@@ -13,6 +13,7 @@ from macaw.interop.eaf import export_eaf
 from macaw.media.align import apply_offset_table
 from macaw.logging_setup import get_logger
 from macaw.project.dictionary import feature_dictionary, long_columns, write_dictionary
+from macaw.project.review_notes import notes_table
 from macaw.project.layout import layout_for
 from macaw.project.manifest import recording_specs
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
@@ -105,6 +106,10 @@ def export(
         exported.to_parquet(out, index=False)
     columns = list(exported.columns) if wide else long_columns(table)
     written = write_dictionary(feature_dictionary(table, columns, specs, units), out)
+    notes = notes_table(layout, recording_ids)
+    if not notes.empty:
+        written = [*written, out.with_name(f"{out.stem}_review_notes.csv")]
+        notes.to_csv(written[-1], index=False, encoding="utf-8")
 
     logger.info("%d rows from %d recordings", len(table), len(frames))
     for path in (out, *written):

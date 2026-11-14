@@ -169,15 +169,6 @@ With several calibrated cameras, **From the calibration** fills in each camera's
 
 **Draw for a paper**, or `macaw draw-room`, writes a top view and a side view of the saved arrangement at 300 dpi as `setups/main.png`, with the participants, the cameras and what each sees, the microphones, the things and a scale bar, and no further annotation.
 
-(naming)=
-### Who is who on each camera
-
-Which person in a picture is which participant is stated by the researcher, once per camera and recording, under *Who is who on each camera* on the Setup page. Choose the recording and the camera, enter a moment of the camera's file in seconds at which the participants it is used for are all in view and clearly apart, and press **Show frame**. Choose each participant in turn and click on them, then enter a name under *Your name* and press **Save the names**. MACAW names whoever was detected under each click and follows them through the rest of the recording. The clicks saved for the camera are listed below the selection, and **Clear this camera's names** removes them.
-
-A camera used for one participant alone needs no click as long as no one else is ever in view on it at the same time. Every other camera needs one, and its recording waits at *Who is on camera* ({ref}`step 6 <review>`) until it has one. When the tracker loses a participant for a while, for example after they leave the picture, a further click at a moment after their return names them again. Suggestions in place of clicks are available as an option ({ref}`suggest-names`).
-
-From the command line, the same is done with `macaw name-people -r dyad01 --camera front --at 12.5 --person parent=0.3,0.5 --person child=0.7,0.6`, where each position is given as a share of the picture's width and height, measured from its top left corner.
-
 ## 4. Configure the project
 
 {bdg-warning}`You do this`
@@ -262,7 +253,9 @@ The window may be closed at any time. The next run resumes where the previous on
 
 {bdg-warning}`You do this`
 
-Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items. Enter a name under *Your name* first: each decision is stored with it, and the browser keeps it for later sessions.
+Some decisions cannot be made reliably by software. When MACAW reaches one, processing of that recording pauses at that point while the other recordings continue. The Review page lists what is waiting; select a recording to see its items. The list of recordings gives, after each name, how many items wait on it and the tags of its notes, and the arrows on either side of it move to the recording before or after. Enter a name under *Your name* first: each decision is stored with it, and the browser keeps it for later sessions.
+
+The *Play* card at the top of the page plays one camera, with its own sound or, for a camera without sound, with the sound of the device that hears the most participants, placed by the offsets between the files. It is made into a small copy once, with **Make a copy to play here**, or for every recording at once in the background with **Make copies of every recording** (`macaw previews`). The bar below the player marks the analysed part of the recording. The card stays in view while the page scrolls, and every time shown on the page in the same colour as a link, such as a voice's clip, a doubtful transcript line or a speech act, plays the camera from that moment.
 
 ```{figure} screens/review.png
 :width: 100%
@@ -281,11 +274,16 @@ The clip shows ten seconds from the start, the middle and the end of the recordi
 
 A device whose clock runs at a slightly different rate also drifts away from the others over a long recording. When the offset of successive segments moves along a straight line by more than 20 ms across the recording, MACAW corrects the drift along that line, resampling the file's sound and rescaling its frame times, and holds the file here; the figure shows the segment offsets and the line. An offset entered by hand is applied as it is, without drift correction.
 
+(naming)=
 ### Who is on camera
 
 {bdg-secondary-line}`only when uncertain`
 
-MACAW follows the participants named in {ref}`step 3 <naming>` through the recording. A camera waits for the researcher when nobody has been named on it, when a click fell on no one or on two overlapping people, when two names were clicked on one person, or when someone who was not named is in view nearly as long as the participants who were. The card states the reason and the times at which to look. Press **Draw review frames** to see each person's box with the name it carries. A wrong or missing name is corrected by clicking the participants again on the Setup page, at a moment where they are clearly apart (the card links there), and running again. **Keep as it stands** accepts the naming as it is, doubts included; the acceptance is recorded with who made it.
+Which person in a picture is which participant is stated by the researcher, once per camera and recording, under *Name the people on the camera playing* on this card. Find a moment at which the participants the camera is used for are all in view and clearly apart, press **The player's time** (or type a moment of the camera's file in seconds) and then **Show frame**. Choose a participant, each shown in a colour of their own, and click on them; choose the next and click again. A click on a participant's face or chest is the safest. Once the people have been detected (`pose.detect`), they are drawn on the frame in grey, and a click colours the person it falls on, or says that it falls on no one or on two people at once; a person then appears in the participant's colour exactly as MACAW will read the click. Press **Save the names**. MACAW names whoever was detected under each click and follows them through the rest of the recording. The clicks saved for the camera are listed above the frame, and **Clear this camera's names** removes them.
+
+A camera used for one participant alone needs no click as long as no one else is ever in view on it at the same time. Every other camera needs one, and its recording waits here until it has one. A camera also waits when a click fell on no one or on two overlapping people, when two names were clicked on one person, or when someone who was not named is in view nearly as long as the participants who were; the card states the reason and the times at which to look. When the tracker loses a participant for a while, for example after they leave the picture, a further click at a moment after their return names them again. Press **Draw review frames** to see each person's box with the name it carries, and run again after clicking. **Keep as it stands** accepts the naming as it is, doubts included; the acceptance is recorded with who made it. Suggestions in place of clicks are available as an option ({ref}`suggest-names`).
+
+From the command line, the same is done with `macaw name-people -r dyad01 --camera front --at 12.5 --person parent=0.3,0.5 --person child=0.7,0.6`, where each position is given as a share of the picture's width and height, measured from its top left corner.
 
 ### Voices on the shared microphone
 
@@ -307,6 +305,10 @@ With a language model set under *Coding* ({ref}`coding`), **Ask the model for do
 {bdg-secondary-line}`with language-model coding only`
 
 The units the language model was uncertain about, together with a random sample of units it was certain about. Select the correct code for each and press **Save decisions**. The researcher's decision is stored alongside the model's.
+
+### Notes
+
+Anything to remember about a recording, such as a start to cut or a step to run again, is written on the *Notes* card: tick its tags, write the note and press **Save the note**. A note changes nothing by itself. The tags offered are listed under `qc.note_tags` in *project.yaml* and can be changed there. Notes are listed in the quality-control report, and `macaw export` writes them beside the measures as `features_review_notes.csv`. From the command line: `macaw note -r dyad01 --tag rerun --text "pose again after naming"`.
 
 ### After a review
 

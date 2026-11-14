@@ -13,7 +13,7 @@ from macaw.config.schema import DEVICE_NAME
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
-from macaw.interface.pages import cameras, naming, room
+from macaw.interface.pages import cameras, room
 from macaw.project.recording import build_recording
 from macaw.project.setup import setup_path
 
@@ -30,7 +30,7 @@ def setup_names(config) -> list[str]:
 def layout(config_path: Path):
     config = resolve_config(config_path)
     three_d = cameras.section(config_path)
-    sections = [("The setup", "setup-room"), ("What each recording holds", "setup-holds"), ("Who is who", "setup-names")]
+    sections = [("The setup", "setup-room"), ("What each recording holds", "setup-holds")]
     return html.Div(
         [
             ui.page_head(
@@ -55,7 +55,6 @@ def layout(config_path: Path):
                 desc="The file found in each device's folder.",
                 id="setup-holds",
             ),
-            html.Div(naming.card(config), id="setup-names"),
             *([html.Div(three_d, id="setup-3d")] if three_d is not None else []),
         ]
     )
@@ -84,7 +83,6 @@ def holdings(config_path: Path):
 
 
 def register(app, config_path: Path) -> None:
-    naming.register(app, config_path)
     room.register(app, config_path)
     cameras.register(app, config_path)
 

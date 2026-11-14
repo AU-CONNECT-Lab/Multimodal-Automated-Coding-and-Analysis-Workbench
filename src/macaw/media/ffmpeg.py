@@ -185,8 +185,9 @@ def extract_thumbnails(src: Path, dest_dir: Path, *, every_s: float = 10.0) -> l
     return sorted(dest_dir.glob("thumb_*.jpg"))
 
 
-def make_preview(src: Path, dest: Path, *, height: int = 360) -> Path:
-    """A small copy of a recording file that a browser plays, its sound kept, timed like the file."""
+def make_preview(src: Path, dest: Path, *, height: int = 360, sound: Path | None = None, sound_at_s: float = 0.0) -> Path:
+    """A small copy of a recording file that a browser plays, timed like the file, with its own sound or with sound
+    from another file whose start falls sound_at_s into it."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_name(dest.stem + ".partial.mp4")
@@ -196,6 +197,11 @@ def make_preview(src: Path, dest: Path, *, height: int = 360) -> Path:
             "-map", "0:v:0", "-vf", f"yadif=deint=interlaced,scale=-2:{height}",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
         ]
-    run_ffmpeg(["-i", str(src), *pictures, "-map", "0:a:0?", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(partial)])
+    inputs, heard = ["-i", str(src)], ["-map", "0:a:0?"]
+    if sound is not None:
+        # a sound that starts after the picture is delayed, one that starts before it is cut
+        shift = ["-itsoffset", f"{sound_at_s:.3f}"] if sound_at_s >= 0 else ["-ss", f"{-sound_at_s:.3f}"]
+        inputs, heard = [*inputs, *shift, "-i", str(sound)], ["-map", "1:a:0"]
+    run_ffmpeg([*inputs, *pictures, *heard, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(partial)])
     partial.replace(dest)
     return dest

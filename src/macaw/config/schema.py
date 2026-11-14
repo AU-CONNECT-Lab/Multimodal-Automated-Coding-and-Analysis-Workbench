@@ -672,6 +672,7 @@ class QCSection(_Section):
     review_max_candidates: int = 40
     review_baseline: int = 25
     review_seed: int = 0
+    note_tags: list[str] = Field(default_factory=lambda: ["trim the start", "trim the end", "rerun", "wrong file", "poor sound", "leave out"])
     look: LookSection = Field(default_factory=LookSection)
 
 

@@ -40,8 +40,16 @@ UPLOAD = "review-upload"
 # what each upload carries, and the files it takes
 TRANSCRIPT_UPLOAD, CODING_UPLOAD = "transcript", "coding"
 # the actions that record who decided, so they wait for a name
-NAMED = {"accept-offset", "accept-owner", "accept-voices", "apply-review", "set-scale", "label-gaze", "look-right", "look-wrong"}
+NAMED = {
+    "accept-offset", "accept-owner", "accept-voices", "apply-review", "set-scale", "label-gaze", "look-right", "look-wrong",
+    "name-people", "add-note",
+}
 EVERYONE = "everyone"
+RECORDING, PREVIOUS, NEXT = "review-recording", "review-previous", "review-next"
+PLAYER, SEEK, SEEKED = "review-player", "review-seek", "review-seeked"
+# parts only some recordings have, so callbacks reach them by pattern and find none where they are missing
+CAMERA, PLAYER_BOX, TIMING, NAMES_BOX = "review-camera", "review-player-box", "review-timing", "review-names-box"
+NOTE_TAGS, NOTE_TEXT = "review-note-tags", "review-note-text"
 _MARK = "#d9534f"
 # a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
 _MAX_ACTS = 200
@@ -54,16 +62,48 @@ def layout(config_path: Path):
             ui.page_head("Review", "What the software decided, for a person to check."),
             html.Div(
                 [
-                    ui.field("Recording", dcc.Dropdown(recordings, recordings[0] if recordings else None, id="review-recording", clearable=False, className="picker")),
+                    ui.button("◀", PREVIOUS, title="The recording before"),
+                    ui.field("Recording", dcc.Dropdown(
+                        recordings, recordings[0] if recordings else None, id=RECORDING, clearable=False, maxHeight=480,
+                        className="picker wide",
+                    )),
+                    ui.button("▶", NEXT, title="The recording after"),
                     # kept in this browser, so a person types it once
                     ui.field("Your name", dcc.Input(id="review-by", value="", placeholder="needed to save", persistence=True, persistence_type="local")),
                 ],
                 className="toolbar",
             ),
             html.Div(id="review-message"),
-            dcc.Loading(html.Div(id="review-body")),
+            # the page stays in view, faded, while it is drawn again after a save
+            dcc.Loading(
+                html.Div(id="review-body"), delay_show=300, target_components={"review-body": "children"},
+                overlay_style={"visibility": "visible", "opacity": 0.5, "pointerEvents": "none"},
+            ),
+            dcc.Store(id=SEEKED),
         ]
     )
+
+
+def recording_label(config, rid: str, waiting: int | None = None) -> str:
+    """The recording with what still waits on it and the tags of its notes, as the picker lists it."""
+    from macaw.project.review_notes import note_tags, read_notes
+
+    if waiting is None:
+        try:
+            waiting = len(_waiting(config, build_recording(rid, config)))
+        except Exception:   # a recording that cannot be read is listed by its name alone
+            waiting = 0
+    tags = note_tags(read_notes(layout_for(config, create=False).review_notes_path(rid)))
+    return " · ".join([rid, *([f"{waiting} waiting"] if waiting else []), *tags])
+
+
+def stepped(options: list, current: str | None, step: int) -> str | None:
+    values = [option["value"] if isinstance(option, dict) else option for option in options or []]
+    if not values:
+        return None
+    if current not in values:
+        return values[0]
+    return values[min(max(values.index(current) + step, 0), len(values) - 1)]
 
 
 def _button(label: str, action: str, target: str = "", primary: bool = False, small: bool = False):
@@ -101,46 +141,118 @@ def _offsets(config, layout, rid):
     )
 
 
-def _people_on_camera(layout, results, rid):
-    cameras = _cameras(layout, results, rid)
+def _one(kind: str) -> dict:
+    return {"type": kind, "key": "one"}
+
+
+def seek(t: float, label: str | None = None):
+    """A time that moves the player there."""
+    return html.Button(label or f"{t:.1f}", id={"type": SEEK, "t": f"{t:.2f}"}, className="seek", title="Play from here")
+
+
+def _player(config, recording, camera: str | None):
+    cameras = [item.name for item in recording.cameras()]
     if not cameras:
         return None
+    camera = camera if camera in cameras else cameras[0]
+    return ui.card(
+        "Play",
+        html.Div(ui.field("Camera", dcc.Dropdown(cameras, camera, id=_one(CAMERA), clearable=False, className="picker")), className="toolbar"),
+        html.Div(player_box(config, recording.recording_id, camera), id=_one(PLAYER_BOX)),
+        desc="Times on this page play from that moment.",
+        id="review-play",
+    )
+
+
+def player_box(config, rid: str, camera: str):
+    from macaw.project.previews import current_preview, playing
+
+    try:
+        found = playing(config, rid, camera)
+    except Exception as error:   # a file that cannot be read is said, not drawn
+        return ui.note(str(error), "bad")
+    timing = dcc.Store(id=_one(TIMING), data={"offset_s": found.offset_s, "clock_scale": found.clock_scale})
+    path = current_preview(config, rid, camera)
+    if path is None:
+        return html.Div([
+            timing,
+            ui.note(f"{camera} is made into a small copy with sound first, once; a few minutes of video take about a minute."),
+            html.Div([
+                ui.button("Make a copy to play here", {"type": ACT, "action": "prepare", "target": camera}, primary=True, icon_name="play"),
+                _button("Make copies of every recording", "prepare-all"),
+            ], className="buttons"),
+        ])
+    notes = [] if found.sound == camera else [f"Sound from {found.sound}."]
+    if not found.aligned:
+        notes.append("The files are not aligned yet: times here are the camera's own until prep.media has run.")
+    return html.Div([
+        timing,
+        html.Video(src=f"{file_url(path)}?v={int(path.stat().st_mtime)}", id=PLAYER, controls=True, preload="metadata", className="player"),
+        window_bar(found),
+        *([ui.note(" ".join(notes))] if notes else []),
+    ])
+
+
+def window_bar(found):
+    """The analysed part along the player's timeline; the rest is greyed."""
+    if found.window is None or not found.duration_s:
+        return None
+    start, end = (min(max(found.own_time(t) / found.duration_s, 0.0), 1.0) for t in found.window)
+    return html.Div(
+        html.Span(style={"left": f"{start:.2%}", "width": f"{max(end - start, 0.0):.2%}"}),
+        className="window-bar", title=f"Analysed: {found.window[0]:.1f} to {found.window[1]:.1f} s of the recording",
+    )
+
+
+def _people_on_camera(config, layout, results, recording, camera: str | None):
+    from macaw.interface.pages import naming
+
+    rid = recording.recording_id
+    people = naming.cameras_of(config, rid)
+    if not people:
+        return None
+    roles = list(config.project.roles)
     blocks = []
-    for camera in cameras:
-        people = "; ".join(f"{person['subject']}: tracks {person['tracks']}" for person in camera["people"])
+    for found in _cameras(layout, results, rid):
         status = (
-            ui.pill("kept by " + camera["accepted"].split(" ")[0], "ok") if camera["accepted"]
-            else ui.pill("in doubt", "warn") if camera["doubt"] else ui.pill("named", "ok")
+            ui.pill("kept by " + found["accepted"].split(" ")[0], "ok") if found["accepted"]
+            else ui.pill("in doubt", "warn") if found["doubt"] else ui.pill("named", "ok")
         )
         blocks.append(
             html.Div(
                 [
-                    html.P([html.B(camera["file"]), " ", status, " ", camera["doubt"] or ""]),
-                    html.P(people),
-                    html.Div(
-                        [
-                            _button("Keep as it stands", "accept-owner", camera["file"], small=True),
-                            dcc.Link("Click the people again on the Setup page", href=f"/setup?recording={rid}&camera={camera['file']}", className="button small"),
-                        ],
-                        className="buttons",
-                    ),
+                    html.P([html.B(found["file"]), " ", status, " ", found["doubt"] or ""]),
+                    html.P([html.Span([naming.swatch(person["subject"], roles), f": tracks {person['tracks']}"], className="tracks") for person in found["people"]]),
+                    html.Div(_button("Keep as it stands", "accept-owner", found["file"], small=True), className="buttons"),
                 ],
                 className="camera",
             )
         )
+    camera = camera if camera in people else next(iter(people))
+    editor = html.Div(
+        [
+            html.H3("Name the people on the camera playing"),
+            html.Div(naming.editor(config, rid, camera, people[camera]), id=_one(NAMES_BOX)),
+            html.Div([
+                _button("Save the names", "name-people", primary=True),
+                _button("Clear this camera's names", "clear-names"),
+            ], className="buttons"),
+        ],
+    )
     index = layout.renders_dir(rid) / "index.csv"
     shots = pd.read_csv(index) if index.is_file() else pd.DataFrame(columns=["file", "reason", "t", "video"])
     thumbs = [
         html.Figure([html.A(html.Img(src=file_url(layout.renders_dir(rid) / row.file)), href=file_url(layout.renders_dir(rid) / row.file), target="_blank"),
-                     html.Figcaption(f"{row.t:.1f} s, {row.video}, {str(row.reason).replace('_', ' ')}")])
+                     html.Figcaption([seek(float(row.t), f"{row.t:.1f} s"), f", {row.video}, {str(row.reason).replace('_', ' ')}"])])
         for row in shots.itertuples()
     ]
     return ui.card(
         "Who is on camera",
         *blocks,
+        editor,
         html.Div(_button("Draw review frames", "render"), className="buttons"),
         html.Div(thumbs, className="thumbs"),
-        desc="A wrong name is put right on the Setup page.",
+        desc="Click each person on a frame where all are in view and apart; a click on a person's face or chest is safest.",
     )
 
 
@@ -208,7 +320,10 @@ def _voices(config, layout, recording):
                 f"{voice.get('speech_s', 0.0):.0f} s",
                 "" if median is None else f"{median:.0f} Hz",
                 html.Div([*(html.Div(f"“{line}”") for line in telling_lines(lines, label)), every]),
-                html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True) for clip in voice.get("clips", [])], className="clips"),
+                html.Div([
+                    html.Div([html.Audio(src=file_url(directory / clip["file"]), controls=True), seek(clip["t_start"], "on video")], className="clip")
+                    for clip in voice.get("clips", [])
+                ], className="clips"),
                 why.get(label, ""),
                 dcc.Dropdown([*subjects, NO_ONE], current, id={"type": "voice-pick", "label": label}, clearable=False, className="picker small"),
             ]
@@ -440,7 +555,7 @@ def _transcript(config, layout, rid, path):
         marked, _ = still_there(found, transcript)
         doubts.append(ui.note(describe(found, transcript), "warn" if not marked.empty else "ok"))
         if not marked.empty:
-            rows = [[f"{row.t_start:.1f}", row.subject_id, row.text, KINDS[row.kind], row.why] for row in marked.itertuples(index=False)]
+            rows = [[seek(row.t_start), row.subject_id, row.text, KINDS[row.kind], row.why] for row in marked.itertuples(index=False)]
             doubts.append(ui.table(["At (s)", "Who", "Words", "Kind", "Why"], rows, numeric={"At (s)"}))
     return ui.card(
         "Transcript",
@@ -502,7 +617,7 @@ def _speech_acts(config, layout, recording):
     for row in queue.head(_MAX_ACTS).itertuples():
         key = _act_key(row.subject_id, row.t_start, row.tier)
         rows.append([
-            f"{row.t_start:.1f}", row.subject_id, words.get(key, ""),
+            seek(row.t_start), row.subject_id, words.get(key, ""),
             answers.get((str(row.subject_id), round(float(row.t_start), 3)), "" if pd.isna(row.label) else str(row.label)),
             ui.pill(str(row.reason).replace("_", " "), "warn"),
             dcc.Dropdown(codes, None, id={"type": PICK, "key": key}, placeholder="code", className="picker small"),
@@ -535,22 +650,43 @@ def review_file(config_path: Path, rid: str, by: str, picks: dict[str, str]) -> 
     return path
 
 
-def body(config_path: Path, rid: str | None):
+def _notes(config, layout, rid: str):
+    from macaw.project.review_notes import read_notes
+
+    rows = [
+        [html.Span([ui.pill(tag, "warn") for tag in note["tags"]], className="tags"), note["text"], note["by"], note["at"][:10],
+         _button("Remove", "remove-note", note["id"], small=True)]
+        for note in read_notes(layout.review_notes_path(rid))
+    ]
+    return ui.card(
+        "Notes",
+        ui.table(["Tags", "Note", "By", "On", ""], rows) if rows else None,
+        dcc.Checklist(list(config.qc.note_tags), [], id=_one(NOTE_TAGS), inline=True, className="tag-picks"),
+        dcc.Textarea(id=_one(NOTE_TEXT), placeholder="what to do with this recording, and why", className="note-text"),
+        html.Div(_button("Save the note", "add-note", primary=True), className="buttons"),
+        desc="For the people who review and run the project; a note changes nothing by itself. Tags are set in qc.note_tags.",
+    )
+
+
+def body(config_path: Path, rid: str | None, camera: str | None = None):
     if rid is None:
         return html.P("No recordings found.", className="none")
     config = resolve_config(config_path)
+    own = resolve_config(config_path, recording_id=rid)
     layout = layout_for(config, create=False)
     recording = build_recording(rid, config)
     results = RecordingResults(layout, rid)
     waiting = _waiting(config, recording)
     parts = [
+        _player(own, build_recording(rid, own), camera),
         ui.card(
             "Waiting for a person",
             html.Ul([html.Li([ui.pill("waiting", "warn"), html.Span([html.B(gate), html.Span(ui.with_code(message), className="value")], className="what")]) for gate, message in waiting], className="status-list")
             if waiting else ui.note("Nothing is waiting on this recording.", "ok"),
         ),
+        _notes(config, layout, rid),
         _offsets(config, layout, rid),
-        _people_on_camera(layout, results, rid),
+        _people_on_camera(own, layout, results, recording, camera),
         _model_look(config, layout, rid),
         _voices(config, layout, recording),
         _speech_acts(config, layout, recording),
@@ -625,11 +761,22 @@ def action_command(
         return command("qc", extra=["--look"])
     if action in ("look-right", "look-wrong"):
         return command("check-look", extra=["--frame", target, "--verdict", action.removeprefix("look-"), *by_flag])
+    if action == "clear-names":
+        return command("name-people", extra=["--camera", target, "--clear"])
+    if action == "remove-note":
+        return command("note", extra=["--remove", target])
+    if action == "prepare":
+        return command("previews")
     if action == "transcript-reset":
         return ["macaw", "transcript", "reset", "-c", str(config_path), "-r", rid]
     if action == "transcript-check":
         return ["macaw", "transcript", "check", "-c", str(config_path), "-r", rid]
     raise ValueError(f"unknown action {action}")
+
+
+def note_command(config_path: Path, rid: str, tags: list[str], text: str, by: str) -> list[str]:
+    flags = [flag for tag in tags for flag in ("--tag", tag)] + (["--text", text.strip()] if text.strip() else [])
+    return cli_bridge.build_command(["note"], config_path=config_path, recordings=[rid], extra_flags=[*flags, "--by", by])
 
 
 def _transcript_command(config_path: Path, rid: str, action: str, upload: Path | None, by: str) -> list[str]:
@@ -646,16 +793,63 @@ def clicked(points: list, click: dict) -> list:
 
 
 def register(app, config_path: Path) -> None:
-    @app.callback(Output("review-recording", "options"), Input("url", "pathname"))
-    def recordings(_):
-        return resolve_recordings(resolve_config(config_path), None)
+    from macaw.interface.pages import naming
+    from macaw.interface.pages.overview import people_waiting
 
-    @app.callback(Output("review-recording", "value"), Input("url", "pathname"), Input("url", "search"))
+    naming.register(app, config_path, PLAYER, RECORDING, _one(CAMERA))
+
+    @app.callback(Output(RECORDING, "options"), Input("url", "pathname"))
+    def recordings(_):
+        config = resolve_config(config_path)
+        try:
+            gates, _ = people_waiting(config)
+        except Exception:   # the picker still lists the recordings, without what waits on them
+            gates = {}
+        return [{"label": recording_label(config, rid, len(gates.get(rid, []))), "value": rid} for rid in resolve_recordings(config, None)]
+
+    @app.callback(Output(RECORDING, "value"), Input("url", "pathname"), Input("url", "search"))
     def linked_recording(pathname, search):
         rid = ui.asked(search).get("recording")
         if (pathname or "/").rstrip("/") != f"/{LABEL.lower()}" or rid not in resolve_recordings(resolve_config(config_path), None):
             return no_update
         return rid
+
+    @app.callback(
+        Output(RECORDING, "value", allow_duplicate=True),
+        Input(PREVIOUS, "n_clicks"), Input(NEXT, "n_clicks"), State(RECORDING, "value"), State(RECORDING, "options"),
+        prevent_initial_call=True,
+    )
+    def step(_previous, _next, rid, options):
+        return stepped(options, rid, -1 if ctx.triggered_id == PREVIOUS else 1) or no_update
+
+    @app.callback(
+        Output({"type": PLAYER_BOX, "key": ALL}, "children"), Output({"type": NAMES_BOX, "key": ALL}, "children"),
+        Input({"type": CAMERA, "key": ALL}, "value"), State(RECORDING, "value"),
+        State({"type": PLAYER_BOX, "key": ALL}, "id"), State({"type": NAMES_BOX, "key": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def camera_chosen(cameras, rid, players, boxes):
+        # the picker appearing with the page fires this too, with nothing chosen by hand
+        if not cameras or not any(item["value"] is not None for item in ctx.triggered) or len(ctx.triggered) != 1:
+            return [no_update] * len(players), [no_update] * len(boxes)
+        own = resolve_config(config_path, recording_id=rid)
+        camera = cameras[0]
+        people = naming.cameras_of(own, rid)
+        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, [])) for _ in boxes]
+
+    app.clientside_callback(
+        """function (clicks, timing) {
+            const trigger = window.dash_clientside.callback_context.triggered_id;
+            const video = document.getElementById('""" + PLAYER + """');
+            if (!trigger || !video || !(clicks || []).some(Boolean)) { return window.dash_clientside.no_update; }
+            const t = parseFloat(trigger.t), own = timing && timing.length ? (t - timing[0].offset_s) / timing[0].clock_scale : t;
+            video.currentTime = Math.max(own, 0);
+            video.play();
+            return t;
+        }""",
+        Output(SEEKED, "data"), Input({"type": SEEK, "t": ALL}, "n_clicks"), State({"type": TIMING, "key": ALL}, "data"),
+        prevent_initial_call=True,
+    )
 
     @app.callback(
         Output({"type": SCALE_GRAPH, "key": MATCH}, "figure"),
@@ -705,7 +899,8 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output("review-body", "children"),
         Output("review-message", "children"),
-        Input("review-recording", "value"),
+        Output(RECORDING, "options", allow_duplicate=True),
+        Input(RECORDING, "value"),
         Input({"type": ACT, "action": ALL, "target": ALL}, "n_clicks"),
         Input({"type": UPLOAD, "kind": ALL}, "contents"),
         State({"type": UPLOAD, "kind": ALL}, "filename"),
@@ -723,8 +918,25 @@ def register(app, config_path: Path) -> None:
         State({"type": SCALE_LENGTH, "key": ALL}, "value"),
         State({"type": SCALE_OBJECT, "key": ALL}, "value"),
         State({"type": SCALE_PERSON, "key": ALL}, "value"),
+        State({"type": CAMERA, "key": ALL}, "value"),
+        State({"type": naming.MARKS["type"], "key": ALL}, "data"),
+        State({"type": naming.FRAME["type"], "key": ALL}, "data"),
+        State({"type": NOTE_TAGS, "key": ALL}, "value"),
+        State({"type": NOTE_TEXT, "key": ALL}, "value"),
+        State(RECORDING, "options"),
+        prevent_initial_call="initial_duplicate",
     )
-    def update(rid, clicks, uploads, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *scale):
+    def update(rid, *values):
+        *values, options = values
+        content, message = _acted(rid, *values)
+        if content is no_update:
+            return no_update, message, no_update
+        return content, message, relabelled(options, rid)
+
+    def _acted(rid, clicks, uploads, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
+        *scale, cameras, marks, shown, tags, text = rest
+        camera = cameras[0] if cameras else None
+        marks, shown = (marks or [None])[0], (shown or [None])[0]
         trigger = ctx.triggered_id
         message = None
         by = (by or "").strip()
@@ -746,8 +958,24 @@ def register(app, config_path: Path) -> None:
                 for person, value in looked.items():
                     argv = action_command(config_path, rid, action, person, by, {}, gaze={"t": gaze_t[0], "looks_at": value})
                     message += [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-                return body(config_path, rid), message
-            if action == "transcript-export":
+                return body(config_path, rid, camera), message
+            if action == "name-people":
+                if not shown or not marks:
+                    return no_update, ui.note("Show a frame and click on the people first.", "warn")
+                argv = naming.name_command(config_path, shown, marks, by)
+            elif action == "add-note":
+                if not (tags and tags[0]) and not (text and (text[0] or "").strip()):
+                    return no_update, ui.note("Tick a tag or write the note first.", "warn")
+                argv = note_command(config_path, rid, list(tags[0] or []), text[0] or "", by)
+            elif action == "clear-names":
+                argv = action_command(config_path, rid, action, camera, by, {})
+            elif action == "prepare-all":
+                argv = cli_bridge.build_command(["previews"], config_path=config_path)
+                log = layout_for(resolve_config(config_path), create=False).work_dir / "gui" / "previews.log"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                cli_bridge.launch(argv, log, cwd=config_path.parent)
+                return no_update, [ui.command(argv), ui.note(f"Making the copies in the background; {log} says how far it got. A recording's player appears once its copy is made.", "ok")]
+            elif action == "transcript-export":
                 argv = _transcript_command(config_path, rid, action, None, by)
             elif action == "apply-review":
                 chosen = {item["key"]: value for item, value in zip(act_ids, acts) if value}
@@ -756,8 +984,8 @@ def register(app, config_path: Path) -> None:
                 voices = {item["label"]: value for item, value in zip(pick_ids, picks)}
                 measured["at"] = float(measured["at"] or 0.0)
                 argv = action_command(config_path, rid, action, target, by, voices, measured)
-            # a model asked about every frame or line takes longer than a click's command
-            slow = {"timeout_s": 3600} if action in ("look", "transcript-check") else {}
+            # a model asked about every frame or line, or a copy of a camera, takes longer than a click's command
+            slow = {"timeout_s": 3600} if action in ("look", "transcript-check", "prepare") else {}
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent, **slow))]
         elif isinstance(trigger, dict) and trigger.get("type") == UPLOAD:
             contents = ctx.triggered[0]["value"]
@@ -773,7 +1001,14 @@ def register(app, config_path: Path) -> None:
             else:
                 argv = ["macaw", "import-codes", str(path), "-c", str(config_path), "-r", rid, "--coder", by]
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-        return body(config_path, rid), message
+        return body(config_path, rid, camera), message
+
+    def relabelled(options: list, rid: str | None) -> list:
+        config = resolve_config(config_path)
+        return [
+            {**option, "label": recording_label(config, rid)} if isinstance(option, dict) and option.get("value") == rid else option
+            for option in options or []
+        ]
 
     @app.callback(Output(ACTS_DECIDED, "children"), Input({"type": PICK, "key": ALL}, "value"), prevent_initial_call=True)
     def decided(picks):
