@@ -225,6 +225,39 @@ def check_recording_steps(config: MacawConfig, dag, recording_ids: list[str], ex
     check_recording_notes(dag, configs)
 
 
+VOICE_STEPS = ("text.asr", "prosody.frame", "prosody.voice_report")
+
+
+def pending_steps(dag, recording_ids: list[str], finished: set[str]) -> list[str]:
+    """Steps with a task not finished for some recording, those waiting behind a person included."""
+    gates = set(_gates(dag))
+    return [name for name in dag.topological_order() if name not in gates and any(task_id_for(r, name) not in finished for r in recording_ids)]
+
+
+def check_ready(configs: dict[str, MacawConfig], steps) -> None:
+    """Before anything runs: every step with tasks to do can run here under each recording's settings, and no voice goes unread."""
+    from macaw.extractors.audio.content.diarization import unread_voices
+
+    problems = []
+    for name in steps:
+        cls = get_extractor(name)
+        seen = set()
+        for own in configs.values():
+            setting = hash_extractor_config(own, name)
+            if setting in seen:
+                continue
+            seen.add(setting)
+            try:
+                cls(own).check_available()
+            except Exception as error:
+                problems.append(f"{name}: {' '.join(str(error).split())}")
+                break
+    if any(name in VOICE_STEPS for name in steps):
+        problems += sorted({unread_voices(own) for own in configs.values()} - {None})
+    if problems:
+        raise ConfigError("nothing was started, as these steps cannot run as things are set up here:\n  " + "\n  ".join(problems))
+
+
 def check_recording_notes(dag, configs: dict[str, MacawConfig]) -> None:
     """Before anything runs: a note by entity names every value the recordings take, so no prompt lacks one by mistake."""
     from macaw.coding.llm.notes import absent_message, taken_notes
@@ -336,6 +369,8 @@ def _run(
     in_scope = {task_id_for(r, name) for r in recording_ids for name in order if name not in gates}
     already = completed_on_disk(config, dag, recording_ids) & in_scope if resume else set()
     finished = set(already)
+    if not dry_run:
+        check_ready(recording_configs(config, recording_ids), pending_steps(dag, recording_ids, already))
     attempted: set[str] = set()
     fetched: set[str] = set()
     n_tasks = 0

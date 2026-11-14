@@ -133,6 +133,24 @@ class PyannoteBackend(DiarizationBackend):
         return pd.DataFrame(rows, columns=["t_start", "t_end", "label", "exclusive"])
 
 
+def unread_voices(config) -> str | None:
+    """With a microphone per person, a voice that only shared sound carries would go unread; say so before a run."""
+    if config.text.diarization == SHARED_MODE:
+        return None
+    devices = config.setup.devices()
+    alone = {device.hears[0] for device in devices.values() if len(set(device.hears)) == 1}
+    for name, device in sorted(devices.items()):
+        heard = sorted(set(device.hears))
+        unread = [person for person in heard if person not in alone]
+        if len(heard) > 1 and unread:
+            return (
+                f"{name} carries the voices of {', '.join(heard)}, but no device carries the voice of {' or '.join(unread)} alone, so with "
+                f"text.diarization {config.text.diarization} what they say is not read; set text.diarization: {SHARED_MODE} "
+                f"to separate the voices on {name}"
+            )
+    return None
+
+
 def refuse_older(package: str, minimum: tuple[int, ...], why: str) -> None:
     """Stop at a release too old to work, whose import would fail with a less readable error."""
     from importlib.metadata import PackageNotFoundError, version

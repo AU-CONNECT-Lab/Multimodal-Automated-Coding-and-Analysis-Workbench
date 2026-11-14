@@ -74,6 +74,7 @@ def run(
         for task_id in runner.plan(resolved, recording_ids, wanted, finished):
             typer.echo(task_id)
         _echo_waiting(runner.check_gates(resolved, dag, recording_ids, finished)[0])
+        runner.check_ready(runner.recording_configs(resolved, recording_ids), runner.pending_steps(dag, recording_ids, finished))
         return
 
     logger.info("%d recordings, extractors: %s", len(recording_ids), ", ".join(wanted) or "all")
