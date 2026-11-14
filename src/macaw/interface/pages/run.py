@@ -14,6 +14,7 @@ from macaw.execution.runner import resolve_recordings, task_id_for, task_states
 from macaw.extractors import get_extractor, list_extractors
 from macaw.extractors.base import Gate
 from macaw.interface import cli_bridge, ui
+from macaw.interface.step_labels import label
 from macaw.project.layout import layout_for
 
 LABEL = "Run"
@@ -73,7 +74,7 @@ def _step_label(name: str, counts: Counter, needs: list[str], n_recordings: int)
     return html.Div(
         [
             html.Span(className=f"dot {'stale' if worst == 'stale' else STATE_KIND[worst] if worst != 'new' else ''}"),
-            html.Span([name, *pills], className="name"),
+            html.Span([label(name), html.Span(name, className="step-id"), *pills], className="name"),
             *([html.Span("needs " + ", ".join(needs), className="meta")] if needs else []),
             # a button inside the row's label runs the step without ticking it
             html.Span(

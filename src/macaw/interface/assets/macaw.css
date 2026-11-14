@@ -470,3 +470,12 @@ table.standing a:hover .cell, table.standing a:focus-visible .cell { outline: 2p
 .tag-picks label { margin-right: 1rem; }
 .note-text { width: 100%; min-height: 4rem; margin-top: 0.6rem; padding: 0.5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
 .tags .pill { margin-right: 0.3rem; }
+
+/* Overview grid: a check by a person is round; who decided it sets its fill */
+.cell.check { border-radius: 50%; }
+.cell.check.person { background: var(--ok); border-color: var(--ok); }
+.cell.check.software { background: var(--panel); border-color: var(--ok); border-width: 2.5px; }
+.cell.check.waiting { background: var(--warn); border-color: var(--warn); }
+.cell.check.none { border-style: dashed; border-color: var(--faint); }
+table.standing th.step-name.check span { color: var(--ink); font-weight: 600; }
+.step-id { margin: 0 0.5rem; color: var(--faint); font-size: 0.82rem; font-family: var(--mono, monospace); }

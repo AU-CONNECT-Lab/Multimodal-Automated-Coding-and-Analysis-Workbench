@@ -10,7 +10,7 @@ import pandas as pd
 
 from macaw.exceptions import InputNotFoundError, MacawError, UnreadableMediaError
 from macaw.extractors import register_extractor
-from macaw.extractors.base import Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
 from macaw.extractors.video.pose.look_names import answer_key, named_by_look
@@ -687,6 +687,15 @@ class PoseReviewGate(Gate):
     def _in_doubt(self, recording: Recording) -> list[str]:
         return waiting_cameras(self.config, recording.recording_id, every=False)
 
+    def decided_by(self, recording: Recording) -> str | None:
+        layout = layout_for(self.config, create=False)
+        rid = recording.recording_id
+        if read_names(layout.names_path(rid)) or read_owner_file(layout.camera_owners_accepted_path(rid)):
+            return PERSON
+        owners = read_owner_file(layout.artifacts_dir(rid, PoseExtractor.name) / "owners")
+        # a camera read for one person alone, with nobody else in view, leaves nothing to decide
+        return SOFTWARE if any(owner.get("chosen_by") for owner in owners.values()) else None
+
     def pending(self, recording: Recording) -> str | None:
         if self.config.pose.review == "skip":
             return None
@@ -697,7 +706,7 @@ class PoseReviewGate(Gate):
         why = "(pose.review is always)" if self.config.pose.review == "always" else "(the warnings say why)"
         return (
             f"who is on {', '.join(waiting)} waits for a person {why}: click the people on a frame of each camera on the "
-            f"Setup page (`macaw name-people -r {rid}`), look at `macaw qc -r {rid} --render`, and "
+            f"Review page (`macaw name-people -r {rid}`), look at `macaw qc -r {rid} --render`, and "
             f"`macaw accept-owner -r {rid}` keeps the naming as it stands"
         )
 

@@ -14,7 +14,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.base import Backend, Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.base import PERSON, SOFTWARE, Backend, Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -606,6 +606,12 @@ class SpeakerReviewGate(Gate):
                 severity="warn" if left_out else "info", message=message,
             )
         ]
+
+    def decided_by(self, recording: Recording) -> str | None:
+        if self.config.text.diarization != SHARED_MODE or not read_voices(self.config, recording.recording_id):
+            return None
+        by = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(recording.recording_id)).get("by")
+        return None if by is None else SOFTWARE if by == AUTOMATIC else PERSON
 
     def pending(self, recording: Recording) -> str | None:
         if self.config.text.diarization != SHARED_MODE:

@@ -15,6 +15,7 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
 from macaw.interface.pages import results, review, run, setup
+from macaw.interface.step_labels import label
 from macaw.project.setup import setup_path
 
 LABEL = "Overview"
@@ -24,6 +25,11 @@ NEXT_STEPS = 6
 REVIEW_PATH = f"/{review.LABEL.lower()}"
 # the grid's key, in the order a project moves through
 LEGEND = ("current", "stale", "new", "held", "failed")
+# a check by a person has a round square of its own beside the steps
+CHECK_TEXT = {"waiting": "waits for a person", "person": "checked by a person", "software": "left to the software", "none": "nothing to check", "new": "not reached yet"}
+CHECK_LEGEND = ("person", "software", "waiting", "none")
+SPEECH_ACTS = "speech acts"
+CHECK_LABELS = {SPEECH_ACTS: "Check: speech acts"}
 
 
 @dataclass
@@ -36,6 +42,9 @@ class Standing:
     task_s: float = 0.0
     n_prepared: int = 0
     setup_saved: bool = True
+    # the steps and the checks by a person in run order, and each check's state per recording
+    columns: list[str] = field(default_factory=list)
+    checks: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
@@ -74,7 +83,59 @@ def standing(config_path: Path) -> Standing:
         except MacawError:
             continue
         prepared += 1
-    return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file())
+    columns, checks = check_states(config_path, recordings, grid, gates)
+    return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file(), columns, checks)
+
+
+def check_states(config_path: Path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str]]:
+    """The project's steps with its checks by a person among them, and per recording whether each check waits, who
+    decided it, or that it has not been reached."""
+    from macaw.coding.review_queue import export_review
+    from macaw.execution.dag import build_dag
+    from macaw.extractors import get_extractor
+    from macaw.extractors.base import Gate
+    from macaw.project.layout import layout_for
+    from macaw.project.recording import build_recording
+
+    config = resolve_config(config_path)
+    dag = build_dag(config)
+    columns = list(dag.topological_order())
+    names = [name for name in columns if issubclass(get_extractor(name), Gate)]
+    judged = "coding.judge" in columns
+    if judged:
+        columns.insert(columns.index("coding.judge") + 1, SPEECH_ACTS)
+    states: dict[tuple[str, str], str] = {}
+    try:
+        queue = export_review(config, recordings) if judged else None
+    except Exception:   # no codebook or nothing coded: no units wait
+        queue = None
+    waiting_units = set(queue["recording_id"].astype(str)) if queue is not None and not queue.empty else set()
+    layout = layout_for(config, create=False)
+    for rid in recordings:
+        held = {gate for gate, _ in gates.get(rid, [])}
+        try:
+            own = resolve_config(config_path, recording_id=rid)
+            recording = build_recording(rid, own)
+        except MacawError:
+            recording = None
+        for name in names:
+            reached = all(grid.get((rid, need)) == "current" for need in dag.dependencies(name) if (rid, need) in grid)
+            if name in held:
+                states[rid, name] = "waiting"
+            elif not reached or recording is None:
+                states[rid, name] = "new"
+            else:
+                states[rid, name] = get_extractor(name)(own).decided_by(recording) or "none"
+        if judged:
+            states[rid, SPEECH_ACTS] = (
+                "waiting" if rid in waiting_units else "new" if grid.get((rid, "coding.judge")) != "current"
+                else "person" if layout.reviewed_codes_path(rid).is_file() else "software"
+            )
+    return [name for name in columns if name in names or name == SPEECH_ACTS or (recordings and (recordings[0], name) in grid)], states
+
+
+def column_label(name: str) -> str:
+    return CHECK_LABELS.get(name) or label(name)
 
 
 def _duration(seconds: float) -> str:
@@ -124,10 +185,10 @@ def next_up(found: Standing) -> list:
     for step in found.steps:
         failed = [rid for rid in found.recordings if found.grid[rid, step] == "failed"]
         if failed:
-            items.append(_item("bad", f"{step} failed", f"for {_names(failed)}", run.PATH, "Run"))
+            items.append(_item("bad", f"{label(step)} failed", f"{step}, for {_names(failed)}", run.PATH, "Run"))
     if found.waiting:
         n_checks = sum(len(gates) for gates in found.waiting.values())
-        detail = "; ".join(f"{rid}: {', '.join(name for name, _ in gates)}" for rid, gates in list(found.waiting.items())[:4])
+        detail = "; ".join(f"{rid}: {', '.join(label(name) for name, _ in gates)}" for rid, gates in list(found.waiting.items())[:4])
         more = len(found.waiting) - 4
         items.append(_item("warn", f"{n_checks} check{'s wait' if n_checks != 1 else ' waits'} for a person",
                            detail + (f"; and {more} more recordings" if more > 0 else ""), REVIEW_PATH, "Review"))
@@ -143,7 +204,7 @@ def next_up(found: Standing) -> list:
         counts = Counter(found.grid[rid, step] for rid in found.recordings)
         parts = [f"{counts[state]} {run.STATE_TEXT[state]}" for state in ("stale", "new") if counts[state]]
         if parts:
-            left.append(_item("", step, ", ".join(parts), run.PATH, "Run"))
+            left.append(_item("", label(step), f"{step}: " + ", ".join(parts), run.PATH, "Run"))
     items += left[:NEXT_STEPS]
     if len(left) > NEXT_STEPS:
         items.append(_item("", f"and {len(left) - NEXT_STEPS} more steps to run", None, run.PATH, "Run"))
@@ -161,16 +222,30 @@ def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
 
 def _cell(rid: str, step: str, state: str):
     href, page = cell_link(rid, step, state)
-    return html.Td(dcc.Link(html.Span(className=f"cell {state}"), href=href, title=f"{rid}, {step}: {run.STATE_TEXT[state]}. Opens {page}."))
+    return html.Td(dcc.Link(html.Span(className=f"cell {state}"), href=href, title=f"{rid}, {label(step)} ({step}): {run.STATE_TEXT[state]}. Opens {page}."))
+
+
+def _check_cell(rid: str, name: str, state: str):
+    href = f"{REVIEW_PATH}?{urlencode({'recording': rid})}"
+    return html.Td(dcc.Link(html.Span(className=f"cell check {state}"), href=href, title=f"{rid}, {column_label(name)}: {CHECK_TEXT[state]}. Opens Review."))
 
 
 def grid(found: Standing):
-    head = html.Tr([html.Th(), *[html.Th(html.Span(step), className="step-name") for step in found.steps]])
+    columns = found.columns or found.steps
+    head = html.Tr([html.Th(), *[
+        html.Th(html.Span(column_label(name), title=name), className="step-name check" if (found.recordings and (found.recordings[0], name) in found.checks) else "step-name")
+        for name in columns
+    ]])
     rows = [
-        html.Tr([html.Th(rid, className="recording"), *[_cell(rid, step, found.grid[rid, step]) for step in found.steps]])
+        html.Tr([html.Th(rid, className="recording"), *[
+            _check_cell(rid, name, found.checks[rid, name]) if (rid, name) in found.checks else _cell(rid, name, found.grid[rid, name])
+            for name in columns
+        ]])
         for rid in found.recordings
     ]
     legend = [html.Span([html.Span(className=f"cell {state}"), run.STATE_TEXT[state]]) for state in LEGEND]
+    if found.checks:
+        legend += [html.Span([html.Span(className=f"cell check {state}"), CHECK_TEXT[state]]) for state in CHECK_LEGEND]
     return [html.Div(html.Table([html.Thead(head), html.Tbody(rows)], className="standing"), className="standing-wrap"),
             html.Div(legend, className="legend")]
 
@@ -195,7 +270,7 @@ def layout(config_path: Path):
                     html.Div(id="overview-tiles", className="tiles"),
                     ui.card("Next up", html.Ul(id="overview-next", className="next"), flush=True),
                     ui.card("Where each recording stands", html.Div(id="overview-grid"),
-                            desc="Point at a square for its state, click it to go there.",
+                            desc="Point at a square for its state, click it to go there. Round ones are checks by a person.",
                             flush=True),
                 ],
                 delay_show=300,

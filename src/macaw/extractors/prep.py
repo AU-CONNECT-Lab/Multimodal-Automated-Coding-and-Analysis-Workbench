@@ -13,8 +13,9 @@ import pandas as pd
 
 from macaw.exceptions import ConfigError, UnreadableMediaError
 from macaw.extractors import register_extractor
-from macaw.extractors.base import Extractor, ExtractorResult, Gate, Phase, QCWarning
+from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, Phase, QCWarning
 from macaw.media.align import (
+    MANUAL,
     UNALIGNED,
     apply_alignment,
     describe_agreement,
@@ -276,6 +277,15 @@ class AlignReviewGate(Gate):
             f"{layout.renders_dir(rid) / 'align'}; keep them with `macaw accept-offset -r {rid}` "
             "or change one with `macaw set-offset`"
         )
+
+
+    def decided_by(self, recording: Recording) -> str | None:
+        cfg = self.config.align
+        table = self.inputs_for(recording)
+        if cfg.method == "none" or len(recording.media) < 2 or not table:
+            return None
+        results = [result for result in read_offset_table(table[0]) if result.target != result.reference]
+        return PERSON if any(result.method == MANUAL or result.accepted for result in results) else SOFTWARE
 
 
 @register_extractor

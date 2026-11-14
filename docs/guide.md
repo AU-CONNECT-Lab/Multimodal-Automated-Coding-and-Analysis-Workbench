@@ -88,7 +88,7 @@ The Overview page of a project with six recordings. One recording failed at the 
 ```
 
 Overview
-: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected.
+: The page the workbench opens on. It summarises the project (recordings, participants and minutes), lists what needs attention next (an unsaved setup, failed steps, pending reviews, steps not yet run), and shows the status of every step for every recording. Clicking a square opens the step's results when it is up to date, the recording's reviews when it waits for one, and otherwise the Run page with that recording and step selected. Each check by a person ({ref}`step 6 <review>`) has a round square of its own beside the steps: filled when a person decided it, an empty ring when it was left to the software, orange while it waits, and dashed when the recording had nothing to check. Steps are named in plain words; pointing at a name shows the step's own name, which the commands use.
 
 Setup
 : The cameras and microphones of the recordings: what each device folder holds, whom each camera is used for, whose voices each device carries, where everyone and everything is in the room, and who is who on each camera ({ref}`step 3 <setup>`). Projects with several cameras filming the same participants also calibrate them here for three-dimensional measures ({ref}`three-d`).

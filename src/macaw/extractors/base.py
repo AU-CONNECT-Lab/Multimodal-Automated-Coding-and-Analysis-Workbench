@@ -121,6 +121,9 @@ class Extractor(ABC):
         return (None, None)
 
 
+PERSON, SOFTWARE = "person", "software"
+
+
 class Gate(Extractor):
     """A step a person clears by a recorded decision. The runner checks it in-process and never schedules it."""
 
@@ -136,6 +139,11 @@ class Gate(Extractor):
 
     def clear_by_itself(self, recording: Recording) -> None:
         """Record the software's own decision where the configuration lets it stand. Called by a run before pending."""
+        return None
+
+    def decided_by(self, recording: Recording) -> str | None:
+        """Once cleared: PERSON where a person decided any of it, SOFTWARE where it all stood as the software had it,
+        None where this recording had nothing to decide."""
         return None
 
     def check_available(self) -> None:

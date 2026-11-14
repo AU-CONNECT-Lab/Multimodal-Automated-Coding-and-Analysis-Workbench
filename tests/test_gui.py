@@ -342,7 +342,9 @@ def test_the_overview_counts_what_there_is_and_what_waits(project):
     items = text_of(overview.next_up(found))
     assert "1 check waits for a person" in items and '"/review"' in items
     grid = text_of(overview.grid(found))
-    assert "cell held" in grid and "003, prep.media: waiting for a person" in grid
+    assert "cell held" in grid and "003, Sound and timing (prep.media): waiting for a person" in grid
+    assert found.checks["003", "align.review"] == "waiting" and "cell check waiting" in grid and "Check: file offsets" in grid
+    assert found.columns.index("align.review") < found.columns.index("prep.media")
 
 
 def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
@@ -350,7 +352,7 @@ def test_a_failed_step_comes_first_in_next_up(project, monkeypatch):
     found = overview.standing(project)
     assert found.grid["003", "prep.media"] == "failed"
     first = text_of(overview.next_up(found)[0])
-    assert "prep.media failed" in first and "for 003" in first and '"/run"' in first
+    assert "Sound and timing failed" in first and "prep.media, for 003" in first and '"/run"' in first
 
 
 def test_a_square_leads_to_what_the_step_produced_waits_on_or_runs(project):
