@@ -176,6 +176,8 @@ def model_of(config, name: str) -> dict:
             if kind == "cameras":
                 entry["calibration"] = placed.get("calibration")
                 entry["depth"] = bool(((data.get(kind) or {}).get(item) or {}).get("depth"))
+                # marked on the Review page; carried here so that saving the setup keeps them, under a new name too
+                entry["ignore"] = [list(area) for area in (data.get("ignore") or {}).get(item) or []]
             for use in USES.get(kind, ()):
                 entry[use] = list(((data.get(kind) or {}).get(item) or {}).get(use) or [])
             model[kind][str(item)] = entry
@@ -215,6 +217,7 @@ def setup_data(model: dict, name: str) -> dict:
         },
         "microphones": {device: {"hears": list(entry.get("hears") or [])} for device, entry in model["microphones"].items()},
         "room": room_of(model),
+        "ignore": {device: entry["ignore"] for device, entry in model["cameras"].items() if entry.get("ignore")},
     }
 
 

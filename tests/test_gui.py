@@ -1011,6 +1011,23 @@ def test_a_camera_ticked_as_recording_depth_is_saved_so(project):
     assert resolve_config(project).setup.cameras["room"].depth and room.model_of(resolve_config(project), "main")["cameras"]["room"]["depth"]
 
 
+def test_saving_the_setup_keeps_a_camera_s_areas_to_ignore_under_a_new_name_too(project):
+    from macaw.cli.main import app as cli
+    from macaw.interface.pages import room
+    from typer.testing import CliRunner
+
+    placed_project(project)
+    assert CliRunner().invoke(cli, ["ignore-area", "-c", str(project), "--camera", "room", "--area", "0.75,0,1,0.5"]).exit_code == 0
+    model = room.model_of(resolve_config(project), "main")
+    room.save(project, "main", model)
+    assert resolve_config(project).setup.ignore == {"room": [(0.75, 0.0, 1.0, 0.5)]}
+    renamed, _ = room.renamed(model, "cameras", "room", "wide")
+    room.save(project, "main", renamed)
+    assert resolve_config(project).setup.ignore == {"wide": [(0.75, 0.0, 1.0, 0.5)]}
+    room.save(project, "main", room.removed(renamed, "cameras", "wide"))
+    assert resolve_config(project).setup.ignore == {}
+
+
 def test_adding_a_person_adds_a_role_to_the_project(project):
     from macaw.interface.pages import room
 
