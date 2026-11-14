@@ -32,10 +32,13 @@ def export(
     out: Path = typer.Argument(..., help="A folder for scores.csv and answers.csv."),
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
+    prompts: bool = typer.Option(False, "--prompts", help="Also write prompts.csv: the text sent to the model for each recording, segment and scale."),
 ) -> None:
     """Every score, the model's and people's, one row per recording, segment, scale and rater (scores.csv), and each of the
     model's answers with its reason and its text (answers.csv), each with a data dictionary beside it."""
-    from macaw.coding.ratings import RATING_DICTIONARY_COLUMNS, answers_dictionary, model_answers, scores_dictionary
+    from macaw.coding.ratings import (
+        RATING_DICTIONARY_COLUMNS, answers_dictionary, model_answers, model_prompts, prompts_dictionary, scores_dictionary,
+    )
     from macaw.project.dictionary import write_dictionary
 
     resolved, chosen, table = _table(config, recordings)
@@ -45,10 +48,16 @@ def export(
     answers.to_csv(folder / "answers.csv", index=False)
     write_dictionary(scores_dictionary(resolved, table, config.parent), folder / "scores.csv", RATING_DICTIONARY_COLUMNS)
     write_dictionary(answers_dictionary(resolved, answers, config.parent), folder / "answers.csv", RATING_DICTIONARY_COLUMNS)
+    sent = ""
+    if prompts:
+        asked = model_prompts(resolved, chosen)
+        asked.to_csv(folder / "prompts.csv", index=False)
+        write_dictionary(prompts_dictionary(resolved, asked, config.parent), folder / "prompts.csv", RATING_DICTIONARY_COLUMNS)
+        sent = f", {len(asked)} prompts sent to it"
     kinds = table.groupby("rater_kind")["rater"].nunique().to_dict()
     typer.echo(
         f"{len(table)} scores from {kinds.get('model', 0)} model version(s) and {kinds.get('person', 0)} coder(s), "
-        f"{len(answers)} answers of the model, in {folder}"
+        f"{len(answers)} answers of the model{sent}, in {folder}"
     )
 
 

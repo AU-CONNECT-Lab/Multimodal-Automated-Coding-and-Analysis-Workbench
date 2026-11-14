@@ -230,3 +230,24 @@ class TestTables:
         assert table.set_index("recording_id").at["F1_play", "task"] == "play" and set(table["group_id"]) == {"F1", "F2"}
         assert answers.at["task", "meaning"] == "The task, read from the recording's name."
         assert answers.at["problem", "missing"] == "Empty where the answer gave a score."
+        assert not (tmp_path / "out" / "prompts.csv").exists()
+
+    def test_the_export_writes_the_prompts_when_asked(self, tmp_path):
+        path = project(tmp_path, PEOPLE)
+        config = resolve_config(path)
+        for rid in ("F1_plan", "F2_play"):
+            model_scores(config, rid, {"warmth": 4})
+            pd.DataFrame(
+                [{"recording_id": rid, "segment": "", "scale": "warmth", "rater": "k1", "system": "Rate it.", "user": f"Scale: warmth\n{rid}"}]
+            ).to_parquet(layout_for(config).artifacts_dir(rid, "coding.rate.k1") / "prompts.parquet", index=False)
+        # a recording rated before prompts were kept has none
+        model_scores(config, "F1_play", {"warmth": 3})
+        result = CliRunner().invoke(app, ["ratings", "export", str(tmp_path / "out"), "-c", str(path), "--prompts"])
+        assert result.exit_code == 0, result.output
+        assert "2 prompts sent to it" in result.output
+        table = pd.read_csv(tmp_path / "out" / "prompts.csv", keep_default_na=False)
+        assert list(table.columns) == ["recording_id", "group_id", "session_id", "task", "run", "segment", "scale", "rater", "system", "user"]
+        assert table.set_index("recording_id").at["F2_play", "user"] == "Scale: warmth\nF2_play" and set(table["task"]) == {"plan", "play"}
+        said = pd.read_csv(tmp_path / "out" / "prompts_dictionary.csv", keep_default_na=False).set_index("column")
+        assert list(said.index) == list(table.columns) and said.at["system", "missing"] == "Never empty."
+        assert "warmth.person=parent" in said.at["scale", "settings"]

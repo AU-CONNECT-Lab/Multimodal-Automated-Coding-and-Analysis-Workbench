@@ -37,6 +37,7 @@ from macaw.store.schema import Scale
 RATE_STEP = "coding.rate."
 RATINGS_NAME = "ratings.parquet"
 ANSWERS_NAME = "answers.parquet"
+PROMPTS_NAME = "prompts.parquet"
 # the segment column of a rating of the whole analysed window
 WHOLE = ""
 CUT_OFF = "cut off"
@@ -49,6 +50,7 @@ RATING_COLUMNS = [
     "n_answers", "n_asked",
 ]
 ANSWER_COLUMNS = ["recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer"]
+PROMPT_COLUMNS = ["recording_id", "segment", "scale", "rater", "system", "user"]
 _MISSING = (
     "Empty for a recording where this rating asked the model nothing: its transcript is recognised and no person corrected "
     "this one, nothing was said in the parts it rates, or none of the segments it names lies in the analysed part. 0 means "
@@ -178,9 +180,10 @@ class RatingExtractor(Extractor):
         ratings = rating_table(answers, prompts, self.rating, recording)
         warnings += answer_warnings(answers, ratings, cfg, backend, rid)
 
-        paths = {RATINGS_NAME: workspace / RATINGS_NAME, ANSWERS_NAME: workspace / ANSWERS_NAME}
+        paths = {name: workspace / name for name in (RATINGS_NAME, ANSWERS_NAME, PROMPTS_NAME)}
         ratings.to_parquet(paths[RATINGS_NAME], index=False)
         answers[ANSWER_COLUMNS].to_parquet(paths[ANSWERS_NAME], index=False)
+        prompt_table(prompts, self.rating, rid).to_parquet(paths[PROMPTS_NAME], index=False)
         return ExtractorResult(
             rows=self._rows(recording, answers, parts), specs=self._specs(scales, recording), artifacts=paths, warnings=warnings,
         )
@@ -336,6 +339,12 @@ def _room(needed: int) -> int:
     while size < needed:
         size *= 2
     return size
+
+
+def prompt_table(prompts: list, rater: str, recording_id: str) -> pd.DataFrame:
+    """The text sent for each segment and scale, once: every sample of a scale is asked with the same."""
+    rows = [(recording_id, segment, scale.scale, rater, system, user) for segment, _, _, scale, system, user in prompts]
+    return pd.DataFrame(rows, columns=PROMPT_COLUMNS)
 
 
 def rating_table(answers: pd.DataFrame, prompts: list, rater: str, recording: Recording) -> pd.DataFrame:

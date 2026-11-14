@@ -258,6 +258,8 @@ macaw ratings export ratings_out
 
 writes `scores.csv`, every score of every version and coder with the recording's entities, the spread of the model's answers and any columns added to `ratings.csv`, and `answers.csv`, each of the model's answers with the recording's entities, its reason and its full text. Beside each table, a data dictionary (`scores_dictionary.csv` and `answers_dictionary.csv`, each also as a JSON sidecar) gives the meaning of every column and what an empty cell means ({ref}`data-dictionary`). Its entry for `rater` lists the settings of each version of the model, with each variant and its recordings where recordings have settings of their own, and each coder; its entry for `scale` lists each scale with the person it rates, its range and its scales file.
 
+Each rating keeps the text it sent to the model, the instructions and the transcript with the question, once for every recording, segment and scale, since every answer to a scale is asked with the same text. `macaw ratings export ratings_out --prompts` also writes these as `prompts.csv` with its data dictionary, so that what the model was shown can be set beside what a human rater saw.
+
 (own-coding)=
 ## Human coding and inter-rater agreement
 

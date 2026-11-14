@@ -296,6 +296,21 @@ class TestRun:
         assert result.rows["feature"].tolist() == ["share_unread_answers_full"] and result.rows["value"].tolist() == [0.0]
         assert result.specs[0].params["n_scales"] == 3 and not result.specs[0].params["names_only"]
 
+    def test_the_text_sent_is_kept_once_per_segment_and_scale(self, monkeypatch, tmp_path, server):
+        config = transcribed(project(
+            tmp_path, {"parts": {"scales": "scales.yaml", "segments": ["opening", "late"]}},
+            llm={"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 2},
+            segments=[("r1", "opening", 0, 10), ("r1", "late", 15, 25)],
+        ))
+        result = rate(monkeypatch, config, "parts")
+        kept = pd.read_parquet(result.artifacts["prompts.parquet"])
+        assert list(kept.columns) == module.PROMPT_COLUMNS and len(kept) == 6 and len(server.requests) == 12
+        assert set(kept["rater"]) == {"parts"} and set(kept["recording_id"]) == {"r1"}
+        sent = {(body["messages"][0]["content"], body["messages"][1]["content"]) for body in server.requests}
+        assert set(zip(kept["system"], kept["user"])) == sent
+        late = kept[(kept["segment"] == "late") & (kept["scale"] == "flow")].iloc[0]
+        assert "We had a test." in late["user"] and "school" not in late["user"]
+
     def test_answers_without_a_score_are_counted_and_left_out(self, monkeypatch, tmp_path, server):
         server.score = lambda scale, sample: {"warmth": ['{"score": 9}', '{"score": 2}', "no idea"], "on_task": ['{"score": 1}'] * 3, "flow": ["?"] * 3}[scale][sample]
         config = transcribed(project(tmp_path, {"full": {"scales": "scales.yaml"}}, llm={"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 3}))

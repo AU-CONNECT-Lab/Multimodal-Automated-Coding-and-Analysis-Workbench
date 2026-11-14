@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, RATE_STEP, RATINGS_NAME, WHOLE
+from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, PROMPT_COLUMNS, PROMPTS_NAME, RATE_STEP, RATINGS_NAME, WHOLE
 from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
 from macaw.project.layout import layout_for
@@ -22,6 +22,7 @@ TABLE_COLUMNS = [
 ]
 # answers.csv carries the recording's entities after its id, as scores.csv does
 ANSWER_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *ANSWER_COLUMNS[1:]]
+PROMPT_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *PROMPT_COLUMNS[1:]]
 STATISTICS = ("icc", "kappa", "exact", "within_one")
 _UNIT = ["recording_id", "segment"]
 
@@ -54,6 +55,13 @@ def model_answers(config, recording_ids: list[str]) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=ANSWER_TABLE_COLUMNS)
     return _with_entities(config, pd.concat(frames, ignore_index=True)).reindex(columns=ANSWER_TABLE_COLUMNS)
+
+
+def model_prompts(config, recording_ids: list[str]) -> pd.DataFrame:
+    frames = _artifacts(config, recording_ids, PROMPTS_NAME)
+    if not frames:
+        return pd.DataFrame(columns=PROMPT_TABLE_COLUMNS)
+    return _with_entities(config, pd.concat(frames, ignore_index=True)).reindex(columns=PROMPT_TABLE_COLUMNS)
 
 
 def _with_entities(config, table: pd.DataFrame) -> pd.DataFrame:
@@ -314,6 +322,16 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     ),
     "answer": ("The model's whole answer as the server sent it back.", None, "Empty where the server sent back no text."),
 }
+PROMPT_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
+    "segment": _SEGMENT,
+    "scale": _SCALE,
+    "rater": ("The version of the language model under coding.ratings that was asked.", None, "Never empty."),
+    "system": ("The instructions sent to the model for this scale, as they were sent.", None, "Never empty."),
+    "user": (
+        "The transcript and the question sent with the instructions, as they were sent; every answer to this scale in this "
+        "recording and segment was asked with the same text.", None, "Never empty.",
+    ),
+}
 _KIND_LEVELS = {MODEL: "a version of the language model under coding.ratings", PERSON: "a coder in the project's ratings table"}
 _ENTITY_COLUMNS = ("recording_id", *ENTITY_NAMES)
 
@@ -335,6 +353,10 @@ def scores_dictionary(config, table: pd.DataFrame, base: Path) -> list[dict]:
 
 def answers_dictionary(config, answers: pd.DataFrame, base: Path) -> list[dict]:
     return _with_raters_and_scales(config, [_rating_entry(column, ANSWER_COLUMNS_SAID) for column in answers.columns], answers, base)
+
+
+def prompts_dictionary(config, prompts: pd.DataFrame, base: Path) -> list[dict]:
+    return _with_raters_and_scales(config, [_rating_entry(column, PROMPT_COLUMNS_SAID) for column in prompts.columns], prompts, base)
 
 
 def _rating_entry(column: str, said: dict[str, tuple[str, str | None, str]]) -> dict:
