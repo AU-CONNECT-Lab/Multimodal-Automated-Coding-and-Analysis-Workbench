@@ -234,6 +234,8 @@ coding:
 
 On the Run page, select the recordings and the steps, then press **Run**. Steps that a selected step depends on are included automatically. The **Run** button at the end of a step's row runs that step alone, with its prerequisites, for the selected recordings. **Preview** lists what would run without running it, and **Stop** ends a run cleanly. Processing a single recording first is a quick way to confirm that the setup works.
 
+Before any step starts, a run checks that every step it has to run can run on this computer with the settings of each recording: that its program is installed, that a setting without a default (such as the pose backend) is filled in, and that every voice can be read, which a shared microphone or a camera's own sound allows only when the voices are separated (*Microphones* set to `pyannote`). If anything is missing, nothing is started, and the output lists each reason; **Preview** reports the same.
+
 ```{figure} screens/run.png
 :width: 100%
 :alt: The Run page: the recordings as ticked chips, and the steps in the order they run, each with the count of its tasks in every state and a Run button of its own.
