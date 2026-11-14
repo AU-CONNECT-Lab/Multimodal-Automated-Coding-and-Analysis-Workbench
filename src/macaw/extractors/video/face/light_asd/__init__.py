@@ -54,7 +54,7 @@ class Track:
 def plan_tracks(t: np.ndarray, x: np.ndarray, y: np.ndarray, s: np.ndarray, *, fps: float, offset_s: float) -> list[Track]:
     """A face seen at times t (a file of fps frames placed at offset_s) as runs at 25 a second: short gaps are bridged
     and the crop smoothed as the model's demo does, and each moment shows the file frame nearest it."""
-    from scipy.signal import medfilt
+    from scipy.ndimage import median_filter
 
     order = np.argsort(t)
     t, x, y, s = (np.asarray(values, dtype=float)[order] for values in (t, x, y, s))
@@ -66,7 +66,8 @@ def plan_tracks(t: np.ndarray, x: np.ndarray, y: np.ndarray, s: np.ndarray, *, f
         times = t[part[0]] + np.arange(int(math.floor((t[part[-1]] - t[part[0]]) * FPS + 1e-6)) + 1) / FPS
         if times.size <= MIN_TRACK_FRAMES:
             continue
-        smooth = [medfilt(np.interp(times, t[part], values[part]), kernel_size=SMOOTH_FRAMES) for values in (x, y, s)]
+        # held at the ends rather than padded with zeros, which would pull the first and last crops towards the corner
+        smooth = [median_filter(np.interp(times, t[part], values[part]), size=SMOOTH_FRAMES, mode="nearest") for values in (x, y, s)]
         frames = np.round((times - offset_s) * fps).astype(int)
         tracks.append(Track(times, frames, *smooth))
     return tracks

@@ -67,10 +67,18 @@ class FaceSpeakingExtractor(Extractor):
     def _network(self, device: str):
         import torch
 
-        try:
-            state = torch.hub.load_state_dict_from_url(
+        def fetch():
+            return torch.hub.load_state_dict_from_url(
                 light_asd.WEIGHTS_URL, map_location="cpu", file_name=light_asd.WEIGHTS_FILE, weights_only=True, progress=False
             )
+
+        try:
+            try:
+                state = fetch()
+            except RuntimeError:
+                # a copy cut short, as by two tasks fetching it at once, is fetched again rather than failing every run after
+                (Path(torch.hub.get_dir()) / "checkpoints" / light_asd.WEIGHTS_FILE).unlink(missing_ok=True)
+                state = fetch()
         except (OSError, RuntimeError) as error:
             raise ExternalToolError(
                 f"could not fetch the Light-ASD weights ({error}); on a machine without internet, run macaw run on one with it "

@@ -83,3 +83,31 @@ def test_each_moment_is_scored_from_its_own_frame_and_the_sound_under_it_in_piec
     assert [n for n, _ in pieces] == [50, 50, tracks[0].times.size - 100]
     # the first piece's sound starts at its first moment on the track's clock: 1 s after the track's start, in 640-sample frames
     assert pieces[0][1] == int((times[0] - 1.0) * rate) // 640
+
+
+def test_the_crop_is_held_at_the_ends_of_a_run_not_pulled_towards_the_corner():
+    t = np.arange(0, 12) / 25
+    falling = 120.0 - np.arange(12)
+    track = light_asd.plan_tracks(t, falling, falling, falling, fps=25.0, offset_s=0.0)[0]
+    assert track.x[0] == 120.0 and track.x[-1] == 109.0
+
+
+def test_a_copy_of_the_weights_cut_short_is_fetched_again(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    cached = tmp_path / "checkpoints" / light_asd.WEIGHTS_FILE
+    cached.parent.mkdir()
+    cached.write_bytes(b"half")
+    calls = []
+
+    def load(url, **kwargs):
+        calls.append(url)
+        if cached.exists():
+            raise RuntimeError("PytorchStreamReader failed reading zip archive")
+        return {"weights": 1}
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(hub=SimpleNamespace(load_state_dict_from_url=load, get_dir=lambda: str(tmp_path))))
+    monkeypatch.setattr(light_asd, "network", lambda state, device: state)
+    assert speaking.FaceSpeakingExtractor._network(SimpleNamespace(), "cpu") == {"weights": 1}
+    assert len(calls) == 2 and not cached.exists()
