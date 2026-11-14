@@ -36,6 +36,8 @@ from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 # every prepared track is written at this rate so downstream extractors never resample
 PREP_SAMPLE_RATE = 16000
 PREP_INFO_NAME = "prep.json"
+# a recording shorter than segment.keep_last_s by less than this is not reported as short
+SHORT_TOLERANCE_S = 0.05
 VIDEO_INFO_NAME = "video.json"
 SHARED_TRACK_PREFIX = "shared_"
 
@@ -195,6 +197,8 @@ def _window(recording: Recording) -> tuple[float, float]:
         if not ends:
             raise UnreadableMediaError(f"{recording.recording_id}: no media duration to work from")
         end = max(ends)
+    if recording.t_keep_last is not None:
+        start = max(start, end - recording.t_keep_last)
     if end <= start:
         raise UnreadableMediaError(
             f"{recording.recording_id}: task window is empty ({start:.3f}s to {end:.3f}s)"
@@ -314,6 +318,11 @@ class MediaPrepExtractor(Extractor):
         duration = end - start
 
         artifacts: dict[str, Path] = {}
+        if recording.t_keep_last is not None and duration < recording.t_keep_last - SHORT_TOLERANCE_S:
+            warnings.append(QCWarning(
+                check="keep_last", recording_id=recording.recording_id, subject_id=None, severity="warn",
+                message=f"the recording is {duration:.1f} s long, shorter than segment.keep_last_s {recording.t_keep_last:g} s, so all of it was analysed",
+            ))
         warnings += [
             QCWarning(check="setup_files", recording_id=recording.recording_id, subject_id=None, severity="warn", message=note)
             for note in recording.metadata.get("setup_notes", [])

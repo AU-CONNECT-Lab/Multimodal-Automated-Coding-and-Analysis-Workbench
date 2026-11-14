@@ -11,7 +11,7 @@ from macaw.execution.runner import resolve_recordings
 from macaw.project.dictionary import NOTES_BY, merged_notes
 from macaw.project.manifest import read_manifest, recording_specs
 from macaw.qc.boilerplate import (
-    drift_corrected_files, recordings_scaled, settings_by_recording, transcripts_corrected, write_methods,
+    drift_corrected_files, recordings_scaled, recordings_short, settings_by_recording, transcripts_corrected, write_methods,
 )
 from macaw.qc.look import project_summary
 
@@ -33,6 +33,7 @@ def methods(
     looked = project_summary(resolve_config(config))
     corrected = transcripts_corrected(resolve_config(config))
     drifted = drift_corrected_files(resolve_config(config))
+    short = recordings_short(config, resolve_config(config))
     ran = [rid for rid in resolve_recordings(resolve_config(config), None) if layout.manifest_fragment_path(rid, "x").parent.is_dir()]
     specs = merged_notes({rid: recording_specs(layout, rid) for rid in ran})
     own = settings_by_recording(specs)
@@ -44,7 +45,7 @@ def methods(
             spec.params = {**spec.params, NOTES_BY: merged[0].params[NOTES_BY]}
     text, bib = write_methods(
         manifest, resolve_config(settings), out or layout.output_dir / "methods", scaled=scaled, looked=looked,
-        corrected=corrected, drifted=drifted, own=own,
+        corrected=corrected, drifted=drifted, own=own, short=short,
     )
     typer.echo(f"methods {text}")
     typer.echo(f"references {bib}")

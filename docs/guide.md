@@ -217,6 +217,8 @@ segment:
   task_start_s: 42
   task_end_s: 402
 ```
+
+When every recording should be cut to the same length counted back from its end, set *Keep only the last (s)* instead of the start, `segment: {keep_last_s: 300}` in *project.yaml*. The part kept ends at *Task ends at* when that is set, otherwise where the recording ends. A recording shorter than that is analysed whole, with a warning in its quality report, and the Methods text says how many there were.
 :::
 
 :::{important}

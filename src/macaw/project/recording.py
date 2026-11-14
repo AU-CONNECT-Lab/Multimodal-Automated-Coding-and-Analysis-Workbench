@@ -87,6 +87,7 @@ class Recording:
     media: list[MediaFile] = field(default_factory=list)
     t_task_start: float | None = None
     t_task_end: float | None = None
+    t_keep_last: float | None = None
     metadata: dict = field(default_factory=dict)
 
     def entities(self) -> dict[str, str | None]:
@@ -389,6 +390,7 @@ def build_recording(recording_id: str, config: MacawConfig) -> Recording:
         media=media,
         t_task_start=config.segment.task_start_s,
         t_task_end=config.segment.task_end_s,
+        t_keep_last=config.segment.keep_last_s,
         metadata={"setup": config.setup.name, "setup_notes": notes},
         **entities,
     )

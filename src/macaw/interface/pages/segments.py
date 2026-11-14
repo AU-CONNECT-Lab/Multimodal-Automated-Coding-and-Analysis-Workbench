@@ -89,11 +89,7 @@ def body(config_path: Path, rid: str | None):
 
 
 def _listed(config, own, rid: str):
-    window = own.segment
-    analysed = (
-        f"Analysed part: {seconds_text(window.task_start_s or 0)} s to {f'{seconds_text(window.task_end_s)} s' if window.task_end_s is not None else 'the end'}."
-        if window.task_start_s is not None or window.task_end_s is not None else "The whole recording is analysed."
-    )
+    analysed = analysed_text(own.segment)
     found = segments_of(config, rid)
     if not found:
         return html.Div([ui.note(analysed), html.P("No segments yet.", className="none")])
@@ -107,6 +103,15 @@ def _listed(config, own, rid: str):
     return html.Div([ui.note(analysed), ui.table(["Segment", "From (s)", "To (s)", "Length (s)", "", ""], rows, numeric={"From (s)", "To (s)", "Length (s)"})])
 
 
+def analysed_text(window) -> str:
+    end = f"{seconds_text(window.task_end_s)} s" if window.task_end_s is not None else "the end"
+    if window.keep_last_s is not None:
+        return f"Analysed part: the last {seconds_text(window.keep_last_s)} s before {end}."
+    if window.task_start_s is not None or window.task_end_s is not None:
+        return f"Analysed part: {seconds_text(window.task_start_s or 0)} s to {end}."
+    return "The whole recording is analysed."
+
+
 def segment_command(config_path: Path, rid: str, name: str, start: float | None = None, end: float | None = None) -> list[str]:
     flags = ["--name", name, *(["--clear"] if start is None else ["--start", seconds_text(start), "--end", seconds_text(end)])]
     return cli_bridge.build_command(["set-segment"], config_path=config_path, recordings=[rid], extra_flags=flags)
@@ -118,7 +123,7 @@ def set_window(config_path: Path, rid: str, start: float, end: float) -> Path:
     path = folder / f"{rid}.yaml"
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     folder.mkdir(parents=True, exist_ok=True)
-    project_file.save(path, project_file.with_values(text, {"segment.task_start_s": float(start), "segment.task_end_s": float(end)}))
+    project_file.save(path, project_file.with_values(text, {"segment.task_start_s": float(start), "segment.task_end_s": float(end), "segment.keep_last_s": None}))
     resolve_config(config_path, recording_id=rid)
     return path
 

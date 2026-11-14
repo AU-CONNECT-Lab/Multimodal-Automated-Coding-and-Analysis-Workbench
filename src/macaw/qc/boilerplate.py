@@ -50,6 +50,27 @@ def recordings_scaled(config_path: Path, config) -> tuple[int, int]:
     return found, len(recording_ids)
 
 
+def recordings_short(config_path: Path, config) -> tuple[int, int]:
+    """(prepared recordings shorter than their segment.keep_last_s, prepared recordings that set it)."""
+    from macaw.config.loader import resolve_config
+    from macaw.exceptions import MacawError
+    from macaw.execution.runner import resolve_recordings
+    from macaw.extractors.prep import SHORT_TOLERANCE_S, load_prep
+
+    short = kept = 0
+    for rid in resolve_recordings(config, None):
+        own = resolve_config(config_path, recording_id=rid)
+        if own.segment.keep_last_s is None:
+            continue
+        try:
+            duration = load_prep(own, rid).duration_s
+        except MacawError:
+            continue
+        kept += 1
+        short += duration < own.segment.keep_last_s - SHORT_TOLERANCE_S
+    return short, kept
+
+
 def transcripts_corrected(config) -> tuple[int, int]:
     """(recordings whose last text.asr run read a corrected transcript, recordings text.asr ran on)."""
     from macaw.execution.runner import resolve_recordings
@@ -92,10 +113,11 @@ def load_references() -> dict[str, dict]:
 def write_methods(
     manifest: FeatureManifest, config, out_dir: Path, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
     corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None, own: str = "",
+    short: tuple[int, int] | None = None,
 ) -> tuple[Path, Path]:
     references = load_references()
     text, used = render(
-        describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected, drifted=drifted, own=own), references
+        describe(manifest, config, scaled=scaled, looked=looked, corrected=corrected, drifted=drifted, own=own, short=short), references
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     methods = out_dir / METHODS_NAME
@@ -108,8 +130,10 @@ def write_methods(
 def describe(
     manifest: FeatureManifest, config, *, scaled: tuple[int, int] | None = None, looked: dict | None = None,
     corrected: tuple[int, int] | None = None, drifted: tuple[int, int, int] | None = None, own: str = "",
+    short: tuple[int, int] | None = None,
 ) -> dict[str, list[str]]:
-    """scaled, corrected and drifted are what recordings_scaled, transcripts_corrected and drift_corrected_files give;
+    """scaled, corrected, drifted and short are what recordings_scaled, transcripts_corrected, drift_corrected_files and
+    recordings_short give;
     looked is qc.look.project_summary's; own is what settings_by_recording says."""
     by_extractor: dict[str, list[FeatureSpec]] = {}
     for spec in manifest.specs.values():
@@ -127,6 +151,8 @@ def describe(
             text += " " + _corrected(*corrected)
         if name == "prep.media" and drifted and drifted[0] and config.align.method == "gcc_phat":
             text += " " + _drifted(*drifted)
+        if name == "prep.media" and short and short[0]:
+            text += " " + _short(*short)
         sections.setdefault("Ratings" if rating else SECTIONS.get(name.split(".")[0], "Other features"), []).append(text)
     in_pixels = any(pixel_power(spec.unit) for spec in manifest.specs.values())
     if scaled and scaled[0] and in_pixels:
@@ -180,6 +206,11 @@ def _corrected(corrected: int, transcribed: int) -> str:
         f"For {which}, the recognised transcript was then corrected by hand, and the corrected transcript, which times "
         "each utterance but not each word, replaced it in every step that followed."
     )
+
+
+def _short(short: int, kept: int) -> str:
+    were = "was" if short == 1 else "were"
+    return f"{_count(short).capitalize()} of the {_count(kept)} recordings {were} shorter than the part to be kept and {were} analysed whole."
 
 
 def _drifted(files: int, recordings: int, aligned: int) -> str:
@@ -321,7 +352,10 @@ def _listed(items: list[str]) -> str:
 def _prep(config, spec, names) -> str:
     segment, align = config.segment, config.align
     window = ""
-    if segment.task_start_s is not None or segment.task_end_s is not None:
+    if segment.keep_last_s is not None:
+        before = f"{_seconds(segment.task_end_s)}" if segment.task_end_s is not None else "the end of the recording"
+        window = f" of the last {_seconds(segment.keep_last_s)} before {before}"
+    elif segment.task_start_s is not None or segment.task_end_s is not None:
         window = f" from {_seconds(segment.task_start_s or 0.0)}"
         if segment.task_end_s is not None:
             window += f" to {_seconds(segment.task_end_s)}"

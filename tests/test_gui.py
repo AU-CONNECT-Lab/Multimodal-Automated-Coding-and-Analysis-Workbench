@@ -1051,3 +1051,13 @@ def test_the_transcript_card_lists_the_lines_a_model_marked(project):
     shown = text_of(review.body(project, "003"))
     assert "Ask the model for doubtful lines" in shown and "1 of 2 line(s) marked by tiny: 1 cut off" in shown and "a word out of place" in shown
     assert review.action_command(project, "003", "transcript-check", "", "", {})[1:3] == ["transcript", "check"]
+
+
+def test_marking_the_analysed_part_replaces_a_length_kept_from_the_end(project):
+    from macaw.interface import project_file
+    from macaw.interface.pages import segments
+
+    project.write_text(project_file.with_values(project.read_text(encoding="utf-8"), {"segment.keep_last_s": 300.0}), encoding="utf-8")
+    segments.set_window(project, "003", 1.5, 20.0)
+    own = resolve_config(project, recording_id="003")
+    assert (own.segment.task_start_s, own.segment.keep_last_s) == (1.5, None)

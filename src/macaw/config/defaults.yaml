@@ -43,6 +43,7 @@ identity:
 segment:
   task_start_s: null                 # s; trims the start. null = from 0
   task_end_s: null                   # s; null = to the end
+  keep_last_s: null                  # s; keeps only the last this many seconds, instead of task_start_s
 
 # Before any video step, each video is re-encoded once: a constant frame rate, upright, square
 # pixels, progressive, standard dynamic range, and frame 0 at the first sound of its file. The copies take about as much

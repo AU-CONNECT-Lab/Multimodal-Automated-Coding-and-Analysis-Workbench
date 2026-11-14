@@ -239,6 +239,13 @@ class VideoSection(_Section):
 class SegmentSection(_Section):
     task_start_s: float | None = None
     task_end_s: float | None = None
+    keep_last_s: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _one_start(self) -> "SegmentSection":
+        if self.keep_last_s is not None and self.task_start_s is not None:
+            raise ValueError("segment.keep_last_s and segment.task_start_s both say where the analysis starts; set one")
+        return self
 
 
 class ProsodySection(_Section):

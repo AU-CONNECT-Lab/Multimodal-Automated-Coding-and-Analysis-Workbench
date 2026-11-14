@@ -27,6 +27,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Project", "Where the recordings are, who takes part, and the part of each recording to analyse.", (
         "project.name", "project.raw_dir", "project.output_dir", "project.work_dir", "project.recording_pattern",
         "project.n_subjects", "project.roles", "project.units", "segment.task_start_s", "segment.task_end_s",
+        "segment.keep_last_s",
     )),
     ("Video", "How videos are brought to one frame rate and format.", (
         "video.normalise", "video.fps", "video.quality", "video.encoder",
@@ -63,6 +64,7 @@ LABELS = {
     "project.units": "Length unit",
     "segment.task_start_s": "Task starts at (s)",
     "segment.task_end_s": "Task ends at (s)",
+    "segment.keep_last_s": "Keep only the last (s)",
     "video.normalise": "Bring videos to one format",
     "video.fps": "One frame rate for all (fps)",
     "video.quality": "Quality",
