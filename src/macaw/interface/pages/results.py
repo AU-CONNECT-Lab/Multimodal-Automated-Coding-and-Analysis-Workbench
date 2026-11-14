@@ -69,8 +69,10 @@ def layout(config_path: Path):
 def sources(config_path: Path, rid: str | None) -> list[str]:
     if rid is None:
         return []
+    from macaw.store.longtable import has_rows
+
     directory = layout_for(resolve_config(config_path), create=False).long_table_path(rid)
-    return sorted(path.stem for path in directory.glob("*.parquet"))
+    return sorted(path.stem for path in directory.glob("*.parquet") if has_rows(path))
 
 
 def chosen_source(found: list[str], linked: str | None, current: str | None) -> str | None:
