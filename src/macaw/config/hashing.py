@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 from pydantic import BaseModel
 
+from macaw.config.fields import HASHED_WHEN_SET
 from macaw.config.schema import CONTENT_HASHED_PATHS, MacawConfig
 
 HASH_LENGTH = 12
@@ -63,10 +64,35 @@ def _digest(text: str) -> str:
 
 
 def _prepared(config: MacawConfig) -> dict[str, Any]:
+    return _prepared_and_left_out(config)[0]
+
+
+def _prepared_and_left_out(config: MacawConfig) -> tuple[dict[str, Any], set[str]]:
     data = config.model_dump(mode="python")
+    left_out: set[str] = set()
+    _leave_out_unset(config, data, "", left_out)
     for dotted in CONTENT_HASHED_PATHS:
         _substitute_content(data, dotted)
-    return data
+    return data, left_out
+
+
+def _leave_out_unset(value: Any, data: Any, path: str, left_out: set[str]) -> None:
+    """Drops each key added later that still holds its default, so adding it changed no cache key."""
+    if isinstance(value, BaseModel):
+        for name, field in type(value).model_fields.items():
+            inner, dotted = getattr(value, name), f"{path}{name}"
+            marked = isinstance(field.json_schema_extra, dict) and field.json_schema_extra.get(HASHED_WHEN_SET)
+            if marked and inner == field.get_default(call_default_factory=True):
+                data.pop(name, None)
+                left_out.add(dotted)
+            else:
+                _leave_out_unset(inner, data.get(name), f"{dotted}.", left_out)
+    elif isinstance(value, dict) and isinstance(data, dict):
+        for key, inner in value.items():
+            _leave_out_unset(inner, data.get(key), f"{path}{key}.", left_out)
+    elif isinstance(value, (list, tuple)) and isinstance(data, (list, tuple)):
+        for inner, dumped in zip(value, data):
+            _leave_out_unset(inner, dumped, path, left_out)
 
 
 def _substitute_content(data: dict[str, Any], dotted: str) -> None:
@@ -129,8 +155,9 @@ def hash_section(config: MacawConfig, section: str) -> str:
 
 
 def hash_sections(config: MacawConfig, sections: Sequence[str]) -> str:
-    data = _prepared(config)
-    parts = [f"{name}:{canonical(_section_value(data, name))}" for name in sorted(set(sections))]
+    data, left_out = _prepared_and_left_out(config)
+    # a section naming such a key outright is left out with it
+    parts = [f"{name}:{canonical(_section_value(data, name))}" for name in sorted(set(sections) - left_out)]
     return _digest("|".join(parts))
 
 
