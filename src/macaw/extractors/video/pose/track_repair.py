@@ -186,6 +186,8 @@ NEAREST_SHARE = 0.5
 SPAN_GAP_S = 1.0
 # the one a camera is pointed at is in doubt when in fewer than this share of the frames with anyone
 MIN_OWNER_COVERAGE = 0.5
+# a track is left out when its middle lies in an ignored area in more than this share of its frames
+IGNORED_SHARE = 0.5
 
 
 @dataclass
@@ -244,6 +246,18 @@ def _track_boxes(keypoints: pd.DataFrame) -> pd.DataFrame:
     boxes["cy"] = (boxes["y0"] + boxes["y1"]) / 2
     boxes["size"] = np.hypot(boxes["x1"] - boxes["x0"], boxes["y1"] - boxes["y0"])
     return boxes
+
+
+def tracks_in_areas(keypoints: pd.DataFrame, areas: list[tuple[float, float, float, float]]) -> list[int]:
+    """Tracks whose middle lies in one of the areas (left, top, right, bottom, in pixels) in most of their frames."""
+    if not areas:
+        return []
+    boxes = _track_boxes(keypoints)
+    inside = np.zeros(len(boxes), dtype=bool)
+    for left, top, right, bottom in areas:
+        inside |= (boxes["cx"].between(left, right) & boxes["cy"].between(top, bottom)).to_numpy()
+    share = pd.Series(inside).groupby(boxes["track_id"].to_numpy()).mean()
+    return sorted(int(track) for track in share.index[share > IGNORED_SHARE])
 
 
 def _spans(times) -> list[tuple[float, float]]:

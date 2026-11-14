@@ -99,7 +99,7 @@ def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
 
     def run(suggest):
-        config = SimpleNamespace(pose=PoseSection(suggest_names=suggest))
+        config = SimpleNamespace(pose=PoseSection(suggest_names=suggest), setup=SimpleNamespace(cameras={}))
         files = [media(name, subject_id=subject) for name, subject in
                  (("parent.mp4", "parent"), ("child.mp4", "child"), ("room.mp4", None))]
         rec = recording(files, t_task_end=SECONDS - 1 / FPS)
@@ -146,7 +146,7 @@ def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
     monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
-    config = SimpleNamespace(pose=PoseSection(suggest_names=True))
+    config = SimpleNamespace(pose=PoseSection(suggest_names=True), setup=SimpleNamespace(cameras={}))
     clicks(tmp_path, "room_a.mp4", 1.0, child=(100.0, 125.0), parent=(500.0, 125.0))
     rec = recording([media("room_a.mp4"), media("room_b.mp4")], t_task_end=SECONDS - 1 / FPS)
     found = PoseDetectExtractor(config).run(rec, tmp_path / "detect")

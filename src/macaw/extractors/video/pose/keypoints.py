@@ -25,6 +25,7 @@ from macaw.extractors.video.pose.track_repair import (
     subject_column,
     suggested_people,
     track_quality,
+    tracks_in_areas,
 )
 from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, speech_activity
 from macaw.project.layout import layout_for
@@ -107,6 +108,15 @@ def analysed_part(config, recording_id: str, camera: str) -> tuple[float, float]
     video = load_video_prep(config, recording_id).get(camera)
     start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
     return round(moment_of(item, video, start), 2), round(moment_of(item, video, end), 2)
+
+
+def ignored_areas(config, camera: str, video: dict | None) -> list[tuple[float, float, float, float]]:
+    """The parts of a camera's picture the setup says to ignore, in the pixels the keypoints are in."""
+    device = config.setup.cameras.get(camera)
+    if device is None or not device.ignore or not video:
+        return []
+    width, height = video.get("prepared_size") or video["size"]
+    return [(left * width, top * height, right * width, bottom * height) for left, top, right, bottom in device.ignore]
 
 
 def camera_people(item) -> list[str]:
@@ -356,10 +366,24 @@ class PoseExtractor(Extractor):
                     f"{item.name}: the clicks at {', '.join(sorted({f'{click.at:g}' for click in outside}, key=float))} s fall "
                     f"outside the analysed part ({part[0]:.1f} to {part[1]:.1f} s of its file) and were left out"
                 )))
+            away = piece["track_id"].isin(tracks_in_areas(piece, ignored_areas(self.config, item.name, video))).to_numpy()
+            if away.any():
+                # they stay in the file under no name, and out of who is who
+                left_out, piece = piece[away].assign(subject_id=None), piece[~away]
+                tracks = sorted(int(track) for track in left_out["track_id"].unique())
+                frames = int(left_out.groupby("track_id")["frame"].nunique().sum())
+                warnings.append(self._warning(recording, None, "info", (
+                    f"{item.name}: tracks {tracks[:5]}{f' and {len(tracks) - 5} more' if len(tracks) > 5 else ''}, in view "
+                    f"{f'{frames / item.fps:.0f} s' if item.fps else f'{frames} frames'} in all, lie in a part of the picture "
+                    "the setup says to ignore and were left out of who is who"
+                )))
+            order = piece.index
             piece, swaps, owner = self._identify(
-                piece, item, clicks, [click for click, keep in zip(written, kept) if keep], pieces, recording,
+                piece.reset_index(drop=True), item, clicks, [click for click, keep in zip(written, kept) if keep], pieces, recording,
                 outside=(sorted({click.person for click in outside}), part),
             )
+            if away.any():
+                piece = pd.concat([piece.set_axis(order), left_out]).sort_index().reset_index(drop=True)
             swaps_by_file[item.name] = swaps
             if owner is not None:
                 owners[item.name] = owner

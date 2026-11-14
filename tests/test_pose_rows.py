@@ -8,7 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from macaw.config.schema import LookSection, PoseSection, QCSection
+from pydantic import ValidationError
+
+from macaw.config.schema import CameraDevice, LookSection, PoseSection, QCSection
 from macaw.extractors.prep import _window
 from macaw.extractors.video.pose import keypoints as pose_module
 from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, PoseFrames
@@ -149,8 +151,9 @@ def clicks(tmp_path, camera, at, **people):
 class Chain:
     """pose.detect then pose.keypoints, the way the runner chains them."""
 
-    def __init__(self, backend, look=None, **pose):
-        config = SimpleNamespace(pose=PoseSection(**pose), qc=QCSection(look=look or LookSection()))
+    def __init__(self, backend, look=None, ignore=None, **pose):
+        cameras = {camera: CameraDevice(body=["parent"], ignore=areas) for camera, areas in (ignore or {}).items()}
+        config = SimpleNamespace(pose=PoseSection(**pose), qc=QCSection(look=look or LookSection()), setup=SimpleNamespace(cameras=cameras))
         self.fake = backend
         self.detect = PoseDetectExtractor(config)
         self.identify = PoseExtractor(config)
@@ -169,14 +172,14 @@ class Chain:
 
 @pytest.fixture
 def extractor(monkeypatch, offsets):
-    def build(backend=None, look=None, **pose):
+    def build(backend=None, look=None, ignore=None, **pose):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
         monkeypatch.setattr(
             pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=N_FRAMES / FPS)
         )
-        return Chain(backend, look, **pose)
+        return Chain(backend, look, ignore, **pose)
 
     return build
 
@@ -465,6 +468,43 @@ class TestSeveralPeopleOnAPersonalCamera:
     def test_the_clicks_are_part_of_the_cache_key(self, extractor, recording, tmp_path):
         clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
         assert tmp_path / "names.json" in extractor().identify.inputs_for(recording([media("a.mp4", subject_id="parent")]))
+
+
+class TestAnAreaToIgnore:
+    """A mirror at the right of the picture shows someone the whole time; the setup says to ignore that part."""
+
+    FRAMES = spread_frame((1, range(N_FRAMES), 200.0, 100.0), (2, range(N_FRAMES), 560.0, 100.0))
+    MIRROR = {"a.mp4": [(0.75, 0.0, 1.0, 1.0)]}
+
+    def test_without_it_the_one_in_the_mirror_puts_the_camera_in_doubt(self, extractor, recording, tmp_path):
+        result = extractor(FakeBackend(self.FRAMES)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        assert result.keypoints.subject_id.isna().all() and "owners" in result.artifacts
+
+    def test_with_it_the_camera_s_own_person_is_named_and_nothing_is_in_doubt(self, extractor, recording, tmp_path):
+        result = extractor(FakeBackend(self.FRAMES), ignore=self.MIRROR).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        keypoints = result.keypoints
+        assert set(keypoints.loc[keypoints.subject_id == "parent", "track_id"]) == {1}
+        assert keypoints.loc[keypoints.track_id == 2, "subject_id"].isna().all() and (keypoints.track_id == 2).sum() == N_FRAMES * len(STANDARD_JOINTS)
+        assert "owners" not in result.artifacts
+        plain = extractor(FakeBackend(self.FRAMES)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path / "plain").keypoints
+        assert keypoints[["frame", "track_id", "joint", "x"]].equals(plain[["frame", "track_id", "joint", "x"]])
+        said = [warning for warning in result.warnings if "the setup says to ignore" in warning.message]
+        assert len(said) == 1 and said[0].severity == "info" and "tracks [2], in view 2 s in all" in said[0].message
+
+    def test_someone_who_only_passes_through_it_is_still_read(self, extractor, recording, tmp_path):
+        frames = spread_frame((1, range(N_FRAMES), 200.0, 100.0), (2, range(0, 4), 560.0, 100.0), (2, range(4, N_FRAMES), 400.0, 100.0))
+        result = extractor(FakeBackend(frames), ignore=self.MIRROR).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        assert "owners" in result.artifacts and not any("to ignore" in warning.message for warning in result.warnings)
+
+    def test_a_click_names_among_those_outside_it_and_the_one_left_out_is_no_rival(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "a.mp4", 0.6, parent=(200.0, 200.0))
+        result = extractor(FakeBackend(self.FRAMES), ignore=self.MIRROR).run(recording([media("a.mp4", people=("parent", "child"))], subject_ids=("parent",)), tmp_path)
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["a.mp4"]["people"] == {"parent": [1]} and "nearly as much" not in (owners["a.mp4"]["doubt"] or "")
+
+    def test_an_area_has_to_lie_inside_the_picture(self):
+        with pytest.raises(ValidationError, match="shares of the picture"):
+            CameraDevice(body=["parent"], ignore=[(0.5, 0.0, 0.4, 1.0)])
 
 
 class Looker:

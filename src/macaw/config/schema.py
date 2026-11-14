@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
+from macaw.config.fields import added
+
 
 class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
@@ -100,6 +102,16 @@ class CameraDevice(_Section):
     hears: list[str] = Field(default_factory=list)
     # the camera also records how far each pixel is, in a depth folder beside its video; bodies on it are placed in 3D
     depth: bool = False
+    # parts of its picture where nobody is read, such as a mirror: left, top, right, bottom as shares of its width and height
+    ignore: list[tuple[float, float, float, float]] = added(default_factory=list)
+
+    @field_validator("ignore")
+    @classmethod
+    def _inside_the_picture(cls, value: list) -> list:
+        for left, top, right, bottom in value:
+            if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+                raise ValueError(f"an area to ignore is left, top, right, bottom as shares of the picture from 0 to 1, not {[left, top, right, bottom]}")
+        return value
 
     def people(self) -> list[str]:
         return sorted(set(self.body) | set(self.face) | set(self.gaze))
@@ -506,7 +518,7 @@ class LLMSection(_Section):
     base_url: str | None = None
     temperature: float = 0.3
     max_tokens: int = 8192
-    timeout_s: int = 300
+    timeout_s: int = 1800
     # requests under way at once within one task
     concurrency: int = Field(default=1, ge=1)
     n_samples: int = Field(default=5, ge=1)

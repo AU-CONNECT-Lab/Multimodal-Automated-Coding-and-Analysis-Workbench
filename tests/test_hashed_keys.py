@@ -62,3 +62,41 @@ def test_once_set_it_changes_the_keys_that_read_it():
     assert hash_section(plain, "several") != hash_section(listed, "several")
     names = ["window.start_s", "gpu_workers"]
     assert hash_sections(plain, names) != hash_sections(after(gpu_workers=2), names)
+
+
+def settings_keys() -> dict[str, bool]:
+    """Section.key of every settings key -> whether it is declared with added()."""
+    import typing
+
+    from macaw.config.fields import HASHED_WHEN_SET
+    from macaw.config.schema import MacawConfig
+
+    found: dict[str, bool] = {}
+    seen: set[type] = set()
+
+    def walk(model: type[BaseModel]) -> None:
+        if model in seen:
+            return
+        seen.add(model)
+        for name, field in model.model_fields.items():
+            found[f"{model.__name__}.{name}"] = isinstance(field.json_schema_extra, dict) and bool(field.json_schema_extra.get(HASHED_WHEN_SET))
+            kinds = [field.annotation]
+            while kinds:
+                kind = kinds.pop()
+                if isinstance(kind, type) and issubclass(kind, BaseModel):
+                    walk(kind)
+                kinds.extend(typing.get_args(kind))
+
+    walk(MacawConfig)
+    return found
+
+
+def test_a_new_settings_key_is_declared_with_added():
+    from pathlib import Path
+
+    listed = set(Path(__file__).with_name("hashed_keys.txt").read_text(encoding="utf-8").split())
+    keys = settings_keys()
+    new = sorted(key for key, later in keys.items() if not later and key not in listed)
+    assert not new, f"declare {', '.join(new)} with added(), so that the results people already have stay as they are"
+    assert not sorted(listed - set(keys)), "hashed_keys.txt lists keys the settings no longer have"
+    assert not sorted(key for key in listed if keys[key]), "a key in hashed_keys.txt has always been in the cache keys; added() would change them"
