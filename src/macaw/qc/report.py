@@ -469,8 +469,8 @@ def _feature_notes(layout, recording_id: str) -> tuple[dict[str, dict], list[dic
 def _measures(layout, results: RecordingResults, recording_id: str, notes: dict) -> list[dict]:
     tables = []
     for path in sorted(layout.long_table_path(recording_id).glob("*.parquet")):
-        rows = results.long_table(path.stem)
-        rows = rows[rows["scale"].astype(str) == Scale.RECORDING.value]
+        # one row per measure, not the frame-level rows the same file holds
+        rows = results.long_table(path.stem, scale=Scale.RECORDING)
         if rows.empty:
             continue
         values = rows.assign(who=_people(rows)).pivot_table(index="feature", columns="who", values="value", aggfunc="first")

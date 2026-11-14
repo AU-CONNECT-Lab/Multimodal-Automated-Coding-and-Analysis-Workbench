@@ -25,7 +25,7 @@ from macaw.project.room import CM_PER_UNIT
 from macaw.store import _io
 from macaw.store import keypoints as keypoints_store
 from macaw.store import longtable as longtable_store
-from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, coerce_frame, empty_frame
+from macaw.store.schema import KEYPOINT_SCHEMA, LONG_TABLE_SCHEMA, Scale, coerce_frame, empty_frame
 
 POSE_SOURCE = "pose.keypoints"
 PROSODY_SOURCE = "prosody.frame"
@@ -95,11 +95,11 @@ class RecordingResults:
         self.layout = layout
         self.recording_id = recording_id
 
-    def long_table(self, source: str, features: Sequence[str] | None = None) -> pd.DataFrame:
+    def long_table(self, source: str, features: Sequence[str] | None = None, scale: Scale | None = None) -> pd.DataFrame:
         path = self.layout.long_table_path(self.recording_id) / f"{source}.parquet"
         if not path.is_file():
             return empty_frame(LONG_TABLE_SCHEMA)
-        return longtable_store.read_long_table(path, recording_id=self.recording_id, features=features)
+        return longtable_store.read_long_table(path, recording_id=self.recording_id, features=features, scale=scale)
 
     def keypoints(self) -> pd.DataFrame:
         path = self.layout.keypoints_path(self.recording_id) / f"{POSE_SOURCE}.parquet"

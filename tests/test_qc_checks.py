@@ -617,3 +617,21 @@ def test_the_default_checks_are_the_same_in_the_settings_file_and_the_schema(tmp
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
     assert resolve_config(config).qc.checks == QCSection().checks
+
+
+def test_the_report_lists_only_the_measures_of_the_whole_recording(tmp_path):
+    from macaw.project.layout import make_layout
+    from macaw.qc.checks import RecordingResults
+    from macaw.qc.report import _measures
+    from macaw.store.longtable import build_long_rows, write_long_table
+    from macaw.store.schema import Scale
+
+    layout = make_layout(tmp_path / "derivatives")
+    frames = build_long_rows(recording_id="003", source="motion.mea", scale=Scale.FRAME, subject_id="parent",
+                             values=pd.DataFrame({"t_start": [0.0, 0.04], "t_end": [0.04, 0.08], "energy": [0.1, 0.2]}))
+    whole = build_long_rows(recording_id="003", source="motion.mea", scale=Scale.RECORDING, subject_id="parent",
+                            values=pd.DataFrame({"t_start": [0.0], "t_end": [60.0], "energy_mean": [0.15]}))
+    write_long_table(pd.concat([frames, whole], ignore_index=True), layout.long_table_path("003"))
+    tables = _measures(layout, RecordingResults(layout, "003"), "003", {})
+    assert [feature["name"] for feature in tables[0]["features"]] == ["energy_mean"]
+    assert tables[0]["features"][0]["cells"] == ["0.15"]
