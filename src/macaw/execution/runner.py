@@ -588,12 +588,7 @@ def run_task(
         if entry is not None:
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             (layout.segment_rows_path(recording_id) / f"{extractor_name}.parquet").unlink(missing_ok=True)
-            rows = layout.long_table_path(recording_id) / f"{extractor_name}.parquet"
-            rows.unlink(missing_ok=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
-            # an entry stored before steps without rows left a file has none
-            if not rows.is_file():
-                longtable_store.write_no_rows(layout.long_table_path(recording_id), extractor_name)
             _write_stamp(stamp, key)
             database.set_status(task_id, "cached", finished_at=now())
             return

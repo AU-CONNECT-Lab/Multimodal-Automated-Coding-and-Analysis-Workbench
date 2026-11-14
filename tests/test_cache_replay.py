@@ -374,13 +374,10 @@ class TestUncachedSteps:
     def test_a_step_without_rows_is_finished_on_disk_run_or_replayed(self, task):
         from macaw.execution.output_checker import completed_tasks
 
-        layout, entries = task(True)
+        layout, _ = task(True)
         rows = layout.long_table_path(RECORDING) / "step.parquet"
         assert f"{RECORDING}:step" in completed_tasks(layout.output_dir, [])
         assert read_long_table(rows).empty
-        # an entry stored before such steps left a file
-        for kept in (entries[0] / "features").glob("*.parquet"):
-            kept.unlink()
         rows.unlink()
         task(True)
         assert f"{RECORDING}:step" in completed_tasks(layout.output_dir, [])
