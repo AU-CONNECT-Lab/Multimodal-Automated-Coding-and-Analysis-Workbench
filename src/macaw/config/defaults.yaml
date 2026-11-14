@@ -231,6 +231,7 @@ qc:
 # study, so they live in a separate hpc.yaml that never enters the config hash.
 execution:
   n_workers: 4                       # tasks run side by side; on a cluster, within one recording
+  gpu_workers: null                  # of those, steps on a graphics card; null = one per card
   cache: true                        # content-addressed cache for resumable runs
   cache_dir: null                    # null = <output_dir>/.cache
   check_outputs: true                # validate declared outputs after a task reports success

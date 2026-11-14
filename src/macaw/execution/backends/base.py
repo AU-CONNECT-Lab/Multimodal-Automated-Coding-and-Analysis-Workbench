@@ -19,6 +19,7 @@ class JobSpec:
     log_path: Path
     depends_on: list[str] = None
     env: dict[str, str] | None = None  # set on top of this process's environment
+    gpu: bool = False                  # the step uses a graphics card where there is one
 
 
 class ExecBackend(ABC):

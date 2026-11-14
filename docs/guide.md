@@ -229,6 +229,8 @@ On the Run page, select the recordings and the steps, then press **Run**. Steps 
 
 Before any step starts, a run checks that every step it has to run can run on this computer with the settings of each recording: that its program is installed, that a setting without a default (such as the pose backend) is filled in, and that every voice can be read, which a shared microphone or a camera's own sound allows only when the voices are separated (*Microphones* set to `pyannote`). If anything is missing, nothing is started, and the output lists each reason; **Preview** reports the same.
 
+Several recordings are processed at once (*Recordings at once* on the Settings page, `macaw run -j`). Of these, the steps that use a graphics card, such as transcription and the body, face and gaze steps, run one per card, each on a card of its own, because two of them on one card compete for its memory and both slow down. *Of those, on a graphics card* (`execution.gpu_workers`) sets another number, for example 2 on a card with a large memory. The cards used are those named in the environment variable `CUDA_VISIBLE_DEVICES`, or every NVIDIA card of the computer when it is not set; **Preview** states how many such steps run at once and on which cards. On a computer without an NVIDIA card these steps run on the processor and are not held back.
+
 ```{figure} screens/run.png
 :width: 100%
 :alt: The Run page: the recordings as ticked chips, and the steps in the order they run, each with the count of its tasks in every state and a Run button of its own.

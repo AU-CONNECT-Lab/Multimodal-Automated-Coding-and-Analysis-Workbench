@@ -151,7 +151,10 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
 
         notices.append(notice(look, "pictures of the people on cameras nobody clicked, for pose.suggest_names,"))
     from macaw.execution import models
+    from macaw.execution.backends.local import gpu_notice, visible_cards
 
+    on_card = [name for name in dag.topological_order() if runner.uses_gpu(get_extractor(name), config)]
+    notices.append(gpu_notice(on_card, config.execution.n_workers, config.execution.gpu_workers, visible_cards() if on_card else []))
     fetching = models.fetching_steps(dag.topological_order())
     if fetching and not models.offline():
         notices.append(f"model weights for {', '.join(fetching)} are fetched or checked before anything runs; the steps then run offline")

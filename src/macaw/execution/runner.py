@@ -16,7 +16,7 @@ from macaw.config.hashing import hash_extractor_config, hash_value
 from macaw.config.schema import MacawConfig
 from macaw.exceptions import ConfigError, MacawError
 from macaw.execution.backends.base import JobSpec
-from macaw.execution.backends.local import LocalBackend
+from macaw.execution.backends.local import LocalBackend, visible_cards
 from macaw.execution.dag import build_dag
 from macaw.execution.job_db import JobDB, JobRecord, now
 from macaw.execution import models
@@ -373,12 +373,13 @@ def _run(
         check_ready(recording_configs(config, recording_ids), pending_steps(dag, recording_ids, already))
     attempted: set[str] = set()
     fetched: set[str] = set()
+    cards = visible_cards() if not dry_run else []
     n_tasks = 0
     database = None
     # a gate that reads what this run produces is checked between waves, once that is there
     while True:
         waiting, blocked, notes = check_gates(config, dag, recording_ids, finished)
-        specs = _wave(config_path, layout, dag, order, gates, recording_ids, execution_id,
+        specs = _wave(config, config_path, layout, dag, order, gates, recording_ids, execution_id,
                       finished | attempted | blocked, finished, attempted)
         if dry_run:
             return RunSummary(
@@ -416,7 +417,7 @@ def _run(
                     log_path=str(spec.log_path),
                 )
             )
-        backend = LocalBackend(n_workers=config.execution.n_workers, job_db=database)
+        backend = LocalBackend(n_workers=config.execution.n_workers, job_db=database, gpu_workers=config.execution.gpu_workers, cards=cards)
         backend.wait(backend.submit(specs))
         n_tasks += len(specs)
         attempted |= {spec.task_id for spec in specs}
@@ -503,7 +504,12 @@ def _fetch_pass(config_path, recording_ids, names, log_path, *, offline: bool) -
     return {line.removeprefix("fetched ") for line in lines if line.startswith("fetched ")}, failed
 
 
-def _wave(config_path, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):
+def uses_gpu(cls, config: MacawConfig) -> bool:
+    """A step whose cluster tier is a graphics card one, which is how a step says it uses a card."""
+    return str(cls.resources(config)).startswith("gpu")
+
+
+def _wave(config, config_path, layout, dag, order, gates, recording_ids, execution_id, skip, finished, attempted):
     """Tasks that can run now; one whose upstream already failed in this run is left out."""
     specs: list[JobSpec] = []
     for name in order:
@@ -528,6 +534,7 @@ def _wave(config_path, layout, dag, order, gates, recording_ids, execution_id, s
                     resources=None,
                     log_path=layout.logs_dir / execution_id / f"{_slug(task_id)}.log",
                     depends_on=[task for task in needed if task not in finished],
+                    gpu=uses_gpu(get_extractor(name), config),
                 )
             )
     return specs

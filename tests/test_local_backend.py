@@ -181,3 +181,100 @@ class TestStatus:
         spec, _ = make_spec("rec1:a")
         backend = _run(database, [spec])
         assert backend.status(["rec9:a"]) == {"rec9:a": "pending"}
+
+
+def _timed(spec, marker, seconds=0.6):
+    """The task writes when it started and ended and which card it was shown."""
+    spec.command = [sys.executable, "-c", (
+        "import os, pathlib, time; start = time.time(); time.sleep(" + str(seconds) + "); "
+        f"pathlib.Path(r'{marker}').write_text(f\"{{start}} {{time.time()}} {{os.environ.get('CUDA_VISIBLE_DEVICES', '-')}}\")"
+    )]
+    return spec
+
+
+def _spans(markers):
+    found = []
+    for marker in markers:
+        start, end, card = marker.read_text().split()
+        found.append((float(start), float(end), card))
+    return found
+
+
+def _most_at_once(spans):
+    return max(sum(start <= moment < end for start, end, _ in spans) for moment, _, _ in spans)
+
+
+def test_steps_that_use_a_card_run_one_per_card_each_on_its_own(database, make_spec, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    built = [make_spec(f"r{i}:pose.detect") for i in range(4)]
+    specs = [_timed(spec, marker) for spec, marker in built]
+    for spec in specs:
+        spec.gpu = True
+    backend = LocalBackend(n_workers=4, job_db=database, cards=["0", "1"])
+    backend.wait(backend.submit(specs))
+    spans = _spans(marker for _, marker in built)
+    assert _most_at_once(spans) == 2
+    assert {card for _, _, card in spans} == {"0", "1"}
+    for start, end, card in spans:
+        overlapping = [other for s, e, other in spans if (s, e, other) != (start, end, card) and s < end and start < e]
+        assert card not in overlapping
+
+
+def test_with_one_card_other_steps_run_beside_the_one_that_uses_it(database, make_spec, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    gpu = [make_spec(f"r{i}:face.au") for i in range(2)]
+    cpu = [make_spec(f"r{i}:motion.mea") for i in range(2)]
+    specs = [_timed(spec, marker) for spec, marker in gpu + cpu]
+    for spec in specs[:2]:
+        spec.gpu = True
+    backend = LocalBackend(n_workers=4, job_db=database, cards=["0"])
+    backend.wait(backend.submit(specs))
+    on_card = _spans(marker for _, marker in gpu)
+    assert _most_at_once(on_card) == 1 and {card for _, _, card in on_card} == {"0"}
+    assert _most_at_once(_spans(marker for _, marker in gpu + cpu)) == 3
+    assert {card for _, _, card in _spans(marker for _, marker in cpu)} == {"-"}
+
+
+def test_without_a_card_or_a_number_set_nothing_is_held_back(database, make_spec, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    built = [make_spec(f"r{i}:pose.detect") for i in range(3)]
+    specs = [_timed(spec, marker) for spec, marker in built]
+    for spec in specs:
+        spec.gpu = True
+    backend = LocalBackend(n_workers=4, job_db=database, cards=[])
+    backend.wait(backend.submit(specs))
+    spans = _spans(marker for _, marker in built)
+    assert _most_at_once(spans) == 3 and {card for _, _, card in spans} == {"-"}
+
+
+def test_the_cards_are_those_named_or_those_found(monkeypatch):
+    from types import SimpleNamespace
+
+    from macaw.execution.backends import local
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1, 3")
+    assert local.visible_cards() == ["1", "3"]
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    assert local.visible_cards() == []
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES")
+    listing = "GPU 0: NVIDIA GeForce RTX 4090 (UUID: GPU-a)\nGPU 1: NVIDIA A100 (UUID: GPU-b)\n"
+    monkeypatch.setattr(local.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=listing))
+    assert local.visible_cards() == ["0", "1"]
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(local.subprocess, "run", missing)
+    assert local.visible_cards() == []
+    assert local.gpu_limit(None, ["0", "1"]) == 2 and local.gpu_limit(None, []) is None and local.gpu_limit(3, []) == 3
+
+
+def test_the_plan_says_how_many_steps_share_the_cards():
+    from macaw.execution.backends.local import gpu_notice
+
+    assert gpu_notice(["pose.detect", "face.au"], 4, None, ["0", "1"]) == (
+        "pose.detect, face.au use a graphics card: 2 at a time (execution.gpu_workers), on cards 0, 1; CUDA_VISIBLE_DEVICES picks the cards"
+    )
+    assert "1 at a time" in gpu_notice(["pose.detect"], 4, None, ["0"]) and "on card 0;" in gpu_notice(["pose.detect"], 4, None, ["0"])
+    assert gpu_notice(["pose.detect"], 4, None, []) == "no NVIDIA card was found, so pose.detect run side by side like any other step"
+    assert gpu_notice(["pose.detect"], 1, None, ["0"]) is None and gpu_notice([], 4, None, ["0"]) is None

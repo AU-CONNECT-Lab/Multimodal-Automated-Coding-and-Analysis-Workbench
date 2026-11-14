@@ -33,7 +33,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "video.normalise", "video.fps", "video.quality", "video.encoder",
     )),
     ("Steps", "What a run without a choice of steps runs, and how many recordings run at once.", (
-        "pipeline.run", "execution.n_workers",
+        "pipeline.run", "execution.n_workers", "execution.gpu_workers",
     )),
     ("Tools", "Which program does each kind of measurement, and with which model.", (
         "prosody.backend", "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.diarization",
@@ -71,6 +71,7 @@ LABELS = {
     "video.encoder": "Encoder",
     "pipeline.run": "Steps to run",
     "execution.n_workers": "Recordings at once",
+    "execution.gpu_workers": "Of those, on a graphics card",
     "prosody.backend": "Voice measures",
     "text.asr_backend": "Transcription",
     "text.asr_model": "Transcription model",

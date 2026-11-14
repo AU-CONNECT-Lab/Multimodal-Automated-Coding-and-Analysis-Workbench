@@ -687,6 +687,8 @@ class QCSection(_Section):
 
 class ExecutionSection(_Section):
     n_workers: int = 4
+    # None: one per graphics card the run may use
+    gpu_workers: int | None = Field(default=None, ge=1)
     cache: bool = True
     cache_dir: Path | None = None
     check_outputs: bool = True

@@ -242,7 +242,7 @@ class TestRunDryRun:
     )
     def test_other_choices_are_not_announced(self, project, extra):
         result = invoke("run", "-c", str(project.config), "-e", "pose.keypoints", *extra, "--dry-run")
-        assert "note:" not in result.output
+        assert "note: pose.backend" not in result.output and "reports" not in result.output
 
     def test_mediapipe_is_not_announced_when_pose_is_not_run(self, project):
         result = invoke(
