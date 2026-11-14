@@ -332,7 +332,7 @@ When a recording contains several phases, for example free play followed by clea
 
 ### Marking segments
 
-On the Segments page, select the recording and press **Make a copy to play here**. While it plays, press **Start here** at the beginning of a phase and **End here** at its end, type a name and press **Save as a segment**. Segments can also be written directly into the file `segments.csv` next to `project.yaml`, one row per segment, which is convenient when the times come from session logs:
+On the Segments page, select the recording and press **Make a copy to play here**. Under the player, drag along an empty stretch of the *Segments* lane to make a segment, drag its edges or its middle to change it, and click it to name it or to set its ends to the hundredth of a second; **Start here** and **End here** set an end to where the player stands. Each change is saved when the mouse is released. The loudness of the sound is drawn behind the lane, so pauses and changes of activity are easy to find. All segments of the recording are listed as a table below the strip. Segments can also be written directly into the file `segments.csv` next to `project.yaml`, one row per segment, which is convenient when the times come from session logs:
 
 ```text
 recording,segment,start_s,end_s
@@ -353,7 +353,7 @@ Several of the quality report's checks are made again within each segment, with 
 
 ### Segments and the analysed part
 
-The analysed part, set by *Task starts at* and *Task ends at* or with **Analyse only this part** on the Segments page, restricts what every step reads, and changing it processes the recording again from the start. Segments only add summaries within the analysed part. A segment that reaches outside it is left out, and the quality report says so.
+The analysed part, set by *Task starts at* and *Task ends at* or by dragging the two handles of the *Analysed* lane on the Segments page, restricts what every step reads, and changing it processes the recording again from the start. Segments only add summaries within the analysed part. A segment that reaches outside it is left out, and the quality report says so.
 
 ### Results
 
@@ -376,7 +376,7 @@ When objects are named, or placed in the room (see *Positions in the room instea
 
 ### Checking the estimate on the study's own video
 
-On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; **A frame at random** selects the next frame. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not.
+On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; the dice button in the card's corner moves the player to a moment at random. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not.
 
 ### Positions in the room instead of the picture
 
@@ -720,7 +720,7 @@ Measurement in the recording itself
 A known value
 : `scale: {per_px: 0.11}` for everyone, or `scale: {per_px_by_role: {child: 0.12, parent: 0.09}}` for each participant's position, in the project's unit per pixel. A value written this way takes precedence over any measurement.
 
-To measure, open *Pixels to centimetres* (or to the unit chosen) on the Review page, choose the recording's video or a calibration clip, show a frame, click the two ends of the object, enter its length, state whose position it was, and press **Save this measurement**. Measuring two or three times is recommended; the spread of the measurements shows how precise the clicks are.
+To measure, open *Pixels to centimetres* (or to the unit chosen) on the Review page, stop the player on a frame where the object is in view (or choose a calibration clip in the card's corner), click the two ends of the object, enter its length, state whose position it was, and press **Save this measurement**. Measuring two or three times is recommended; the spread of the measurements shows how precise the clicks are.
 
 The results remain in pixels. `macaw export` adds every pixel measure a second time in the project's unit, with `_cm`, `_m` or `_in` appended to its name, and writes a file beside the table with each recording's scale for each participant.
 
