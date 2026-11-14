@@ -30,7 +30,7 @@ from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, spe
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.names import read_names
-from macaw.project.recording import Recording
+from macaw.project.recording import MediaFile, Recording, build_recording
 from macaw.store.keypoints import read_keypoints
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
@@ -87,6 +87,26 @@ def _warning(check: str, recording: Recording, subject_id, severity: str, messag
     return QCWarning(
         check=check, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message
     )
+
+
+def moment_of(item: MediaFile, video: dict | None, t: float) -> float:
+    """Where recording time t falls on a camera's file, from its first picture, as clicks are given."""
+    first = video["first_picture_s"] if video else 0.0
+    start = video["frames_start_s"] if video else 0.0
+    return (t - item.offset_s) / item.clock_scale - first + start
+
+
+def analysed_part(config, recording_id: str, camera: str) -> tuple[float, float] | None:
+    """The analysed part of a camera's file, from its first picture; None before prep.media has run."""
+    recording = build_recording(recording_id, config)
+    try:
+        prep = apply_prep_timing(config, recording)
+    except MacawError:
+        return None
+    item = recording.media_named(camera)
+    video = load_video_prep(config, recording_id).get(camera)
+    start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
+    return round(moment_of(item, video, start), 2), round(moment_of(item, video, end), 2)
 
 
 def camera_people(item) -> list[str]:
@@ -286,7 +306,7 @@ class PoseExtractor(Extractor):
     needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.9.0"
+    version = "0.9.1"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "setup.cameras")
@@ -309,7 +329,8 @@ class PoseExtractor(Extractor):
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         detections, backend = load_detections(self.config, recording.recording_id)
         self._start_looking(recording)
-        apply_prep_timing(self.config, recording)
+        prep = apply_prep_timing(self.config, recording)
+        window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         videos = load_video_prep(self.config, recording.recording_id)
         names = read_names(layout_for(self.config, create=False).names_path(recording.recording_id))
         warnings: list[QCWarning] = []
@@ -321,8 +342,24 @@ class PoseExtractor(Extractor):
         cameras.sort(key=lambda item: not (names.get(item.name) or item.subject_id is not None))
         for item in cameras:
             piece = detections[detections["video"] == item.name].reset_index(drop=True)
-            clicks = [self._click(item, videos.get(item.name), click) for click in names.get(item.name, [])]
-            piece, swaps, owner = self._identify(piece, item, clicks, names.get(item.name, []), pieces, recording)
+            video = videos.get(item.name)
+            written = names.get(item.name, [])
+            placed = [self._click(item, video, click) for click in written]
+            # a click outside the analysed part has no frame to name anyone on, so it is left out rather than doubted
+            reach = 0.5 / item.fps if item.fps else 0.05
+            kept = [window[0] - reach <= click.t <= window[1] + reach for click in placed]
+            clicks = [click for click, keep in zip(placed, kept) if keep]
+            outside = [click for click, keep in zip(placed, kept) if not keep]
+            part = tuple(moment_of(item, video, t) for t in window)
+            if outside:
+                warnings.append(self._warning(recording, None, "info", (
+                    f"{item.name}: the clicks at {', '.join(sorted({f'{click.at:g}' for click in outside}, key=float))} s fall "
+                    f"outside the analysed part ({part[0]:.1f} to {part[1]:.1f} s of its file) and were left out"
+                )))
+            piece, swaps, owner = self._identify(
+                piece, item, clicks, [click for click, keep in zip(written, kept) if keep], pieces, recording,
+                outside=(sorted({click.person for click in outside}), part),
+            )
             swaps_by_file[item.name] = swaps
             if owner is not None:
                 owners[item.name] = owner
@@ -370,7 +407,10 @@ class PoseExtractor(Extractor):
             x=float(click["x"]) * width, y=float(click["y"]) * height,
         )
 
-    def _identify(self, piece: pd.DataFrame, item, clicks: list[Click], written: list[dict], named: list[pd.DataFrame], recording: Recording):
+    def _identify(
+        self, piece: pd.DataFrame, item, clicks: list[Click], written: list[dict], named: list[pd.DataFrame], recording: Recording,
+        outside: tuple[list[str], tuple[float, float]] = ([], (0.0, 0.0)),
+    ):
         """Attach subject_id. The stored track_id stays the backend's raw numbering, so a
         disputed assignment can still be traced back to what the model actually returned."""
         alone = item.subject_id
@@ -381,6 +421,8 @@ class PoseExtractor(Extractor):
         swaps: list = []
         how = ""
         identified = piece
+        left_out, part = outside
+        within = f" within its analysed part, {part[0]:.1f} to {part[1]:.1f} s of its file" if left_out else ""
         if alone is None and self.config.pose.track_repair:
             swaps = detect_swaps(piece, max_gap_s=self.config.pose.track_repair_max_gap_s)
             identified = repair_tracks(piece, swaps)
@@ -390,7 +432,7 @@ class PoseExtractor(Extractor):
             missing = [person for person in camera_people(item) if person not in choice.people]
             doubts = [choice.doubt] if choice.doubt else []
             if missing:
-                doubts.append(f"{', '.join(missing)} {'was' if len(missing) == 1 else 'were'} not clicked on {item.name}")
+                doubts.append(f"{', '.join(missing)} {'was' if len(missing) == 1 else 'were'} not clicked on {item.name}{within}")
             choice.doubt = "; ".join(doubts) or None
         elif self.config.pose.suggest_names and alone is not None:
             choice, how = most_in_view(identified, alone), "for being most in view"
@@ -399,10 +441,13 @@ class PoseExtractor(Extractor):
         elif alone is not None:
             choice = PeopleChoice(people={}, doubt=(
                 f"more than one person is in view at once on {item.name}, which the setup reads for {alone} alone: "
-                f"click {alone} on a frame of it"
+                f"click {alone} on a frame of it{within}"
             ))
         else:
-            choice = PeopleChoice(people={}, doubt=f"nobody has said who is who on {item.name} yet: click each person on a frame of it")
+            choice = PeopleChoice(people={}, doubt=(
+                f"every click on {item.name} falls outside its analysed part: click each person at a moment from {part[0]:.1f} to {part[1]:.1f} s of its file"
+                if left_out else f"nobody has said who is who on {item.name} yet: click each person on a frame of it"
+            ))
 
         piece["subject_id"] = subject_column(identified, choice.people).to_numpy()
         by = {click["person"]: f"{click.get('by', '')} (clicked at {float(click['at']):g} s)".strip() for click in written}

@@ -244,6 +244,26 @@ class TestSharedCamera:
         assert owners["room.mp4"]["people"] == {"parent": [0], "child": [1]}
         assert owners["room.mp4"]["doubt"] is None and "clicked at 0.5 s" in owners["room.mp4"]["chosen_by"]["child"]
 
+    def test_clicks_outside_the_analysed_part_are_left_out_with_a_note_not_a_doubt(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "room.mp4", 0.2, parent=(500.0, 200.0), child=(100.0, 200.0))
+        clicks(tmp_path, "room.mp4", 0.7, parent=(100.0, 200.0), child=(500.0, 200.0))
+        result = extractor().run(recording([media()], t_task_start=0.5), tmp_path)
+        owners = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))
+        assert owners["room.mp4"]["people"] == {"parent": [0], "child": [1]} and owners["room.mp4"]["doubt"] is None
+        assert "clicked at 0.7 s" in owners["room.mp4"]["chosen_by"]["parent"]
+        said = [w for w in result.warnings if "left out" in w.message]
+        assert [w.severity for w in said] == ["info"] and "clicks at 0.2 s fall outside the analysed part (0.5 to 2.0 s" in said[0].message
+
+    def test_with_every_click_outside_the_analysed_part_a_person_is_asked_to_click_inside_it(self, extractor, recording, tmp_path):
+        clicks(tmp_path, "room.mp4", 0.2, parent=(100.0, 200.0), child=(500.0, 200.0))
+        clicks(tmp_path, "room.mp4", 0.7, parent=(100.0, 200.0))
+        result = extractor().run(recording([media()], t_task_start=0.5), tmp_path)
+        doubt = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))["room.mp4"]["doubt"]
+        assert "child was not clicked on room.mp4 within its analysed part, 0.5 to 2.0 s of its file" in doubt
+        result = extractor().run(recording([media()], t_task_start=1.0), tmp_path)
+        doubt = json.loads(result.artifacts["owners"].read_text(encoding="utf-8"))["room.mp4"]["doubt"]
+        assert "every click on room.mp4 falls outside its analysed part" in doubt
+
     def test_without_clicks_nobody_is_named_and_a_person_is_asked(self, extractor, recording, tmp_path):
         result = extractor().run(recording([media()]), tmp_path)
         assert result.keypoints.subject_id.isna().all()
