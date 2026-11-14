@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import re
 import threading
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 import yaml
+from llm_helpers import CountingBackend
 from typer.testing import CliRunner
 
 from macaw.cli.main import app
@@ -453,6 +455,68 @@ class TestShow:
     def test_pitch_or_loudness_put_the_voice_step_before_it(self, show, needed):
         config = SimpleNamespace(coding=CodingSection(layers=["A", "B"], llm=LLMSection(show=show)))
         assert ("prosody.frame" in JudgementExtractor.dependencies(config)) == needed
+
+
+def label_by_text_and_seed(user, seed):
+    found = re.findall(r"^id (u\d+) \|.*?: (.*)$", user, re.MULTILINE)
+    return json.dumps({"labels": [{"id": unit_id, "label": ("question", "inform")[zlib.crc32(f"{text}|{seed}".encode()) % 2]} for unit_id, text in found]})
+
+
+class TestAtOnce:
+    def cfg(self, concurrency):
+        return LLMSection(model="tiny", n_samples=3, batch_size=1, seed=5, concurrency=concurrency)
+
+    def test_the_codes_are_the_same_table_in_the_same_order_whichever_comes_back_first(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        lines = coding_units(None, RECORDING, "utterance")
+        one = CountingBackend(label_by_text_and_seed)
+        four = CountingBackend(label_by_text_and_seed, gate=4, delay=lambda user, seed: 0.03 if "id u0 |" in user else 0.0)
+        alone = sample_labels(lines, CODEBOOK, one, self.cfg(1))
+        together = sample_labels(lines, CODEBOOK, four, self.cfg(4))
+        pd.testing.assert_frame_equal(alone, together)
+        assert alone["unit_id"].tolist() == ["u0", "u1", "u2"] * 3 and alone["sample"].tolist() == [0] * 3 + [1] * 3 + [2] * 3
+        assert alone.attrs == together.attrs == {"cut_off": 0, "requests": 9}
+        assert [seed for _, seed in one.calls] == [5] * 3 + [6] * 3 + [7] * 3
+        assert one.most == 1 and four.most == 4 and sorted(four.calls) == sorted(one.calls) and four.finished != one.finished
+
+    def test_an_answer_cut_off_before_any_code_keeps_the_rest_from_going_out(self, monkeypatch):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        backend = CountingBackend(lambda user, seed: "", gate=4, cut_off=True)
+        with pytest.raises(LLMBackendError, match="raise coding.llm.max_tokens"):
+            sample_labels(coding_units(None, RECORDING, "utterance"), CODEBOOK, backend, self.cfg(4))
+        assert len(backend.calls) == 1
+
+    def test_requests_sent_at_once_are_kept_with_the_results_and_said_in_the_report(self, monkeypatch, tmp_path, stub):
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=3, batch_size=1, concurrency=4)
+        assert len(stub.requests) == 9 and len(pd.read_parquet(result.artifacts["samples.parquet"])) == 9
+        assert result.annotations.sort_values("t_start")["label"].tolist() == ["question", "inform", "inform"]
+        assert all(spec.params["concurrency"] == 4 for spec in result.specs)
+        assert any(warning.check == "llm_at_once" and "same seed" in warning.message for warning in result.warnings)
+        single = run_judge(monkeypatch, tmp_path, stub, n_samples=3, batch_size=1)
+        assert all("concurrency" not in spec.params for spec in single.specs)
+        assert not any(warning.check == "llm_at_once" for warning in single.warnings)
+
+    def test_concurrency_changes_how_a_version_runs_and_not_its_key(self, tmp_path, capsys):
+        from macaw.cli.run import _echo_reporting
+
+        write_codebook(CODEBOOK, tmp_path / "acts.yaml")
+        coding = {"layers": ["A", "B"], "codebook": "acts.yaml", "llm": {"model": "tiny"}, "judges": {"words": {"show": []}}}
+        steps = ("coding.judge", "coding.judge.words")
+        path = project_with(tmp_path, coding)
+        before = {name: hash_extractor_config(resolve_config(path), name) for name in steps}
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["coding"]["llm"]["concurrency"] = 2
+        data["coding"]["judges"]["words"]["concurrency"] = 6
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        resolved = resolve_config(path)
+        assert {name: hash_extractor_config(resolved, name) for name in steps} == before
+        assert resolved.coding.judge_settings("words")[1].concurrency == 6 and resolved.coding.llm.concurrency == 2
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            CodingSection(judges={"words": {"concurrency": 0}})
+        _echo_reporting(resolved, build_dag(resolved), [])
+        shown = capsys.readouterr().out
+        assert "coding.judge keeps 2 requests under way per recording, up to 8 in all" in shown
+        assert "coding.judge.words keeps 6 requests under way per recording, up to 24 in all" in shown
 
 
 def project_with(tmp_path, coding):

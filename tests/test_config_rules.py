@@ -38,3 +38,9 @@ def test_where_the_language_model_answers_leaves_its_coding_alone(project):
     before = resolve_config(project)
     after = resolve_config(project, cli_overrides=["coding.llm.base_url=http://gpu-node:11434/v1", "coding.llm.timeout_s=900"])
     assert hash_extractor_config(before, "coding.judge") == hash_extractor_config(after, "coding.judge")
+
+
+def test_how_many_requests_go_at_once_leaves_the_coding_alone(project):
+    before = resolve_config(project)
+    after = resolve_config(project, cli_overrides=["coding.llm.concurrency=8"])
+    assert hash_extractor_config(before, "coding.judge") == hash_extractor_config(after, "coding.judge")

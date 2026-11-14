@@ -182,6 +182,7 @@ coding:
     temperature: 0.3                 # above 0 so repeated samples can disagree
     max_tokens: 8192                 # a cap per answer; a model that reasons first spends tokens on that before the codes
     timeout_s: 300                   # s; one request
+    concurrency: 1                   # requests under way at once within one recording; with run -j the server gets up to execution.n_workers times this. Ollama answers that many at once only when started with OLLAMA_NUM_PARALLEL at or above that product, the rest wait in its queue; openai and anthropic have rate limits. Above 1 a server may answer requests as one batch, so the same seed need not give the same answer word for word. Changing it runs nothing again
     n_samples: 5                     # answers per unit; the label is the majority, confidence its share
     seed: 0                          # sample i sends seed + i where the provider takes one
     allow_abstain: true              # the model may answer "cannot tell"
@@ -197,7 +198,7 @@ coding:
     reasons: false                   # true: the model says what each code rests on
     think: null                      # null = the model's default; false answers at once (local servers)
   judges: {}                         # more codings by the language model beside this one, to compare, e.g. {k0: {codebook: names_only.yaml}, words_only: {show: []}}; each takes codebook and any coding.llm key, the rest as above
-  ratings: {}                        # whole recordings rated on scales by the language model, one version per name, e.g. {full_text: {scales: scales.yaml, show: []}}; each takes scales, transcript (in_use | recognised), segments and the coding.llm keys provider, model, base_url, temperature, max_tokens, n_samples, seed, show, notes, notes_by, reasons, think
+  ratings: {}                        # whole recordings rated on scales by the language model, one version per name, e.g. {full_text: {scales: scales.yaml, show: []}}; each takes scales, transcript (in_use | recognised), segments and the coding.llm keys provider, model, base_url, temperature, max_tokens, concurrency, n_samples, seed, show, notes, notes_by, reasons, think
   imports: {}                        # for macaw import-codes: each tier of your coding files, as the file names it, and whose it is, e.g. {"Child Gaze": {person: child, tier: gaze_target, labels: {Mom: parent, Away: elsewhere}}}; tier and labels are optional
 
 qc:

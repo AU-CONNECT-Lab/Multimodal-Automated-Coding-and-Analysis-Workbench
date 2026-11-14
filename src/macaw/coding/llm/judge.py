@@ -7,6 +7,7 @@ what makes a codebook edit recompute this pass.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -14,12 +15,12 @@ import pandas as pd
 
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
 from macaw.coding.examples import read_examples
-from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
+from macaw.coding.llm.backends import LLMBackend, concurrency_params, resolve_llm_backend, run_in_order, seed_caveat
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, FRAME_AT, FRAMES, VOICE, build_annotation_prompt
 from macaw.config.hashing import canonical
-from macaw.config.schema import JudgeVersion, LLMSection, MacawConfig
+from macaw.config.schema import RUN_ONLY_KEYS, JudgeVersion, LLMSection, MacawConfig
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
@@ -293,6 +294,8 @@ class JudgementExtractor(Extractor):
             note("llm_single_sample", "info", "coding.llm.n_samples is 1, so no confidence was measured; only abstentions go to the review queue.")
         if not backend.takes_seed and cfg.n_samples > 1:
             note("llm_no_seed", "info", f"{backend.name} takes no seed, so a rerun can give different labels.")
+        if seed_caveat(backend, cfg):
+            note("llm_at_once", "info", seed_caveat(backend, cfg))
         if not judged.empty and judged["abstained"].mean() > 0.5:
             note(
                 "llm_mostly_abstained", "warn",
@@ -313,7 +316,7 @@ class JudgementExtractor(Extractor):
             "temperature": cfg.temperature, "seed": cfg.seed, "review_threshold": cfg.review_threshold,
             "batch_size": units_per_request(cfg), "context_units": cfg.context_units, "coded_roles": list(cfg.coded_roles),
             "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording), "n_examples": len(examples),
-            "reasons": cfg.reasons, "think": cfg.think, "judge": self.judge,
+            "reasons": cfg.reasons, "think": cfg.think, "judge": self.judge, **concurrency_params(cfg),
         }
         return [
             FeatureSpec(
@@ -407,7 +410,7 @@ def register_judge_versions(config: MacawConfig) -> None:
                         "judge": name,
                         "config_sections": (
                             *JudgementExtractor.config_sections,
-                            *(f"coding.judges.{name}.{key}" for key in JudgeVersion.model_fields if key not in NOTE_KEYS),
+                            *(f"coding.judges.{name}.{key}" for key in JudgeVersion.model_fields if key not in (*NOTE_KEYS, *RUN_ONLY_KEYS)),
                         ),
                         "__module__": __name__,
                     },
@@ -512,30 +515,32 @@ def sample_labels(
     notes = cfg.notes if notes is None else notes
     coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
     size = units_per_request(cfg)
-    answers = []
-    cut_off = 0
-    for sample in range(cfg.n_samples):
-        seed = cfg.seed + sample if backend.takes_seed else None
-        for start in range(0, len(coded), size):
-            first, last = coded[start], coded[min(start + size, len(coded)) - 1]
-            batch = lines.iloc[first : last + 1]
-            context = lines.iloc[max(0, first - cfg.context_units) : first]
-            system, user = build_annotation_prompt(
-                codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show, notes=notes,
-                examples=examples, reasons=cfg.reasons,
+    batches = []
+    for start in range(0, len(coded), size):
+        first, last = coded[start], coded[min(start + size, len(coded)) - 1]
+        batch = lines.iloc[first : last + 1]
+        context = lines.iloc[max(0, first - cfg.context_units) : first]
+        system, user = build_annotation_prompt(
+            codebook, batch, context, allow_abstain=cfg.allow_abstain, show=cfg.show, notes=notes,
+            examples=examples, reasons=cfg.reasons,
+        )
+        ids = batch["unit_id"].dropna().tolist()
+        batches.append((system, user, ids, [picture for unit_id in ids for picture in frames[unit_id]] if frames else ()))
+
+    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool]:
+        response = backend.complete(system, user, seed=cfg.seed + sample if backend.takes_seed else None, images=images)
+        parsed = parse_annotation_response(response.text, codebook, ids, allow_abstain=cfg.allow_abstain)
+        # an answer that never came is not the model saying it cannot tell
+        if response.cut_off and (parsed["label"] == ABSTAIN).all():
+            raise LLMBackendError(
+                f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
+                "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
             )
-            ids = batch["unit_id"].dropna().tolist()
-            images = [picture for unit_id in ids for picture in frames[unit_id]] if frames else ()
-            response = backend.complete(system, user, seed=seed, images=images)
-            parsed = parse_annotation_response(response.text, codebook, ids, allow_abstain=cfg.allow_abstain)
-            # an answer that never came is not the model saying it cannot tell
-            if response.cut_off and (parsed["label"] == ABSTAIN).all():
-                raise LLMBackendError(
-                    f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
-                    "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
-                )
-            cut_off += response.cut_off
-            answers.append(parsed.assign(sample=sample))
+        return parsed.assign(sample=sample), response.cut_off
+
+    given = run_in_order([partial(answer, sample, *batch) for sample in range(cfg.n_samples) for batch in batches], cfg.concurrency)
+    answers = [parsed for parsed, _ in given]
+    cut_off = sum(cut for _, cut in given)
     if not answers:
         out = pd.DataFrame({column: pd.Series(dtype=int if column == "sample" else str) for column in ("unit_id", "sample", "label", "reason")})
     else:

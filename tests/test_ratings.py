@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import re
 import threading
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 import yaml
+from llm_helpers import CountingBackend
 from pydantic import ValidationError
 
 from macaw.coding.llm import backends as backends_module
@@ -19,7 +21,7 @@ from macaw.coding.scales import ALL, RatingScale, ScaleSet, read_scales, validat
 from macaw.config.hashing import hash_extractor_config
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import CodingSection, LLMSection, ProjectSection
-from macaw.exceptions import CodebookError, InputNotFoundError, LLMBackendError
+from macaw.exceptions import CodebookError, ConfigError, InputNotFoundError, LLMBackendError
 from macaw.execution.dag import build_dag
 from macaw.extractors.audio.content.asr import TRANSCRIPT_SCHEMA, WORD_SCHEMA, ASRExtractor
 from macaw.project.layout import layout_for
@@ -439,6 +441,95 @@ class TestVersions:
         assert "the role of the person speaking, the words, its start and length" in text
         assert "asked five times at temperature 0.3; the score is the median" in text
         assert "before a person corrected it" in text and "what each score rested on, after the score" in text
+
+
+def scale_prompts():
+    return [("", 0.0, 60.0, module_scale(entry), "system", f"The talk.\n\nScale: {entry['scale']}\n") for entry in SCALES["scales"]]
+
+
+def score_by_prompt_and_seed(user, seed):
+    return json.dumps({"score": 1 + zlib.crc32(f"{user}|{seed}".encode()) % 5})
+
+
+class TestAtOnce:
+    def cfg(self, concurrency):
+        return LLMSection(model="tiny", n_samples=5, seed=7, concurrency=concurrency)
+
+    @pytest.mark.parametrize("concurrency", [1, 4])
+    def test_as_many_requests_are_under_way_as_concurrency_says(self, concurrency):
+        backend = CountingBackend(score_by_prompt_and_seed, gate=concurrency)
+        answers = module.ask(scale_prompts(), backend, self.cfg(concurrency))
+        assert backend.most == concurrency and len(backend.calls) == len(answers) == 15
+
+    def test_the_answers_are_the_same_table_in_the_same_order_whichever_comes_back_first(self):
+        one = CountingBackend(score_by_prompt_and_seed)
+        four = CountingBackend(score_by_prompt_and_seed, gate=4, delay=lambda user, seed: 0.03 if seed == 7 else 0.0)
+        alone = module.ask(scale_prompts(), one, self.cfg(1))
+        together = module.ask(scale_prompts(), four, self.cfg(4))
+        pd.testing.assert_frame_equal(alone, together)
+        assert list(zip(alone["scale"], alone["sample"])) == [(scale, sample) for scale in ("warmth", "on_task", "flow") for sample in range(5)]
+        assert [seed for _, seed in one.calls] == [7, 8, 9, 10, 11] * 3
+        assert sorted(four.calls) == sorted(one.calls) and four.finished != one.finished
+
+    @pytest.mark.parametrize("concurrency", [1, 3])
+    def test_a_request_that_fails_keeps_the_rest_from_going_out_and_its_error_is_raised(self, concurrency):
+        backend = CountingBackend(score_by_prompt_and_seed, gate=concurrency, fail_at=4, delay=lambda user, seed: 0.05)
+        with pytest.raises(RuntimeError) as raised:
+            module.ask(scale_prompts(), backend, self.cfg(concurrency))
+        assert raised.value is backend.error
+        # besides the one that failed, only those already under way went out
+        assert 4 <= len(backend.calls) <= 4 + concurrency - 1
+
+    def test_a_context_too_short_costs_one_request_however_many_go_at_once(self):
+        backend = CountingBackend(score_by_prompt_and_seed, gate=4, context=16)
+        with pytest.raises(LLMBackendError, match="reads 16 tokens at most"):
+            module.ask(scale_prompts(), backend, self.cfg(4))
+        assert len(backend.calls) == 1
+
+    def test_answers_all_cut_off_stop_the_step_once_all_are_in(self):
+        backend = CountingBackend(lambda user, seed: "", gate=4, cut_off=True)
+        with pytest.raises(LLMBackendError, match="every answer was cut off"):
+            module.ask(scale_prompts(), backend, self.cfg(4))
+        assert len(backend.calls) == 15
+
+    @pytest.mark.parametrize("value", [0, -2])
+    def test_concurrency_below_one_is_refused(self, tmp_path, value):
+        with pytest.raises(ValidationError, match="greater than or equal to 1"):
+            LLMSection(concurrency=value)
+        with pytest.raises(ValidationError, match="greater than or equal to 1"):
+            CodingSection(ratings={"r": {"scales": "s.yaml", "concurrency": value}})
+        with pytest.raises(ConfigError, match="coding.llm.concurrency"):
+            resolve_config(project(tmp_path, {}), cli_overrides=[f"coding.llm.concurrency={value}"])
+
+    def test_concurrency_changes_how_a_rating_runs_and_not_its_key(self, tmp_path):
+        path = project(tmp_path, {"k0": {"scales": "names.yaml"}})
+        before = hash_extractor_config(resolve_config(path), "coding.rate.k0")
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["coding"]["llm"]["concurrency"] = 4
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        assert hash_extractor_config(resolve_config(path), "coding.rate.k0") == before
+        data["coding"]["ratings"]["k0"]["concurrency"] = 8
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        resolved = resolve_config(path)
+        assert hash_extractor_config(resolved, "coding.rate.k0") == before
+        assert resolved.coding.rating_settings("k0")[1].concurrency == 8 and resolved.coding.llm.concurrency == 4
+
+    def test_requests_sent_at_once_are_kept_with_the_results_and_said_in_the_plan_and_the_report(self, monkeypatch, tmp_path, server, capsys):
+        from macaw.cli.run import _echo_reporting
+
+        llm = {"model": "tiny", "provider": "ollama", "base_url": f"{server.url}/v1", "n_samples": 2, "concurrency": 4}
+        server.score = lambda scale, sample: json.dumps({"score": 1})
+        config = transcribed(project(tmp_path, {"full": {"scales": "scales.yaml"}, "single": {"scales": "names.yaml", "concurrency": 1}}, llm=llm))
+        result = rate(monkeypatch, config, "full")
+        assert result.specs[0].params["concurrency"] == 4 and len(server.requests) == 6
+        assert (pd.read_parquet(result.artifacts["ratings.parquet"])["n_answers"] == 2).all()
+        assert any(warning.check == "rating_at_once" and "same seed" in warning.message for warning in result.warnings)
+        single = rate(monkeypatch, config, "single")
+        assert "concurrency" not in single.specs[0].params and not any(warning.check == "rating_at_once" for warning in single.warnings)
+        _echo_reporting(config, build_dag(config), [])
+        shown = capsys.readouterr().out
+        assert "coding.rate.full keeps 4 requests under way per recording, up to 16 in all with 4 tasks side by side (run -j). Ollama answers" in shown
+        assert "OLLAMA_NUM_PARALLEL" in shown and "coding.rate.single keeps" not in shown
 
 
 TASKS = ("f1_task_a", "f1_task_b", "f2_task_a")

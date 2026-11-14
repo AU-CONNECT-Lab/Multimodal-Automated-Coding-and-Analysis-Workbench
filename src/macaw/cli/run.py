@@ -100,6 +100,7 @@ def run(
 
 
 def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
+    from macaw.coding.llm.backends import concurrency_notice
     from macaw.coding.llm.notes import notes_plan
     from macaw.extractors.video.face.backends import BACKEND_GROUP as FACE_BACKENDS
     from macaw.project.recording import recording_entities
@@ -120,11 +121,13 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         from macaw.coding.llm.judge import cloud_notice, units_per_request
 
         _, llm = get_extractor(name).settings(config)
-        notices.append(cloud_notice(get_backend(LLM_BACKENDS, llm.provider)(llm), llm))
+        backend = get_backend(LLM_BACKENDS, llm.provider)(llm)
+        notices.append(cloud_notice(backend, llm))
         notices.append(
             f"{name} sends {llm.n_samples} x ceil(units / {units_per_request(llm)}) requests per recording "
             f"to {llm.provider}, units being the codebook's utterances or turns"
         )
+        notices.append(concurrency_notice(name, backend, llm, config.execution.n_workers))
         notices.append(said_by_entity(name))
     for name in sorted(node for node in dag.nodes if node.startswith("coding.rate.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
@@ -136,6 +139,7 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         scales = scales_asked(config, get_extractor(name).rating)
         where = f"each of {len(own.segments)} segments of each recording" if own.segments else "each recording"
         notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where} to {llm.provider}")
+        notices.append(concurrency_notice(name, backend, llm, config.execution.n_workers))
         notices.append(said_by_entity(name))
     if "pose.listening" in dag.nodes:
         from macaw.extractors.video.pose.listening import body_size_notice

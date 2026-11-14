@@ -507,6 +507,8 @@ class LLMSection(_Section):
     temperature: float = 0.3
     max_tokens: int = 8192
     timeout_s: int = 300
+    # requests under way at once within one task
+    concurrency: int = Field(default=1, ge=1)
     n_samples: int = Field(default=5, ge=1)
     seed: int = 0
     allow_abstain: bool = True
@@ -539,6 +541,7 @@ class JudgeVersion(_Section):
     base_url: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    concurrency: int | None = Field(default=None, ge=1)
     n_samples: int | None = Field(default=None, ge=1)
     seed: int | None = None
     allow_abstain: bool | None = None
@@ -567,6 +570,7 @@ class RatingVersion(_Section):
     base_url: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    concurrency: int | None = Field(default=None, ge=1)
     n_samples: int | None = Field(default=None, ge=1)
     seed: int | None = None
     show: list[ShownToModel] | None = None
@@ -584,7 +588,12 @@ class RatingVersion(_Section):
 
 
 # what a rating takes from coding.llm, unless the version says otherwise
-RATING_LLM_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens", "n_samples", "seed", "show", "notes", "notes_by", "reasons", "think")
+RATING_LLM_KEYS = (
+    "provider", "model", "base_url", "temperature", "max_tokens", "concurrency", "n_samples", "seed", "show", "notes", "notes_by",
+    "reasons", "think",
+)
+# a version's keys that change how its step runs and not what it gives, so they stay out of its cache key
+RUN_ONLY_KEYS = ("concurrency",)
 
 
 class ImportedTier(_Section):

@@ -5,19 +5,20 @@ from __future__ import annotations
 
 import json
 import re
+from functools import partial
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.backends import LLMBackend, resolve_llm_backend
+from macaw.coding.llm.backends import LLMBackend, concurrency_params, resolve_llm_backend, run_in_order, seed_caveat
 from macaw.coding.llm.judge import prosody_rows_file, voice_figures
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import VOICE, build_rating_prompt
 from macaw.coding.scales import ScaleSet, read_scales, validate_scales
 from macaw.config.hashing import canonical
-from macaw.config.schema import LLMSection, MacawConfig, RatingVersion
+from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingVersion
 from macaw.exceptions import CodebookError, ConfigError, InputNotFoundError, LLMBackendError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import (
@@ -224,6 +225,7 @@ class RatingExtractor(Extractor):
             "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples, "temperature": cfg.temperature,
             "seed": cfg.seed, "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording),
             "reasons": cfg.reasons, "think": cfg.think, "transcript": own.transcript, "segments": list(own.segments),
+            **concurrency_params(cfg),
         }
         return [
             FeatureSpec(
@@ -288,20 +290,18 @@ def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: floa
 def ask(prompts: list, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
     """One row per prompt and sample: segment, scale, sample, score, problem, reason, answer. A server whose context is
     shorter than the longest prompt and its answer stops the step after the first answer."""
-    rows = []
-    checked = False
     longest = max((estimated_tokens(system + user) for *_, system, user in prompts), default=0)
-    for segment, _, _, scale, system, user in prompts:
-        for sample in range(cfg.n_samples):
-            seed = cfg.seed + sample if backend.takes_seed else None
-            response = backend.complete(system, user, seed=seed)
-            if not checked:
-                check_context(backend, longest, cfg)
-                checked = True
-            score, reason, problem = parse_rating(response.text, scale.low, scale.high)
-            if score is None and response.cut_off:
-                problem = CUT_OFF
-            rows.append((segment, scale.scale, sample, float(score) if score is not None else np.nan, problem, reason, response.text))
+    asked = [(segment, scale, sample, system, user) for segment, _, _, scale, system, user in prompts for sample in range(cfg.n_samples)]
+    responses = run_in_order(
+        [partial(backend.complete, system, user, seed=cfg.seed + sample if backend.takes_seed else None) for *_, sample, system, user in asked],
+        cfg.concurrency, after_first=lambda: check_context(backend, longest, cfg),
+    )
+    rows = []
+    for (segment, scale, sample, *_), response in zip(asked, responses):
+        score, reason, problem = parse_rating(response.text, scale.low, scale.high)
+        if score is None and response.cut_off:
+            problem = CUT_OFF
+        rows.append((segment, scale.scale, sample, float(score) if score is not None else np.nan, problem, reason, response.text))
     answers = pd.DataFrame(rows, columns=["segment", "scale", "sample", "score", "problem", "reason", "answer"])
     if len(answers) and (answers["problem"] == CUT_OFF).all():
         raise LLMBackendError(
@@ -383,6 +383,8 @@ def answer_warnings(answers: pd.DataFrame, ratings: pd.DataFrame, cfg: LLMSectio
         note("rating_single_sample", "info", "coding.llm.n_samples is 1, so how much the model's answers vary was not measured.")
     if len(answers) and cfg.n_samples > 1 and not backend.takes_seed:
         note("rating_no_seed", "info", f"{backend.name} takes no seed, so a rerun can give other scores.")
+    if len(answers) and seed_caveat(backend, cfg):
+        note("rating_at_once", "info", seed_caveat(backend, cfg))
     return found
 
 
@@ -402,7 +404,7 @@ def register_rating_versions(config: MacawConfig) -> None:
     sections = tuple(f"coding.llm.{key}" for key in ("provider", "model", "temperature", "max_tokens", "n_samples", "seed", "show", "reasons", "think"))
     for name in config.coding.ratings:
         if name not in _VERSIONS:
-            own = tuple(f"coding.ratings.{name}.{key}" for key in RatingVersion.model_fields if key not in NOTE_KEYS)
+            own = tuple(f"coding.ratings.{name}.{key}" for key in RatingVersion.model_fields if key not in (*NOTE_KEYS, *RUN_ONLY_KEYS))
             _VERSIONS[name] = register_extractor(
                 type(
                     f"RatingVersion_{name}",

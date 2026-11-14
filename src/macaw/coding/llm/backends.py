@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence, TypeVar
 
 from macaw.config.schema import LLMSection
 from macaw.exceptions import BackendNotAvailableError, LLMBackendError
@@ -20,6 +22,9 @@ BACKEND_GROUP = "llm"
 
 _RETRIES = 3
 _PROBE_TIMEOUT_S = 5
+_POLL_S = 0.5
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -38,6 +43,8 @@ class LLMBackend(Backend):
     takes_seed: bool = True
     # printed in the run plan; None for a server on the user's own machine
     reporting: str | None = None
+    # printed in the run plan when several requests go at once: what the server needs for that
+    at_once: str | None = None
 
     def __init__(self, cfg: LLMSection, *, settings: str = "coding.llm"):
         self.cfg = cfg
@@ -60,6 +67,7 @@ class LLMBackend(Backend):
                 f"{self.settings}.think is for a model served on your own machine (ollama, vllm, llamacpp); leave it null for {self.name}."
             )
 
+    # called from several threads at once when concurrency is above 1: nothing of one request is kept on the instance
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
         """images are JPEG pictures sent after the text, for a model that reads them."""
         raise NotImplementedError
@@ -101,6 +109,69 @@ def _get(url: str, headers: dict[str, str] | None = None, timeout: float = _PROB
     request = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+_RATE_LIMITS = "The provider's rate limits apply: a request over them is refused, tried again a few times, and then stops the step."
+
+
+def run_in_order(jobs: Sequence[Callable[[], T]], concurrency: int, *, after_first: Callable[[], None] | None = None) -> list[T]:
+    """Each job's result in the order of jobs, at most concurrency under way at once; the first runs alone, then after_first."""
+    results = [job() for job in jobs[:1]]
+    if results and after_first is not None:
+        after_first()
+    rest = jobs[1:]
+    if concurrency <= 1 or len(rest) <= 1:
+        return results + [job() for job in rest]
+    stopped = threading.Event()
+    failures: list[BaseException] = []
+
+    def guarded(job: Callable[[], T]) -> T | None:
+        # once a job has failed, those not yet started stay unstarted
+        if stopped.is_set():
+            return None
+        try:
+            return job()
+        except BaseException as error:
+            failures.append(error)
+            stopped.set()
+            return None
+
+    pool = ThreadPoolExecutor(max_workers=min(concurrency, len(rest)))
+    try:
+        futures = [pool.submit(guarded, job) for job in rest]
+        # in short waits: one without an end cannot be interrupted from the keyboard on Windows
+        while wait(futures, timeout=_POLL_S).not_done:
+            pass
+    finally:
+        stopped.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+    if failures:
+        raise failures[0]
+    return results + [future.result() for future in futures]
+
+
+def concurrency_params(cfg: LLMSection) -> dict:
+    """Kept with the results where requests went at once, as a seed then no longer fixes the answers."""
+    return {"concurrency": cfg.concurrency} if cfg.concurrency > 1 else {}
+
+
+def seed_caveat(backend: LLMBackend, cfg: LLMSection) -> str | None:
+    if cfg.concurrency <= 1 or not backend.takes_seed:
+        return None
+    return (
+        f"coding.llm.concurrency is {cfg.concurrency}: a server may answer requests sent at once as one batch, so a rerun with "
+        "the same seed can give other answers."
+    )
+
+
+def concurrency_notice(step: str, backend: LLMBackend, cfg: LLMSection, n_workers: int) -> str | None:
+    if cfg.concurrency <= 1:
+        return None
+    total = cfg.concurrency * max(n_workers, 1)
+    return (
+        f"{step} keeps {cfg.concurrency} requests under way per recording, up to {total} in all with {max(n_workers, 1)} tasks "
+        f"side by side (run -j). {backend.at_once or ''}"
+    ).strip()
 
 
 class OpenAICompatibleBackend(LLMBackend):
@@ -201,6 +272,10 @@ class OllamaBackend(OpenAICompatibleBackend):
     default_base_url = "http://127.0.0.1:11434/v1"
 
     fetch_hint = "Fetch it with `ollama pull`, or name one it has."
+    at_once = (
+        "Ollama answers that many at once only when started with OLLAMA_NUM_PARALLEL at or above it, and the rest wait in "
+        "its queue; each takes a context of its own, so the model needs more memory."
+    )
 
     def _serves(self, served: list[str]) -> bool:
         # a tag left out means latest
@@ -268,6 +343,7 @@ class OpenAIBackend(OpenAICompatibleBackend):
         "coding.llm.provider openai: the transcript text, speaker letters and times are sent to "
         "OpenAI's servers. Whether that is allowed is for your ethics approval to say."
     )
+    at_once = _RATE_LIMITS
 
 
 @register_backend(BACKEND_GROUP)
@@ -280,6 +356,7 @@ class AnthropicBackend(LLMBackend):
         "coding.llm.provider anthropic: the transcript text, speaker letters and times are sent to "
         "Anthropic's servers. Whether that is allowed is for your ethics approval to say."
     )
+    at_once = _RATE_LIMITS
 
     def check_available(self) -> None:
         super().check_available()
