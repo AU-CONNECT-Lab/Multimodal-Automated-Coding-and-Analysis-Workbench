@@ -70,7 +70,7 @@ def test_an_outsiders_bleed_into_an_own_microphone_is_dropped(project, monkeypat
     regular = pd.DataFrame(
         {"label": ["S0", "S2"], "t_start": [0.0, 5.0], "t_end": [4.0, 9.0], "exclusive": [False, False]}
     )
-    monkeypatch.setattr(asr_module, "_track_clock_turns", lambda config, rid, prep, exclusive=True: regular)
+    monkeypatch.setattr(asr_module, "_track_clock_turns", lambda config, rid, prep, exclusive=True, changed=False: regular)
     monkeypatch.setattr(diarization_module, "voice_names", lambda config, rid: {"S0": "parent", "S2": None})
     own = pd.DataFrame({"subject_id": ["parent"] * 2, "t_start": [0.5, 5.5], "t_end": [3.5, 8.0]})
     for overrides, kept in (((), [0.5]), (("text.extra_voices=0",), [0.5, 5.5])):

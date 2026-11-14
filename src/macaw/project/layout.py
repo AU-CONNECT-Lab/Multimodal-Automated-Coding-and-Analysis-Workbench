@@ -96,6 +96,14 @@ class Layout:
     def voice_owners_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "voice_owners.json"
 
+    # on a shared microphone whose voices a person found mixed: the stretches given to another person; an input to text.asr
+    def line_speakers_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "line_speakers.json"
+
+    # that a person heard nobody else where the software found a further voice
+    def further_voice_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "further_voice.json"
+
     # frames a person labelled with whom or what each person looks at; gaze.target's check, and its angles backend's input
     def gaze_labels_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "gaze_labels.json"
@@ -152,6 +160,8 @@ class Layout:
             self.names_path(recording_id),
             self.camera_owners_accepted_path(recording_id),
             self.voice_owners_path(recording_id),
+            self.line_speakers_path(recording_id),
+            self.further_voice_path(recording_id),
             self.gaze_labels_path(recording_id),
             self.corrected_transcript_path(recording_id),
             self.corrected_transcript_stamp_path(recording_id),

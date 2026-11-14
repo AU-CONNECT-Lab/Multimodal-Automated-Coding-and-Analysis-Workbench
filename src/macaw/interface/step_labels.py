@@ -28,6 +28,7 @@ LABELS = {
     "motion.mea": "Motion energy",
     "text.diarize": "Separate voices",
     "text.review": "Check: whose voice",
+    "text.lines": "Check: who speaks each line",
     "text.shared_asr": "Speech, shared sound",
     "text.asr": "Transcript",
     "text.features": "Word measures",

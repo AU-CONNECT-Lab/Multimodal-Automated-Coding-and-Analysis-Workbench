@@ -454,7 +454,7 @@ class TestMixed:
 
         prep = PrepInfo(recording_id="003", t_origin_s=0.0, duration_s=10.0, sample_rate=SAMPLE_RATE, tracks={"parent": "parent.wav"})
         regular = turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0), ("S0", 6.0, 6.4), exclusive=False)
-        monkeypatch.setattr(asr_module, "_track_clock_turns", lambda config, rid, prep, exclusive=True: regular)
+        monkeypatch.setattr(asr_module, "_track_clock_turns", lambda config, rid, prep, exclusive=True, changed=False: regular)
         monkeypatch.setattr(diarization_module, "voice_names", lambda config, rid: self.NAMES)
         own = pd.DataFrame({"subject_id": ["parent"] * 3, "t_start": [0.5, 5.5, 6.0], "t_end": [3.5, 8.0, 6.5]})
         config = project.resolved()
@@ -472,7 +472,7 @@ class TestMixed:
             recording_id="003", t_origin_s=0.0, duration_s=10.0, sample_rate=SAMPLE_RATE,
             tracks={"parent": "parent.wav"}, shared_tracks={"003_room.wav": "shared_003_room.wav"}, root=tmp_path,
         )
-        monkeypatch.setattr(diarization_module, "read_diarization", lambda config, rid: turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0), exclusive=False))
+        monkeypatch.setattr(diarization_module, "read_diarization", lambda config, rid, changed=False: turns(("S0", 0.0, 4.0), ("S1", 5.0, 9.0), exclusive=False))
         monkeypatch.setattr(diarization_module, "voice_names", lambda config, rid: self.NAMES)
         config = project.resolved()
         sources = diarization_module.voice_sources(config, build_recording("003", config), prep)

@@ -19,6 +19,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.prep",
     "macaw.extractors.audio.prosody.frame",
     "macaw.extractors.audio.content.asr",
+    "macaw.extractors.audio.content.line_speakers",
     "macaw.extractors.audio.content.features",
     "macaw.extractors.audio.content.syntax",
     "macaw.turns.segmentation",

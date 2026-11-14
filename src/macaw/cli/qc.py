@@ -13,7 +13,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
-from macaw.extractors.audio.content.diarization import NO_ONE, read_voices
+from macaw.extractors.audio.content.diarization import NO_ONE, further_voice_id, read_further_voice, read_voices, voices_mixed
 from macaw.extractors.audio.content.speaker_id import offered_suggestion
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
 from macaw.logging_setup import get_logger
@@ -308,6 +308,12 @@ def accept_voices(
     rename: str = typer.Option(
         None, "--rename", help=f"LABEL=PERSON pairs for every voice, comma-separated; PERSON {NO_ONE} leaves a voice out (with text.extra_voices it takes turns as other)."
     ),
+    mixed: bool = typer.Option(
+        False, "--mixed", help="One voice holds two people here: the lines then wait for `macaw line-speakers` to say who speaks each."
+    ),
+    nobody_else: bool = typer.Option(
+        False, "--nobody-else", help="You listened to the further voice found and nobody but the people speaks; names nothing."
+    ),
     by: str = typer.Option(None, "--by", help="Who listened. Default: the login name."),
 ) -> None:
     """Keep the suggested names of the voices on a shared microphone, or name them."""
@@ -322,6 +328,13 @@ def accept_voices(
         voices = read_voices(resolved, recording_id)
         if not voices:
             raise MacawError(f"{recording_id}: no voices found yet; run text.diarize first")
+        if nobody_else:
+            found = read_further_voice(resolved, recording_id)
+            if not found:
+                raise MacawError(f"{recording_id}: no further voice was found")
+            _write_json(layout.further_voice_path(recording_id), {"found": further_voice_id(found), "by": stamp})
+            typer.echo(f"{recording_id}: nobody else speaks; apply it with `macaw run -r {recording_id}`")
+            continue
         if rename is not None:
             people = _named_voices(voices, rename, recording)
         else:
@@ -338,9 +351,73 @@ def accept_voices(
                     f"{recording_id}: the suggestion leaves {', '.join(undecided)} undecided between "
                     f"{', '.join(suggestion['unheard'])}; listen to the clips and name all voices with --rename"
                 )
-        _write_json(layout.voice_owners_path(recording_id), {"people": people, "by": stamp})
+        _write_json(layout.voice_owners_path(recording_id), {"people": people, "by": stamp, **({"mixed": True} if mixed else {})})
         named = "; ".join(f"{label} is {who}" for label, who in sorted(people.items()))
-        typer.echo(f"{recording_id}: {named}; apply it with `macaw run -r {recording_id}`")
+        then = f"say who speaks each line with `macaw line-speakers -r {recording_id}`" if mixed else f"apply it with `macaw run -r {recording_id}`"
+        typer.echo(f"{recording_id}: {named}; {then}")
+
+
+@app.command("line-speakers")
+def line_speakers(
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    recording: str = typer.Option(..., "--recordings", "-r", help="One recording whose voices were marked as mixed."),
+    suggested: bool = typer.Option(False, "--suggested", help="Give every line with a sure suggestion to the person suggested."),
+    apply: Path = typer.Option(None, "--apply", help="A csv with t_start and person: who speaks the line starting then."),
+    at: float = typer.Option(None, "--at", help="With --person: from the word said at this second to the end of its line, that person speaks."),
+    person: str = typer.Option(None, "--person"),
+    as_they_are: bool = typer.Option(False, "--as-they-are", help="You checked the lines and nothing more needs changing."),
+    clear: bool = typer.Option(False, "--clear", help="Forget every change; the lines wait for a decision again."),
+    by: str = typer.Option(None, "--by", help="Who decided. Default: the login name."),
+) -> None:
+    """On a shared microphone whose voices are mixed: list who speaks each line, or change it."""
+    import pandas as pd
+
+    from macaw.extractors.audio.content.line_speakers import (
+        BY_HAND, SUGGESTED, keep_suggested, split_at, suggested_lines, with_picks, write_line_speakers,
+    )
+
+    resolved = resolve_config(config, recording_id=recording)
+    layout = layout_for(resolved, create=False)
+    if not voices_mixed(resolved, recording):
+        raise MacawError(
+            f"{recording}: the voices are not marked as mixed; name them with `macaw accept-voices -r {recording} --rename ... --mixed` first"
+        )
+    if clear:
+        layout.line_speakers_path(recording).unlink(missing_ok=True)
+        typer.echo(f"{recording}: changes forgotten")
+        return
+    subjects = build_recording(recording, resolved)
+    lines = suggested_lines(resolved, subjects)
+    name = by or getpass.getuser()
+    people = {subject.subject_id for subject in subjects.subjects} | {NO_ONE}
+    if person is not None and person not in people:
+        raise MacawError(f"not a subject: {person}")
+    if sum([suggested, apply is not None, at is not None, as_they_are]) > 1:
+        raise MacawError("give one of --suggested, --apply, --at and --as-they-are")
+    if suggested:
+        lines, route = keep_suggested(lines), SUGGESTED
+    elif apply is not None:
+        table = pd.read_csv(apply).dropna(subset=["person"])
+        unknown = sorted(set(table["person"].astype(str)) - people)
+        if unknown:
+            raise MacawError(f"not a subject: {', '.join(unknown)}")
+        lines, route = with_picks(lines, {round(float(row.t_start), 3): str(row.person) for row in table.itertuples()}, name), BY_HAND
+    elif at is not None:
+        if person is None:
+            raise MacawError("--at needs --person")
+        lines, route = split_at(lines, at, person, name), BY_HAND
+    elif as_they_are:
+        route = BY_HAND
+    else:
+        for line in lines.itertuples(index=False):
+            doubt = f"  [{'sure' if line.sure else 'doubt'}: {line.suggested or 'not ' + line.base}, {line.doubt}]" if line.doubt else ""
+            changed = f" (was {line.base})" if line.person != line.base else ""
+            typer.echo(f"  {line.t_start:.1f} s {line.person}{changed}: {line.text}{doubt}")
+        typer.echo(f"{recording}: {len(lines)} lines, {int((lines['person'] != lines['base']).sum())} changed, {int((lines['doubt'] != '').sum())} doubted")
+        return
+    write_line_speakers(resolved, recording, lines, f"{name} {datetime.now().isoformat(timespec='seconds')}", route)
+    changed = int((lines["person"] != lines["base"]).sum())
+    typer.echo(f"{recording}: {changed} of {len(lines)} lines with another person than their voice's; apply it with `macaw run -r {recording}`")
 
 
 def _named_voices(voices: dict, rename: str, recording) -> dict[str, str]:

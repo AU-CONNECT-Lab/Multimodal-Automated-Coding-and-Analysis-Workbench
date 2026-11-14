@@ -31,11 +31,16 @@ SHARED_MODE = "pyannote"
 
 DIARIZATION_NAME = "diarization.parquet"
 VOICES_NAME = "voices.json"
+FURTHER_NAME = "further_voice.json"
 NO_ONE = "none"
 # the one further speaker every voice named none becomes once text.extra_voices lets the room hold others
 OTHER = "other"
 # who named the voices when the suggestion was kept without a person
 AUTOMATIC = "automatic"
+# the gate after the voices are named, where a person who found them mixed says who speaks each line
+LINES_GATE = "text.lines"
+# the voice a stretch given to another person speaks in, before that person's name
+CHANGED = "line:"
 
 DIARIZATION_SCHEMA: dict[str, str] = {
     "track": "string",
@@ -47,6 +52,8 @@ DIARIZATION_SCHEMA: dict[str, str] = {
 
 # a voice with less speech than this is more likely a cough, a door or a cut-off word than a person
 _MIN_VOICE_S = 5.0
+# a further voice with less speech than this is more often a piece of someone already heard than another person
+_FURTHER_MIN_S = 5.0
 _CLIPS_PER_VOICE = 3
 _CLIP_S = 5.0
 
@@ -334,7 +341,7 @@ class DiarizationExtractor(Extractor):
     """Who speaks when on a shared microphone, as anonymous voices; text.review says who they are."""
 
     name = "text.diarize"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = ("text.diarization", "text.diarization_model", "text.extra_voices", "text.device", "segment")
@@ -378,6 +385,12 @@ class DiarizationExtractor(Extractor):
         turns["t_end"] = turns["t_end"] + prep.t_origin_s
         turns["track"] = track
         voices = describe_voices(turns, path, prep.t_origin_s, workspace)
+        further = {}
+        if not self.config.text.extra_voices:
+            # one more voice than there are people is looked for once, only to tell a person about it
+            trial = resolve_diarizer(self.config).diarize(path, n_speakers=len(recording.subjects), extra_speakers=1)
+            trial = trial.assign(t_start=trial["t_start"] + prep.t_origin_s, t_end=trial["t_end"] + prep.t_origin_s)
+            further = further_voice(turns, trial, path, prep.t_origin_s, workspace)
         values = {
             "n_shared_tracks_diarized": 1.0,
             "n_voices_found": float(len(voices)),
@@ -386,8 +399,9 @@ class DiarizationExtractor(Extractor):
         artifacts = {
             DIARIZATION_NAME: _io.write_file(turns, workspace / DIARIZATION_NAME, DIARIZATION_SCHEMA, "diarization"),
             VOICES_NAME: _write_json(workspace / VOICES_NAME, voices),
+            FURTHER_NAME: _write_json(workspace / FURTHER_NAME, further),
         }
-        artifacts.update({clip["file"]: workspace / clip["file"] for voice in voices.values() for clip in voice["clips"]})
+        artifacts.update({clip["file"]: workspace / clip["file"] for voice in (*voices.values(), further) for clip in voice.get("clips", [])})
         return ExtractorResult(
             rows=self._rows(recording, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), values),
             specs=self._specs(values),
@@ -478,23 +492,84 @@ def describe_voices(turns: pd.DataFrame, track_path: Path, t_origin_s: float, wo
     """Per voice its total speech and a few clips to listen to, cut from its longest turns alone."""
     samples, sr = load_audio(Path(track_path))
     exclusive = turns[turns["exclusive"].astype(bool)]
-    voices = {}
-    for label, own in exclusive.groupby("label", observed=True):
-        longest = own.assign(length=own["t_end"] - own["t_start"]).nlargest(_CLIPS_PER_VOICE, "length").sort_values("t_start")
-        clips = []
-        for index, turn in enumerate(longest.itertuples(index=False), start=1):
-            middle = (turn.t_start + turn.t_end) / 2
-            start = max(turn.t_start, middle - _CLIP_S / 2)
-            end = min(turn.t_end, middle + _CLIP_S / 2)
-            name = f"clip_{label}_{index}.wav"
-            _write_wav(workspace / name, samples, sr, start - t_origin_s, end - t_origin_s)
-            clips.append({"file": name, "t_start": float(start), "t_end": float(end)})
-        voices[str(label)] = {
+    return {
+        str(label): {
             "speech_s": float((own["t_end"] - own["t_start"]).sum()),
             "first_s": float(own["t_start"].min()),
-            "clips": clips,
+            "clips": _clips(own, str(label), samples, sr, t_origin_s, workspace),
         }
-    return voices
+        for label, own in exclusive.groupby("label", observed=True)
+    }
+
+
+def _clips(own: pd.DataFrame, stem: str, samples: np.ndarray, sr: float, t_origin_s: float, workspace: Path) -> list[dict]:
+    longest = own.assign(length=own["t_end"] - own["t_start"]).nlargest(_CLIPS_PER_VOICE, "length").sort_values("t_start")
+    clips = []
+    for index, turn in enumerate(longest.itertuples(index=False), start=1):
+        middle = (turn.t_start + turn.t_end) / 2
+        start = max(turn.t_start, middle - _CLIP_S / 2)
+        end = min(turn.t_end, middle + _CLIP_S / 2)
+        name = f"clip_{stem}_{index}.wav"
+        _write_wav(workspace / name, samples, sr, start - t_origin_s, end - t_origin_s)
+        clips.append({"file": name, "t_start": float(start), "t_end": float(end)})
+    return clips
+
+
+def further_voice(turns: pd.DataFrame, trial: pd.DataFrame, track_path: Path, t_origin_s: float, workspace: Path) -> dict:
+    """What one more voice slot found beyond the voices kept: its speech, where it lies, whose voice holds it now and
+    clips to listen to. Empty when the slot stayed unused or held too little to be a person."""
+    from scipy.optimize import linear_sum_assignment
+
+    kept = turns[turns["exclusive"].astype(bool)]
+    tried = trial[trial["exclusive"].astype(bool)]
+    labels, slots = sorted(kept["label"].astype(str).unique()), sorted(tried["label"].astype(str).unique())
+    if len(slots) <= len(labels):
+        return {}
+    shared = np.array([[_shared_s(tried[tried["label"] == slot], kept[kept["label"] == label]) for label in labels] for slot in slots])
+    matched = set(linear_sum_assignment(shared, maximize=True)[0])
+    spare = [slot for index, slot in enumerate(slots) if index not in matched]
+    own = tried[tried["label"].isin(spare)].sort_values("t_start")
+    speech_s = float((own["t_end"] - own["t_start"]).sum())
+    if speech_s < _FURTHER_MIN_S:
+        return {}
+    samples, sr = load_audio(Path(track_path))
+    held = {label: _shared_s(own, kept[kept["label"] == label]) for label in labels}
+    return {
+        "speech_s": speech_s,
+        "first_s": float(own["t_start"].min()),
+        "last_s": float(own["t_end"].max()),
+        "spans": [[float(a), float(b)] for a, b in zip(own["t_start"], own["t_end"])],
+        "held_by": {label: seconds for label, seconds in held.items() if seconds > 0},
+        "clips": _clips(own, "further", samples, sr, t_origin_s, workspace),
+    }
+
+
+def _shared_s(one: pd.DataFrame, other: pd.DataFrame) -> float:
+    starts, ends = other["t_start"].to_numpy(dtype=float), other["t_end"].to_numpy(dtype=float)
+    return float(sum(np.clip(np.minimum(ends, b) - np.maximum(starts, a), 0, None).sum() for a, b in zip(one["t_start"], one["t_end"])))
+
+
+def read_further_voice(config, recording_id: str) -> dict:
+    path = layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / FURTHER_NAME
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def further_voice_id(found: dict) -> str:
+    return f"{found['speech_s']:.1f} s from {found['first_s']:.1f} s"
+
+
+def unheard_further_voice(config, recording_id: str) -> dict:
+    """The further voice found, until a person has said nobody else speaks there."""
+    found = read_further_voice(config, recording_id)
+    if not found or config.text.extra_voices:
+        return {}
+    path = layout_for(config, create=False).further_voice_path(recording_id)
+    heard = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return {} if heard.get("found") == further_voice_id(found) else found
+
+
+def describe_further_voice(found: dict) -> str:
+    return f"{found['speech_s']:.0f} s in {len(found['spans'])} stretch(es) between {found['first_s']:.0f} s and {found['last_s']:.0f} s"
 
 
 def _write_wav(path: Path, samples: np.ndarray, sr: float, t_start: float, t_end: float) -> None:
@@ -518,11 +593,59 @@ def read_voices(config, recording_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
-def read_diarization(config, recording_id: str) -> pd.DataFrame:
-    path = layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / DIARIZATION_NAME
+def diarization_path(config, recording_id: str) -> Path:
+    return layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / DIARIZATION_NAME
+
+
+def read_diarization(config, recording_id: str, *, changed: bool = False) -> pd.DataFrame:
+    """The voices' turns as the diarizer gave them; with changed, the stretches given to another person moved to that person."""
+    path = diarization_path(config, recording_id)
     if not path.is_file():
         raise InputNotFoundError(f"{recording_id}: {path} is missing, run {DiarizationExtractor.name} first")
-    return pd.read_parquet(path)
+    turns = pd.read_parquet(path)
+    return with_changes(turns, line_changes(config, recording_id)) if changed else turns
+
+
+def voices_mixed(config, recording_id: str) -> bool:
+    """Whether the person who named the voices said one of them holds two people."""
+    return bool(read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id)).get("mixed"))
+
+
+def read_line_speakers(config, recording_id: str) -> dict:
+    path = layout_for(config, create=False).line_speakers_path(recording_id)
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def line_changes(config, recording_id: str) -> list[dict]:
+    """The stretches given to another person than their voice's, while the voices count as mixed."""
+    if not voices_mixed(config, recording_id):
+        return []
+    return read_line_speakers(config, recording_id).get("changes", [])
+
+
+def with_changes(turns: pd.DataFrame, changes: list[dict]) -> pd.DataFrame:
+    """Each changed stretch is cut out of whatever voice held it and becomes a turn of the person it was given to."""
+    if not changes:
+        return turns
+    parts = []
+    for exclusive, kept in turns.groupby(turns["exclusive"].astype(bool)):
+        for change in changes:
+            kept = _without(kept, float(change["t_start"]), float(change["t_end"]))
+        given = pd.DataFrame(
+            {
+                "label": [CHANGED + change["person"] for change in changes],
+                "t_start": [float(change["t_start"]) for change in changes],
+                "t_end": [float(change["t_end"]) for change in changes],
+            }
+        ).assign(exclusive=exclusive, **({"track": turns["track"].iloc[0]} if "track" in turns else {}))
+        parts += [kept, given[given["t_end"] > given["t_start"]]]
+    return pd.concat(parts, ignore_index=True)[list(turns.columns)].sort_values(["exclusive", "t_start"], ignore_index=True)
+
+
+def _without(spans: pd.DataFrame, start: float, end: float) -> pd.DataFrame:
+    before = spans[spans["t_start"] < start].assign(t_end=lambda frame: frame["t_end"].clip(upper=start))
+    after = spans[spans["t_end"] > end].assign(t_start=lambda frame: frame["t_start"].clip(lower=end))
+    return pd.concat([before, after], ignore_index=True)
 
 
 def read_voice_owners(path: Path) -> dict:
@@ -535,6 +658,12 @@ def voice_names(config, recording_id: str) -> dict[str, str | None]:
     return {label: (None if who == NO_ONE else who) for label, who in named.get("people", {}).items()}
 
 
+def turn_owners(config, recording_id: str) -> dict[str, str | None]:
+    """voice_names, and the person of every stretch that was given to another person."""
+    given = {CHANGED + change["person"]: change["person"] for change in line_changes(config, recording_id)}
+    return {**voice_names(config, recording_id), **{label: (None if who == NO_ONE else who) for label, who in given.items()}}
+
+
 def others_take_turns(config) -> bool:
     return config.text.diarization == SHARED_MODE and config.text.extra_voices > 0
 
@@ -545,8 +674,8 @@ def turn_takers(config, recording: Recording) -> list[str]:
 
 
 def speaker_names(config, recording_id: str) -> dict[str, str | None]:
-    """voice_names, with a voice left out speaking as OTHER when others take turns."""
-    names = voice_names(config, recording_id)
+    """turn_owners, with a voice left out speaking as OTHER when others take turns."""
+    names = turn_owners(config, recording_id)
     if not others_take_turns(config):
         return names
     return {label: who or OTHER for label, who in names.items()}
@@ -583,6 +712,8 @@ class SpeakerReviewGate(Gate):
         voices = read_voices(self.config, rid)
         if not voices or set(voice_names(self.config, rid)) == set(voices):
             return
+        if mode == "flagged" and unheard_further_voice(self.config, rid):
+            return
         suggestion = suggest_voices(self.config, recording)
         if suggestion is None:
             return
@@ -598,19 +729,33 @@ class SpeakerReviewGate(Gate):
     def notes(self, recording: Recording) -> list[QCWarning]:
         if self.config.text.diarization != SHARED_MODE:
             return []
-        named = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(recording.recording_id))
+        rid = recording.recording_id
+        named = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(rid))
+        notes = []
+        further = unheard_further_voice(self.config, rid)
+        if further:
+            notes.append(
+                QCWarning(
+                    check="further_voice_unheard", recording_id=rid, subject_id=None, severity="warn",
+                    message=(
+                        f"a further voice may speak here ({describe_further_voice(further)}) and nobody listened to it; "
+                        "its words are counted as the people's"
+                    ),
+                )
+            )
         if named.get("by") != AUTOMATIC:
-            return []
+            return notes
         left_out = sorted(label for label, who in named.get("people", {}).items() if who == NO_ONE)
         message = "the voices were named by the suggestion without a person listening"
         message += f"; {', '.join(left_out)} could not be decided and were left out" if left_out else ""
         message += f", their words taking turns as {OTHER}" if left_out and others_take_turns(self.config) else ""
-        return [
+        notes.append(
             QCWarning(
-                check="voices_unreviewed", recording_id=recording.recording_id, subject_id=None,
+                check="voices_unreviewed", recording_id=rid, subject_id=None,
                 severity="warn" if left_out else "info", message=message,
             )
-        ]
+        )
+        return notes
 
     def decided_by(self, recording: Recording) -> str | None:
         if self.config.text.diarization != SHARED_MODE or not read_voices(self.config, recording.recording_id):
@@ -623,11 +768,18 @@ class SpeakerReviewGate(Gate):
             return None
         rid = recording.recording_id
         voices = read_voices(self.config, rid)
+        clips = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name)
+        further = unheard_further_voice(self.config, rid)
+        if further and self.config.text.voice_review != "skip":
+            return (
+                f"a further voice may speak here ({describe_further_voice(further)}): listen to the clip_further files in {clips}, "
+                "then cut that part out with segment.task_start_s and task_end_s for this recording, or give it a voice of its "
+                f"own with text.extra_voices: 1 for this recording, or say nobody else speaks with `macaw accept-voices -r {rid} --nobody-else`"
+            )
         if set(voice_names(self.config, rid)) == set(voices):
             return None
         from macaw.extractors.audio.content.speaker_id import describe_suggestion, offered_suggestion
 
-        clips = layout_for(self.config, create=False).artifacts_dir(rid, DiarizationExtractor.name)
         suggestion = offered_suggestion(self.config, recording)
         hint = f"; suggested: {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`" if suggestion else ""
         return (
@@ -672,7 +824,7 @@ def voice_sources(config, recording: Recording, prep) -> dict[str, tuple[Path, p
     if config.text.diarization != SHARED_MODE:
         return own
     path = prep.shared_track_path(shared_track(prep, recording.recording_id))
-    spans = solo_spans(read_diarization(config, recording.recording_id), voice_names(config, recording.recording_id))
+    spans = solo_spans(read_diarization(config, recording.recording_id, changed=True), turn_owners(config, recording.recording_id))
     return {**{who: (path, found) for who, found in spans.items() if who not in own}, **own}
 
 
@@ -681,11 +833,13 @@ def voice_inputs(config, recording: Recording, prep) -> list[Path]:
     if config.text.diarization != SHARED_MODE:
         return [prep.track_path(subject_id) for subject_id in sorted(prep.tracks)]
     layout = layout_for(config, create=False)
+    lines = layout.line_speakers_path(recording.recording_id)
     return [
         *(prep.track_path(subject_id) for subject_id in sorted(prep.tracks)),
         prep.shared_track_path(shared_track(prep, recording.recording_id)),
-        layout.artifacts_dir(recording.recording_id, DiarizationExtractor.name) / DIARIZATION_NAME,
+        diarization_path(config, recording.recording_id),
         layout.voice_owners_path(recording.recording_id),
+        *([lines] if lines.is_file() else []),
     ]
 
 

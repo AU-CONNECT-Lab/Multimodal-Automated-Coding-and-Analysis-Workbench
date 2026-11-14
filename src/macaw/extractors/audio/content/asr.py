@@ -12,6 +12,7 @@ from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.content.diarization import (
     BACKEND_GROUP as DIARIZATION_GROUP,
     DIARIZATION_NAME,
+    LINES_GATE,
     OTHER,
     SHARED_MODE,
     DiarizationExtractor,
@@ -388,7 +389,7 @@ class ASRExtractor(Extractor):
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:
         # on a shared microphone nothing is anyone's until a person has named the voices
-        return cls.requires + ((SHARED_ASR, SpeakerReviewGate.name) if config.text.diarization == SHARED_MODE else ())
+        return cls.requires + ((SHARED_ASR, SpeakerReviewGate.name, LINES_GATE) if config.text.diarization == SHARED_MODE else ())
 
     def __init__(self, config):
         super().__init__(config)
@@ -513,7 +514,7 @@ class ASRExtractor(Extractor):
         """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
         rid = recording.recording_id
         utterances, words = read_shared_transcript(self.config, rid)
-        turns = _track_clock_turns(self.config, rid, prep)
+        turns = _track_clock_turns(self.config, rid, prep, changed=True)
         utterances, words, unplaced = split_by_voice(
             utterances, words, turns, speaker_names(self.config, rid), elsewhere=frozenset(prep.tracks)
         )
@@ -532,7 +533,7 @@ class ASRExtractor(Extractor):
         """A person heard only on the shared microphone still leaks into the others' own microphones.
         An utterance is their bleed when it lies mostly in their voice and the owner's is all but absent."""
         names = speaker_names(self.config, recording.recording_id)
-        turns = _track_clock_turns(self.config, recording.recording_id, prep, exclusive=False)
+        turns = _track_clock_turns(self.config, recording.recording_id, prep, exclusive=False, changed=True)
         turns = turns.assign(subject_id=turns["label"].map(lambda label: names.get(label)))
         roomers = set(turns["subject_id"].dropna()) - set(prep.tracks)
         flags = np.zeros(len(utterances), dtype=bool)
@@ -1062,8 +1063,8 @@ def _words_inside(utterance, words: pd.DataFrame, start_s: float, end_s: float) 
     return [token for i, token in enumerate(tokens) if start_s <= float(utterance["t_start"]) + (i + 0.5) * step < end_s]
 
 
-def _track_clock_turns(config, recording_id: str, prep, *, exclusive: bool = True) -> pd.DataFrame:
-    turns = read_diarization(config, recording_id)
+def _track_clock_turns(config, recording_id: str, prep, *, exclusive: bool = True, changed: bool = False) -> pd.DataFrame:
+    turns = read_diarization(config, recording_id, changed=changed)
     return turns[turns["exclusive"].astype(bool) == exclusive].assign(
         t_start=lambda frame: frame["t_start"] - prep.t_origin_s, t_end=lambda frame: frame["t_end"] - prep.t_origin_s
     )
