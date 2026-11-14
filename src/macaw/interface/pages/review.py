@@ -30,10 +30,12 @@ ACT = "review-act"
 NO_ONE = "none"
 PICK = "act-pick"
 ACTS_DECIDED = "acts-decided"
-SCALE_VIDEO, SCALE_AT, SCALE_SHOW, SCALE_GRAPH = "scale-video", "scale-at", "scale-show", "scale-graph"
+SCALE_VIDEO, SCALE_AT, SCALE_GRAPH = "scale-video", "scale-at", "scale-graph"
 SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
 SCALE_LENGTH, SCALE_OBJECT, SCALE_PERSON = "scale-length", "scale-object", "scale-person"
-GAZE_VIDEO, GAZE_AT, GAZE_SHOW, GAZE_RANDOM, GAZE_GRAPH = "gaze-video", "gaze-at", "gaze-show", "gaze-random", "gaze-graph"
+GAZE_VIDEO, GAZE_AT, GAZE_RANDOM, GAZE_GRAPH = "gaze-video", "gaze-at", "gaze-random", "gaze-graph"
+# a frame's graph takes no room until there is a frame
+HIDDEN = {"display": "none"}
 GAZE_T, GAZE_NOTE, GAZE_PICK = "gaze-t", "gaze-note", "gaze-pick"
 CLIP = "clip:"
 UPLOAD = "review-upload"
@@ -496,12 +498,11 @@ def _scale(config, layout, recording):
             [
                 ui.field("Measure on", dcc.Dropdown(sources, chosen, id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
                 ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10, debounce=True)),
-                ui.button("Show frame", {"type": SCALE_SHOW, **key}),
             ],
             className="toolbar",
         ),
         html.Div(id={"type": SCALE_NOTE, **key}),
-        dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}),
+        dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
         dcc.Store(id={"type": SCALE_POINTS, **key}, data=[]),
         dcc.Store(id={"type": SCALE_FRAME, **key}, data=None),
         html.Div(
@@ -542,13 +543,12 @@ def _gaze(config, layout, recording):
             [
                 ui.field("Video", dcc.Dropdown(videos, videos[0], id={"type": GAZE_VIDEO, **key}, clearable=False, className="picker")),
                 ui.field("At (s)", dcc.Input(id={"type": GAZE_AT, **key}, type="number", min=0, value=10, debounce=True)),
-                ui.button("Show frame", {"type": GAZE_SHOW, **key}),
                 ui.button("A frame at random", {"type": GAZE_RANDOM, **key}),
             ],
             className="toolbar",
         ),
         html.Div(id={"type": GAZE_NOTE, **key}),
-        dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}),
+        dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
         dcc.Store(id={"type": GAZE_T, **key}, data=None),
         html.Div(
             [ui.field(f"{person} looks at", dcc.Dropdown(choices[person], None, id={"type": GAZE_PICK, "key": person}, className="picker small")) for person in roles],
@@ -624,13 +624,17 @@ def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str
     if item is None:
         return None, f"{video} is not a video of {rid}."
     if config.video.normalise and item.prepared_video is None:
-        return None, "Run prep.video first: people are measured on its copy of the video, and the two ends must be clicked on the same picture."
+        return None, "Run prep.video first: frames are shown from its copy of the video, the one people are measured on."
     dest = layout_for(config, create=False).work_dir / "gui" / "scale" / f"{rid}_{Path(video).stem}.jpg"
     try:
         extract_frame(item.frames_path, item.own_time(at_s), dest)
     except Exception as error:
         return None, f"No frame at {at_s:g} s: {error}"
     return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None
+
+
+def graph_style(figure):
+    return None if figure.data else HIDDEN
 
 
 def scale_figure(uri: str | None, points: list):
@@ -988,22 +992,25 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output({"type": SCALE_GRAPH, "key": MATCH}, "figure"),
+        Output({"type": SCALE_GRAPH, "key": MATCH}, "style"),
         Output({"type": SCALE_POINTS, "key": MATCH}, "data"),
         Output({"type": SCALE_FRAME, "key": MATCH}, "data"),
         Output({"type": SCALE_NOTE, "key": MATCH}, "children"),
-        Input({"type": SCALE_SHOW, "key": MATCH}, "n_clicks"),
         Input({"type": SCALE_GRAPH, "key": MATCH}, "clickData"),
-        # a moment typed or another video chosen shows its frame without the button
+        # the frame shows as the card opens, and again for a moment typed or another video chosen
         Input({"type": SCALE_VIDEO, "key": MATCH}, "value"),
         Input({"type": SCALE_AT, "key": MATCH}, "value"),
         State({"type": SCALE_POINTS, "key": MATCH}, "data"),
         State({"type": SCALE_FRAME, "key": MATCH}, "data"),
-        prevent_initial_call=True,
     )
-    def scale_frame(_show, click, video, at, points, uri):
+    def scale_frame(click, video, at, points, uri):
+        figure, *rest = _scale_frame(click, video, at, points, uri)
+        return figure, no_update if figure is no_update else graph_style(figure), *rest
+
+    def _scale_frame(click, video, at, points, uri):
         trigger = ctx.triggered_id
-        if trigger["type"] in (SCALE_SHOW, SCALE_VIDEO, SCALE_AT):
-            uri, problem = frame_uri(config_path, trigger["key"], video, float(at or 0.0))
+        if trigger is None or trigger["type"] in (SCALE_VIDEO, SCALE_AT):
+            uri, problem = frame_uri(config_path, ctx.outputs_list[0]["id"]["key"], video, float(at or 0.0))
             note = ui.note(problem, "warn") if problem else ui.note("Click one end of the object, then the other.")
             return scale_figure(uri, []), [], uri, note
         if not uri or not click:
@@ -1017,20 +1024,20 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output({"type": GAZE_GRAPH, "key": MATCH}, "figure"),
+        Output({"type": GAZE_GRAPH, "key": MATCH}, "style"),
         Output({"type": GAZE_T, "key": MATCH}, "data"),
         Output({"type": GAZE_AT, "key": MATCH}, "value"),
         Output({"type": GAZE_NOTE, "key": MATCH}, "children"),
-        Input({"type": GAZE_SHOW, "key": MATCH}, "n_clicks"),
         Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
         Input({"type": GAZE_VIDEO, "key": MATCH}, "value"),
         Input({"type": GAZE_AT, "key": MATCH}, "value"),
-        prevent_initial_call=True,
     )
-    def show_gaze_frame(_show, _random, video, at):
-        rid = ctx.triggered_id["key"]
-        at = random_time(config_path, rid, video) if ctx.triggered_id["type"] == GAZE_RANDOM else float(at or 0.0)
+    def show_gaze_frame(_random, video, at):
+        rid = ctx.outputs_list[0]["id"]["key"]
+        trigger = ctx.triggered_id
+        at = random_time(config_path, rid, video) if trigger and trigger["type"] == GAZE_RANDOM else float(at or 0.0)
         figure, note = gaze_frame(config_path, rid, video, at)
-        return figure, at, at, note
+        return figure, graph_style(figure), at, at, note
 
     @app.callback(
         Output("review-body", "children"),

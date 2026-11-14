@@ -180,7 +180,7 @@ def _register_navigation(app: Dash, config_path: Path) -> None:
         [Output(ui.SHOWN[page], "data") for page in pages],
         Input(ui.RECORDING, "value"), Input("url", "pathname"), [State(ui.SHOWN[page], "data") for page in pages],
     )
-    def hand_over(rid, pathname, drawn):
+    def hand_over(rid, pathname, *drawn):
         shown = page_for(pathname)
         return [rid if page == shown and before != rid else no_update for page, before in zip(pages, drawn)]
 

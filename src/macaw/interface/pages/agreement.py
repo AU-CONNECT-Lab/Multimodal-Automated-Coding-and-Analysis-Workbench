@@ -126,6 +126,7 @@ def layout(config_path: Path):
             ),
             ui.card(
                 "What to compare",
+                html.Div(id="agreement-message"),
                 html.Div(
                     [
                         # a tier's label names its coders, too long for one column
@@ -149,11 +150,10 @@ def layout(config_path: Path):
                 ),
                 dcc.Checklist(
                     [{"label": "Count each answer of the language model as a coder, to set it against itself", "value": "samples"}],
-                    [], id="agreement-samples", className="chips",
+                    [], id="agreement-samples", className="ticks",
                 ),
                 html.Div(id="agreement-command", className="spaced"),
             ),
-            html.Div(id="agreement-message"),
             dcc.Loading(ui.card("Result", html.Div(html.P("Nothing compared yet.", className="none"), id="agreement-result"))),
             ui.card(
                 "A clearer codebook",

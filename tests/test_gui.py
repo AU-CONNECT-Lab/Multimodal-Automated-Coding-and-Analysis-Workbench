@@ -333,9 +333,9 @@ def test_the_recording_picker_shows_only_on_pages_of_one_recording(project):
     assert [page for page, style in shown.items() if style is None] == ["setup", "review", "segments", "results"]
     assert '"id": "recording"' in text_of(build_layout(project)) and '"recording-box"' in text_of(build_layout(project))
     hand_over = callback(app, "..setup-recording-shown.data")
-    assert hand_over("003", "/review", [None] * 4) == [no_update, "003", no_update, no_update]
-    assert hand_over("003", "/review", [None, "003", None, None]) == [no_update] * 4
-    assert hand_over("003", "/run", [None] * 4) == [no_update] * 4
+    assert hand_over("003", "/review", *[None] * 4) == [no_update, "003", no_update, no_update]
+    assert hand_over("003", "/review", None, "003", None, None) == [no_update] * 4
+    assert hand_over("003", "/run", *[None] * 4) == [no_update] * 4
 
 
 def test_each_step_has_a_run_button_of_its_own(project):

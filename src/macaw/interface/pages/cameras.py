@@ -101,8 +101,7 @@ def layout(config_path: Path):
                 "Board lying flat",
                 html.Div(
                     [
-                        html.Div(dcc.Slider(0, 60, 0.1, value=0, id="cameras-floor-at", marks=None, updatemode="mouseup",
-                                            tooltip={"placement": "bottom", "always_visible": True}), className="floor-slider"),
+                        html.Div(dcc.Slider(0, 60, 0.1, value=0, id="cameras-floor-at", marks=None, updatemode="mouseup"), className="floor-slider"),
                         ui.field("On", dcc.Dropdown(["floor"], "floor", id="cameras-floor-on", clearable=False, className="picker")),
                         ui.field(f"Marked corner across ({config.project.units})", dcc.Input(id="cameras-floor-x", type="number", step="any")),
                         ui.field(f"Marked corner along ({config.project.units})", dcc.Input(id="cameras-floor-y", type="number", step="any")),
