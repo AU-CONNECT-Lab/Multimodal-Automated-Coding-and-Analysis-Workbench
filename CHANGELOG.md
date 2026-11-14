@@ -72,6 +72,7 @@
 - Ratings keep the text sent to the model (`macaw ratings export --prompts`), the tokens and time of each answer, and the answers of a rating that stopped part way, with `coding.llm.timeout_s` now 1800 s; a settings key added later leaves existing results as they are while unset; a part of a camera's picture such as a mirror can be marked to ignore (`macaw ignore-area`), and the quality report draws where each tracked body was.
 - The Overview shows what failed and what waits for the researcher on its tiles, draws the workflow in lanes by what each step works on and lights up what a step needs, and groups the grid's columns in the same lanes, with the finished recordings folded away, a key that counts each state and squares sized to the window; the recording is chosen once, at the top, for every page that shows one.
 - The other pages are calmer: notes are plain lines, with a coloured bar only for a warning or a failure, cards with nothing in them yet are one line, the Review player stays in view only once it has a video, and its scale and gaze cards show their frame as they open; the pages showing one recording draw again after the header picker came in.
+- A time strip under the player: segments are drawn and moved on it over the sound's loudness, it zooms for long recordings, and the Review page's frames follow it; the Agreement page shows its choices beside the result.
 
 ### Removed
 - `macaw export --rmd` and the R Markdown starter it wrote beside the export.
