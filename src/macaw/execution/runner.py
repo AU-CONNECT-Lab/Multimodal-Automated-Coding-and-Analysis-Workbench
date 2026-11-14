@@ -588,7 +588,12 @@ def run_task(
         if entry is not None:
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             (layout.segment_rows_path(recording_id) / f"{extractor_name}.parquet").unlink(missing_ok=True)
+            rows = layout.long_table_path(recording_id) / f"{extractor_name}.parquet"
+            rows.unlink(missing_ok=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
+            # an entry stored before steps without rows left a file has none
+            if not rows.is_file():
+                longtable_store.write_no_rows(layout.long_table_path(recording_id), extractor_name)
             _write_stamp(stamp, key)
             database.set_status(task_id, "cached", finished_at=now())
             return
@@ -632,6 +637,9 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         longtable_store.write_long_table(
             _stamp(result.rows, execution_id, config_hash), layout.long_table_path(recording_id)
         )
+    else:
+        # also replaces the rows of an earlier run that measured something
+        longtable_store.write_no_rows(layout.long_table_path(recording_id), extractor)
     if result.keypoints is not None and not result.keypoints.empty:
         keypoints_store.write_keypoints(result.keypoints, layout.keypoints_path(recording_id))
     elif result.keypoints is not None:

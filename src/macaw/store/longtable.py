@@ -30,6 +30,17 @@ def write_long_table(df: pd.DataFrame, path: Path, *, append: bool = False) -> P
     )
 
 
+def write_no_rows(path: Path, source: str) -> Path:
+    """A step that ran and measured nothing still leaves its file; a missing one would read as never run."""
+    return _io.write_file(empty_frame(LONG_TABLE_SCHEMA), Path(path) / f"{_io._slug(source)}.parquet", LONG_TABLE_SCHEMA, NAME)
+
+
+def has_rows(path: Path) -> bool:
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(path).metadata.num_rows > 0
+
+
 def read_long_table(
     path: Path,
     *,

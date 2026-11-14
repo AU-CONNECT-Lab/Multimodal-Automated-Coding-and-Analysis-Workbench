@@ -15,7 +15,8 @@ from macaw.execution.runner import _stage_payload
 from macaw.project.layout import make_layout
 from macaw.store import cache as cache_store
 from macaw.store.keypoints import read_keypoints, write_keypoints, write_no_keypoints
-from macaw.store.schema import KEYPOINT_SCHEMA, coerce_frame, empty_frame
+from macaw.store.longtable import build_long_rows, read_long_table
+from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
 
 EXTRACTOR = "coding.layer_a"
 RECORDING = "sub-003_ses-12mo"
@@ -369,3 +370,29 @@ class TestUncachedSteps:
         layout, entries = task(False)
         assert (layout.artifacts_dir(RECORDING, "step") / "big.bin").is_file()
         assert entries == []
+
+    def test_a_step_without_rows_is_finished_on_disk_run_or_replayed(self, task):
+        from macaw.execution.output_checker import completed_tasks
+
+        layout, entries = task(True)
+        rows = layout.long_table_path(RECORDING) / "step.parquet"
+        assert f"{RECORDING}:step" in completed_tasks(layout.output_dir, [])
+        assert read_long_table(rows).empty
+        # an entry stored before such steps left a file
+        for kept in (entries[0] / "features").glob("*.parquet"):
+            kept.unlink()
+        rows.unlink()
+        task(True)
+        assert f"{RECORDING}:step" in completed_tasks(layout.output_dir, [])
+
+    def test_a_run_without_rows_replaces_the_rows_of_the_run_before(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        earlier = build_long_rows(
+            values=pd.DataFrame({"t_start": [0.0], "t_end": [1.0], "n": [3.0]}), recording_id=RECORDING, source=EXTRACTOR, scale=Scale.RECORDING,
+        )
+        result = SimpleNamespace(rows=earlier, annotations=None, keypoints=None, body_model=None, segment_rows=None, specs=[], warnings=[], artifacts={})
+        runner._write_result(layout, RECORDING, EXTRACTOR, result, "exec-1", "cfg-1")
+        assert len(read_long_table(layout.long_table_path(RECORDING))) == 1
+        runner._write_result(layout, RECORDING, EXTRACTOR, SimpleNamespace(**{**vars(result), "rows": pd.DataFrame()}), "exec-2", "cfg-1")
+        assert read_long_table(layout.long_table_path(RECORDING)).empty
