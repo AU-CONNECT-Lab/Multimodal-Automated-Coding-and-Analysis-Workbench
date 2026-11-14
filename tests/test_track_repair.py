@@ -145,3 +145,35 @@ class TestTrackQuality:
         empty = track_quality(scene([100.0]).iloc[0:0])
         assert empty.empty
         assert "continuity" in empty.columns
+
+
+def _relabelled_one_swap_at_a_time(keypoints, swaps):
+    """The relabelling written out swap by swap, rewriting every later row each time."""
+    out = keypoints.copy()
+    raw = out["track_id"]
+    mapping = {track: track for track in raw.dropna().unique()}
+    frames = out["frame"].to_numpy()
+    for event in sorted(swaps, key=lambda item: item.frame):
+        if event.track_a not in mapping or event.track_b not in mapping:
+            continue
+        mapping[event.track_a], mapping[event.track_b] = mapping[event.track_b], mapping[event.track_a]
+        selected = frames >= event.frame
+        out.loc[selected, "track_id"] = raw[selected].map(mapping)
+    return out
+
+
+@pytest.mark.parametrize("dtype", ["float64", "Int64"])
+def test_many_swaps_relabel_as_one_swap_at_a_time_would(dtype):
+    import numpy as np
+
+    from macaw.extractors.video.pose.track_repair import SwapEvent, repair_tracks
+
+    rng = np.random.default_rng(3)
+    n = 4000
+    tracks = rng.choice([0, 1, 2, 3, np.nan], size=n)
+    keypoints = pd.DataFrame({"frame": rng.integers(0, 500, n), "track_id": pd.array(tracks, dtype=dtype), "x": rng.random(n)})
+    swaps = [
+        SwapEvent(t=0.0, frame=int(frame), track_a=int(a), track_b=int(b), evidence="test", score=1.0)
+        for frame, a, b in zip(rng.integers(0, 520, 60), rng.integers(0, 5, 60), rng.integers(0, 5, 60)) if a != b
+    ]
+    pd.testing.assert_frame_equal(repair_tracks(keypoints, swaps), _relabelled_one_swap_at_a_time(keypoints, swaps))

@@ -107,9 +107,10 @@ def repair_tracks(keypoints: pd.DataFrame, swaps: list[SwapEvent]) -> pd.DataFra
         return out
 
     raw = out["track_id"]
-    mapping = {track: track for track in raw.dropna().unique()}
-    frames = out["frame"].to_numpy()
-
+    codes, tracks = pd.factorize(raw)
+    position = {track: index for index, track in enumerate(tracks)}
+    mapping = {track: track for track in tracks}
+    starts, tables = [], []
     for event in sorted(swaps, key=lambda item: item.frame):
         if event.track_a not in mapping or event.track_b not in mapping:
             continue
@@ -117,9 +118,16 @@ def repair_tracks(keypoints: pd.DataFrame, swaps: list[SwapEvent]) -> pd.DataFra
             mapping[event.track_b],
             mapping[event.track_a],
         )
-        selected = frames >= event.frame
-        out.loc[selected, "track_id"] = raw[selected].map(mapping)
+        starts.append(event.frame)
+        tables.append([position[mapping[track]] for track in tracks])
+    if not starts:
+        return out
 
+    # each row takes the mapping of the last swap at or before its frame, all rows in one write
+    since = np.searchsorted(np.asarray(starts), out["frame"].to_numpy(), side="right") - 1
+    selected = (since >= 0) & (codes >= 0)
+    relabelled = np.asarray(tables)[since[selected], codes[selected]]
+    out.loc[selected, "track_id"] = tracks.take(relabelled).to_numpy()
     return out
 
 
