@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from urllib.parse import parse_qs
 
 from dash import html
@@ -31,7 +32,7 @@ def pill(text: str, kind: str = "info"):
 def card(title: str, *children, desc: str | None = None, actions=None, flush: bool = False, waits: bool = False, **kwargs):
     """waits: until its body holds more than a line marked empty, the card shows as that line alone."""
     head = [html.Div([html.H2(title), *([html.P(desc)] if desc else [])])]
-    if actions:
+    if actions is not None:
         head.append(html.Div(actions, className="actions"))
     body = [child for child in children if child is not None]
     return html.Section(
@@ -93,6 +94,12 @@ RECORDING, PREVIOUS, NEXT = "recording", "recording-previous", "recording-next"
 ONE_RECORDING_PAGES = ("setup", "review", "segments", "results")
 # the recording each of those pages was last drawn for
 SHOWN = {page: f"{page}-recording-shown" for page in ONE_RECORDING_PAGES}
+
+
+def time_strip(id, **config):
+    """Drawn by assets/timeline.js from config: video, camera, offset, scale, length, start, window, ticks, edit,
+    segments, loudness, timeStore, editStore; times on the video's own clock."""
+    return html.Div(id=id, className="time-strip", **{"data-strip": json.dumps(config)})
 
 
 def empty(text: str):

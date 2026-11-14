@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from macaw.media.ffmpeg import make_preview
 from macaw.media.probe import probe
 from macaw.project.layout import layout_for
@@ -88,3 +90,25 @@ def make_camera_preview(config, rid: str, camera: str) -> Path:
     make_preview(Path(made["source"]), path, sound=None if own else Path(made["sound"]), sound_at_s=made["sound_at_s"])
     _stamp(path).write_text(json.dumps(made), encoding="utf-8")
     return path
+
+
+LOUDNESS_STEP_S = 0.1
+_SAMPLE_RATE = 4000
+
+
+def loudness(path: Path) -> dict:
+    """The copy's loudness every step on a 0 to 1 scale over 50 dB below its loud part; worked out once per copy."""
+    from macaw.media.ffmpeg import decode_audio
+
+    cache = path.with_suffix(".loudness.npy")
+    if cache.is_file() and cache.stat().st_mtime >= path.stat().st_mtime:
+        values = np.load(cache)
+    else:
+        samples = decode_audio(path, sample_rate=_SAMPLE_RATE)
+        width = int(_SAMPLE_RATE * LOUDNESS_STEP_S)
+        bins = samples[: len(samples) // width * width].reshape(-1, width)
+        level = 10 * np.log10(np.mean(bins**2, axis=1) + 1e-12)
+        top = np.percentile(level, 99.5) if len(level) else 0.0
+        values = np.clip((level - top + 50) / 50, 0, 1).astype(np.float32)
+        np.save(cache, values)
+    return {"step": LOUDNESS_STEP_S, "values": [round(float(v), 2) for v in values]}

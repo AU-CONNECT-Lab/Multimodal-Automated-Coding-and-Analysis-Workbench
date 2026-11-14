@@ -19,15 +19,10 @@ LABEL = "Agreement"
 PATH = "/agreement"
 FOLDER = "agreement"
 MODES = [
-    {"label": "One coder's units", "value": "units"},
-    {"label": "A time grid", "value": "grid"},
-    {"label": "Shared intervals", "value": "exact"},
+    ("units", "One coder's units", "Each interval of one coder is a unit; suits people against the machine."),
+    ("grid", "A time grid", "Each step of the grid takes the code that covers most of it."),
+    ("exact", "Shared intervals", "Only intervals marked with the same start and end."),
 ]
-MODE_HINT = {
-    "units": "Each interval of the coder below is a unit; suits people against the machine.",
-    "grid": "Each step of the grid takes the code that covers most of it.",
-    "exact": "Only intervals the coders marked with the same start and end are compared.",
-}
 
 
 def coded_tiers(config) -> dict[str, list[str]]:
@@ -73,34 +68,40 @@ def _number(value) -> str:
     return "-" if value is None or (isinstance(value, float) and not math.isfinite(value)) else f"{value:.3f}"
 
 
+def _share(value) -> str:
+    return "-" if value is None or not math.isfinite(value) else f"{value:.0%}"
+
+
 def result_view(report: dict, folder: Path, printed: str):
-    """The figures of report.json as tables, its warnings, and where the unit table went."""
-    parts = [
-        ui.table(
-            ["Units", "Rated by two or more", "Coders", "Coded by every coder", "Krippendorff's alpha"],
-            [[report["n_units"], report["n_pairable"], report["n_annotators"], _number(report["coverage"]), _number(report["alpha"])]],
-            numeric={"Units", "Rated by two or more", "Coders", "Coded by every coder", "Krippendorff's alpha"}, fit=True,
-        ),
+    """The figures of report.json: the overall ones large, the tables side by side, its warnings."""
+    figures = [
+        (_number(report["alpha"]), "Krippendorff's alpha"), (report["n_units"], "units"), (report["n_pairable"], "rated by two or more"),
+        (report["n_annotators"], "coders"), (_share(report["coverage"]), "coded by every coder"),
     ]
+    tables = []
     if report["pairwise_kappa"]:
         columns = ["Coder", "With", "Units", "Observed agreement", "Cohen's kappa"]
         rows = [[row["annotator_a"], row["annotator_b"], row["n_units"], _number(row["observed_agreement"]), _number(row["kappa"])]
                 for row in report["pairwise_kappa"]]
-        parts += [html.H3("Each pair of coders"), ui.table(columns, rows, numeric=set(columns[2:]), fit=True)]
-    if report["per_code_pairs"]:
-        columns = ["Code", "Coder", "With", "Units", "Times the first gave it", "Times the second gave it", "Cohen's kappa"]
-        rows = [[row["code"], row["annotator_a"], row["annotator_b"], row["n_units"], row["n_a"], row["n_b"], _number(row["kappa"])]
-                for row in report["per_code_pairs"]]
-        parts += [html.H3("Each code, each pair of coders"), ui.table(columns, rows, numeric=set(columns[3:]), fit=True)]
+        tables.append(html.Div([html.H3("Each pair of coders"), ui.table(columns, rows, numeric=set(columns[2:]))]))
     if report["per_code"]:
         columns = ["Code", "Units", "Ratings", "Krippendorff's alpha"]
         rows = [[row["code"], row["n_units"], row["n_ratings"], _number(row["alpha"])] for row in report["per_code"]]
-        parts += [html.H3("Each code, every coder together"), ui.table(columns, rows, numeric=set(columns[1:]), fit=True)]
+        tables.append(html.Div([html.H3("Each code, every coder together"), ui.table(columns, rows, numeric=set(columns[1:]))]))
+    if report["per_code_pairs"]:
+        columns = ["Code", "Coder", "With", "Units", "First gave it", "Second gave it", "Cohen's kappa"]
+        rows = [[row["code"], row["annotator_a"], row["annotator_b"], row["n_units"], row["n_a"], row["n_b"], _number(row["kappa"])]
+                for row in report["per_code_pairs"]]
+        tables.append(html.Div([html.H3("Each code, each pair of coders"), ui.table(columns, rows, numeric=set(columns[3:]))], className="full"))
+    parts = [
+        html.Div([html.Div([html.Div(value, className="n"), html.Div(label, className="l")]) for value, label in figures], className="headline"),
+        html.Div(tables, className="result-grid"),
+    ]
     if report["abstention_rate"]:
         parts.append(ui.note("Left uncoded: " + ", ".join(f"{name} {rate:.0%}" for name, rate in report["abstention_rate"].items())))
     parts += [ui.note(warning, "warn") for warning in report["warnings"]]
     parts += [
-        ui.note(f"report.json and units.csv, each unit with every coder's code and its words, are in {folder}."),
+        ui.note(f"report.json and units.csv (each unit with every coder's code and its words) are in {folder}."),
         html.Details([html.Summary("What the command printed"), html.Pre(printed, className="log")], className="more"),
     ]
     return parts
@@ -118,6 +119,40 @@ def compare(config_path: Path, argv: list[str], folder: str | None):
 
 
 def layout(config_path: Path):
+    modes = [
+        {"label": html.Span([html.Span(label, className="what"), html.Span(hint, className="line")]), "value": value}
+        for value, label, hint in MODES
+    ]
+    choices = ui.card(
+        "What to compare",
+        html.Div(id="agreement-message"),
+        ui.field("Tier", dcc.Dropdown(id="agreement-tier", clearable=False, className="picker")),
+        ui.field("Segment", dcc.Dropdown(id="agreement-segment", placeholder="whole recordings", className="picker"), "Recordings without it are left out."),
+        ui.field("Recordings", dcc.Dropdown(id="agreement-recordings", multi=True, placeholder="every recording coded", className="picker")),
+        html.Div("Units", className="small-caps"),
+        dcc.RadioItems(modes, "units", id="agreement-mode", className="choices"),
+        html.Div(ui.field("On the units of", dcc.Dropdown(id="agreement-coder", clearable=False, className="picker")), id="agreement-coder-wrap", className="choice-more"),
+        html.Div(ui.field("Grid step (s)", dcc.Input(id="agreement-grid", type="number", min=0, step="any", value=1)), id="agreement-grid-wrap", className="choice-more"),
+        ui.field("Save to folder", dcc.Input(id="agreement-folder", value=FOLDER), "In the project's folder; replaced each time."),
+        dcc.Checklist(
+            [{"label": "Count each answer of the language model as a coder", "value": "samples"}],
+            [], id="agreement-samples", className="ticks",
+        ),
+        html.Div(id="agreement-command", className="spaced"),
+    )
+    refine = ui.card(
+        "A clearer codebook",
+        html.Div(
+            [
+                ui.field("Go by the codes of", dcc.Dropdown(id="agreement-refine-coder", placeholder="the one person who coded it", className="picker")),
+                ui.field("Save as", dcc.Input(id="agreement-refine-out", value=refined_name(config_path), debounce=True)),
+            ],
+            className="field-grid",
+        ),
+        html.Div(ui.button("Suggest a clearer codebook", "agreement-refine", icon_name="play"), className="buttons"),
+        dcc.Loading(html.Div(id="agreement-refine-result")),
+        desc="The model rewrites the codes coders disagree on; the codebook in use stays.",
+    )
     return html.Div(
         [
             ui.page_head(
@@ -125,49 +160,12 @@ def layout(config_path: Path):
                 "How far people and the machine agree on one tier.",
                 [ui.button("Compare", "agreement-run", icon_name="play", primary=True)],
             ),
-            ui.card(
-                "What to compare",
-                html.Div(id="agreement-message"),
-                html.Div(
-                    [
-                        # a tier's label names its coders, too long for one column
-                        html.Div(ui.field("Tier", dcc.Dropdown(id="agreement-tier", clearable=False, className="picker"),
-                                          "The codes compared, and the coders who gave them."), className="wide"),
-                        ui.field("Segment", dcc.Dropdown(id="agreement-segment", placeholder="whole recordings", className="picker"),
-                                 "Compare inside one named segment only; recordings without it are left out."),
-                        ui.field("Recordings", dcc.Dropdown(id="agreement-recordings", multi=True, placeholder="every recording coded", className="picker")),
-                    ],
-                    className="field-grid",
-                ),
-                dcc.RadioItems(MODES, "units", id="agreement-mode", className="segmented", inline=True),
-                html.P(id="agreement-mode-hint", className="hint"),
-                html.Div(
-                    [
-                        html.Div(ui.field("On the units of", dcc.Dropdown(id="agreement-coder", clearable=False, className="picker")), id="agreement-coder-wrap"),
-                        html.Div(ui.field("Grid step (s)", dcc.Input(id="agreement-grid", type="number", min=0, step="any", value=1)), id="agreement-grid-wrap"),
-                        ui.field("Save to folder", dcc.Input(id="agreement-folder", value=FOLDER), "Relative to the project's folder; a comparison saved there before is replaced."),
-                    ],
-                    className="field-grid",
-                ),
-                dcc.Checklist(
-                    [{"label": "Count each answer of the language model as a coder, to set it against itself", "value": "samples"}],
-                    [], id="agreement-samples", className="ticks",
-                ),
-                html.Div(id="agreement-command", className="spaced"),
-            ),
-            dcc.Loading(ui.card("Result", html.Div(ui.empty("Nothing compared yet."), id="agreement-result"), waits=True)),
-            ui.card(
-                "A clearer codebook",
-                html.Div(
-                    [
-                        ui.field("Go by the codes of", dcc.Dropdown(id="agreement-refine-coder", placeholder="the one person who coded it", className="picker")),
-                        ui.field("Save as", dcc.Input(id="agreement-refine-out", value=refined_name(config_path), debounce=True)),
-                    ],
-                    className="field-grid",
-                ),
-                html.Div(ui.button("Suggest a clearer codebook", "agreement-refine", icon_name="play"), className="buttons"),
-                dcc.Loading(html.Div(id="agreement-refine-result")),
-                desc="The model rewrites the codes coders disagree on; the codebook in use stays.",
+            html.Div(
+                [
+                    html.Div(choices, className="side"),
+                    html.Div([dcc.Loading(ui.card("Result", html.Div(ui.empty("Nothing compared yet."), id="agreement-result"), waits=True)), refine]),
+                ],
+                className="page-split",
             ),
         ]
     )
@@ -225,13 +223,10 @@ def register(app, config_path: Path) -> None:
         chosen = next((coder for coder in (ui.asked(search).get("units"), current) if coder in found), found[0] if found else None)
         return found, chosen
 
-    @app.callback(
-        Output("agreement-mode-hint", "children"), Output("agreement-coder-wrap", "style"), Output("agreement-grid-wrap", "style"),
-        Input("agreement-mode", "value"),
-    )
+    @app.callback(Output("agreement-coder-wrap", "style"), Output("agreement-grid-wrap", "style"), Input("agreement-mode", "value"))
     def show_mode(mode):
         hidden = {"display": "none"}
-        return MODE_HINT[mode], None if mode == "units" else hidden, None if mode == "grid" else hidden
+        return None if mode == "units" else hidden, None if mode == "grid" else hidden
 
     @app.callback(
         Output("agreement-command", "children"),

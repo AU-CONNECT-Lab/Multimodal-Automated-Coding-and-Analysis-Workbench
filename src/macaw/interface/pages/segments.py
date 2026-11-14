@@ -1,24 +1,26 @@
-"""Name parts of a recording while playing it, so every measure is worked out again within each, or set the part of
-the recording that is analysed. The segment buttons run the macaw command shown with them."""
+"""Name parts of a recording on its time strip, so every measure is worked out again within each, or set the part of
+the recording that is analysed."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
-from macaw.exceptions import MacawError
+from macaw.exceptions import ConfigError, MacawError
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
 from macaw.media.ffmpeg import make_preview
+from macaw.media.probe import probe
 from macaw.project.layout import layout_for
+from macaw.project.previews import loudness
 from macaw.project.recording import build_recording
-from macaw.project.segments import seconds_text, segments_of, segments_path, summaries
+from macaw.project.segments import Segment, remove_segment, seconds_text, segments_of, segments_path, set_segment, summaries
 
 LABEL = "Segments"
 PLAYER = "segments-player"
-ACT, REMOVE, FIELD, HERE = "segments-act", "segments-remove", "segments-field", "segments-here"
+ACT, STRIP, EDITS, SHOWN, TABLE = "segments-act", "segments-strip", "segments-edits", "segments-shown", "segments-table"
 
 
 def layout(config_path: Path):
@@ -30,6 +32,8 @@ def layout(config_path: Path):
             ),
             html.Div(id="segments-message"),
             dcc.Loading(html.Div(id="segments-body")),
+            dcc.Store(id=EDITS),
+            dcc.Store(id=SHOWN),
         ]
     )
 
@@ -37,6 +41,25 @@ def layout(config_path: Path):
 def played(config, rid: str) -> Path:
     """The file a preview is made of: the recording's own clock, so the player's time is the recording's time."""
     return build_recording(rid, config).reference_media().path
+
+
+def window_of(segment, length: float) -> list[float]:
+    end = segment.task_end_s if segment.task_end_s is not None else length
+    start = end - segment.keep_last_s if segment.keep_last_s is not None else segment.task_start_s or 0.0
+    return [max(float(start), 0.0), float(end)]
+
+
+def recording_length(config, own, rid: str) -> float:
+    try:
+        return probe(played(config, rid)).duration_s or 0.0
+    except Exception:   # a file that cannot be read still gets a strip as long as what is marked on it
+        ends = [segment.end_s for segment in segments_of(config, rid)] + [own.segment.task_end_s or 0.0, 1.0]
+        return max(ends)
+
+
+def strip_segments(config, rid: str) -> list[dict]:
+    done = set(summaries(config, rid)["segment"].astype(str))
+    return [{"name": s.name, "a": s.start_s, "b": s.end_s, "done": s.name in done} for s in segments_of(config, rid)]
 
 
 def body(config_path: Path, rid: str | None):
@@ -49,39 +72,25 @@ def body(config_path: Path, rid: str | None):
         source = played(config, rid)
     except MacawError as error:
         return ui.note(str(error), "bad")
+    length = recording_length(config, own, rid)
+    loud = None
     if preview.is_file():
-        player = html.Video(src=file_url(preview), id=PLAYER, controls=True, preload="metadata", className="player")
+        player = html.Video(src=file_url(preview), id=PLAYER, preload="metadata", className="player")
+        try:
+            loud = loudness(preview)
+        except MacawError:   # a copy without sound still plays
+            pass
     else:
         player = html.Div(
             [ui.note(f"{source.name} is made into a small copy with its sound first, once; a long recording takes a minute or two."),
              ui.button("Make a copy to play here", {"type": ACT, "action": "prepare"}, primary=True, icon_name="play")],
         )
-    marking = html.Div(
-        [
-            html.Div(
-                [
-                    html.Div(ui.field("Name", dcc.Input(id={"type": FIELD, "name": "name"}, placeholder="free_play")), className="wide"),
-                    ui.field("Starts at (s)", dcc.Input(id={"type": FIELD, "name": "start"}, type="number", min=0, step="any")),
-                    ui.button("Start here", {"type": HERE, "name": "start"}),
-                    ui.field("Ends at (s)", dcc.Input(id={"type": FIELD, "name": "end"}, type="number", min=0, step="any")),
-                    ui.button("End here", {"type": HERE, "name": "end"}),
-                ],
-                className="pairs",
-            ),
-            ui.note("Saving a segment runs nothing again; changing the analysed part runs the recording again."),
-        ]
+    strip = ui.time_strip(
+        STRIP, video=PLAYER if preview.is_file() else None, length=length, window=window_of(own.segment, length), edit=True,
+        segments=strip_segments(config, rid), loudness=loud, editStore=EDITS,
     )
-    return [
-        ui.card("Play", player, desc=f"{source.name}, on the recording's clock."),
-        html.Div([
-            ui.card(
-                "Mark a part", marking,
-                actions=[ui.button("Save as a segment", {"type": ACT, "action": "save"}, primary=True),
-                         ui.button("Analyse only this part", {"type": ACT, "action": "window"})],
-            ),
-            ui.card("This recording's segments", _listed(config, own, rid), desc=f"Kept in {segments_path(config).name}, which can be edited by hand."),
-        ], className="card-pair"),
-    ]
+    listed = html.Details([html.Summary("Every segment as a table"), html.Div(_listed(config, own, rid), id=TABLE)], className="more")
+    return ui.card("Segments", player, strip, listed, desc=f"{source.name}, on the recording's clock; kept in {segments_path(config).name}.")
 
 
 def _listed(config, own, rid: str):
@@ -92,11 +101,10 @@ def _listed(config, own, rid: str):
     done = set(summaries(config, rid)["segment"].astype(str))
     rows = [
         [segment.name, f"{segment.start_s:.2f}", f"{segment.end_s:.2f}", f"{segment.end_s - segment.start_s:.1f}",
-         ui.pill("summarised", "ok") if segment.name in done else ui.pill("after the next run", "info"),
-         ui.button("Remove", {"type": REMOVE, "name": segment.name}, small=True)]
+         "summarised" if segment.name in done else "after the next run"]
         for segment in found
     ]
-    return html.Div([ui.note(analysed), ui.table(["Segment", "From (s)", "To (s)", "Length (s)", "", ""], rows, numeric={"From (s)", "To (s)", "Length (s)"})])
+    return html.Div([ui.note(analysed), ui.table(["Segment", "From (s)", "To (s)", "Length (s)", ""], rows, numeric={"From (s)", "To (s)", "Length (s)"})])
 
 
 def analysed_text(window) -> str:
@@ -119,59 +127,64 @@ def set_window(config_path: Path, rid: str, start: float, end: float) -> Path:
     )
 
 
-def _time_from_player() -> str:
-    # the player's own clock, to the hundredth of a second
-    return (
-        "function (clicks) { const player = document.getElementById('" + PLAYER + "');"
-        " if (!clicks || !player) { return window.dash_clientside.no_update; }"
-        " return Math.round(player.currentTime * 100) / 100; }"
-    )
+def apply_edit(config_path: Path, rid: str, edit: dict) -> str:
+    """Saves one change made on the strip; what the strip says after it."""
+    config = resolve_config(config_path)
+    if edit["op"] == "window":
+        set_window(config_path, rid, edit["start"], edit["end"])
+        return f"Analysed part {seconds_text(edit['start'])} to {seconds_text(edit['end'])} s; the next run starts this recording again."
+    if edit["op"] == "remove":
+        remove_segment(config, rid, edit["name"])
+        return f"{edit['name']} removed."
+    name, old = edit["name"].strip(), edit.get("old")
+    if name != old and any(segment.name == name for segment in segments_of(config, rid)):
+        raise ConfigError(f"{rid} has a segment named {name} already")
+    set_segment(config, rid, Segment(name, float(edit["start"]), float(edit["end"])))
+    if old and old != name:
+        remove_segment(config, rid, old)
+    return "saved"
 
 
 def register(app, config_path: Path) -> None:
     app.clientside_callback(
-        _time_from_player(), Output({"type": FIELD, "name": MATCH}, "value"), Input({"type": HERE, "name": MATCH}, "n_clicks"),
-        prevent_initial_call=True,
+        "function (data) { if (data && window.macawStrip) { window.macawStrip.shown('" + STRIP + "', data); }"
+        " return window.dash_clientside.no_update; }",
+        Output(STRIP, "title"), Input(SHOWN, "data"), prevent_initial_call=True,
     )
 
     @app.callback(
         Output("segments-body", "children"),
         Output("segments-message", "children"),
         Input(ui.SHOWN["segments"], "data"),
-        Input({"type": REMOVE, "name": ALL}, "n_clicks"),
         Input({"type": ACT, "action": ALL}, "n_clicks"),
-        State({"type": FIELD, "name": ALL}, "value"),
-        State({"type": FIELD, "name": ALL}, "id"),
     )
-    def update(rid, _removed, _acted, values, ids):
+    def update(rid, _acted):
         trigger = ctx.triggered_id
         # a button appearing fires this too, with no click behind it
         if isinstance(trigger, dict) and not ctx.triggered[0]["value"]:
             return no_update, no_update
-        fields = {item["name"]: value for item, value in zip(ids, values)}
-        name, start, end = fields.get("name"), fields.get("start"), fields.get("end")
-        action = trigger.get("action") if isinstance(trigger, dict) and trigger.get("type") == ACT else None
-        message = None
-        if isinstance(trigger, dict) and trigger.get("type") == REMOVE:
-            argv = segment_command(config_path, rid, trigger["name"])
-            message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-        elif action in ("save", "window"):
-            if start is None or end is None or end <= start or (action == "save" and not (name or "").strip()):
-                needed = "a name, a start and an end after it" if action == "save" else "a start and an end after it"
-                return no_update, ui.note(f"Give {needed} first.", "warn")
-            if action == "save":
-                argv = segment_command(config_path, rid, name.strip(), float(start), float(end))
-                message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-            else:
-                try:
-                    path = set_window(config_path, rid, float(start), float(end))
-                except MacawError as error:
-                    return no_update, ui.note(str(error), "bad")
-                message = ui.note(f"The analysed part is {seconds_text(start)} to {seconds_text(end)} s, in {path}. The next run works on this recording again from the start.", "ok")
-        elif action == "prepare":
+        if isinstance(trigger, dict) and trigger.get("action") == "prepare":
             config = resolve_config(config_path)
             try:
                 make_preview(played(config, rid), layout_for(config).preview_path(rid))
             except MacawError as error:
                 return no_update, ui.note(str(error), "bad")
-        return body(config_path, rid), message
+        return body(config_path, rid), None
+
+    @app.callback(
+        Output(TABLE, "children"), Output(SHOWN, "data"), Output("segments-message", "children", allow_duplicate=True),
+        Input(EDITS, "data"), State(ui.SHOWN["segments"], "data"),
+        prevent_initial_call=True,
+    )
+    def edited(edit, rid):
+        if not edit or not rid:
+            return no_update, no_update, no_update
+        try:
+            said, message = apply_edit(config_path, rid, edit), None
+        except MacawError as error:
+            said, message = "not saved", ui.note(str(error), "bad")
+        config = resolve_config(config_path)
+        own = resolve_config(config_path, recording_id=rid)
+        length = recording_length(config, own, rid)
+        shown = {"segments": strip_segments(config, rid), "window": window_of(own.segment, length), "said": said, "op": edit["op"]}
+        return _listed(config, own, rid), shown, message

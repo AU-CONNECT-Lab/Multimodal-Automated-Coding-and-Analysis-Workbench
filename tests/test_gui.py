@@ -83,7 +83,7 @@ def test_the_review_page_offers_to_keep_a_camera_in_doubt(project):
     assert "Who is on camera" in shown and "accept-owner" in shown and "Which file is whose" not in shown
     argv = review.action_command(project, "003", "accept-owner", "room", "ann", {})
     assert argv[1] == "accept-owner" and argv[argv.index("--camera") + 1] == "room"
-    assert "Name the people on the camera playing" in shown and "name-people" in shown and "/setup?" not in shown
+    assert "names-person" in shown and "name-people" in shown and "/setup?" not in shown
     voices = review.action_command(project, "003", "accept-voices", "", "ann", {"S1": "child", "S0": "none"})
     assert voices[voices.index("--rename") + 1] == "S0=none,S1=child"
 
@@ -106,7 +106,9 @@ def test_the_review_page_labels_where_people_look_and_reports_agreement(project)
     from macaw.project.gaze_labels import GazeLabel, write_labels
 
     shown = text_of(review.body(project, "003"))
-    assert "Where people look" in shown and "at random" in shown and "label-gaze" in shown
+    assert "Where people look" in shown
+    assert "gaze-random" in shown
+    assert "label-gaze" in shown
     argv = review.action_command(project, "003", "label-gaze", "child", "ann", {}, gaze={"t": 12.5, "looks_at": "parent"})
     assert argv[1] == "label-gaze" and argv[argv.index("--at") + 1] == "12.5" and argv[argv.index("--person") + 1] == "child"
     assert argv[argv.index("--looks-at") + 1] == "parent" and argv[argv.index("--by") + 1] == "ann"
@@ -387,9 +389,9 @@ def review_update(app):
 
 
 # the states after the recording, the clicks, the uploads and the split: name, voices, acts, gaze, scale, camera, names, note, mixed, lines, picker
-def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None, corners=None):
+def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None, corners=None, times=()):
     return [by, [], [], [], [], [], [], [], *([[]] * 6), list(cameras), [marks] if marks else [], [frame] if frame else [],
-            [corners] if corners else [], [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], []]
+            [corners] if corners else [], [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], list(times), []]
 
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
@@ -1198,33 +1200,31 @@ def test_marking_the_analysed_part_replaces_a_length_kept_from_the_end(project):
     assert (own.segment.task_start_s, own.segment.keep_last_s) == (1.5, None)
 
 
-def test_the_naming_frame_follows_the_timeline_and_the_typed_moment(project, monkeypatch):
+def test_the_naming_frame_follows_where_the_player_stands(project, monkeypatch):
     from macaw.interface.pages import naming
     from macaw.media.ffmpeg import run_ffmpeg
 
     video = project.parent / "raw" / "003" / "room" / "a.mp4"
     run_ffmpeg(["-f", "lavfi", "-i", "color=gray:s=320x240:r=10:d=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
     shown = text_of(naming.editor(resolve_config(project, recording_id="003"), "003", "room", ["parent", "child"]))
-    assert "names-timeline" in shown and "Show frame" not in shown and '"value": 3.0' in shown
+    assert "on-frame" in shown and "names-timeline" not in shown and "names-at" not in shown
     frame = callback(create_app(project), "..names-graph.figure")
     options = [{"value": "parent"}, {"value": "child"}, {"value": naming.AREA}]
-    states = ("003", "room", "parent", options, {}, None, None, [])
-    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id={"type": naming.TIMELINE, "key": "one"}))
-    figure, marks, found, note, at, moved, corners = frame(3.0, [4.5], None, *states)
-    assert at == 4.5 and moved == [4.5] and found["at"] == 4.5 and "Frame at 4.5 s of room" in text_of(note) and corners == []
-    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.AT))
-    *_, at, moved, _ = frame(1.25, [4.5], None, *states)
-    assert at == 1.25 and moved == [1.25]
-    *_, note, _, _, _ = frame(1.25, [4.5], None, *states[:-2], [2.0, 5.0], [])
+    states = ("003", "parent", options, {}, None, None, [])
+    monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id={"type": "review-time", "key": "003"}))
+    figure, marks, found, note, corners = frame([{"camera": "room", "own": 4.5, "t": 4.5}], None, *states)
+    assert found["at"] == 4.5 and found["camera"] == "room" and "Click on each person" in text_of(note) and corners == []
+    assert frame([], None, *states) == (no_update,) * 5
+    *_, note, _ = frame([{"camera": "room", "own": 1.25, "t": 1.25}], None, *states[:-2], [2.0, 5.0], [])
     assert "1.25 s is outside the analysed part of this file (2.0 to 5.0 s)" in text_of(note)
     # with an area chosen under Click on, two clicks are its corners and name nobody
     monkeypatch.setattr(naming, "ctx", SimpleNamespace(triggered_id=naming.GRAPH))
-    area = ("003", "room", naming.AREA, options, {}, found, None)
-    figure, marks, _, note, _, _, corners = frame(4.5, [4.5], {"points": [{"x": 240, "y": 0}]}, *area, [])
+    area = ("003", naming.AREA, options, {}, found, None)
+    figure, marks, _, note, corners = frame([], {"points": [{"x": 240, "y": 0}]}, *area, [])
     assert corners == [[0.75, 0.0]] and marks is no_update and "opposite corner" in text_of(note)
-    figure, _, _, note, _, _, corners = frame(4.5, [4.5], {"points": [{"x": 320, "y": 120}]}, *area, corners)
+    figure, _, _, note, corners = frame([], {"points": [{"x": 320, "y": 120}]}, *area, corners)
     assert corners == [[0.75, 0.0], [1.0, 0.5]] and "Ignore this area" in text_of(note) and len(figure.layout.shapes) == 1
-    figure, marks, *_, corners = frame(4.5, [4.5], {"points": [{"x": 80, "y": 120}]}, "003", "room", "parent", options, {}, found, None, corners)
+    figure, marks, *_, corners = frame([], {"points": [{"x": 80, "y": 120}]}, "003", "parent", options, {}, found, None, corners)
     assert marks == {"parent": [0.25, 0.5]} and corners is no_update and len(figure.layout.shapes) == 1
 
 
@@ -1264,3 +1264,105 @@ def test_every_step_has_a_short_name_for_under_the_grid():
 def test_the_workflow_leaves_out_a_need_reached_through_another():
     needs = {"a": [], "b": ["a"], "c": ["a", "b"]}
     assert overview.direct_needs(["a", "b", "c"], needs) == {"a": [], "b": ["a"], "c": ["b"]}
+
+
+def strip_config(component) -> dict:
+    found = []
+
+    def walk(item):
+        if isinstance(item, dict):
+            props = item.get("props", {})
+            if "time-strip" in str(props.get("className", "")):
+                found.append(json.loads(props["data-strip"]))
+            for value in item.values():
+                walk(value)
+        elif isinstance(item, list):
+            for value in item:
+                walk(value)
+
+    walk(json.loads(text_of(component)))
+    return found[0] if found else {}
+
+
+def test_segments_are_made_moved_renamed_and_removed_on_the_strip(project):
+    from macaw.interface.pages import segments
+
+    shown = strip_config(segments.body(project, "003"))
+    assert shown["edit"] and shown["segments"] == [] and shown["editStore"] == segments.EDITS
+    assert segments.apply_edit(project, "003", {"op": "set", "name": "free_play", "old": None, "start": 1.5, "end": 4.0}) == "saved"
+    assert segments.apply_edit(project, "003", {"op": "set", "name": "warm_up", "old": None, "start": 0.5, "end": 1.5}) == "saved"
+    with pytest.raises(MacawError, match="named warm_up already"):
+        segments.apply_edit(project, "003", {"op": "set", "name": "warm_up", "old": "free_play", "start": 1.5, "end": 4.0})
+    segments.apply_edit(project, "003", {"op": "set", "name": "play", "old": "free_play", "start": 2.0, "end": 4.5})
+    config = resolve_config(project)
+    assert [(s["name"], s["a"], s["b"], s["done"]) for s in segments.strip_segments(config, "003")] == [("warm_up", 0.5, 1.5, False), ("play", 2.0, 4.5, False)]
+    assert "removed" in segments.apply_edit(project, "003", {"op": "remove", "name": "warm_up"})
+    said = segments.apply_edit(project, "003", {"op": "window", "start": 1.0, "end": 5.0})
+    assert "runs this recording again" in said or "starts this recording again" in said
+    own = resolve_config(project, recording_id="003")
+    assert segments.window_of(own.segment, 9.0) == [1.0, 5.0] and strip_config(segments.body(project, "003"))["window"] == [1.0, 5.0]
+
+
+def test_the_edits_callback_says_why_a_change_was_not_saved(project):
+    from macaw.interface.pages import segments
+
+    edited = callback(create_app(project), "..segments-table.children")
+    table, shown, message = edited({"op": "set", "name": "x", "old": None, "start": 3.0, "end": 2.0, "n": 1}, "003")
+    assert shown["said"] == "not saved" and shown["segments"] == [] and "has to end after it starts" in text_of(message)
+    table, shown, message = edited({"op": "set", "name": "x", "old": None, "start": 1.0, "end": 2.0, "n": 2}, "003")
+    assert message is None and shown["segments"][0]["name"] == "x" and "x" in text_of(table)
+
+
+def test_the_loudness_of_a_copy_is_worked_out_once(tmp_path):
+    from macaw.exceptions import ExternalToolError
+    from macaw.media.ffmpeg import run_ffmpeg
+    from macaw.project.previews import LOUDNESS_STEP_S, loudness
+
+    copy = tmp_path / "copy.mp4"
+    try:
+        run_ffmpeg(["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                    "-filter_complex", "[1]atrim=duration=1[q];[0][q]concat=n=2:v=0:a=1", str(copy)])
+    except ExternalToolError:
+        pytest.skip("needs ffmpeg")
+    found = loudness(copy)
+    values = found["values"]
+    assert found["step"] == LOUDNESS_STEP_S and 19 <= len(values) <= 21
+    assert min(values[:9]) > 0.9 and max(values[11:]) == 0.0
+    assert copy.with_suffix(".loudness.npy").is_file() and loudness(copy) == found
+
+
+def test_the_review_player_strip_holds_the_page_time(project):
+    from macaw.media.ffmpeg import run_ffmpeg
+
+    video = project.parent / "raw" / "003" / "room" / "a.mp4"
+    run_ffmpeg(["-f", "lavfi", "-i", "color=gray:s=320x240:r=10:d=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    shown = strip_config(review.body(project, "003"))
+    assert shown["camera"] == "room" and shown["timeStore"] == {"type": review.TIME, "key": "003"}
+    assert shown["ticks"] == "#review-body .seek" and shown["video"] is None
+    page = text_of(review.body(project, "003"))
+    assert "the camera playing" in page and "scale-at-wrap" in page and "gaze-random" in page and '"type": "gaze-video"' not in page
+
+
+def test_a_scale_on_the_camera_playing_is_measured_where_the_player_stands(project, monkeypatch):
+    app = create_app(project)
+    update = review_update(app)
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id={"type": review.ACT, "action": "set-scale", "target": ""}, triggered=[{"value": 1}]))
+    commands = []
+    monkeypatch.setattr(review.cli_bridge, "run_now", lambda argv, **_: (commands.append(argv), (0, "ok"))[1])
+    states = review_states("ann", ["room"], times=[{"camera": "room", "own": 7.5, "t": 8.25}])
+    states[8:14] = [[review.PLAYING], [0], [[[1, 2], [11, 2]]], [30], ["ruler"], ["everyone"]]
+    update("003", [1], [], [], [], *states)
+    argv = commands[0]
+    assert argv[argv.index("--camera") + 1] == "room" and argv[argv.index("--at") + 1] == "8.25"
+
+
+def test_the_agreement_result_puts_the_overall_figures_first():
+    report = {
+        "n_units": 412, "n_pairable": 398, "n_annotators": 3, "coverage": 0.941, "alpha": 0.713, "abstention_rate": {},
+        "pairwise_kappa": [{"annotator_a": "ann", "annotator_b": "bo", "n_units": 371, "observed_agreement": 0.836, "kappa": 0.768}],
+        "per_code_pairs": [], "per_code": [{"code": "question", "n_units": 398, "n_ratings": 1140, "alpha": 0.801}], "warnings": [],
+    }
+    shown = text_of(agreement.result_view(report, Path("agreement"), "printed"))
+    assert shown.index("headline") < shown.index("result-grid") and "94%" in shown and "0.713" in shown
+    page = text_of(agreement.layout(Path("project.yaml")))
+    assert "page-split" in page and "choices" in page and "segmented" not in page

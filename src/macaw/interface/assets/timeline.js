@@ -1,0 +1,391 @@
+// The time strip under a player: play, the time, speed, zoom, and lanes for the analysed part, segments and listed moments.
+(function () {
+  const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const strips = new Map();
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const send = (id, data) => window.dash_clientside && window.dash_clientside.set_props && id && window.dash_clientside.set_props(id, { data });
+
+  function clock(t, long, tenths) {
+    const sign = t < 0 ? '-' : '';
+    t = Math.abs(t);
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    const sec = tenths ? s.toFixed(tenths).padStart(3 + tenths, '0') : String(Math.floor(s)).padStart(2, '0');
+    return sign + (long || h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`);
+  }
+
+  function parse(text) {
+    const parts = String(text).trim().split(':').map(Number);
+    if (!parts.length || parts.some((v) => !Number.isFinite(v))) return null;
+    return parts.reduce((total, v) => total * 60 + v, 0);
+  }
+
+  function make(root) {
+    const cfg = JSON.parse(root.dataset.strip);
+    const video = cfg.video ? document.getElementById(cfg.video) : null;
+    const length = Math.max(cfg.length || (video && video.duration) || 1, 0.1);
+    const long = (cfg.offset || 0) + length * (cfg.scale || 1) >= 3600;
+    const S = {
+      own: cfg.start || 0, view: [0, length], segs: (cfg.segments || []).map((s) => ({ ...s })), sel: null,
+      win: cfg.window ? [...cfg.window] : null, oldWin: null, said: '', drag: null, ticks: [], n: 0, raf: 0, tell: 0,
+    };
+    const rec = (own) => own * (cfg.scale || 1) + (cfg.offset || 0);
+    const ownOf = (t) => (t - (cfg.offset || 0)) / (cfg.scale || 1);
+    const lanes = [
+      `<div class="strip-lane"><span></span><div class="strip-ruler"><b class="strip-hover"></b></div></div>`,
+      `<div class="strip-lane"><span class="strip-name">Analysed</span><div class="strip-track thin" data-lane="win"></div></div>`,
+      cfg.edit ? `<div class="strip-lane"><span class="strip-name">Segments</span><div class="strip-track" data-lane="segs"><svg class="strip-wave" preserveAspectRatio="none"><path/></svg></div></div>` : '',
+      cfg.ticks ? `<div class="strip-lane strip-ticks-lane" hidden><span class="strip-name">On this page</span><div class="strip-track thin" data-lane="ticks"></div></div>` : '',
+    ];
+    root.innerHTML = `
+      <div class="strip-bar">
+        <button type="button" class="strip-play" title="Play or pause (space)"></button>
+        <input class="strip-time" title="Type a time, as 1:43 or 103">
+        <span class="strip-spacer"></span>
+        ${video ? `<select class="strip-speed" title="Speed">${[0.5, 1, 1.5, 2].map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r}×</option>`).join('')}</select>
+        <button type="button" class="strip-mute" title="Sound on or off"></button>` : ''}
+        <button type="button" class="strip-zoom" data-z="out" title="Zoom out (ctrl and scroll)">−</button>
+        <button type="button" class="strip-zoom" data-z="in" title="Zoom in (ctrl and scroll)">+</button>
+      </div>
+      <div class="strip-lanes">${lanes.join('')}<div class="strip-head"></div></div>
+      ${cfg.edit ? '<div class="strip-chosen"></div>' : ''}`;
+    const $ = (sel) => root.querySelector(sel);
+    const ruler = $('.strip-ruler'), hover = $('.strip-hover'), head = $('.strip-head'), timeBox = $('.strip-time');
+    const winTrack = $('[data-lane=win]'), segTrack = $('[data-lane=segs]'), tickTrack = $('[data-lane=ticks]');
+    const chosen = $('.strip-chosen'), lanesBox = $('.strip-lanes');
+
+    const span = () => S.view[1] - S.view[0];
+    const pct = (own) => `${((own - S.view[0]) / span()) * 100}%`;
+    const width = (a, b) => `${((b - a) / span()) * 100}%`;
+    const ownAt = (x) => { const r = ruler.getBoundingClientRect(); return clamp(S.view[0] + ((x - r.left) / r.width) * span(), 0, length); };
+    const now = () => (video && video.readyState ? video.currentTime : S.own);
+    const playing = () => video && !video.paused;
+    const snap = (t, skip) => {
+      const near = (6 / ruler.clientWidth) * span();
+      for (const s of S.segs) if (s !== skip) for (const e of [s.a, s.b]) if (Math.abs(e - t) < near) return e;
+      return Math.round(t * 100) / 100;
+    };
+
+    function tell() {
+      clearTimeout(S.tell);
+      S.tell = setTimeout(() => {
+        const own = Math.round(now() * 100) / 100;
+        send(cfg.timeStore, { camera: cfg.camera, own, t: Math.round(rec(own) * 100) / 100 });
+      }, 120);
+    }
+
+    function seek(own, play) {
+      own = clamp(own, 0, length);
+      S.own = own;
+      if (video && video.readyState) video.currentTime = own; else tell();
+      if (play && video) video.play();
+      follow(true);
+      draw();
+    }
+
+    function follow(centre) {
+      const t = now(), w = span();
+      if (w >= length) return;
+      if (t < S.view[0] || t > S.view[1]) {
+        const start = centre ? t - w / 2 : t - w * 0.1;
+        S.view = [clamp(start, 0, length - w), 0];
+        S.view[1] = S.view[0] + w;
+      }
+    }
+
+    function zoom(factor, around) {
+      const w = clamp(span() * factor, Math.min(2, length), length);
+      const at = around === undefined ? now() : around;
+      const share = (at - S.view[0]) / span();
+      const start = clamp(at - share * w, 0, length - w);
+      S.view = [start, start + w];
+      draw();
+    }
+
+    function drawRuler() {
+      const w = span(), px = ruler.clientWidth || 600;
+      const step = STEPS.find((s) => (s / w) * px >= 64) || 3600;
+      const tenths = step < 1 ? 1 : 0;
+      let html = '';
+      for (let t = Math.ceil(rec(S.view[0]) / step) * step; t <= rec(S.view[1]) + 1e-9; t += step) {
+        html += `<span style="left:${pct(ownOf(t))}">${clock(t, long, tenths)}</span>`;
+      }
+      ruler.querySelectorAll('span').forEach((el) => el.remove());
+      ruler.insertAdjacentHTML('afterbegin', html);
+    }
+
+    function drawWave() {
+      const svg = segTrack && segTrack.querySelector('svg');
+      if (!svg || !cfg.loudness) return;
+      const { step, values } = cfg.loudness, px = Math.max(segTrack.clientWidth, 1);
+      const first = Math.max(0, Math.floor(S.view[0] / step)), last = Math.min(values.length - 1, Math.ceil(S.view[1] / step));
+      const every = Math.max(1, Math.floor((last - first) / px));
+      const top = [], bottom = [];
+      for (let i = first; i <= last; i += every) {
+        let v = 0;
+        for (let j = i; j < Math.min(i + every, values.length); j++) v = Math.max(v, values[j]);
+        const x = (((i * step) - S.view[0]) / span()) * 100;
+        top.push(`${x.toFixed(3)} ${(50 - 46 * v).toFixed(2)}`);
+        bottom.push(`${x.toFixed(3)} ${(50 + 46 * v).toFixed(2)}`);
+      }
+      svg.setAttribute('viewBox', '0 0 100 100');
+      svg.querySelector('path').setAttribute('d', top.length ? `M${top.join(' L')} L${bottom.reverse().join(' L')} Z` : '');
+    }
+
+    function drawWindow() {
+      if (!S.win) { winTrack.innerHTML = ''; return; }
+      const [a, b] = S.win;
+      winTrack.innerHTML = `<i class="strip-out" style="left:0;width:${pct(a)}"></i><i class="strip-out" style="left:${pct(b)};right:0"></i>`
+        + `<i class="strip-window" style="left:${pct(a)};width:${width(a, b)}"></i>`
+        + (cfg.edit ? `<i class="strip-handle" data-h="0" style="left:${pct(a)}"></i><i class="strip-handle" data-h="1" style="left:${pct(b)}"></i>` : '');
+    }
+
+    function drawSegments() {
+      if (!segTrack) return;
+      segTrack.querySelectorAll('.strip-block, .strip-out').forEach((el) => el.remove());
+      if (S.win) segTrack.insertAdjacentHTML('beforeend', `<i class="strip-out" style="left:0;width:${pct(S.win[0])}"></i><i class="strip-out" style="left:${pct(S.win[1])};right:0"></i>`);
+      S.segs.forEach((s, i) => segTrack.insertAdjacentHTML('beforeend',
+        `<div class="strip-block${s === S.sel ? ' chosen' : ''}${s.done ? '' : ' pending'}" data-i="${i}" style="left:${pct(s.a)};width:${width(s.a, s.b)}" title="${esc(s.name)}: ${s.a.toFixed(2)} to ${s.b.toFixed(2)} s">`
+        + `<i class="grip l"></i>${esc(s.name)}<small>${(s.b - s.a).toFixed(1)} s</small><i class="grip r"></i></div>`));
+    }
+
+    function drawTicks() {
+      if (!tickTrack) return;
+      tickTrack.closest('.strip-lane').hidden = !S.ticks.length;
+      tickTrack.innerHTML = S.ticks.filter(([t]) => t >= S.view[0] && t <= S.view[1])
+        .map(([t, what]) => `<i class="strip-tick" style="left:${pct(t)}" data-t="${t}" title="${esc(clock(rec(t), long, 1))}: ${esc(what)}"></i>`).join('');
+    }
+
+    function drawChosen() {
+      if (!chosen || (document.activeElement && chosen.contains(document.activeElement))) return;
+      const s = S.sel;
+      if (!s) {
+        chosen.innerHTML = `<span class="strip-said">${esc(S.said || 'Drag on an empty stretch to make a segment.')}</span>`
+          + (S.oldWin ? ' <button type="button" class="link" data-act="undo-window">Undo</button>' : '');
+        return;
+      }
+      const box = (label, key, value, type) => `<label class="field"><span class="field-label">${label}</span><input data-k="${key}" value="${esc(value)}"${type ? ` type="${type}" step="0.01" min="0"` : ''}></label>`;
+      chosen.innerHTML = `${box('Name', 'name', s.name)}${box('From (s)', 'a', s.a.toFixed(2), 'number')}<button type="button" class="button small" data-act="a">Start here</button>`
+        + `${box('To (s)', 'b', s.b.toFixed(2), 'number')}<button type="button" class="button small" data-act="b">End here</button>`
+        + `<span class="strip-said">${esc(S.said || (s.done ? 'summarised' : 'summarised after the next run'))}</span>`
+        + `<button type="button" class="button small" data-act="play">Play it</button><button type="button" class="button small" data-act="remove">Remove</button>`;
+    }
+
+    function draw() {
+      if (!root.isConnected) return;
+      const t = now();
+      if (document.activeElement !== timeBox) timeBox.value = clock(rec(t), long, 2);
+      root.querySelector('.strip-play').classList.toggle('on', !!playing());
+      const mute = root.querySelector('.strip-mute');
+      if (mute) mute.classList.toggle('off', video.muted);
+      const box = lanesBox.getBoundingClientRect(), r = ruler.getBoundingClientRect();
+      const x = ((t - S.view[0]) / span()) * r.width;
+      head.style.left = `${r.left - box.left + x}px`;
+      head.hidden = x < 0 || x > r.width;
+      drawRuler(); drawWindow(); drawSegments(); drawTicks(); drawWave(); drawChosen();
+    }
+
+    function loop() {
+      cancelAnimationFrame(S.raf);
+      if (!playing() || !root.isConnected) return;
+      follow(false);
+      draw();
+      S.raf = requestAnimationFrame(loop);
+    }
+
+    function save(op) {
+      S.n += 1;
+      send(cfg.editStore, { ...op, n: S.n });
+    }
+
+    function readTicks() {
+      if (!cfg.ticks) return;
+      const found = [];
+      document.querySelectorAll(cfg.ticks).forEach((button) => {
+        if (button.closest('details:not([open])')) return;
+        let id;
+        try { id = JSON.parse(button.id); } catch (e) { return; }
+        const card = button.closest('.card'), row = button.closest('tr, figure, .clip');
+        const title = card ? card.querySelector('.card-head h2') : null;
+        const what = [title ? title.textContent : '', row ? row.textContent.replace(/\s+/g, ' ').trim().slice(0, 70) : ''].filter(Boolean).join(': ');
+        found.push([ownOf(parseFloat(id.t)), what]);
+      });
+      S.ticks = found;
+      drawTicks();
+    }
+
+    root.querySelector('.strip-play').addEventListener('click', () => { if (!video) return; if (video.paused) video.play(); else video.pause(); });
+    timeBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') timeBox.blur(); });
+    timeBox.addEventListener('change', () => { const t = parse(timeBox.value); timeBox.blur(); if (t !== null) seek(ownOf(t)); else draw(); });
+    root.querySelectorAll('.strip-zoom').forEach((b) => b.addEventListener('click', () => zoom(b.dataset.z === 'in' ? 0.5 : 2)));
+    if (video) {
+      video.controls = false;
+      root.querySelector('.strip-speed').addEventListener('change', (e) => { video.playbackRate = parseFloat(e.target.value); });
+      root.querySelector('.strip-mute').addEventListener('click', () => { video.muted = !video.muted; draw(); });
+      video.addEventListener('click', () => { if (video.paused) video.play(); else video.pause(); });
+      video.addEventListener('dblclick', () => { if (video.requestFullscreen) video.requestFullscreen(); });
+      video.addEventListener('play', loop);
+      video.addEventListener('pause', () => { draw(); tell(); });
+      video.addEventListener('seeked', () => { draw(); if (video.paused) tell(); });
+      video.addEventListener('loadedmetadata', () => {
+        if (cfg.start && !video.currentTime) video.currentTime = Math.min(cfg.start, video.duration || cfg.start);
+        else tell();
+        draw();
+      });
+      if (video.readyState && cfg.start && !video.currentTime) video.currentTime = Math.min(cfg.start, video.duration || cfg.start);
+      else if (video.readyState) tell();
+    } else {
+      tell();
+    }
+
+    ruler.parentElement.parentElement.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        zoom(e.deltaY > 0 ? 1.25 : 0.8, ownAt(e.clientX));
+      } else if ((e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) && span() < length) {
+        e.preventDefault();
+        const d = ((e.deltaX || e.deltaY) / ruler.clientWidth) * span();
+        const start = clamp(S.view[0] + d, 0, length - span());
+        S.view = [start, start + span()];
+        draw();
+      }
+    }, { passive: false });
+
+    const move = (e) => {
+      const t = ownAt(e.clientX);
+      hover.textContent = clock(rec(t), long, 1);
+      hover.style.left = pct(t);
+      hover.style.opacity = 1;
+      const d = S.drag;
+      if (!d) return;
+      if (d.scrub) { S.own = t; if (video && video.readyState) video.currentTime = t; }
+      else if (d.win !== undefined) { S.win[d.win] = Math.round(t * 10) / 10; if (S.win[0] > S.win[1]) { S.win.reverse(); d.win = 1 - d.win; } }
+      else if (d.part === 'move') {
+        const w = d.b0 - d.a0;
+        const a = snap(clamp(d.a0 + t - d.t0, 0, length - w), d.s);
+        d.s.a = a; d.s.b = Math.round((a + w) * 100) / 100;
+      } else {
+        d.s[d.part] = snap(t, d.s);
+        if (d.s.a > d.s.b) { [d.s.a, d.s.b] = [d.s.b, d.s.a]; d.part = d.part === 'a' ? 'b' : 'a'; }
+      }
+      d.moved = true;
+      draw();
+    };
+    const up = () => {
+      const d = S.drag;
+      S.drag = null;
+      if (!d) return;
+      if (d.scrub) { if (!video || !video.readyState) tell(); }
+      else if (d.win !== undefined && d.moved) { save({ op: 'window', start: S.win[0], end: S.win[1] }); }
+      else if (d.s && d.fresh && d.s.b - d.s.a < 0.5) { S.segs.splice(S.segs.indexOf(d.s), 1); S.sel = null; }
+      else if (d.s && d.moved) { S.said = 'saving'; save({ op: 'set', name: d.s.name, old: d.fresh ? null : d.s.name, start: d.s.a, end: d.s.b }); }
+      draw();
+    };
+    ruler.addEventListener('pointerdown', (e) => { S.drag = { scrub: true }; ruler.setPointerCapture(e.pointerId); move(e); });
+    if (cfg.edit) {
+      winTrack.addEventListener('pointerdown', (e) => {
+        const h = e.target.closest('.strip-handle');
+        if (!h) return;
+        S.oldWin = S.oldWin || [...S.win];
+        S.drag = { win: +h.dataset.h };
+        winTrack.setPointerCapture(e.pointerId);
+      });
+      segTrack.addEventListener('pointerdown', (e) => {
+        const t = ownAt(e.clientX), block = e.target.closest('.strip-block');
+        S.said = '';
+        if (block) {
+          const s = S.segs[+block.dataset.i];
+          S.sel = s;
+          const part = e.target.classList.contains('l') ? 'a' : e.target.classList.contains('r') ? 'b' : 'move';
+          S.drag = { s, part, t0: t, a0: s.a, b0: s.b };
+        } else {
+          let k = S.segs.length + 1;
+          while (S.segs.some((s) => s.name === `segment_${k}`)) k += 1;
+          const s = { name: `segment_${k}`, a: snap(t), b: snap(t), done: false };
+          S.segs.push(s); S.sel = s;
+          S.drag = { s, part: 'b', t0: t, a0: s.a, b0: s.b, fresh: true };
+        }
+        segTrack.setPointerCapture(e.pointerId);
+        draw();
+      });
+      chosen.addEventListener('change', (e) => {
+        const s = S.sel, key = e.target.dataset.k;
+        if (!s || !key) return;
+        const old = s.name;
+        if (key === 'name') s.name = e.target.value.trim() || old;
+        else s[key] = parseFloat(e.target.value);
+        e.target.blur();
+        S.said = 'saving';
+        save({ op: 'set', name: s.name, old, start: s.a, end: s.b });
+        draw();
+      });
+      chosen.addEventListener('click', (e) => {
+        const act = e.target.dataset.act, s = S.sel;
+        if (act === 'undo-window' && S.oldWin) { S.win = S.oldWin; S.oldWin = null; save({ op: 'window', start: S.win[0], end: S.win[1] }); }
+        if (!s) return draw();
+        if (act === 'a' || act === 'b') { s[act] = Math.round(now() * 100) / 100; S.said = 'saving'; save({ op: 'set', name: s.name, old: s.name, start: s.a, end: s.b }); }
+        if (act === 'play') seek(s.a, true);
+        if (act === 'remove') { S.segs.splice(S.segs.indexOf(s), 1); S.sel = null; save({ op: 'remove', name: s.name }); }
+        draw();
+      });
+    }
+    for (const track of [ruler, winTrack, segTrack, tickTrack].filter(Boolean)) {
+      track.addEventListener('pointermove', move);
+      track.addEventListener('pointerup', up);
+      track.addEventListener('pointerleave', () => { hover.style.opacity = 0; });
+    }
+    if (tickTrack) tickTrack.addEventListener('click', (e) => { const k = e.target.closest('.strip-tick'); if (k) seek(+k.dataset.t, true); });
+
+    const api = {
+      root, seek, draw, readTicks,
+      seekRecording: (t, play) => seek(ownOf(t), play),
+      random: () => { const [a, b] = S.win || [0, length]; seek(a + Math.random() * (b - a)); },
+      shown: (data) => {
+        const name = S.sel && S.sel.name;
+        S.segs = (data.segments || []).map((s) => ({ ...s }));
+        S.sel = S.segs.find((s) => s.name === name) || null;
+        if (data.window !== undefined) S.win = data.window;
+        S.said = data.said || '';
+        if (data.op !== 'window') S.oldWin = null;
+        draw();
+      },
+    };
+    new ResizeObserver(draw).observe(ruler);
+    draw();
+    readTicks();
+    return api;
+  }
+
+  function scan() {
+    for (const [root, api] of strips) if (!root.isConnected) strips.delete(root);
+    document.querySelectorAll('.time-strip').forEach((root) => {
+      const api = strips.get(root);
+      if (api && api.config === root.dataset.strip) return;
+      const made = make(root);
+      made.config = root.dataset.strip;
+      strips.set(root, made);
+    });
+    for (const api of strips.values()) api.readTicks();
+  }
+
+  const first = () => strips.values().next().value;
+  window.macawStrip = {
+    seek: (t, play) => { const api = first(); if (api) api.seekRecording(t, play); return !!api; },
+    random: () => { const api = first(); if (api) api.random(); },
+    shown: (id, data) => { for (const api of strips.values()) if (api.root.id === id) api.shown(data); },
+  };
+
+  let pending = 0;
+  new MutationObserver(() => { clearTimeout(pending); pending = setTimeout(scan, 60); })
+    .observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-strip', 'open'] });
+  document.addEventListener('toggle', () => { clearTimeout(pending); pending = setTimeout(scan, 60); }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.target.closest('input, textarea, select, [contenteditable]')) return;
+    const api = first();
+    const video = api && api.root.isConnected && document.getElementById(JSON.parse(api.root.dataset.strip).video || '');
+    if (!video) return;
+    e.preventDefault();
+    if (video.paused) video.play(); else video.pause();
+  });
+})();

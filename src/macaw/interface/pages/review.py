@@ -7,7 +7,6 @@ import base64
 from pathlib import Path
 from urllib.parse import urlencode
 
-import numpy as np
 import pandas as pd
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 
@@ -33,7 +32,10 @@ ACTS_DECIDED = "acts-decided"
 SCALE_VIDEO, SCALE_AT, SCALE_GRAPH = "scale-video", "scale-at", "scale-graph"
 SCALE_POINTS, SCALE_FRAME, SCALE_NOTE = "scale-points", "scale-frame", "scale-note"
 SCALE_LENGTH, SCALE_OBJECT, SCALE_PERSON = "scale-length", "scale-object", "scale-person"
-GAZE_VIDEO, GAZE_AT, GAZE_RANDOM, GAZE_GRAPH = "gaze-video", "gaze-at", "gaze-random", "gaze-graph"
+GAZE_RANDOM, GAZE_GRAPH = "gaze-random", "gaze-graph"
+SCALE_AT_WRAP = "scale-at-wrap"
+# the scale is measured where the player stands, unless a calibration clip is chosen
+PLAYING = "playing"
 # a frame's graph takes no room until there is a frame
 HIDDEN = {"display": "none"}
 GAZE_T, GAZE_NOTE, GAZE_PICK = "gaze-t", "gaze-note", "gaze-pick"
@@ -55,6 +57,8 @@ RECORDING, PREVIOUS, NEXT = ui.RECORDING, ui.PREVIOUS, ui.NEXT
 PLAYER, SEEK, SEEKED = "review-player", "review-seek", "review-seeked"
 # parts only some recordings have, so callbacks reach them by pattern and find none where they are missing
 CAMERA, PLAYER_BOX, TIMING, NAMES_BOX = "review-camera", "review-player-box", "review-timing", "review-names-box"
+# where the player stands, {camera, own, t}; the frame cards follow it
+TIME, STRIP = "review-time", "review-strip"
 NOTE_TAGS, NOTE_TEXT = "review-note-tags", "review-note-text"
 _MARK = "#d9534f"
 # a page of dropdowns this long is still usable; the rest waits for the next save or the csv route
@@ -157,58 +161,70 @@ def seek(t: float, label: str | None = None):
     return html.Button(label or f"{t:.1f}", id={"type": SEEK, "t": f"{t:.2f}"}, className="seek", title="Play from here")
 
 
+def quiet_pick(word: str, picker):
+    return html.Label([word, picker], className="quiet-pick")
+
+
 def _player(config, recording, camera: str | None):
     cameras = [item.name for item in recording.cameras()]
     if not cameras:
         return None
     camera = camera if camera in cameras else cameras[0]
+    rid = recording.recording_id
+    picker = dcc.Dropdown(cameras, camera, id=_one(CAMERA), clearable=False, searchable=False, className="quiet")
     return ui.card(
         "Play",
-        html.Div(ui.field("Camera", dcc.Dropdown(cameras, camera, id=_one(CAMERA), clearable=False, className="picker")), className="toolbar"),
-        html.Div(player_box(config, recording.recording_id, camera), id=_one(PLAYER_BOX)),
-        desc="The recording's video; once copied it stays in view, and any time on this page plays from there.",
+        html.Div(player_box(config, rid, camera), id=_one(PLAYER_BOX)),
+        dcc.Store(id={"type": TIME, "key": rid}),
+        desc="Every time on this page plays from here.",
+        actions=quiet_pick("camera", picker) if len(cameras) > 1 else html.Div(picker, hidden=True),
         id="review-play",
     )
 
 
-def player_box(config, rid: str, camera: str):
+def player_box(config, rid: str, camera: str, at_s: float | None = None):
+    """The camera's copy and its time strip; without a copy the strip still picks the frame the cards show."""
+    from macaw.interface.pages.naming import first_moment
     from macaw.project.previews import current_preview, playing
 
     try:
         found = playing(config, rid, camera)
     except Exception as error:   # a file that cannot be read is said, not drawn
         return ui.note(str(error), "bad")
-    timing = dcc.Store(id=_one(TIMING), data={"offset_s": found.offset_s, "clock_scale": found.clock_scale})
+    window = [found.own_time(t) for t in found.window] if found.window else None
+    start = found.own_time(at_s) if at_s is not None else first_moment(tuple(window) if window else None, found.duration_s)
     path = current_preview(config, rid, camera)
+    strip = ui.time_strip(
+        STRIP, video=PLAYER if path else None, camera=camera, offset=found.offset_s, scale=found.clock_scale,
+        length=found.duration_s, start=start, window=window, ticks="#review-body .seek", timeStore={"type": TIME, "key": rid},
+    )
+    timing = dcc.Store(id=_one(TIMING), data={"offset_s": found.offset_s, "clock_scale": found.clock_scale})
     if path is None:
         return html.Div([
             timing,
-            ui.note(f"{camera} is made into a small copy with sound first, once; a few minutes of video take about a minute."),
             html.Div([
                 ui.button("Make a copy to play here", {"type": ACT, "action": "prepare", "target": camera}, primary=True, icon_name="play"),
                 _button("Make copies of every recording", "prepare-all"),
             ], className="buttons"),
+            strip,
         ])
     notes = [] if found.sound == camera else [f"Sound from {found.sound}."]
     if not found.aligned:
-        notes.append("The files are not aligned yet: times here are the camera's own until prep.media has run.")
+        notes.append("Not aligned yet: times are the camera's own until prep.media has run.")
     return html.Div([
         timing,
-        html.Video(src=f"{file_url(path)}?v={int(path.stat().st_mtime)}", id=PLAYER, controls=True, preload="metadata", className="player"),
-        window_bar(found),
+        html.Video(src=f"{file_url(path)}?v={int(path.stat().st_mtime)}", id=PLAYER, preload="metadata", className="player"),
+        strip,
         *([ui.note(" ".join(notes))] if notes else []),
     ])
 
 
-def window_bar(found):
-    """The analysed part along the player's timeline; the rest is greyed."""
-    if found.window is None or not found.duration_s:
-        return None
-    start, end = (min(max(found.own_time(t) / found.duration_s, 0.0), 1.0) for t in found.window)
-    return html.Div(
-        html.Span(style={"left": f"{start:.2%}", "width": f"{max(end - start, 0.0):.2%}"}),
-        className="window-bar", title=f"Analysed: {found.window[0]:.1f} to {found.window[1]:.1f} s of the recording",
-    )
+def names_box(config, rid: str, camera: str, people: list[str]):
+    from macaw.interface.pages import naming
+
+    if not people:
+        return ui.note(f"Nobody is read on {camera}; play another camera to name people.")
+    return naming.editor(config, rid, camera, people, _take_back, _take_back_area)
 
 
 def _people_on_camera(config, layout, results, recording, camera: str | None):
@@ -238,8 +254,7 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
     camera = camera if camera in people else next(iter(people))
     editor = html.Div(
         [
-            html.H3("Name the people on the camera playing"),
-            html.Div(naming.editor(config, rid, camera, people[camera], _take_back, _take_back_area), id=_one(NAMES_BOX)),
+            html.Div(names_box(config, rid, camera, people[camera]), id=_one(NAMES_BOX)),
             html.Div([
                 _button("Save the names", "name-people", primary=True),
                 _button("Clear this camera's names", "clear-names"),
@@ -260,7 +275,7 @@ def _people_on_camera(config, layout, results, recording, camera: str | None):
         editor,
         html.Div(_button("Draw review frames", "render"), className="buttons"),
         html.Div(thumbs, className="thumbs"),
-        desc="Click each person on a frame where all are in view and apart; a click on a person's face or chest is safest.",
+        desc="Stop the player where everyone is in view, then click each person.",
     )
 
 
@@ -478,9 +493,10 @@ def _scale(config, layout, recording):
         status = ui.note(f"Exports use {scale.describe()}.", "ok")
     if clip is None and clips:
         status = [status, ui.note(f"To use a calibration clip for this recording, write scale: {{calibration: name}} in project.yaml, or in recordings/{rid}.yaml for this one.")]
-    sources = [{"label": name, "value": name} for name in videos] + [{"label": f"calibration clip {name}", "value": CLIP + name} for name in clips]
-    chosen = own[0].video if own else (CLIP + clip if clip in clips else sources[0]["value"])
     key = {"key": rid}
+    sources = ([{"label": "the camera playing", "value": PLAYING}] if videos else []) + [{"label": f"calibration clip {name}", "value": CLIP + name} for name in clips]
+    chosen = CLIP + clip if not own and clip in clips else sources[0]["value"]
+    picker = dcc.Dropdown(sources, chosen, id={"type": SCALE_VIDEO, **key}, clearable=False, searchable=False, className="quiet")
     remove = [_button("Remove this recording's measurements", "clear-scale")] if own else []
     remove += [_button(f"Remove the measurements of {clip}", "clear-scale", CLIP + clip)] if from_clip else []
     return ui.card(
@@ -494,13 +510,8 @@ def _scale(config, layout, recording):
             numeric={"At (s)", "Length", "Pixels", f"{units} per pixel"},
         ) if rows else None,
         status,
-        html.Div(
-            [
-                ui.field("Measure on", dcc.Dropdown(sources, chosen, id={"type": SCALE_VIDEO, **key}, clearable=False, className="picker")),
-                ui.field("At (s)", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=10, debounce=True)),
-            ],
-            className="toolbar",
-        ),
+        html.Div(ui.field("At (s) of the clip", dcc.Input(id={"type": SCALE_AT, **key}, type="number", min=0, value=0, debounce=True)),
+                 id={"type": SCALE_AT_WRAP, **key}, className="toolbar", style=None if chosen.startswith(CLIP) else HIDDEN),
         html.Div(id={"type": SCALE_NOTE, **key}),
         dcc.Graph(id={"type": SCALE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
         dcc.Store(id={"type": SCALE_POINTS, **key}, data=[]),
@@ -514,7 +525,8 @@ def _scale(config, layout, recording):
             className="toolbar",
         ),
         html.Div([_button("Save this measurement", "set-scale", primary=True), *remove], className="buttons"),
-        desc=f"Click the two ends of something of known length; exports add {UNIT_NAMES[units]}.",
+        desc="Click the two ends of something of known length.",
+        actions=quiet_pick("on", picker) if len(sources) > 1 else html.Div(picker, hidden=True),
     )
 
 
@@ -539,14 +551,6 @@ def _gaze(config, layout, recording):
         "Where people look",
         ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}, fit=True) if rows else None,
         *[ui.note(f"{item.subject_id}: {item.message}", "warn" if item.severity == "warn" else "ok") for item in checked],
-        html.Div(
-            [
-                ui.field("Video", dcc.Dropdown(videos, videos[0], id={"type": GAZE_VIDEO, **key}, clearable=False, className="picker")),
-                ui.field("At (s)", dcc.Input(id={"type": GAZE_AT, **key}, type="number", min=0, value=10, debounce=True)),
-                ui.button("A frame at random", {"type": GAZE_RANDOM, **key}),
-            ],
-            className="toolbar",
-        ),
         html.Div(id={"type": GAZE_NOTE, **key}),
         dcc.Graph(id={"type": GAZE_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
         dcc.Store(id={"type": GAZE_T, **key}, data=None),
@@ -555,7 +559,8 @@ def _gaze(config, layout, recording):
             className="toolbar",
         ),
         html.Div([_button("Save what they look at", "label-gaze", primary=True)], className="buttons"),
-        desc="Say whom or what each person looks at, on frames taken at random.",
+        desc="Say whom or what each person looks at.",
+        actions=html.Button(id={"type": GAZE_RANDOM, **key}, className="icon-button icon-dice", title="Go to a moment at random"),
     )
 
 
@@ -586,18 +591,6 @@ def gaze_frame(config_path: Path, rid: str, video: str, at_s: float):
     return figure, ui.note(f"Frame at {at_s:.2f} s. Say for each person whom or what they look at, then save.")
 
 
-def random_time(config_path: Path, rid: str, video: str) -> float:
-    from macaw.extractors.prep import apply_prep_timing
-
-    config = resolve_config(config_path, recording_id=rid)
-    recording = build_recording(rid, config)
-    try:
-        prep = apply_prep_timing(config, recording)
-        start, length = prep.t_origin_s, prep.duration_s
-    except Exception:   # before prep.media only the file's own length is known
-        item = next(item for item in recording.media if item.name == video)
-        start, length = item.offset_s, item.span_s or 0.0
-    return round(start + float(np.random.default_rng().uniform(0, max(length, 0.0))), 2)
 
 
 def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str | None, str | None]:
@@ -923,7 +916,7 @@ def register(app, config_path: Path) -> None:
     from macaw.interface.pages import naming
     from macaw.interface.pages.overview import people_waiting
 
-    naming.register(app, config_path, PLAYER, RECORDING, _one(CAMERA))
+    naming.register(app, config_path, RECORDING, {"type": TIME, "key": ALL})
 
     @app.callback(Output(RECORDING, "options"), Input("url", "pathname"))
     def recordings(_):
@@ -953,23 +946,27 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output({"type": PLAYER_BOX, "key": ALL}, "children"), Output({"type": NAMES_BOX, "key": ALL}, "children"),
         Input({"type": CAMERA, "key": ALL}, "value"), State(RECORDING, "value"),
-        State({"type": PLAYER_BOX, "key": ALL}, "id"), State({"type": NAMES_BOX, "key": ALL}, "id"),
+        State({"type": PLAYER_BOX, "key": ALL}, "id"), State({"type": NAMES_BOX, "key": ALL}, "id"), State({"type": TIME, "key": ALL}, "data"),
         prevent_initial_call=True,
     )
-    def camera_chosen(cameras, rid, players, boxes):
+    def camera_chosen(cameras, rid, players, boxes, times):
         # the picker appearing with the page fires this too, with nothing chosen by hand
         if not cameras or not any(item["value"] is not None for item in ctx.triggered) or len(ctx.triggered) != 1:
             return [no_update] * len(players), [no_update] * len(boxes)
         own = resolve_config(config_path, recording_id=rid)
         camera = cameras[0]
         people = naming.cameras_of(own, rid)
-        return [player_box(own, rid, camera) for _ in players], [naming.editor(own, rid, camera, people.get(camera, []), _take_back, _take_back_area) for _ in boxes]
+        at = (times or [None])[0]
+        # the new camera opens at the moment the last one stood
+        return [player_box(own, rid, camera, at["t"] if at else None) for _ in players], [names_box(own, rid, camera, people.get(camera, [])) for _ in boxes]
 
     app.clientside_callback(
         """function (clicks, timing) {
             const trigger = window.dash_clientside.callback_context.triggered_id;
             const video = document.getElementById('""" + PLAYER + """');
-            if (!trigger || !video || !(clicks || []).some(Boolean)) { return window.dash_clientside.no_update; }
+            if (!trigger || !(clicks || []).some(Boolean)) { return window.dash_clientside.no_update; }
+            if (window.macawStrip && window.macawStrip.seek(parseFloat(trigger.t), !!video)) { return parseFloat(trigger.t); }
+            if (!video) { return window.dash_clientside.no_update; }
             const t = parseFloat(trigger.t), own = timing && timing.length ? (t - timing[0].offset_s) / timing[0].clock_scale : t;
             video.currentTime = Math.max(own, 0);
             video.play();
@@ -996,21 +993,28 @@ def register(app, config_path: Path) -> None:
         Output({"type": SCALE_POINTS, "key": MATCH}, "data"),
         Output({"type": SCALE_FRAME, "key": MATCH}, "data"),
         Output({"type": SCALE_NOTE, "key": MATCH}, "children"),
+        Output({"type": SCALE_AT_WRAP, "key": MATCH}, "style"),
         Input({"type": SCALE_GRAPH, "key": MATCH}, "clickData"),
-        # the frame shows as the card opens, and again for a moment typed or another video chosen
         Input({"type": SCALE_VIDEO, "key": MATCH}, "value"),
         Input({"type": SCALE_AT, "key": MATCH}, "value"),
+        Input({"type": TIME, "key": MATCH}, "data"),
         State({"type": SCALE_POINTS, "key": MATCH}, "data"),
         State({"type": SCALE_FRAME, "key": MATCH}, "data"),
     )
-    def scale_frame(click, video, at, points, uri):
-        figure, *rest = _scale_frame(click, video, at, points, uri)
-        return figure, no_update if figure is no_update else graph_style(figure), *rest
+    def scale_frame(click, video, at, time, points, uri):
+        figure, *rest = _scale_frame(click, video, at, time, points, uri)
+        return figure, no_update if figure is no_update else graph_style(figure), *rest, None if video.startswith(CLIP) else HIDDEN
 
-    def _scale_frame(click, video, at, points, uri):
+    def _scale_frame(click, video, at, time, points, uri):
         trigger = ctx.triggered_id
-        if trigger is None or trigger["type"] in (SCALE_VIDEO, SCALE_AT):
-            uri, problem = frame_uri(config_path, ctx.outputs_list[0]["id"]["key"], video, float(at or 0.0))
+        playing = video == PLAYING
+        if trigger is not None and trigger["type"] == TIME and not playing:
+            return no_update, no_update, no_update, no_update
+        if trigger is None or trigger["type"] in (SCALE_VIDEO, SCALE_AT, TIME):
+            if playing and not time:
+                return scale_figure(None, []), [], None, None
+            source, moment = (time["camera"], time["t"]) if playing else (video, float(at or 0.0))
+            uri, problem = frame_uri(config_path, ctx.outputs_list[0]["id"]["key"], source, moment)
             note = ui.note(problem, "warn") if problem else ui.note("Click one end of the object, then the other.")
             return scale_figure(uri, []), [], uri, note
         if not uri or not click:
@@ -1026,18 +1030,20 @@ def register(app, config_path: Path) -> None:
         Output({"type": GAZE_GRAPH, "key": MATCH}, "figure"),
         Output({"type": GAZE_GRAPH, "key": MATCH}, "style"),
         Output({"type": GAZE_T, "key": MATCH}, "data"),
-        Output({"type": GAZE_AT, "key": MATCH}, "value"),
         Output({"type": GAZE_NOTE, "key": MATCH}, "children"),
-        Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
-        Input({"type": GAZE_VIDEO, "key": MATCH}, "value"),
-        Input({"type": GAZE_AT, "key": MATCH}, "value"),
+        Input({"type": TIME, "key": MATCH}, "data"),
     )
-    def show_gaze_frame(_random, video, at):
-        rid = ctx.outputs_list[0]["id"]["key"]
-        trigger = ctx.triggered_id
-        at = random_time(config_path, rid, video) if trigger and trigger["type"] == GAZE_RANDOM else float(at or 0.0)
-        figure, note = gaze_frame(config_path, rid, video, at)
-        return figure, graph_style(figure), at, at, note
+    def show_gaze_frame(time):
+        if not time:
+            return no_update, no_update, no_update, no_update
+        figure, note = gaze_frame(config_path, ctx.outputs_list[0]["id"]["key"], time["camera"], time["t"])
+        return figure, graph_style(figure), time["t"], note
+
+    app.clientside_callback(
+        "function (clicks) { if (clicks && window.macawStrip) { window.macawStrip.random(); } return window.dash_clientside.no_update; }",
+        Output({"type": GAZE_RANDOM, "key": MATCH}, "title"), Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
+        prevent_initial_call=True,
+    )
 
     @app.callback(
         Output("review-body", "children"),
@@ -1072,6 +1078,7 @@ def register(app, config_path: Path) -> None:
         State({"type": LINE_PERSON, "key": ALL}, "value"),
         State({"type": LINE_PICK, "t": ALL}, "value"),
         State({"type": LINE_PICK, "t": ALL}, "id"),
+        State({"type": TIME, "key": ALL}, "data"),
         State(RECORDING, "options"),
         prevent_initial_call="initial_duplicate",
     )
@@ -1083,7 +1090,7 @@ def register(app, config_path: Path) -> None:
         return content, message, relabelled(options, rid)
 
     def _acted(rid, clicks, uploads, split, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
-        *scale, cameras, marks, shown, corners, tags, text, mixed, split_person, line_picks, line_ids = rest
+        *scale, cameras, marks, shown, corners, tags, text, mixed, split_person, line_picks, line_ids, times = rest
         camera = cameras[0] if cameras else None
         marks, shown, corners = (marks or [None])[0], (shown or [None])[0], (corners or [None])[0]
         trigger = ctx.triggered_id
@@ -1097,6 +1104,9 @@ def register(app, config_path: Path) -> None:
             if action in NAMED and not by:
                 return no_update, ui.note("Type your name first: each decision is kept with who made it.", "warn")
             measured = dict(zip(("video", "at", "points", "length", "object", "person"), (values[0] if values else None for values in scale)))
+            if measured["video"] == PLAYING:
+                at = (times or [None])[0] or {}
+                measured["video"], measured["at"] = at.get("camera"), at.get("t")
             if action == "set-scale" and (len(measured["points"] or []) != 2 or not measured["length"]):
                 return no_update, ui.note("Click both ends on the frame and type the length first.", "warn")
             if action == "label-gaze":
