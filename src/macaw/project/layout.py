@@ -63,6 +63,14 @@ class Layout:
         return self.recording_dir(recording_id) / "done" / f"{extractor}.key"
 
     @property
+    def unfinished_dir(self) -> Path:
+        return self.work_dir / "unfinished"
+
+    def unfinished_path(self, recording_id: str, extractor: str) -> Path:
+        """What a task that has not finished keeps for its next try; gone once it finishes."""
+        return self.unfinished_dir / recording_id / extractor
+
+    @property
     def recordings_dir(self) -> Path:
         return self.output_dir / "recordings"
 

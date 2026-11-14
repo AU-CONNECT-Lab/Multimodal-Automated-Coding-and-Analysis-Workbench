@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 from functools import partial
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_pa
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import VOICE, build_rating_prompt
 from macaw.coding.scales import ScaleSet, read_scales, validate_scales
-from macaw.config.hashing import canonical
+from macaw.config.hashing import canonical, hash_value
 from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingVersion
 from macaw.exceptions import CodebookError, ConfigError, InputNotFoundError, LLMBackendError
 from macaw.extractors import register_extractor
@@ -49,7 +51,12 @@ RATING_COLUMNS = [
     "recording_id", "segment", "t_start", "t_end", "scale", "person", "rater", "score", "score_sd", "score_min", "score_max",
     "n_answers", "n_asked",
 ]
-ANSWER_COLUMNS = ["recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer"]
+ANSWER_COLUMNS = [
+    "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
+    "completion_tokens", "reasoning_tokens", "seconds",
+]
+KEPT_NAME = "answers.jsonl"
+_COUNTS = ("prompt_tokens", "completion_tokens", "reasoning_tokens")
 PROMPT_COLUMNS = ["recording_id", "segment", "scale", "rater", "system", "user"]
 _MISSING = (
     "Empty for a recording where this rating asked the model nothing: its transcript is recognised and no person corrected "
@@ -174,7 +181,7 @@ class RatingExtractor(Extractor):
                         scale, shown, people=people, minutes=(end - start) / 60.0, show=cfg.show, notes=told, reasons=cfg.reasons,
                     )
                     prompts.append((segment, start, end, scale, system, user))
-        answers = ask(prompts, backend, cfg)
+        answers = ask(prompts, backend, cfg, layout_for(self.config, create=False).unfinished_path(rid, self.name) / KEPT_NAME)
         answers.insert(0, "recording_id", rid)
         answers.insert(3, "rater", self.rating)
         ratings = rating_table(answers, prompts, self.rating, recording)
@@ -290,28 +297,100 @@ def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: floa
     return cut
 
 
-def ask(prompts: list, backend: LLMBackend, cfg: LLMSection) -> pd.DataFrame:
-    """One row per prompt and sample: segment, scale, sample, score, problem, reason, answer. A server whose context is
-    shorter than the longest prompt and its answer stops the step after the first answer."""
+class KeptAnswers:
+    """The answers of a rating that has not finished, written as each comes, so that its next try asks only for the rest."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self._lock = threading.Lock()
+        self._found: dict[str, dict] = {}
+        if path is not None and path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    # the line being written when the run stopped
+                    continue
+                self._found[entry.pop("key")] = entry
+
+    def get(self, key: str | None) -> dict | None:
+        return self._found.get(key)
+
+    def keep(self, key: str | None, entry: dict) -> None:
+        if self.path is None:
+            return
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"key": key, **entry}, ensure_ascii=False) + "\n")
+
+
+def request_key(backend: LLMBackend, cfg: LLMSection, system: str, user: str, sample: int, seed: int | None) -> str:
+    """Everything an answer depends on; the same key is the same question to the same model."""
+    return hash_value({
+        "provider": backend.name, "model": backend.model_version(), "temperature": cfg.temperature, "max_tokens": cfg.max_tokens,
+        "think": cfg.think, "system": system, "user": user, "sample": sample, "seed": seed,
+    })
+
+
+def _answer(backend: LLMBackend, system: str, user: str, seed: int | None) -> dict:
+    started = time.monotonic()
+    response = backend.complete(system, user, seed=seed)
+    return {
+        "text": response.text, "cut_off": response.cut_off, **{name: getattr(response, name, None) for name in _COUNTS},
+        "seconds": round(time.monotonic() - started, 2),
+    }
+
+
+def ask(prompts: list, backend: LLMBackend, cfg: LLMSection, kept_at: Path | None = None) -> pd.DataFrame:
+    """One row per prompt and sample: segment, scale, sample, score, problem, reason, answer, the tokens and seconds it
+    took, and whether it was kept from an earlier try. A server whose context is shorter than the longest prompt and its
+    answer stops the step after the first answer. With kept_at each answer is written there as it comes, and one already
+    there is not asked for again."""
     longest = max((estimated_tokens(system + user) for *_, system, user in prompts), default=0)
     asked = [(segment, scale, sample, system, user) for segment, _, _, scale, system, user in prompts for sample in range(cfg.n_samples)]
-    responses = run_in_order(
-        [partial(backend.complete, system, user, seed=cfg.seed + sample if backend.takes_seed else None) for *_, sample, system, user in asked],
-        cfg.concurrency, after_first=lambda: check_context(backend, longest, cfg),
-    )
+    seeds = [cfg.seed + sample if backend.takes_seed else None for _, _, sample, _, _ in asked]
+    kept = KeptAnswers(kept_at)
+    keys = [
+        request_key(backend, cfg, system, user, sample, seed) if kept_at is not None else None
+        for (_, _, sample, system, user), seed in zip(asked, seeds)
+    ]
+    entries = [kept.get(key) for key in keys]
+    rest = [index for index, entry in enumerate(entries) if entry is None]
+    held: list[tuple[str | None, dict]] = []
+
+    def answer(index: int, first: bool) -> dict:
+        entry = _answer(backend, asked[index][3], asked[index][4], seeds[index])
+        if first:
+            held.append((keys[index], entry))
+        else:
+            kept.keep(keys[index], entry)
+        return entry
+
+    def checked() -> None:
+        check_context(backend, longest, cfg)
+        # only now: an answer to a prompt the server cut short is not one to keep
+        kept.keep(*held[0])
+
+    fresh = run_in_order([partial(answer, index, position == 0) for position, index in enumerate(rest)], cfg.concurrency, after_first=checked)
+    for index, entry in zip(rest, fresh):
+        entries[index] = {**entry, "fresh": True}
     rows = []
-    for (segment, scale, sample, *_), response in zip(asked, responses):
-        score, reason, problem = parse_rating(response.text, scale.low, scale.high)
-        if score is None and response.cut_off:
+    for (segment, scale, sample, *_), entry in zip(asked, entries):
+        score, reason, problem = parse_rating(entry["text"], scale.low, scale.high)
+        if score is None and entry["cut_off"]:
             problem = CUT_OFF
-        rows.append((segment, scale.scale, sample, float(score) if score is not None else np.nan, problem, reason, response.text))
-    answers = pd.DataFrame(rows, columns=["segment", "scale", "sample", "score", "problem", "reason", "answer"])
+        rows.append((
+            segment, scale.scale, sample, float(score) if score is not None else np.nan, problem, reason, entry["text"],
+            *(entry.get(name) for name in _COUNTS), entry.get("seconds"), not entry.get("fresh", False),
+        ))
+    answers = pd.DataFrame(rows, columns=["segment", "scale", "sample", "score", "problem", "reason", "answer", *_COUNTS, "seconds", "kept"])
     if len(answers) and (answers["problem"] == CUT_OFF).all():
         raise LLMBackendError(
             f"{backend.name} {cfg.model}: every answer was cut off at max_tokens ({cfg.max_tokens}) before a score came back. A model "
             "that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
         )
-    return answers.astype({"sample": int, "score": float})
+    return answers.astype({"sample": int, "score": float, "seconds": float, "kept": bool, **{name: "Int64" for name in _COUNTS}})
 
 
 def estimated_tokens(text: str) -> int:
@@ -394,6 +473,12 @@ def answer_warnings(answers: pd.DataFrame, ratings: pd.DataFrame, cfg: LLMSectio
         note("rating_no_seed", "info", f"{backend.name} takes no seed, so a rerun can give other scores.")
     if len(answers) and seed_caveat(backend, cfg):
         note("rating_at_once", "info", seed_caveat(backend, cfg))
+    if "kept" in answers and answers["kept"].any():
+        note(
+            "rating_resumed", "info",
+            f"{int(answers['kept'].sum())} of {len(answers)} answers were kept from a run of this rating that stopped before its end, "
+            "and were not asked for again.",
+        )
     return found
 
 

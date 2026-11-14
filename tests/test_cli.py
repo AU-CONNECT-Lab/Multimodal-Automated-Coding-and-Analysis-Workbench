@@ -15,7 +15,7 @@ from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import MacawConfig
 from macaw.execution.job_db import JobDB, JobRecord
 from macaw.logging_setup import LOGGER_NAME, setup_logging
-from macaw.project.layout import make_layout
+from macaw.project.layout import layout_for, make_layout
 from setup_helpers import camera, write_setup
 
 runner = CliRunner()
@@ -322,6 +322,17 @@ class TestClean:
         result = invoke("clean", "-c", str(project.config))
         assert result.exit_code == 0
         assert "removed 0" in result.output
+
+    def test_what_unfinished_tasks_kept_goes_with_the_cache_of_the_step_named_or_of_all(self, project):
+        layout = layout_for(resolve_config(project.config), create=False)
+        kept = {step: layout.unfinished_path("003", step) / "answers.jsonl" for step in ("coding.rate.a", "coding.rate.b")}
+        for path in kept.values():
+            path.parent.mkdir(parents=True)
+            path.write_text("{}", encoding="utf-8")
+        assert invoke("clean", "-c", str(project.config), "-e", "coding.rate.a").exit_code == 0
+        assert not kept["coding.rate.a"].exists() and kept["coding.rate.b"].exists()
+        assert invoke("clean", "-c", str(project.config)).exit_code == 0
+        assert not kept["coding.rate.b"].exists()
 
     def test_all_asks_before_deleting_output(self, project):
         """Declining must leave the directory alone."""

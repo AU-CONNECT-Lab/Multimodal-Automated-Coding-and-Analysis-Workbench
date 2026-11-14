@@ -21,6 +21,8 @@ from macaw.extractors.base import Backend
 BACKEND_GROUP = "llm"
 
 _RETRIES = 3
+# a request that ran out of time is sent once more only: a second wait that long seldom ends otherwise
+_TIMEOUT_RETRIES = 1
 # the longest wait a refusing server's Retry-After is followed for
 _MAX_RETRY_AFTER_S = 120
 _PROBE_TIMEOUT_S = 5
@@ -34,7 +36,9 @@ class LLMResponse:
     text: str
     model: str
     prompt_tokens: int | None = None
+    # generated in all, reasoning before the answer included
     completion_tokens: int | None = None
+    reasoning_tokens: int | None = None
     cut_off: bool = False  # stopped at max_tokens, not at the end of the answer
 
 
@@ -101,12 +105,31 @@ class LLMBackend(Backend):
                     raise LLMBackendError(f"{self.name} answered {error.code} at {url}: {detail}") from None
                 pause = retry_after(error.headers, pause)
             except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                if _timed_out(error) and attempt >= _TIMEOUT_RETRIES:
+                    raise LLMBackendError(
+                        f"{self.name} at {url} sent no whole answer within {self.cfg.timeout_s} s, tried {attempt + 1} times. A model "
+                        "that reasons before it answers, several requests at once and a queue on the server each take longer: "
+                        f"raise {self.settings}.timeout_s."
+                    ) from None
                 if attempt == _RETRIES:
                     raise LLMBackendError(
                         f"{self.name} at {url} did not answer after {_RETRIES + 1} tries: {error}"
                     ) from None
             time.sleep(pause)
         raise AssertionError("unreachable")
+
+
+def _timed_out(error: BaseException) -> bool:
+    return isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError)
+
+
+def reasoning_tokens(reported, generated, reasoning: str, text: str) -> int | None:
+    """Tokens spent reasoning: the server's count, else the generated ones shared out by the length of the reasoning it sent back."""
+    if reported is not None:
+        return int(reported)
+    if generated is None or not reasoning:
+        return None
+    return round(generated * len(reasoning) / (len(reasoning) + len(text)))
 
 
 def retry_after(headers, otherwise: float) -> float:
@@ -260,9 +283,11 @@ class OpenAICompatibleBackend(LLMBackend):
         try:
             choice = answer["choices"][0]
             text = choice["message"]["content"] or ""
-        except (KeyError, IndexError, TypeError):
+            reasoning = choice["message"].get("reasoning") or choice["message"].get("reasoning_content") or ""
+        except (KeyError, IndexError, TypeError, AttributeError):
             raise LLMBackendError(f"{self.name} returned no message: {str(answer)[:300]}") from None
         usage = answer.get("usage") or {}
+        counted = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
         self._seen_model = answer.get("model") or self._seen_model
         return LLMResponse(
             text=text,
@@ -270,6 +295,7 @@ class OpenAICompatibleBackend(LLMBackend):
             cut_off=choice.get("finish_reason") == "length",
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
+            reasoning_tokens=reasoning_tokens(counted, usage.get("completion_tokens"), reasoning, text),
         )
 
     def model_version(self) -> str:

@@ -303,6 +303,7 @@ SCORE_COLUMNS: dict[str, tuple[str, str | None, str]] = {
     ),
     "n_asked": ("How many times the model was asked this scale (coding.llm.n_samples); 1 for a person's score.", "count", "Never empty."),
 }
+_NO_COUNT = "Empty where the server gave no count, and for answers rated before these counts were kept."
 ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     "segment": _SEGMENT,
     "scale": _SCALE,
@@ -321,6 +322,20 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
         "Empty when the version did not ask for reasons (coding.llm.reasons), or the answer gave none.",
     ),
     "answer": ("The model's whole answer as the server sent it back.", None, "Empty where the server sent back no text."),
+    "prompt_tokens": ("Tokens the server counted in the text sent, instructions and transcript together.", "tokens", _NO_COUNT),
+    "completion_tokens": (
+        "Tokens the model generated for this answer, any reasoning before the answer included; an answer that reached "
+        "coding.llm.max_tokens was cut off.", "tokens", _NO_COUNT,
+    ),
+    "reasoning_tokens": (
+        "Tokens of those generated that went to reasoning before the answer: the server's count, or, where it sends the reasoning "
+        "back without a count, the generated tokens shared out by the length of the reasoning and of the answer.", "tokens",
+        "Empty where the server gave neither a count nor the reasoning, and for answers rated before these counts were kept.",
+    ),
+    "seconds": (
+        "Seconds from sending the request to its whole answer, its wait in the server's queue and any further tries included.", "s",
+        "Empty for answers rated before the time was kept.",
+    ),
 }
 PROMPT_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     "segment": _SEGMENT,

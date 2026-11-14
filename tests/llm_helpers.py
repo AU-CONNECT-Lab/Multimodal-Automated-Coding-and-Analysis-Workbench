@@ -30,6 +30,9 @@ class CountingBackend:
     def context_length(self) -> int | None:
         return self.context
 
+    def model_version(self) -> str:
+        return "fake"
+
     def complete(self, system, user, *, seed=None, images=()):
         with self._lock:
             self.calls.append((user, seed))

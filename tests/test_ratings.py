@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import threading
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -61,6 +62,8 @@ class Server:
         self.requests: list[dict] = []
         self.context = None
         self.cut = False
+        self.usage = {"prompt_tokens": 5, "completion_tokens": 3}
+        self.reasoning = None
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -92,8 +95,9 @@ class Server:
                 scale = re.search(r"^Scale: (\S+)$", user, re.MULTILINE).group(1)
                 sample = sum(1 for request in server.requests if f"Scale: {scale}\n" in request["messages"][-1]["content"]) - 1
                 text = "" if server.cut else server.score(scale, sample)
-                choice = {"message": {"content": text}, "finish_reason": "length" if server.cut else "stop"}
-                self._send({"model": "tiny", "choices": [choice], "usage": {"prompt_tokens": 5, "completion_tokens": 3}})
+                message = {"content": text, **({"reasoning": server.reasoning} if server.reasoning else {})}
+                choice = {"message": message, "finish_reason": "length" if server.cut else "stop"}
+                self._send({"model": "tiny", "choices": [choice], "usage": server.usage})
 
         self.http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.http.server_port}"
@@ -165,7 +169,10 @@ def transcribed(config_path, talk=TALK, *, where=None, rid="r1"):
 def rate(monkeypatch, config, name, window=(0.0, 60.0), rid="r1"):
     monkeypatch.setattr(module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=window[0], duration_s=window[1] - window[0]))
     step = module._VERSIONS[name](config)
-    return step.run(build_recording(rid, config), layout_for(config).recording_dir(rid))
+    result = step.run(build_recording(rid, config), layout_for(config).recording_dir(rid))
+    # as the runner does once a task has finished
+    shutil.rmtree(layout_for(config).unfinished_path(rid, step.name), ignore_errors=True)
+    return result
 
 
 class TestScales:
@@ -310,6 +317,23 @@ class TestRun:
         assert set(zip(kept["system"], kept["user"])) == sent
         late = kept[(kept["segment"] == "late") & (kept["scale"] == "flow")].iloc[0]
         assert "We had a test." in late["user"] and "school" not in late["user"]
+
+    def test_each_answer_says_the_tokens_and_the_time_it_took(self, monkeypatch, tmp_path, server):
+        llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 1}
+        config = transcribed(project(tmp_path, {"full": {"scales": "names.yaml"}}, llm=llm))
+        server.usage = {"prompt_tokens": 900, "completion_tokens": 400, "completion_tokens_details": {"reasoning_tokens": 380}}
+        answers = pd.read_parquet(rate(monkeypatch, config, "full").artifacts["answers.parquet"])
+        assert list(answers.columns) == module.ANSWER_COLUMNS
+        assert answers[["prompt_tokens", "completion_tokens", "reasoning_tokens"]].values.tolist() == [[900, 400, 380]] * 3
+        assert (answers["seconds"] >= 0).all() and answers["seconds"].notna().all()
+        # a server that sends the reasoning back without counting it: the generated tokens are shared out by length
+        server.usage = {"prompt_tokens": 900, "completion_tokens": 400}
+        server.reasoning = "x" * 30
+        answers = pd.read_parquet(rate(monkeypatch, config, "full").artifacts["answers.parquet"])
+        assert answers["reasoning_tokens"].tolist() == [round(400 * 30 / (30 + len('{"score": 3}')))] * 3
+        server.usage, server.reasoning = {}, None
+        answers = pd.read_parquet(rate(monkeypatch, config, "full").artifacts["answers.parquet"])
+        assert answers[["prompt_tokens", "completion_tokens", "reasoning_tokens"]].isna().all().all()
 
     def test_answers_without_a_score_are_counted_and_left_out(self, monkeypatch, tmp_path, server):
         server.score = lambda scale, sample: {"warmth": ['{"score": 9}', '{"score": 2}', "no idea"], "on_task": ['{"score": 1}'] * 3, "flow": ["?"] * 3}[scale][sample]
@@ -481,7 +505,7 @@ class TestAtOnce:
         four = CountingBackend(score_by_prompt_and_seed, gate=4, delay=lambda user, seed: 0.03 if seed == 7 else 0.0)
         alone = module.ask(scale_prompts(), one, self.cfg(1))
         together = module.ask(scale_prompts(), four, self.cfg(4))
-        pd.testing.assert_frame_equal(alone, together)
+        pd.testing.assert_frame_equal(alone.drop(columns="seconds"), together.drop(columns="seconds"))
         assert list(zip(alone["scale"], alone["sample"])) == [(scale, sample) for scale in ("warmth", "on_task", "flow") for sample in range(5)]
         assert [seed for _, seed in one.calls] == [7, 8, 9, 10, 11] * 3
         assert sorted(four.calls) == sorted(one.calls) and four.finished != one.finished
@@ -584,6 +608,138 @@ def edit(path, change):
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     change(data)
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+class TestKeptAnswers:
+    """A rating that stops part way keeps the answers it has, and its next try asks only for the rest."""
+
+    CFG = LLMSection(model="tiny", n_samples=5, seed=7, concurrency=1)
+
+    def test_a_try_after_a_failure_asks_only_for_the_answers_still_missing(self, tmp_path):
+        kept = tmp_path / "unfinished" / "answers.jsonl"
+        failing = CountingBackend(score_by_prompt_and_seed, fail_at=7)
+        with pytest.raises(RuntimeError, match="fell over"):
+            module.ask(scale_prompts(), failing, self.CFG, kept)
+        assert len(kept.read_text(encoding="utf-8").splitlines()) == 6
+        again = CountingBackend(score_by_prompt_and_seed)
+        answers = module.ask(scale_prompts(), again, self.CFG, kept)
+        assert len(again.calls) == 9 and set(again.calls).isdisjoint(failing.finished[:6])
+        assert answers["kept"].tolist() == [True] * 6 + [False] * 9
+        whole = module.ask(scale_prompts(), CountingBackend(score_by_prompt_and_seed), self.CFG)
+        assert answers.drop(columns=["seconds", "kept"]).equals(whole.drop(columns=["seconds", "kept"])) and not whole["kept"].any()
+
+    def test_several_at_once_keep_every_answer_that_came_back(self, tmp_path):
+        kept = tmp_path / "answers.jsonl"
+        cfg = self.CFG.model_copy(update={"concurrency": 4})
+        failing = CountingBackend(score_by_prompt_and_seed, gate=4, fail_at=9)
+        with pytest.raises(RuntimeError):
+            module.ask(scale_prompts(), failing, cfg, kept)
+        written = len(kept.read_text(encoding="utf-8").splitlines())
+        assert written == len(failing.finished) - 1
+        again = CountingBackend(score_by_prompt_and_seed, gate=4)
+        module.ask(scale_prompts(), again, cfg, kept)
+        assert len(again.calls) == 15 - written
+
+    def test_an_answer_is_kept_only_for_the_same_question_to_the_same_model(self, tmp_path):
+        kept = tmp_path / "answers.jsonl"
+        module.ask(scale_prompts(), CountingBackend(score_by_prompt_and_seed), self.CFG, kept)
+        for change in ({"temperature": 0.9}, {"max_tokens": 100}, {"seed": 8}, {"think": True}):
+            other = CountingBackend(score_by_prompt_and_seed)
+            module.ask(scale_prompts(), other, self.CFG.model_copy(update=change), tmp_path / "answers.jsonl")
+            assert len(other.calls) == 15, change
+        changed = [(segment, start, end, scale, system, user + "One more line.") for segment, start, end, scale, system, user in scale_prompts()]
+        other = CountingBackend(score_by_prompt_and_seed)
+        module.ask(changed, other, self.CFG, kept)
+        assert len(other.calls) == 15
+        same = CountingBackend(score_by_prompt_and_seed)
+        module.ask(scale_prompts(), same, self.CFG, kept)
+        assert same.calls == []
+
+    def test_a_line_cut_short_when_the_run_stopped_is_passed_over(self, tmp_path):
+        kept = tmp_path / "answers.jsonl"
+        module.ask(scale_prompts(), CountingBackend(score_by_prompt_and_seed), self.CFG, kept)
+        lines = kept.read_text(encoding="utf-8").splitlines()
+        kept.write_text("\n".join(lines[:-1] + [lines[-1][:20]]), encoding="utf-8")
+        again = CountingBackend(score_by_prompt_and_seed)
+        module.ask(scale_prompts(), again, self.CFG, kept)
+        assert len(again.calls) == 1
+
+    def test_the_first_answer_is_not_kept_when_the_context_was_too_short_for_it(self, tmp_path):
+        kept = tmp_path / "answers.jsonl"
+        with pytest.raises(LLMBackendError, match="reads 64 tokens at most"):
+            module.ask(scale_prompts(), CountingBackend(score_by_prompt_and_seed, context=64), self.CFG, kept)
+        assert not kept.exists()
+
+    def test_a_rating_says_how_many_answers_it_kept_and_a_finished_one_keeps_none(self, monkeypatch, tmp_path, server):
+        llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 2}
+        config = transcribed(project(tmp_path, {"full": {"scales": "names.yaml"}}, llm=llm))
+        layout = layout_for(config)
+        kept = layout.unfinished_path("r1", "coding.rate.full") / "answers.jsonl"
+        assert layout.work_dir in kept.parents and layout.recording_dir("r1") not in kept.parents
+
+        def falls_over(scale, sample):
+            if len(server.requests) >= 4:
+                raise RuntimeError("the server fell over")
+            return json.dumps({"score": 3})
+
+        server.score = falls_over
+        with pytest.raises(LLMBackendError, match="did not answer after 4 tries"):
+            rate(monkeypatch, config, "full")
+        assert len(kept.read_text(encoding="utf-8").splitlines()) == 3
+        server.score = lambda scale, sample: json.dumps({"score": 3})
+        server.requests.clear()
+        result = rate(monkeypatch, config, "full")
+        assert len(server.requests) == 3
+        said = {warning.check: warning.message for warning in result.warnings}
+        assert said["rating_resumed"].startswith("3 of 6 answers were kept")
+        assert "rating_resumed" not in {warning.check for warning in rate(monkeypatch, config, "full").warnings}
+
+    def test_the_runner_drops_what_a_task_kept_once_it_has_finished(self, tmp_path):
+        from macaw.execution.runner import _finished
+
+        layout = layout_for(resolve_config(project(tmp_path, {})))
+        kept = layout.unfinished_path("r1", "coding.rate.full") / "answers.jsonl"
+        kept.parent.mkdir(parents=True)
+        kept.write_text("{}", encoding="utf-8")
+        _finished(layout, layout.completion_path("r1", "coding.rate.full"), SimpleNamespace(as_dirname=lambda: "key"), "r1", "coding.rate.full")
+        assert not kept.exists() and layout.completion_path("r1", "coding.rate.full").read_text(encoding="utf-8") == "key"
+
+
+class TestTimeout:
+    def backend(self):
+        return backends_module.resolve_llm_backend(LLMSection(model="tiny", provider="vllm", timeout_s=20))
+
+    @pytest.mark.parametrize("error", [TimeoutError("timed out"), backends_module.urllib.error.URLError(TimeoutError("timed out"))])
+    def test_a_request_out_of_time_is_sent_once_more_and_then_says_to_raise_the_timeout(self, monkeypatch, error):
+        calls = []
+
+        def out_of_time(request, timeout):
+            calls.append(timeout)
+            raise error
+
+        monkeypatch.setattr(backends_module.urllib.request, "urlopen", out_of_time)
+        with pytest.raises(LLMBackendError, match=r"no whole answer within 20 s, tried 2 times.*raise coding\.llm\.timeout_s"):
+            self.backend().complete("system", "user")
+        assert calls == [20, 20]
+
+    def test_a_server_that_is_not_there_is_still_tried_four_times(self, monkeypatch):
+        calls = []
+
+        def refused(request, timeout):
+            calls.append(timeout)
+            raise ConnectionRefusedError("refused")
+
+        monkeypatch.setattr(backends_module.urllib.request, "urlopen", refused)
+        with pytest.raises(LLMBackendError, match="did not answer after 4 tries"):
+            self.backend().complete("system", "user")
+        assert len(calls) == 4
+
+    def test_the_timeout_is_half_an_hour_unless_set_and_changes_no_cache_key(self, tmp_path):
+        assert LLMSection().timeout_s == 1800
+        path = project(tmp_path, {"full": {"scales": "scales.yaml"}})
+        module.register_rating_versions(resolve_config(path))
+        before = hash_extractor_config(resolve_config(path), "coding.rate.full")
+        assert hash_extractor_config(resolve_config(path, cli_overrides=["coding.llm.timeout_s=60"]), "coding.rate.full") == before
 
 
 class TestNotesBy:

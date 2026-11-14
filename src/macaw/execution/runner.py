@@ -594,7 +594,7 @@ def run_task(
             shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
             (layout.segment_rows_path(recording_id) / f"{extractor_name}.parquet").unlink(missing_ok=True)
             cache_store.restore(entry, layout.recording_dir(recording_id))
-            _write_stamp(stamp, key)
+            _finished(layout, stamp, key, recording_id, extractor_name)
             database.set_status(task_id, "cached", finished_at=now())
             return
 
@@ -610,7 +610,7 @@ def run_task(
                 _stage_payload(layout, recording_id, extractor_name, result, payload)
                 cache_store.store(cache_root, key, payload)
 
-        _write_stamp(stamp, key)
+        _finished(layout, stamp, key, recording_id, extractor_name)
         database.set_status(task_id, "done", finished_at=now())
     except Exception as error:
         database.set_status(
@@ -618,6 +618,11 @@ def run_task(
         )
         traceback.print_exc()
         raise
+
+
+def _finished(layout, stamp: Path, key, recording_id: str, extractor: str) -> None:
+    _write_stamp(stamp, key)
+    shutil.rmtree(layout.unfinished_path(recording_id, extractor), ignore_errors=True)
 
 
 def _write_stamp(path: Path, key) -> None:
