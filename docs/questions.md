@@ -51,7 +51,7 @@ Yes, in ELAN; see {ref}`transcript`. Everything that uses the transcript is upda
 
 ## The project has hundreds of recordings.
 
-MACAW can run on a computing cluster that uses Slurm, with one job per recording. See [Optional features](extras.md), section *Large projects on a computing cluster*.
+MACAW can run on a computing cluster that uses Slurm, with one job per recording. See {ref}`cluster`.
 
 ## What should be reported in the paper?
 

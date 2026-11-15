@@ -60,7 +60,7 @@ Not yet available: three-dimensional pose from a single camera.
 
 ## Documentation
 
-::::{grid} 1 1 3 3
+::::{grid} 1 2 2 2
 :gutter: 2
 
 :::{grid-item-card} Using MACAW
@@ -69,16 +69,46 @@ Not yet available: three-dimensional pose from a single camera.
 Requirements, installation, and the eight steps from the recordings to the finished table.
 :::
 
-:::{grid-item-card} Optional features
-:link: extras
+:::{grid-item-card} Coding and rating
+:link: coding
 :link-type: doc
-Language-model coding, human coding and agreement, gaze, suggesting who is who on a camera, custom body measures, gestures, centimetres, three dimensions, a model checking the review frames, clusters.
+Language-model coding of speech, ratings of whole recordings, imported human coding and agreement.
+:::
+
+:::{grid-item-card} Help with the review
+:link: review_aids
+:link-type: doc
+Suggestions for who is who and whose voice is whose, and a model that checks the review frames.
+:::
+
+:::{grid-item-card} Further measures
+:link: measures
+:link-type: doc
+Gaze, motion energy, counts and shares, synchrony and convergence, custom body measures, gestures.
+:::
+
+:::{grid-item-card} Lengths and three dimensions
+:link: three_d
+:link-type: doc
+Lengths in the project's unit instead of pixels, and three-dimensional pose from several cameras, a depth camera or one camera.
+:::
+
+:::{grid-item-card} Segments, exports and extensions
+:link: projects
+:link-type: doc
+Several parts of one recording, the data dictionary, computing clusters, new processing steps.
 :::
 
 :::{grid-item-card} Questions
 :link: questions
 :link-type: doc
 Privacy, run times, experimenters in the room, children's voices, and other special cases.
+:::
+
+:::{grid-item-card} Command reference
+:link: commands
+:link-type: doc
+Every terminal command with its options, generated from the program itself.
 :::
 ::::
 
@@ -88,6 +118,23 @@ MACAW is at an early stage of development, so names and settings may still chang
 :hidden:
 
 guide
-extras
+```
+
+```{toctree}
+:hidden:
+:caption: Optional features
+
+coding
+review_aids
+measures
+three_d
+projects
+```
+
+```{toctree}
+:hidden:
+:caption: Reference
+
 questions
+commands
 ```

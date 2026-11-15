@@ -1,11 +1,14 @@
+import sys
 import tomllib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 
 project = "MACAW"
 release = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 version = release
 
-extensions = ["myst_parser", "sphinx_design"]
+extensions = ["myst_parser", "sphinx_design", "command_reference"]
 myst_enable_extensions = ["colon_fence", "deflist"]
 exclude_patterns = ["_build"]
 

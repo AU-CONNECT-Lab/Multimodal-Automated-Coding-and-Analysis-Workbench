@@ -1,0 +1,274 @@
+# Further measures
+
+These measures extend the standard set listed on the first page. Each is switched on separately. Settings given as a block can be pasted into the *project.yaml* box on the settings page and adapted to the study.
+
+(gaze)=
+## Gaze: who looks at whom
+
+For each participant in each frame, MACAW estimates the point in the picture they look at, and from it whom they look at, which named object, somewhere else in the picture, or something outside it. The estimate is made from the participant's head and the whole scene, so it also works when a face is partly turned away. The first run downloads a model of about 1.3 GB.
+
+:::{important}
+Whom a participant looks at can be determined only when the person looked at is visible in the same picture, so this requires a camera that shows everyone involved. A camera that films one participant alone yields where in the picture they look, not at whom; for that case see *Positions in the room instead of the picture* below. The estimate reflects head and eye orientation as visible in the video and is not a substitute for an eye tracker: it distinguishes the other person's face from the table or the toys, but not one toy from the one beside it.
+:::
+
+Objects to be distinguished are named in plain English under *Things people look at* in the *Tools* group, for example `bottle, book, toy car`. The quality-control report warns when a name is rarely found; another word for the same object often works better. When objects are detected that are not there, raise the detection threshold (`gaze.object_score`, 0.35 by default); when objects that are there are missed, lower it.
+
+For each pair of participants the results give, at every moment, whether one looks at the other and whether the two look at each other (mutual gaze), and for the whole recording the proportion of time spent looking at the other, the number of looks and the proportion of mutual gaze. A moment at which a participant looks outside the picture while the other is not in it is left open, since the look may be directed at that person, and counts toward neither proportion. A glance of a frame or two toward something else is merged into the preceding look, so that it does not count as a new look. Every look is also stored as a code, so that it can be exported to ELAN, compared with human gaze coding ({ref}`own-coding`) and summarised with `macaw describe-codes`.
+
+When objects are named, or placed in the room (see *Positions in the room instead of the picture* below), the results also give joint attention: the moments in which two participants look at the same named object. For each pair they give the proportion of time spent in joint attention, the number of stretches of it, and how many of these stretches each participant led, that is, looked at the object first. For each stretch, `joint_attention_lag_s` gives how long after the first participant the second one joined, so that a study can apply its own window for following another's attention. A look that began before the participant's gaze could first be read counts from that moment. Each stretch is stored as a code on a tier of its own for each pair, labelled with the object. Two participants looking at the same third person is not counted as joint attention; it can be read from whom each looks at. The limitation above applies: two objects close together in the picture are not told apart.
+
+### Checking the estimate on the study's own video
+
+On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; the dice button in the card's corner moves the player to a moment at random. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not.
+
+### Positions in the room instead of the picture
+
+When the person looked at is often outside the picture, for example a parent seated beside the camera that films the child, whom a participant looks at can be inferred from the direction of their head (and, with eye direction enabled, their eyes), provided their positions are known. Enter the room on the Setup page ({ref}`room`): the position and eye height of each participant, and the position, height, direction and tilt of the camera used for each participant's gaze. Things placed in the room with a height, such as a toy on the table, become targets too. Then set:
+
+```yaml
+gaze:
+  backend: angles
+  tolerance_deg: 20
+face:
+  gaze: true                 # use eye direction as well as head direction
+```
+
+A look within `tolerance_deg` of the direction to a person or thing counts as a look at it. There is no default, as the appropriate value depends on how far apart the participants sit. Each participant's directions are taken as seen from the camera used for their gaze, so participants filmed by cameras of their own are read as well. The method assumes that participants remain at their positions; a recording with a different arrangement changes the room in its own settings file. Head angles estimated from a single camera carry a bias of their own, so labelling frames as described above is recommended: MACAW then corrects each participant's offset from the labelled frames, and once a participant has three or more labelled frames looking at a target, it takes that target's direction from the frames rather than from the room. Labelled frames alone, without the room, are also sufficient.
+
+(motion)=
+## Motion energy in a region of the picture
+
+Motion energy measures the amount of movement within a rectangle of the picture, for each participant separately. Give each participant a region as `[x, y, width, height]` in pixels of the picture of the camera the setup uses for their body (their own camera when one is used for them alone, otherwise the first camera listed for their body), as read off a still frame in an image viewer:
+
+```yaml
+motion:
+  rois:
+    parent: [80, 120, 640, 900]
+    child: [1100, 200, 600, 800]
+```
+
+When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
+
+(counts)=
+## Counts and shares per person
+
+A few simple summaries per person complement the measures every run gives. Each is computed for the whole analysed part and for every named segment ({ref}`segments`). They often serve as rule-based counterparts of a rating scale.
+
+### Questions and listed words
+
+Each person's sentences ending in a question mark are counted per minute (`questions_per_minute`). Sentences are cut after a full stop, question mark or exclamation mark followed by a space, so the count rests on the punctuation of the transcript: the recogniser's own, or that of the person who corrected it.
+
+Lists of words or phrases in the project folder, one entry per line, give the number of sentences per minute that hold at least one entry:
+
+```yaml
+text:
+  word_lists:
+    negative: negative_words.txt
+```
+
+This gives `negative_per_minute` for each person. An entry matches whole words regardless of case, a phrase matches its words in a row, and `#` starts a comment. No list is supplied with MACAW.
+
+### Faces and action units
+
+For each person, `face_found_share` is the share of the frames, on the camera their face is read from, in which a face was found and assigned to them. A low share means that the face was turned away, hidden or out of view; that person's action units and face angles rest on the frames that remain. With thresholds set,
+
+```yaml
+face:
+  au_above: {au12: 0.5}
+```
+
+`au12_above_share` is the share of the frames with that person's face in which the action unit exceeds the threshold. Thresholds have no default, because the scale of the values depends on the face backend and model, as the description of each action unit in the results states.
+
+### Movement while listening
+
+`upper_body_speed` is the mean speed of the head, shoulder, elbow and wrist points found in a frame, in pixels per second. With
+
+```yaml
+kinematics:
+  listening: [upper_body_speed]
+```
+
+each person's upper-body speed is averaged over the frames in which another participant is talking and nobody else is, judged from the start and end of each utterance in the transcript (`upper_body_speed_listening`). The results also give how long this was the case (`listening_s`) and how many frames the average rests on; an average over few frames is easily moved by a single jump of the tracker. Motion energy (`motion_energy`, see {ref}`motion`) can be listed as well. Speech in a voice other than the participants', such as a researcher's, does not count as another participant talking. Speeds in pixels depend on how far each person sits from the camera and on the camera's resolution, so comparisons between people or recordings call for lengths in a common unit ({ref}`scale`), or for speeds relative to body size:
+
+```yaml
+kinematics:
+  listening: [upper_body_speed, motion_energy]
+  listening_per_body_size: true
+```
+
+divides each listed length or speed by the person's shoulder width, the 95th percentile of the distance between their shoulders over the recording on the camera their body is measured from, as `per_body_size` does for the project's own measures ({ref}`measures`); `upper_body_speed_listening` is then in shoulder widths per second. This holds where each person stays at about the same distance from the camera and faces it for part of the recording. A person whose two shoulders are never found in the same frame has no value. Motion energy and the head angles are not lengths and stay as they are; the run plan says which series were divided.
+
+(synchrony)=
+## Synchrony, convergence and response rates
+
+MACAW leaves indices of synchrony and convergence to dedicated tools, since each involves choices (window, lag, normalisation) that belong to the study. It provides the series and the paired values these tools take.
+
+### Movement synchrony with rMEA or SUSY
+
+Motion energy ({ref}`motion`) is measured in every video frame, and therefore at a constant rate. Export the frames with `macaw export --scale frame`, then give each recording's two series to the R package rMEA:
+
+```r
+library(dplyr)
+library(tidyr)
+library(rMEA)
+
+frames <- readr::read_csv("exports/features.csv", show_col_types = FALSE)
+dir.create("mea", showWarnings = FALSE)
+frames |>
+  filter(!is.na(motion_energy)) |>
+  select(recording_id, subject_id, t_start, motion_energy) |>
+  pivot_wider(names_from = subject_id, values_from = motion_energy) |>
+  arrange(recording_id, t_start) |>
+  group_by(recording_id) |>
+  group_walk(~ write.table(select(.x, parent, child), file.path("mea", paste0(.y$recording_id, ".txt")),
+                           row.names = FALSE, col.names = FALSE))
+
+mea <- readMEA("mea", s1Col = 1, s2Col = 2, sampRate = 25, s1Name = "parent", s2Name = "child", idOrder = NA)
+mea <- MEAccf(mea, lagSec = 5, winSec = 60, incSec = 30)
+summary(mea)
+```
+
+`sampRate` is the frame rate of the video, which is the inverse of the step between consecutive values of `t_start`; `parent` and `child` are the participants' identifiers. The R package SUSY takes one recording's two columns directly, with the segment length and the largest lag in seconds:
+
+```r
+library(SUSY)
+one <- frames |>
+  filter(recording_id == "001", !is.na(motion_energy)) |>
+  select(subject_id, t_start, motion_energy) |>
+  pivot_wider(names_from = subject_id, values_from = motion_energy) |>
+  arrange(t_start)
+susy(as.data.frame(select(one, parent, child)), segment = 30, Hz = 25, maxlag = 5)
+```
+
+Other series at the frame rate, such as wrist speed or head angles, can be passed to these tools in the same way.
+
+### Prosodic convergence
+
+At each change of speaker, the results set the voice measures of the turn just handed over beside those of the turn that took the floor: `prior_<measure>` for the previous speaker's turn and `next_<measure>` for the new one, on one row per change, where `subject_id` is the new speaker and `subject_id_b` the previous one. The measures are those computed for every turn: pitch (mean, median, spread, range and slope), the voiced fraction, mean intensity, jitter, shimmer, harmonics-to-noise ratio, cepstral peak prominence, and speech rate in words per second. Indices of entrainment, such as the difference between adjacent turns or its change over the session, are computed from these pairs. Intensity and the amplitude measures depend on the microphone and its distance from the speaker, so they are usually standardised within each speaker before being compared.
+
+### Lexical overlap
+
+For each turn taken directly after another participant's, `lexical_overlap` gives the proportion of the distinct words in the turn that the previous speaker used in the turn just before it, and `mean_lexical_overlap` gives its mean for each pair of speakers, in each direction. Words are compared as written, after lower-casing, so that *play* and *played* count as different words. Function words, fillers and backchannels are left out by default, as they are when MACAW counts who introduces the words a pair come to share. `text.exclude_words` sets this list for both measures: `english_stopwords` (the default), `none`, or the path of a word list with one word per line.
+
+### Responses within a time window
+
+The proportion of one participant's turns that the other answers within a few seconds, as in the conversational turn counts of LENA, depends on the window, which varies between studies (2, 3 or 5 s). MACAW therefore gives, for every change of speaker, the floor transfer offset `fto_s` (the gap before the new turn, negative when it overlaps the previous one), and the rate is computed from it. For a 5 s window:
+
+```r
+features <- readr::read_csv("exports/features.csv", show_col_types = FALSE)
+turns <- features |>
+  filter(!is.na(turn_duration_s)) |>
+  count(recording_id, subject_id, name = "turns")
+answered <- features |>
+  filter(!is.na(fto_s), fto_s <= 5) |>
+  count(recording_id, subject_id = subject_id_b, name = "answered_within_5s")
+turns |>
+  left_join(answered, by = c("recording_id", "subject_id")) |>
+  mutate(answered_within_5s = coalesce(answered_within_5s, 0L), response_rate = answered_within_5s / turns)
+```
+
+The counts differ from those of LENA itself, which segments the audio in its own way.
+
+(measures)=
+## Custom body measures
+
+Besides the body measures MACAW always computes, measures between two keypoints can be defined, from a point on one participant to a point on another participant or on the same participant. Each becomes a measure over time under its own name.
+
+```yaml
+kinematics:
+  measures:
+    - name: hand_to_child_head
+      person: parent
+      joints: [left_wrist, right_wrist]
+      to_person: child
+      to_joints: [nose]
+      method: distance
+      per_body_size: true
+    - name: head_toward_parent
+      person: child
+      joints: [nose]
+      to_person: parent
+      to_joints: [nose]
+      method: offset_toward
+      per_body_size: true
+```
+
+`person`, `to_person`
+: Roles of the study. `to_person: self` measures within one participant, for example a hand to their own face.
+
+`joints`, `to_joints`
+: Keypoints of the skeleton: `nose`, `left_eye`, `right_eye`, `left_ear`, `right_ear`, `left_shoulder`, `right_shoulder`, `left_elbow`, `right_elbow`, `left_wrist`, `right_wrist`, `left_hip`, `right_hip`, `left_knee`, `right_knee`, `left_ankle`, `right_ankle`, and the derived `shoulder_center` and `hip_center`. When several are listed, the nearest pair counts.
+
+`method`
+: `distance`; `approach_speed`, the rate at which that distance shrinks (positive while approaching); `offset_toward`, how far a point lies from the participant's own shoulder midpoint in the direction of the other participant, such as a head turned toward them; or a function of one's own (below).
+
+`per_body_size`
+: Divides by the participant's shoulder width, so that the measure is in shoulder widths and does not depend on the distance from the camera. In the picture the width is the 95th percentile of the distance between the shoulders over the recording, which holds where the participant stays at about the same distance and faces the camera for part of the recording; in the room it is the median.
+
+Measures between two participants are computed only on a camera that shows both of them.
+
+A measure of one's own is a Python function in a file in the `scripts` folder of the project, named as `method: file.function`. The function receives two tables, one per participant, with one row per video frame, a column `t` for time, and the columns `<joint>_x` and `<joint>_y` for every keypoint, and returns one number per row:
+
+```python
+# scripts/my_measures.py
+def wrist_height_gap(person, other):
+    return other["left_wrist_y"] - person["left_wrist_y"]
+```
+
+```yaml
+    - name: wrist_height_gap
+      person: parent
+      to_person: child
+      method: my_measures.wrist_height_gap
+```
+
+When the file changes, the next run recomputes the measure. See {ref}`extending` before placing files in the `scripts` folder.
+
+### Time below a threshold
+
+A measure can also report how much of the time it stays below a value, for example how long two participants are within reach of each other. Add `below` to it:
+
+```yaml
+    - name: shoulders_apart
+      person: parent
+      joints: [shoulder_center]
+      to_person: child
+      to_joints: [shoulder_center]
+      below: 250
+```
+
+The results then give the proportion of the frames in which the measure was below the value, out of the frames in which it could be measured, and the number of unbroken stretches below it. Each stretch is also stored as a code, so that it can be inspected in ELAN or compared with human coding. `below` is in the unit of the measure: pixels for a distance in the picture, and shoulder widths with `per_body_size`. There is no default, because the appropriate value depends on the camera and on the study. A threshold given in centimetres in the literature, such as 76 cm (30 inches), can be converted to pixels with the scale of the recording ({ref}`scale`), which holds only while the participants stay at the distance from the camera at which the scale was measured. With several calibrated cameras ({ref}`three-d`), `below_3d` sets the threshold for the measure in three dimensions in the project's unit of length, which needs no such condition.
+
+(gestures)=
+## Gesture kinematics
+
+When gestures have been coded on a tier for each participant and imported ({ref}`own-coding`), MACAW measures each coded gesture from the wrists: peak speed, the number of submovements (the speed peaks it consists of), holds between the first and the last submovement, the regularity of the submovements, the area the hand covers, how high it reaches relative to the body, the gesture space it uses, and in how many directions around the body's centre it extends. Each gesture yields one value per measure and hand.
+
+```yaml
+kinematics:
+  gestures:
+    tier: gesture
+    still_speed: 15
+    peak_prominence: 40
+```
+
+`still_speed` and `peak_prominence` have no default, because they are in pixels per second and therefore depend on the camera. A hand slower than `still_speed` counts as still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. `peak_prominence` should lie well above the jitter of the tracking, otherwise every wobble counts as a submovement; check a few gestures against the video before relying on the counts. When two people coded the tier, `annotator` names whose gestures are measured. `holds: both_hands` counts a hold only while both hands are still, instead of for each hand separately.
+
+Height and gesture space require the hips to be visible; when a table hides them, these two measures remain empty.
+
+:::{important}
+Gesture space is measured in the picture, so it follows the body only while the participant faces the camera or has their back to it. Seen from the side, the body appears narrow and the hands seem to reach far beyond it. Height is much less affected. With several calibrated cameras, the three-dimensional gesture space described below is free of this limitation.
+:::
+
+Tracking jitter adds slightly to every speed and area, most to small, slow movements. These values are therefore best compared between participants and conditions measured in the same way rather than read as absolute sizes.
+
+With several calibrated cameras ({ref}`three-d`), the same measures are also computed in three dimensions once two further thresholds are set, in the project's unit of length per second. As in the picture, there is no default, and the three-dimensional wrist speeds in the exported table help to choose them (here in centimetres per second):
+
+```yaml
+kinematics:
+  gestures:
+    still_speed_3d: 5
+    peak_prominence_3d: 10
+```
+
+In three dimensions, area, height and gesture space are taken in the participant's own frontal plane, defined by their hips and shoulders, so they hold whichever way the participant faces.
