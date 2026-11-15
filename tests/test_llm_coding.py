@@ -348,6 +348,19 @@ class TestBackends:
         assert response.prompt_tokens == 5 and backend.model_version() == "claude-x"
 
 
+@pytest.fixture(autouse=True)
+def unfinished_in_tmp(monkeypatch, tmp_path):
+    """A made-up config has no project folder, so an unfinished coding keeps its answers under tmp_path."""
+    real = module.layout_for
+
+    def layout(config, create=True):
+        if not hasattr(getattr(config, "project", None), "output_dir"):
+            return SimpleNamespace(unfinished_path=lambda rid, step: tmp_path / "unfinished" / rid / step)
+        return real(config, create=create)
+
+    monkeypatch.setattr(module, "layout_for", layout)
+
+
 def run_judge(monkeypatch, tmp_path, stub, talk=TALK, **llm):
     path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
     monkeypatch.setattr(module, "load_transcript", transcript_of(talk))
@@ -502,7 +515,7 @@ class TestAtOnce:
         together = sample_labels(lines, CODEBOOK, four, self.cfg(4))
         pd.testing.assert_frame_equal(alone, together)
         assert alone["unit_id"].tolist() == ["u0", "u1", "u2"] * 3 and alone["sample"].tolist() == [0] * 3 + [1] * 3 + [2] * 3
-        assert alone.attrs == together.attrs == {"cut_off": 0, "requests": 9}
+        assert alone.attrs == together.attrs == {"cut_off": 0, "requests": 9, "kept": 0}
         assert [seed for _, seed in one.calls] == [5] * 3 + [6] * 3 + [7] * 3
         assert one.most == 1 and four.most == 4 and sorted(four.calls) == sorted(one.calls) and four.finished != one.finished
 
@@ -512,6 +525,30 @@ class TestAtOnce:
         with pytest.raises(LLMBackendError, match="raise coding.llm.max_tokens"):
             sample_labels(coding_units(None, RECORDING, "utterance"), CODEBOOK, backend, self.cfg(4))
         assert len(backend.calls) == 1
+
+    def test_a_try_after_a_failure_asks_only_for_the_answers_still_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        lines, kept = coding_units(None, RECORDING, "utterance"), tmp_path / "unfinished" / "answers.jsonl"
+        failing = CountingBackend(label_by_text_and_seed, fail_at=5)
+        with pytest.raises(RuntimeError, match="fell over"):
+            sample_labels(lines, CODEBOOK, failing, self.cfg(1), kept_at=kept)
+        assert len(kept.read_text(encoding="utf-8").splitlines()) == 4
+        again = CountingBackend(label_by_text_and_seed)
+        resumed = sample_labels(lines, CODEBOOK, again, self.cfg(1), kept_at=kept)
+        assert len(again.calls) == 5 and resumed.attrs["kept"] == 4
+        whole = sample_labels(lines, CODEBOOK, CountingBackend(label_by_text_and_seed), self.cfg(1))
+        pd.testing.assert_frame_equal(resumed, whole)
+
+    def test_an_answer_is_kept_only_for_the_same_frames(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+        lines, kept = coding_units(None, RECORDING, "utterance"), tmp_path / "answers.jsonl"
+        frames = {unit_id: [unit_id.encode()] for unit_id in ("u0", "u1", "u2")}
+        sample_labels(lines, CODEBOOK, CountingBackend(label_by_text_and_seed), self.cfg(1), frames=frames, kept_at=kept)
+        same = CountingBackend(label_by_text_and_seed)
+        sample_labels(lines, CODEBOOK, same, self.cfg(1), frames=frames, kept_at=kept)
+        other = CountingBackend(label_by_text_and_seed)
+        sample_labels(lines, CODEBOOK, other, self.cfg(1), frames={**frames, "u1": [b"another frame"]}, kept_at=kept)
+        assert same.calls == [] and len(other.calls) == 3
 
     def test_requests_sent_at_once_are_kept_with_the_results_and_said_in_the_report(self, monkeypatch, tmp_path, stub):
         result = run_judge(monkeypatch, tmp_path, stub, n_samples=3, batch_size=1, concurrency=4)

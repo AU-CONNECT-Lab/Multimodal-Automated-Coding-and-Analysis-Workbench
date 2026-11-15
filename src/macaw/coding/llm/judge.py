@@ -15,7 +15,9 @@ import pandas as pd
 
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
 from macaw.coding.examples import read_examples
-from macaw.coding.llm.backends import LLMBackend, concurrency_params, resolve_llm_backend, run_in_order, seed_caveat
+from macaw.coding.llm.backends import (
+    KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
+)
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, FRAME_AT, FRAMES, VOICE, build_annotation_prompt
@@ -43,6 +45,7 @@ LAYER = "B"
 VERSION_STEP = "coding.judge."
 VERSION_LAYER = "B."
 SAMPLES_NAME = "samples.parquet"
+KEPT_NAME = "answers.jsonl"
 _FRAME_FEATURES = {"pitch": "f0_semitone", "loudness": "intensity_db"}
 # px; enough for faces at a table in a full frame without the picture costing thousands of tokens more
 FRAME_LONG_SIDE = 960
@@ -169,7 +172,10 @@ class JudgementExtractor(Extractor):
         # an example from the conversation being coded would hand the model the answer
         own = examples["recording_id"] == recording.recording_id
         frames = unit_frames(self.config, recording, units, workspace / "frames") if FRAMES in cfg.show else None
-        samples = sample_labels(lines, codebook, backend, cfg, examples=examples[~own], frames=frames, notes=self.prompt_note(recording))
+        kept_at = layout_for(self.config, create=False).unfinished_path(recording.recording_id, self.name) / KEPT_NAME
+        samples = sample_labels(
+            lines, codebook, backend, cfg, examples=examples[~own], frames=frames, notes=self.prompt_note(recording), kept_at=kept_at,
+        )
         judged = aggregate_samples(units, samples, cfg)
 
         path = workspace / SAMPLES_NAME
@@ -289,6 +295,12 @@ class JudgementExtractor(Extractor):
                 "llm_cut_off", "warn",
                 f"{sampled['cut_off']} of {sampled['requests']} answers were cut off at max_tokens ({cfg.max_tokens}); the units "
                 "they did not reach count as ones the model could not tell. Raise coding.llm.max_tokens.",
+            )
+        if sampled.get("kept"):
+            note(
+                "llm_resumed", "info",
+                f"{sampled['kept']} of {sampled['requests']} answers were kept from a run of this coding that stopped before its end, "
+                "and were not asked for again.",
             )
         if cfg.n_samples == 1:
             note("llm_single_sample", "info", "coding.llm.n_samples is 1, so no confidence was measured; only abstentions go to the review queue.")
@@ -508,10 +520,11 @@ def video_length(path: Path) -> float:
 def sample_labels(
     lines: pd.DataFrame, codebook: Codebook, backend: LLMBackend, cfg: LLMSection, *,
     examples: pd.DataFrame | None = None, frames: dict[str, list[bytes]] | None = None, notes: str | None = None,
+    kept_at: Path | None = None,
 ) -> pd.DataFrame:
     """One row per unit and sample: unit_id, sample, label (a code or abstain), reason. A batch is
     units_per_request units with the uncoded lines between them in place; notes is the recording's note, coding.llm.notes
-    when not given."""
+    when not given. With kept_at each answer is written there as it comes, and one already there is not asked for again."""
     notes = cfg.notes if notes is None else notes
     coded = np.flatnonzero(lines["unit_id"].notna().to_numpy())
     size = units_per_request(cfg)
@@ -527,25 +540,35 @@ def sample_labels(
         ids = batch["unit_id"].dropna().tolist()
         batches.append((system, user, ids, [picture for unit_id in ids for picture in frames[unit_id]] if frames else ()))
 
-    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool]:
-        response = backend.complete(system, user, seed=cfg.seed + sample if backend.takes_seed else None, images=images)
-        parsed = parse_annotation_response(response.text, codebook, ids, allow_abstain=cfg.allow_abstain)
+    kept = KeptAnswers(kept_at)
+
+    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool, bool]:
+        seed = cfg.seed + sample if backend.takes_seed else None
+        key = request_key(backend, cfg, system, user, sample, seed, images) if kept_at is not None else None
+        entry = kept.get(key)
+        was_kept = entry is not None
+        if not was_kept:
+            response = backend.complete(system, user, seed=seed, images=images)
+            entry = {"text": response.text, "cut_off": response.cut_off}
+        parsed = parse_annotation_response(entry["text"], codebook, ids, allow_abstain=cfg.allow_abstain)
         # an answer that never came is not the model saying it cannot tell
-        if response.cut_off and (parsed["label"] == ABSTAIN).all():
+        if entry["cut_off"] and (parsed["label"] == ABSTAIN).all():
             raise LLMBackendError(
                 f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
                 "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
             )
-        return parsed.assign(sample=sample), response.cut_off
+        if not was_kept:
+            kept.keep(key, entry)
+        return parsed.assign(sample=sample), entry["cut_off"], was_kept
 
     given = run_in_order([partial(answer, sample, *batch) for sample in range(cfg.n_samples) for batch in batches], cfg.concurrency)
-    answers = [parsed for parsed, _ in given]
-    cut_off = sum(cut for _, cut in given)
+    answers = [parsed for parsed, _, _ in given]
+    cut_off = sum(cut for _, cut, _ in given)
     if not answers:
         out = pd.DataFrame({column: pd.Series(dtype=int if column == "sample" else str) for column in ("unit_id", "sample", "label", "reason")})
     else:
         out = pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label", "reason"]]
-    out.attrs.update(cut_off=cut_off, requests=len(answers))
+    out.attrs.update(cut_off=cut_off, requests=len(answers), kept=sum(was_kept for *_, was_kept in given))
     return out
 
 

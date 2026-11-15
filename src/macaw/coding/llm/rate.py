@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import re
-import threading
 import time
 from functools import partial
 from pathlib import Path
@@ -13,13 +12,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.backends import LLMBackend, concurrency_params, resolve_llm_backend, run_in_order, seed_caveat
+from macaw.coding.llm.backends import (
+    KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
+)
 from macaw.coding.llm.judge import prosody_rows_file, voice_figures
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import VOICE, build_rating_prompt
 from macaw.coding.scales import ScaleSet, read_scales, validate_scales
-from macaw.config.hashing import canonical, hash_value
+from macaw.config.hashing import canonical
 from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingVersion
 from macaw.exceptions import CodebookError, ConfigError, InputNotFoundError, LLMBackendError
 from macaw.extractors import register_extractor
@@ -295,42 +296,6 @@ def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: floa
     cut["t_end"] = cut["t_end"] - start
     cut["gap_before"] = cut["t_start"] - cut["t_end"].cummax().shift()
     return cut
-
-
-class KeptAnswers:
-    """The answers of a rating that has not finished, written as each comes, so that its next try asks only for the rest."""
-
-    def __init__(self, path: Path | None):
-        self.path = path
-        self._lock = threading.Lock()
-        self._found: dict[str, dict] = {}
-        if path is not None and path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    # the line being written when the run stopped
-                    continue
-                self._found[entry.pop("key")] = entry
-
-    def get(self, key: str | None) -> dict | None:
-        return self._found.get(key)
-
-    def keep(self, key: str | None, entry: dict) -> None:
-        if self.path is None:
-            return
-        with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"key": key, **entry}, ensure_ascii=False) + "\n")
-
-
-def request_key(backend: LLMBackend, cfg: LLMSection, system: str, user: str, sample: int, seed: int | None) -> str:
-    """Everything an answer depends on; the same key is the same question to the same model."""
-    return hash_value({
-        "provider": backend.name, "model": backend.model_version(), "temperature": cfg.temperature, "max_tokens": cfg.max_tokens,
-        "think": cfg.think, "system": system, "user": user, "sample": sample, "seed": seed,
-    })
 
 
 def _answer(backend: LLMBackend, system: str, user: str, seed: int | None) -> dict:

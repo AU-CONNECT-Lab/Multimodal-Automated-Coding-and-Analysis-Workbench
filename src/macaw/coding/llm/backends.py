@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import threading
@@ -11,8 +12,10 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
+from macaw.config.hashing import hash_value
 from macaw.config.schema import LLMSection
 from macaw.exceptions import BackendNotAvailableError, LLMBackendError
 from macaw.extractors import get_backend, register_backend
@@ -164,6 +167,45 @@ _RATE_LIMITS = (
     "The provider's rate limits apply: a refused request waits as long as the provider asks (up to two minutes) and is tried "
     "again up to three times before it stops the step."
 )
+
+
+class KeptAnswers:
+    """The answers of a step that has not finished, written as each comes, so that its next try asks only for the rest."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self._lock = threading.Lock()
+        self._found: dict[str, dict] = {}
+        if path is not None and path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    # the line being written when the run stopped
+                    continue
+                self._found[entry.pop("key")] = entry
+
+    def get(self, key: str | None) -> dict | None:
+        return self._found.get(key)
+
+    def keep(self, key: str | None, entry: dict) -> None:
+        if self.path is None:
+            return
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"key": key, **entry}, ensure_ascii=False) + "\n")
+
+
+def request_key(
+    backend: LLMBackend, cfg: LLMSection, system: str, user: str, sample: int, seed: int | None, images: Sequence[bytes] = (),
+) -> str:
+    """Everything an answer depends on; the same key is the same question to the same model."""
+    return hash_value({
+        "provider": backend.name, "model": backend.model_version(), "temperature": cfg.temperature, "max_tokens": cfg.max_tokens,
+        "think": cfg.think, "system": system, "user": user, "sample": sample, "seed": seed,
+        "images": [hashlib.sha256(image).hexdigest() for image in images],
+    })
 
 
 def run_in_order(jobs: Sequence[Callable[[], T]], concurrency: int, *, after_first: Callable[[], None] | None = None) -> list[T]:
