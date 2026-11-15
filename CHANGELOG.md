@@ -75,6 +75,7 @@
 - A time strip under the player: segments are drawn and moved on it over the sound's loudness, it zooms for long recordings, and the Review page's frames follow it; the Agreement page shows its choices beside the result.
 - The Review page is shorter: scrolled past, the player shrinks to its time strip with a small picture, the cards that show a frame have their controls beside it, and voice clips play from a small button.
 - The 3D views move through time on the same time strip, the Results page playing the recording beside its 3D, a language-model coding that stops part way asks only for the answers still missing next time, and the alignment figures read in dark mode.
+- The user guide's optional features are five chapters, with a command reference written from the commands' own help, and `macaw --help` groups the commands by what they are for, every option saying what it does.
 
 ### Removed
 - `macaw export --rmd` and the R Markdown starter it wrote beside the export.
