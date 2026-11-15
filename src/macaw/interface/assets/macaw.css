@@ -541,7 +541,6 @@ table.standing .cell { width: var(--cell); height: var(--cell); border-radius: c
 .section-title { font-size: 1.25rem; font-weight: var(--heading-weight); margin: 2rem 0.25rem 1rem; }
 .choice-label { font-size: 0.78rem; color: var(--muted); margin: 1rem 0 0.1rem; }
 .card-body > .choice-label:first-child { margin-top: 0; }
-.floor-slider { flex: 1; min-width: 18rem; }
 
 /* Review page: a wide recording picker, the player that stays in view, times that play from there */
 .picker.wide { min-width: 22rem; }

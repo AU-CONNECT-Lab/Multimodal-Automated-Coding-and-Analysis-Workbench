@@ -605,6 +605,14 @@ def test_the_3d_view_opens_where_most_points_were_placed():
     assert results.fullest_moment(points) == 1.0
 
 
+def test_the_3d_strip_has_no_player_and_opens_at_the_fullest_moment(project):
+    import json
+
+    points = pd.DataFrame({"t": [0.0, 1.0, 1.0, 2.5], "joint": list("abcd")})
+    shown = json.loads(results.strip_3d(project, "dyad01", points).to_plotly_json()["props"]["data-strip"])
+    assert shown["start"] == 1.0 and shown["length"] == 2.5 and shown["timeStore"] == results.TIME_3D and "video" not in shown
+
+
 def test_choosing_a_setup_writes_it_into_the_project(project):
     from macaw.interface.pages import cameras
 

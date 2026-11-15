@@ -99,9 +99,10 @@ def layout(config_path: Path):
             ),
             ui.card(
                 "Board lying flat",
+                html.Div(id="cameras-floor-strip-box"),
+                dcc.Store(id="cameras-floor-time"),
                 html.Div(
                     [
-                        html.Div(dcc.Slider(0, 60, 0.1, value=0, id="cameras-floor-at", marks=None, updatemode="mouseup"), className="floor-slider"),
                         ui.field("On", dcc.Dropdown(["floor"], "floor", id="cameras-floor-on", clearable=False, className="picker")),
                         ui.field(f"Marked corner across ({config.project.units})", dcc.Input(id="cameras-floor-x", type="number", step="any")),
                         ui.field(f"Marked corner along ({config.project.units})", dcc.Input(id="cameras-floor-y", type="number", step="any")),
@@ -111,7 +112,7 @@ def layout(config_path: Path):
                 ),
                 dcc.Loading(html.Div(id="cameras-floor-view")),
                 html.Div(id="cameras-floor-result"),
-                desc="Drag to when the board lay flat; where its marked corner lay, if known, places the cameras without measuring them.",
+                desc="Move the strip to when the board lay flat; where its marked corner lay, if known, places the cameras without measuring them.",
                 actions=[ui.button("Save the moment", "cameras-floor-save")],
             ),
             ui.card("Progress", html.Div(id="cameras-progress"), dcc.Interval(id="cameras-poll", interval=2000), dcc.Store(id="cameras-state"), waits=True),
@@ -276,7 +277,7 @@ def floor_things(config, setup_name: str | None) -> list[str]:
 
 
 def floor_tools(config_path: Path, name: str | None, setup_name: str | None) -> tuple:
-    """The slider's length and place, what the board may lie on and what it lay on, where it lay, and the moment saved so far."""
+    """The time strip's length and place, what the board may lie on and what it lay on, where it lay, and the moment saved so far."""
     from macaw.extractors.video.pose.board import clip_seconds
     from macaw.project.placing import floor_said
 
@@ -440,27 +441,28 @@ def register(app, config_path: Path) -> None:
         return ui.note(f"Finding the cameras of {name}; this reads every clip and takes a few minutes. The output goes to {log}.", "ok"), no_update
 
     @app.callback(
-        Output("cameras-floor-at", "max"), Output("cameras-floor-at", "value"), Output("cameras-floor-on", "options"),
+        Output("cameras-floor-strip-box", "children"), Output("cameras-floor-on", "options"),
         Output("cameras-floor-on", "value"), Output("cameras-floor-x", "value"), Output("cameras-floor-y", "value"),
         Output("cameras-floor-toward", "value"), Output("cameras-floor-result", "children"),
         Input("cameras-setup", "value"), Input("setup-pick", "value"),
     )
     def floor_choices(name, setup_name):
         try:
-            return floor_tools(config_path, name, setup_name)
+            length, at, *rest = floor_tools(config_path, name, setup_name)
         except MacawError as error:
-            return *(no_update,) * 7, ui.note(str(error), "bad")
+            return *(no_update,) * 6, ui.note(str(error), "bad")
+        return ui.time_strip("cameras-floor-strip", length=length, start=at, timeStore="cameras-floor-time"), *rest
 
-    @app.callback(Output("cameras-floor-view", "children"), Input("cameras-floor-at", "value"), State("cameras-setup", "value"))
+    @app.callback(Output("cameras-floor-view", "children"), Input("cameras-floor-time", "data"), State("cameras-setup", "value"))
     def floor_frames(at, name):
         try:
-            return floor_view(config_path, name, at)
+            return floor_view(config_path, name, at["t"] if at else 0.0)
         except MacawError as error:
             return ui.note(str(error), "bad")
 
     @app.callback(
         Output("cameras-floor-result", "children", allow_duplicate=True),
-        Input("cameras-floor-save", "n_clicks"), State("cameras-setup", "value"), State("cameras-floor-at", "value"), State("cameras-floor-on", "value"),
+        Input("cameras-floor-save", "n_clicks"), State("cameras-setup", "value"), State("cameras-floor-time", "data"), State("cameras-floor-on", "value"),
         State("cameras-floor-x", "value"), State("cameras-floor-y", "value"), State("cameras-floor-toward", "value"),
         prevent_initial_call=True,
     )
@@ -468,7 +470,7 @@ def register(app, config_path: Path) -> None:
         if not clicks:
             return no_update
         try:
-            return save_floor(config_path, name, at, on, x, y, toward)
+            return save_floor(config_path, name, at["t"] if at else 0.0, on, x, y, toward)
         except MacawError as error:
             return ui.note(str(error), "bad")
 

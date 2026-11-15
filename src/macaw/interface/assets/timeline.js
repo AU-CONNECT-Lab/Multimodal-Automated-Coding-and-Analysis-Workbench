@@ -40,7 +40,7 @@
     ];
     root.innerHTML = `
       <div class="strip-bar">
-        <button type="button" class="strip-play" title="Play or pause (space)"></button>
+        ${video ? '<button type="button" class="strip-play" title="Play or pause (space)"></button>' : ''}
         <input class="strip-time" title="Type a time, as 1:43 or 103">
         <span class="strip-spacer"></span>
         ${video ? `<select class="strip-speed" title="Speed">${[0.5, 1, 1.5, 2].map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r}×</option>`).join('')}</select>
@@ -176,9 +176,10 @@
       if (!root.isConnected) return;
       const t = now();
       if (document.activeElement !== timeBox) timeBox.value = clock(rec(t), long, 2);
-      root.querySelector('.strip-play').classList.toggle('on', !!playing());
-      const mute = root.querySelector('.strip-mute');
-      if (mute) mute.classList.toggle('off', video.muted);
+      if (video) {
+        root.querySelector('.strip-play').classList.toggle('on', !!playing());
+        root.querySelector('.strip-mute').classList.toggle('off', video.muted);
+      }
       const box = lanesBox.getBoundingClientRect(), r = ruler.getBoundingClientRect();
       const x = ((t - S.view[0]) / span()) * r.width;
       head.style.left = `${r.left - box.left + x}px`;
@@ -215,12 +216,12 @@
       drawTicks();
     }
 
-    root.querySelector('.strip-play').addEventListener('click', () => { if (!video) return; if (video.paused) video.play(); else video.pause(); });
     timeBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') timeBox.blur(); });
     timeBox.addEventListener('change', () => { const t = parse(timeBox.value); timeBox.blur(); if (t !== null) seek(ownOf(t)); else draw(); });
     root.querySelectorAll('.strip-zoom').forEach((b) => b.addEventListener('click', () => zoom(b.dataset.z === 'in' ? 0.5 : 2)));
     if (video) {
       video.controls = false;
+      root.querySelector('.strip-play').addEventListener('click', () => { if (video.paused) video.play(); else video.pause(); });
       root.querySelector('.strip-speed').addEventListener('change', (e) => { video.playbackRate = parseFloat(e.target.value); });
       root.querySelector('.strip-mute').addEventListener('click', () => { video.muted = !video.muted; draw(); });
       video.addEventListener('click', () => { if (video.paused) video.play(); else video.pause(); });
@@ -388,7 +389,8 @@
   addEventListener('scroll', pin, { passive: true });
   addEventListener('resize', pin);
 
-  const first = () => strips.values().next().value;
+  // every page stays in the document, so the strip meant is the first on the page showing
+  const first = () => [...strips.values()].find((api) => api.root.isConnected && api.root.offsetParent !== null);
   window.macawStrip = {
     seek: (t, play) => { const api = first(); if (api) api.seekRecording(t, play); return !!api; },
     random: () => { const api = first(); if (api) api.random(); },
@@ -402,7 +404,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.target.closest('input, textarea, select, [contenteditable]')) return;
     const api = first();
-    const video = api && api.root.isConnected && document.getElementById(JSON.parse(api.root.dataset.strip).video || '');
+    const video = api && document.getElementById(JSON.parse(api.root.dataset.strip).video || '');
     if (!video) return;
     e.preventDefault();
     if (video.paused) video.play(); else video.pause();

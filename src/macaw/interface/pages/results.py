@@ -23,6 +23,7 @@ from macaw.store.schema import Scale
 
 LABEL = "Results"
 PATH = "/results"
+STRIP_3D, TIME_3D = "results-3d-strip", "results-3d-time"
 # colours of the QC report figures, one per person in order
 COLOURS = ["#1d4e89", "#d1495b", "#2a9d8f", "#e9a03b", "#6c5b7b", "#57606a"]
 
@@ -52,7 +53,8 @@ def layout(config_path: Path):
             ),
             ui.card(
                 "In 3D",
-                html.Div(dcc.Slider(id="results-3d-time", min=0, max=1, value=0, step=None, marks=None, tooltip={"placement": "bottom"}), id="results-3d-slider"),
+                html.Div(id="results-3d-strip-box"),
+                dcc.Store(id=TIME_3D),
                 dcc.Loading(html.Div(id="results-3d")),
                 desc="Drag to turn it; stretching bones mean misplaced points.",
             ),
@@ -155,6 +157,15 @@ def fullest_moment(points) -> float:
     """The time at which the most points were placed, where the view opens."""
     counts = points.groupby("t").size()
     return float(counts.idxmax())
+
+
+def strip_3d(config_path: Path, rid: str, points):
+    """The time strip over the recording's analysed part, opening where the most points were placed."""
+    from macaw.interface.pages.segments import window_of
+
+    own = resolve_config(config_path, recording_id=rid)
+    length = float(points["t"].max())
+    return ui.time_strip(STRIP_3D, length=length, start=fullest_moment(points), window=window_of(own.segment, length), timeStore=TIME_3D)
 
 
 def in_first_camera(setup, xyz: np.ndarray) -> np.ndarray:
@@ -294,19 +305,19 @@ def register(app, config_path: Path) -> None:
             return html.P("Nothing to show yet.", className="none")
         return view(config_path, rid, source, feature)
 
-    @app.callback(
-        Output("results-3d-time", "min"), Output("results-3d-time", "max"), Output("results-3d-time", "value"),
-        Output("results-3d-slider", "style"), Input(ui.SHOWN["results"], "data"),
-    )
+    @app.callback(Output("results-3d-strip-box", "children"), Input(ui.SHOWN["results"], "data"))
     def span_3d(rid):
         points = points_3d(config_path, rid) if rid else None
         if points is None or points.empty:
-            return 0, 1, 0, {"display": "none"}
-        start, end = float(points["t"].min()), float(points["t"].max())
-        return start, end, fullest_moment(points), {}
+            return None
+        return strip_3d(config_path, rid, points)
 
-    @app.callback(Output("results-3d", "children"), Input("results-3d-time", "value"), State(ui.RECORDING, "value"))
-    def show_3d(at_s, rid):
+    @app.callback(Output("results-3d", "children"), Input(TIME_3D, "data"), Input(ui.SHOWN["results"], "data"), State(ui.RECORDING, "value"))
+    def show_3d(at, _, rid):
         if not rid:
             return html.P("No recordings found.", className="none")
-        return view_3d(config_path, rid, float(at_s or 0.0))
+        points = points_3d(config_path, rid)
+        if points is None or points.empty:
+            return view_3d(config_path, rid, 0.0, points)
+        at_s = at["t"] if at and ctx.triggered_id == TIME_3D else fullest_moment(points)
+        return view_3d(config_path, rid, float(at_s), points)
