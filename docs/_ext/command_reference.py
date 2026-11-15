@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -11,6 +12,7 @@ INTRO = (
     "`macaw <command> --help` prints the same text in the terminal."
 )
 SKIPPED = {"help", "install_completion", "show_completion"}
+TYPE_NAMES = {Path: "PATH", str: "TEXT", int: "INTEGER", float: "FLOAT", bool: "BOOL"}
 
 
 def _escape(text: str) -> str:
@@ -23,14 +25,32 @@ def _plain(text: str | None) -> str:
     return " ".join((text or "").split())
 
 
-def _metavar(param) -> str:
+def _hints(command) -> dict:
+    # types come from the command function's own annotations; typer's parameter internals change between releases
+    import typing
+
+    function = inspect.unwrap(command.callback) if command.callback else None
+    try:
+        return typing.get_type_hints(function) if function else {}
+    except Exception:
+        return {}
+
+
+def _type_name(annotation) -> str:
+    import typing
+
+    origin, args = typing.get_origin(annotation), typing.get_args(annotation)
+    if origin is tuple:
+        return " ".join(_type_name(arg) for arg in args)
+    if origin in (list, typing.Union) or str(origin) == "types.UnionType":
+        return _type_name(next(arg for arg in args if arg is not type(None)))
+    return TYPE_NAMES.get(annotation, "VALUE")
+
+
+def _metavar(param, hints: dict) -> str:
     if getattr(param, "is_flag", False) or getattr(param, "count", False):
         return ""
-    if hasattr(param.type, "types"):
-        return " ".join(part.name.upper() for part in param.type.types)
-    name = param.type.name.upper() if param.type.name else "VALUE"
-    name = {"BOOLEAN": "BOOL", "STR": "TEXT", "INT": "INTEGER"}.get(name, name)
-    return " ".join([name] * param.nargs) if param.nargs > 1 else name
+    return _type_name(hints.get(param.name, str))
 
 
 def _default(param) -> str:
@@ -44,12 +64,12 @@ def _default(param) -> str:
     return str(value)
 
 
-def _param_lines(param) -> list[str]:
+def _param_lines(param, hints: dict) -> list[str]:
     if param.param_type_name == "argument":
-        head = f"`{param.human_readable_name.upper()}`"
+        head = f"`{param.name.upper()}`"
     else:
         names = ", ".join(f"`{name}`" for name in param.opts + param.secondary_opts)
-        metavar = _metavar(param)
+        metavar = _metavar(param, hints)
         head = f"{names} {metavar}".rstrip() if metavar else names
     notes = []
     if param.required:
@@ -66,7 +86,7 @@ def _param_lines(param) -> list[str]:
 
 def _usage(path: list[str], command) -> str:
     args = " ".join(
-        p.human_readable_name.upper() if p.required else f"[{p.human_readable_name.upper()}]"
+        p.name.upper() if p.required else f"[{p.name.upper()}]"
         for p in command.params
         if p.param_type_name == "argument"
     )
@@ -83,9 +103,10 @@ def _command(path: list[str], command, level: int) -> list[str]:
             lines += _command([*path, name], sub, level + 1)
         return lines
     lines += ["```text", _usage(path, command), "```", ""]
+    hints = _hints(command)
     for param in command.params:
         if param.name not in SKIPPED and not getattr(param, "hidden", False):
-            lines += _param_lines(param)
+            lines += _param_lines(param, hints)
     return lines
 
 
@@ -96,9 +117,10 @@ def render() -> str:
 
     root = typer.main.get_command(app)
     lines = ["# Command reference", "", INTRO, "", "## Options before the command", "", "These go between `macaw` and the command, as in `macaw -v run`.", ""]
+    hints = _hints(root)
     for param in root.params:
         if param.name not in SKIPPED:
-            lines += _param_lines(param)
+            lines += _param_lines(param, hints)
     panels: dict[str, list[tuple[str, object]]] = {}
     for name, command in root.commands.items():
         panels.setdefault(command.rich_help_panel or "Other", []).append((name, command))
