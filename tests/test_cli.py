@@ -552,3 +552,45 @@ class TestSkeletonExport:
     def test_exporting_before_the_pose_steps_says_so(self, project):
         result, _ = self.export(project)
         assert result.exit_code != 0 and "macaw run" in str(result.exception)
+
+
+class TestReference:
+    """The command reference in the docs is written from these, so none may be missing."""
+
+    @staticmethod
+    def visible():
+        import typer.main
+
+        def walk(command, path):
+            if command.hidden:
+                return
+            yield path, command
+            for name, sub in getattr(command, "commands", {}).items():
+                yield from walk(sub, [*path, name])
+
+        root = typer.main.get_command(app)
+        for name, command in root.commands.items():
+            yield from walk(command, [name])
+
+    def test_every_command_has_a_panel_and_a_description(self):
+        for path, command in self.visible():
+            if len(path) == 1:
+                assert command.rich_help_panel, path
+            assert command.help, path
+
+    def test_every_option_says_what_it_does(self):
+        for path, command in self.visible():
+            for param in command.params:
+                if param.name != "help" and not getattr(command, "commands", None):
+                    assert getattr(param, "help", None), (path, param.name)
+
+    def test_the_reference_page_lists_every_visible_command_and_no_hidden_one(self, monkeypatch):
+        from pathlib import Path
+
+        monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "docs" / "_ext"))
+        from command_reference import render
+
+        page = render()
+        for path, _ in self.visible():
+            assert f"`macaw {' '.join(path)}`" in page
+        assert "macaw run-task" not in page and "macaw hpc task" not in page

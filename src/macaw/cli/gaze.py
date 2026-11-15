@@ -15,10 +15,10 @@ from macaw.project.recording import build_recording
 app = typer.Typer()
 
 
-@app.command("label-gaze")
+@app.command("label-gaze", rich_help_panel="Review")
 def label_gaze(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     at: float = typer.Option(None, "--at", help="Time of the frame in seconds, on the recording's clock."),
     person: str = typer.Option(None, "--person", help="The role who looks."),
     looks_at: str = typer.Option(None, "--looks-at", help=f"A role, a name from gaze.targets, {ELSEWHERE}, or {UNSURE}."),

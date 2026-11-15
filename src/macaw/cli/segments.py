@@ -12,10 +12,10 @@ from macaw.project.segments import Segment, remove_segment, seconds_text, set_se
 app = typer.Typer()
 
 
-@app.command("set-segment")
+@app.command("set-segment", rich_help_panel="Preparing the recordings")
 def set_segment_command(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     name: str = typer.Option(..., "--name", help="What the segment is called; its rows in the export carry this name."),
     start: float = typer.Option(None, "--start", help="Where it begins, in seconds on the recording's clock."),
     end: float = typer.Option(None, "--end", help="Where it ends, in seconds on the recording's clock."),

@@ -13,9 +13,9 @@ from macaw.project.recording import camera_clips
 app = typer.Typer()
 
 
-@app.command("calibration-board")
+@app.command("calibration-board", rich_help_panel="Cameras and the room")
 def calibration_board(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     paper: str = typer.Option("A2", "--paper", help="A4 | A3 | A2 | A1, landscape."),
     out: Path = typer.Option(None, "--out", help="Where to write the PNG. Default: the calibration folder."),
 ) -> None:
@@ -33,10 +33,10 @@ def calibration_board(
     )
 
 
-@app.command("calibrate-cameras")
+@app.command("calibrate-cameras", rich_help_panel="Cameras and the room")
 def calibrate_cameras(
     setup: str = typer.Argument(..., help="Folder in project.calibration_dir holding a folder per camera with its board clip."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     until: float = typer.Option(None, "--until", help="Read the clips only up to this many seconds."),
 ) -> None:
     """Find each camera's lens and where the cameras stand from a ChArUco board filmed by all of them at once;
@@ -110,7 +110,7 @@ def _offsets(clips: list[Path], config) -> tuple[dict[Path, float], list[str]]:
     return offsets, notes
 
 
-@app.command("calibration-floor")
+@app.command("calibration-floor", rich_help_panel="Cameras and the room")
 def calibration_floor(
     calibration: str = typer.Argument(..., help="Folder in project.calibration_dir holding the board clips."),
     at: float = typer.Option(..., "--at", help="Second of the board clips, on the first camera's clock, at which the board lay flat."),
@@ -119,7 +119,7 @@ def calibration_floor(
         None, "--corner", help="Where the board's marked corner lay, across and along in the room, in project.units; for example 1.5 1.5 with the page in the zero corner.",
     ),
     toward: float = typer.Option(90.0, "--toward", help="With --corner: where the board's arrow pointed, in degrees clockwise from +y as a camera's facing; 90 is along +x."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Say when the board lay flat in a calibration's board clips, on the floor or on a thing of the room, and where if
     known; placing the cameras in the room then takes which way is up and how high they are from it, and with --corner
@@ -150,9 +150,9 @@ def calibration_floor(
     typer.echo(str(write_floor(folder, at, on, corner, toward if corner is not None else None)))
 
 
-@app.command("place-cameras")
+@app.command("place-cameras", rich_help_panel="Cameras and the room")
 def place_cameras_command(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     setup: str = typer.Option(None, "--setup", help="Which setup. Default: setup.name."),
 ) -> None:
     """Fill each calibrated camera's place, height, facing, tilt and lens angle in a setup's room from pose3d.calibration,
@@ -200,9 +200,9 @@ def place_cameras_command(
         typer.echo(str(path))
 
 
-@app.command("draw-room")
+@app.command("draw-room", rich_help_panel="Cameras and the room")
 def draw_room_command(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     setup: str = typer.Option(None, "--setup", help="Which setup. Default: setup.name."),
     out: Path = typer.Option(None, "--out", help="Where to write the PNG. Default: setups/<setup>.png."),
 ) -> None:

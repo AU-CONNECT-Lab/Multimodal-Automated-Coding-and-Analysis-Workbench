@@ -27,9 +27,9 @@ app = typer.Typer()
 logger = get_logger("qc")
 
 
-@app.command("qc")
+@app.command("qc", rich_help_panel="Review")
 def qc(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     check: list[str] = typer.Option(None, "--check", help="Run only these checks."),
     render: bool = typer.Option(
@@ -41,7 +41,7 @@ def qc(
     report: bool = typer.Option(False, "--report/--no-report", help="Write an HTML page per recording and one for the project."),
     open_report: bool = typer.Option(False, "--open", help="Write the pages and open the project page."),
 ) -> None:
-    """Run quality checks; write warnings and the moments worth reviewing, optionally rendered."""
+    """Run the quality checks: write warnings and the moments worth reviewing, and optionally draw those moments and write the report pages."""
 
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
@@ -135,10 +135,10 @@ def _look(resolved, layout, recording, results, index, backend) -> None:
     typer.echo(f"{recording.recording_id}: {describe(summary(layout, recording.recording_id))}")
 
 
-@app.command("check-look")
+@app.command("check-look", rich_help_panel="Review")
 def check_look(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     frame: str = typer.Option(..., "--frame", help="The review frame's file name, as macaw qc --look lists it."),
     verdict: str = typer.Option(None, "--verdict", help="right when the model was right about the frame, wrong when not."),
     clear: bool = typer.Option(False, "--clear", help="Take the verdict back."),
@@ -155,10 +155,10 @@ def check_look(
     typer.echo(f"{recording}: {describe(summary(layout, recording))}")
 
 
-@app.command("note")
+@app.command("note", rich_help_panel="Review")
 def note(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     tag: list[str] = typer.Option(None, "--tag", help="One of qc.note_tags, repeatable."),
     text: str = typer.Option("", "--text", help="The note in your own words."),
     remove: str = typer.Option(None, "--remove", help="Take back the note with this id."),
@@ -186,10 +186,10 @@ def note(
     typer.echo(f"{recording}: note {added['id']} kept in {path}")
 
 
-@app.command("name-people")
+@app.command("name-people", rich_help_panel="Review")
 def name_people(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     camera: str = typer.Option(..., "--camera", help="The camera, as its folder is named."),
     at: float = typer.Option(None, "--at", help="Seconds into the camera's file, from its first picture."),
     person: list[str] = typer.Option(
@@ -260,9 +260,9 @@ def _area_text(area) -> str:
     return f"{left:.0%} to {right:.0%} across, {top:.0%} to {bottom:.0%} down"
 
 
-@app.command("ignore-area")
+@app.command("ignore-area", rich_help_panel="Review")
 def ignore_area(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recording: str = typer.Option(None, "--recording", "-r", help="A recording filmed with the setup meant, where recordings name setups of their own."),
     camera: str = typer.Option(..., "--camera", help="The camera, as its folder is named."),
     area: str = typer.Option(None, "--area", help="LEFT,TOP,RIGHT,BOTTOM: its edges as shares of the picture's width and height."),
@@ -313,9 +313,9 @@ def ignore_area(
     typer.echo(f"{camera} in setup {setup.name}: {listed}; apply it with `macaw run -e pose.keypoints`")
 
 
-@app.command("accept-owner")
+@app.command("accept-owner", rich_help_panel="Review")
 def accept_owner(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     media: list[str] = typer.Option(None, "--camera", help="Camera, repeatable. Default: every one waiting for a person."),
     by: str = typer.Option(None, "--by", help="Who looked. Default: the login name."),
@@ -361,9 +361,9 @@ def _write_json(path: Path, payload) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-@app.command("accept-voices")
+@app.command("accept-voices", rich_help_panel="Review")
 def accept_voices(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     rename: str = typer.Option(
         None, "--rename", help=f"LABEL=PERSON pairs for every voice, comma-separated; PERSON {NO_ONE} leaves a voice out (with text.extra_voices it takes turns as other)."
@@ -417,14 +417,14 @@ def accept_voices(
         typer.echo(f"{recording_id}: {named}; {then}")
 
 
-@app.command("line-speakers")
+@app.command("line-speakers", rich_help_panel="Review")
 def line_speakers(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recording: str = typer.Option(..., "--recordings", "-r", help="One recording whose voices were marked as mixed."),
     suggested: bool = typer.Option(False, "--suggested", help="Give every line with a sure suggestion to the person suggested."),
     apply: Path = typer.Option(None, "--apply", help="A csv with t_start and person: who speaks the line starting then."),
     at: float = typer.Option(None, "--at", help="With --person: from the word said at this second to the end of its line, that person speaks."),
-    person: str = typer.Option(None, "--person"),
+    person: str = typer.Option(None, "--person", help="With --at: the person who speaks from there."),
     as_they_are: bool = typer.Option(False, "--as-they-are", help="You checked the lines and nothing more needs changing."),
     clear: bool = typer.Option(False, "--clear", help="Forget every change; the lines wait for a decision again."),
     by: str = typer.Option(None, "--by", help="Who decided. Default: the login name."),

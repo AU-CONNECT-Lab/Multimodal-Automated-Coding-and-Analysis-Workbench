@@ -35,14 +35,14 @@ app = typer.Typer()
 logger = get_logger("align")
 
 
-@app.command("align")
+@app.command("align", rich_help_panel="Preparing the recordings")
 def align(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check"),
-    set_: list[str] = typer.Option(None, "--set"),
+    drift_check: bool = typer.Option(True, "--drift-check/--no-drift-check", help="Also check whether the clocks drift apart over the recording."),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Estimate inter-source offsets by cross-correlation and draw each pair for review."""
+    """Estimate from their sound how far each recording's files are offset from one another, and draw each pair for review."""
     overrides = list(set_ or ())
     if not drift_check:
         overrides.append("align.drift_check=false")
@@ -84,14 +84,14 @@ def align(
             )
 
 
-@app.command("set-offset")
+@app.command("set-offset", rich_help_panel="Preparing the recordings")
 def set_offset(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     media: str = typer.Option(..., "--device", help="Device to adjust, as its folder is named."),
     offset: float = typer.Option(..., "--offset", help="Seconds."),
 ) -> None:
-    """Manually override one offset after inspecting it; a later `macaw align` keeps it."""
+    """Set one offset by hand after inspecting it; a later `macaw align` keeps it."""
     resolved = resolve_config(config)
     layout = layout_for(resolved)
     built = build_recording(recording, resolved)
@@ -121,9 +121,9 @@ def set_offset(
     _clip(built, results, None, clip_path(layout, recording), resolved.video.encoder)
 
 
-@app.command("accept-offset")
+@app.command("accept-offset", rich_help_panel="Preparing the recordings")
 def accept_offset(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     media: list[str] = typer.Option(None, "--device", help="Device to keep, repeatable. Default: every one waiting for a person."),
     by: str = typer.Option(None, "--by", help="Who looked at them. Default: the login name."),

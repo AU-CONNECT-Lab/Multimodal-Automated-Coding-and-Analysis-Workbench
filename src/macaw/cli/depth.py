@@ -7,7 +7,7 @@ import typer
 app = typer.Typer(help="Depth cameras.")
 
 
-@app.command("depth-import")
+@app.command("depth-import", rich_help_panel="Cameras and the room")
 def depth_import(
     recording: Path = typer.Argument(..., help="A RealSense .bag, or an Azure Kinect or Orbbec Femto .mkv."),
     out: Path = typer.Argument(..., help="The camera's device folder in one recording, such as raw/dyad01/kinect."),

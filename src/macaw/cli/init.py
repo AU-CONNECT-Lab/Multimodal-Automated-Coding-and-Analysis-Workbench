@@ -14,7 +14,7 @@ logger = get_logger("init")
 DERIVATIVES_DIRNAME = "derivatives"
 
 
-@app.command("init")
+@app.command("init", rich_help_panel="Project")
 def init_project(
     directory: Path = typer.Argument(Path("."), help="Where to create the project."),
     name: str = typer.Option(..., "--name", help="Project name."),
@@ -22,10 +22,10 @@ def init_project(
     work_dir: Path = typer.Option(
         None, "--work", "-w", help="Logs, job records and cache. Defaults to under the output dir."
     ),
-    n_subjects: int = typer.Option(2, "--n-subjects"),
+    n_subjects: int = typer.Option(2, "--n-subjects", help="How many people take part in each recording."),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing project.yaml."),
 ) -> None:
-    """Scaffold project.yaml and the output directory structure."""
+    """Create a project: a project.yaml to fill in and the folders the results go to."""
     directory = directory.resolve()
     # BIDS puts processed output under derivatives/; keeping to it means the raw tree stays
     # untouched and a whole project can be moved as one directory

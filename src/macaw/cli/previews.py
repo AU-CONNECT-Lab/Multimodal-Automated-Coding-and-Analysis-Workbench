@@ -13,9 +13,9 @@ from macaw.project.recording import build_recording
 app = typer.Typer()
 
 
-@app.command("previews")
+@app.command("previews", rich_help_panel="Review")
 def previews_command(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: list[str] = typer.Option(None, "--recording", "-r", help="Recordings to make copies of; every one by default."),
 ) -> None:
     """Make the small copies of each camera, with sound, that the Review page plays; copies still current are kept."""

@@ -19,7 +19,7 @@ app = typer.Typer(help="Run on a Slurm cluster: job arrays you submit with sbatc
 
 @app.command("generate")
 def generate(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Extractor or group name, repeatable. Defaults to pipeline.run."),
     hpc_config: Path = typer.Option(None, "--hpc-config", help="Defaults to $MACAW_HPC_CONFIG, then hpc.yaml beside project.yaml, then the packaged file."),
@@ -43,7 +43,7 @@ def generate(
 
 @app.command("prefetch-models")
 def prefetch_models(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     extractor: list[str] = typer.Option(None, "--extractor", "-e", help="Extractor or group name, repeatable. Defaults to pipeline.run."),
     hpc_config: Path = typer.Option(None, "--hpc-config", help="Where hf_home is set; found as for generate."),
 ) -> None:

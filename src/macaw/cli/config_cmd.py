@@ -11,17 +11,17 @@ from macaw.exceptions import ConfigError, InputNotFoundError
 from macaw.extractors import get_extractor, list_extractors
 from macaw.logging_setup import get_logger
 
-app = typer.Typer(help="Inspect and validate configuration.")
+app = typer.Typer(help="Show, check and compare the settings.")
 logger = get_logger("config")
 
 
 @app.command("show")
 def show(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    section: str = typer.Option(None, "--section"),
-    set_: list[str] = typer.Option(None, "--set"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    section: str = typer.Option(None, "--section", help="Print only this section, such as pose."),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Print the fully merged configuration; what is actually in effect."""
+    """Print every setting in effect: the project's own and the defaults it leaves."""
     data = resolve_config(config, cli_overrides=set_ or ()).model_dump(mode="json")
     if section is not None:
         if section not in data:
@@ -32,9 +32,9 @@ def show(
 
 @app.command("validate")
 def validate(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
-    """Check the schema and reject unknown keys."""
+    """Check the settings file; a misspelled or unknown key is an error."""
     resolved = resolve_config(config)
     typer.echo(f"ok  project '{resolved.project.name}'  output {resolved.project.output_dir}")
 
@@ -79,7 +79,7 @@ def diff(
     a: Path = typer.Argument(..., help="First resolved config."),
     b: Path = typer.Argument(..., help="Second resolved config."),
 ) -> None:
-    """Show which sections differ, and therefore what a rerun would recompute."""
+    """Compare two runs' saved settings: which sections differ, and so which steps would run again."""
     left, right = _load(a), _load(b)
     sections = _differing_sections(left, right)
     if not sections:

@@ -27,9 +27,9 @@ from macaw.project.scale import (
 app = typer.Typer()
 
 
-@app.command("set-scale")
+@app.command("set-scale", rich_help_panel="Preparing the recordings")
 def set_scale(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recording: str = typer.Option(None, "--recording", "-r", help="Measure on this recording's own video."),
     calibration: str = typer.Option(None, "--calibration", help="Measure on this clip in project.calibration_dir instead."),
     media: str = typer.Option(None, "--camera", help="The camera measured on; needed when the recording has several."),

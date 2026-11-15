@@ -12,13 +12,13 @@ app = typer.Typer()
 logger = get_logger("recordings")
 
 
-@app.command("recordings")
+@app.command("recordings", rich_help_panel="Project")
 def list_recordings(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     prefix: str = typer.Option(None, "--prefix", "-p", help="Directory prefix. Overrides the config."),
     out: Path = typer.Option(None, "--out", help="Write the ids to a file, one per line."),
 ) -> None:
-    """List recording ids found under raw_dir."""
+    """List the recordings found in the recordings folder, project.raw_dir."""
     resolved = resolve_config(config)
     project = resolved.project
     found = detect_recordings(

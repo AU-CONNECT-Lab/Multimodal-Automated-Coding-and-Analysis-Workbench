@@ -38,7 +38,7 @@ def refine(
     coder: str = typer.Option(None, "--coder", help="Whose codes to go by, when several people coded the codebook's tier."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     per_kind: int = typer.Option(12, "--per-kind", min=1, help="Units of each kind the model is shown for each code."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Propose clearer definitions, criteria, boundary cases and examples for the codebook in use, from the units where a
     person's codes and the model's differ, or, where nobody coded, the units the model was split on."""
@@ -78,7 +78,7 @@ def draft(
     n_units: int = typer.Option(200, "--units", min=1, help="Units drawn at random across the recordings."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     seed: int = typer.Option(0, "--seed", help="Fixes the draw, so running it again draws the same units."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Draft a first codebook: the model says in a few words what each unit drawn does, then gathers that into codes,
     each with a description, criteria, boundary cases and examples. Choosing the codes in the end is yours."""

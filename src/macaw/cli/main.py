@@ -19,28 +19,28 @@ app.add_typer(recordings.app)
 app.add_typer(align.app)
 app.add_typer(scale.app)
 app.add_typer(segments.app)
-app.add_typer(previews.app)
-app.add_typer(gaze.app)
 app.add_typer(cameras.app)
 app.add_typer(depth.app)
 app.add_typer(run.app)
+app.add_typer(previews.app)
+app.add_typer(gaze.app)
 app.add_typer(qc.app)
 app.add_typer(code.app)
 app.add_typer(export.app)
 app.add_typer(methods.app)
 app.add_typer(plugin.app)
-app.add_typer(hpc.app, name="hpc")
+app.add_typer(hpc.app, name="hpc", rich_help_panel="Cluster and extensions")
 app.add_typer(gui.app)
-app.add_typer(config_cmd.app, name="config")
-app.add_typer(transcript.app, name="transcript")
-app.add_typer(codebook.app, name="codebook")
-app.add_typer(ratings.app, name="ratings")
+app.add_typer(config_cmd.app, name="config", rich_help_panel="Project")
+app.add_typer(transcript.app, name="transcript", rich_help_panel="Review")
+app.add_typer(codebook.app, name="codebook", rich_help_panel="Coding and rating")
+app.add_typer(ratings.app, name="ratings", rich_help_panel="Coding and rating")
 
 
 @app.callback()
 def main(
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
-    quiet: bool = typer.Option(False, "--quiet", "-q"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print more of what happens."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Print errors only, not warnings."),
 ) -> None:
     setup_logging(verbose=verbose, quiet=quiet)
 

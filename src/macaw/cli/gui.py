@@ -9,14 +9,14 @@ from macaw.config.loader import resolve_config
 app = typer.Typer()
 
 
-@app.command("gui")
+@app.command("gui", rich_help_panel="Project")
 def gui(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     browser: bool = typer.Option(False, "--browser", help="Open in the default browser."),
     server: bool = typer.Option(False, "--server", help="Listen on 0.0.0.0 for remote access."),
-    host: str = typer.Option(None, "--host"),
-    port: int = typer.Option(None, "--port"),
-    debug: bool = typer.Option(False, "--debug"),
+    host: str = typer.Option(None, "--host", help="Address to listen on. Default: gui.host, or 0.0.0.0 with --server."),
+    port: int = typer.Option(None, "--port", help="Port to listen on. Default: gui.port."),
+    debug: bool = typer.Option(False, "--debug", help="Turn on the page's developer tools, for development."),
 ) -> None:
     """Launch the workbench. Default is gui.mode from the config, a native window unless set otherwise."""
     from macaw.interface.run_gui import launch_browser, launch_server, launch_window

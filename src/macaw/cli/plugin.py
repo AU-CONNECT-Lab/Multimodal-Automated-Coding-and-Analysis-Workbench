@@ -12,7 +12,7 @@ from macaw.plugin_template import scaffold_extractor
 app = typer.Typer()
 
 
-@app.command("new-extractor")
+@app.command("new-extractor", rich_help_panel="Cluster and extensions")
 def new_extractor(
     name: str = typer.Argument(..., help="Namespaced extractor name, e.g. mylab.f0_spread."),
     directory: Path = typer.Option(Path("."), "--dir", help="Where to create the package."),
@@ -24,7 +24,7 @@ def new_extractor(
     typer.echo(str(scaffold_extractor(name, directory, group=group)))
 
 
-@app.command("new-backend")
+@app.command("new-backend", rich_help_panel="Cluster and extensions")
 def new_backend(
     name: str = typer.Argument(..., help="Namespaced backend name, e.g. mylab.openpose_csv."),
     directory: Path = typer.Option(Path("."), "--dir", help="Where to create the package."),

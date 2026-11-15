@@ -20,13 +20,13 @@ from macaw.project.recording import build_recording
 from macaw.qc.transcript_check import KINDS, read_check, still_there
 from macaw.store import _io
 
-app = typer.Typer(help="Correct a transcript by hand in ELAN.")
+app = typer.Typer(help="Correct a transcript by hand in ELAN, have a model mark doubtful lines, or go back to the recognised transcript.")
 
 
 @app.command("export")
 def export(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     out: Path = typer.Option(None, "--out", help="Default: <output_dir>/exports/<recording>_transcript.eaf"),
 ) -> None:
     """Write the transcript as an ELAN file, one tier per person, with what was left out on tiers of its own."""
@@ -56,8 +56,8 @@ def export(
 @app.command("import")
 def import_(
     eaf: Path = typer.Argument(..., help="The corrected .eaf"),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     by: str = typer.Option(None, "--by", help="Who corrected it. Default: the login name."),
 ) -> None:
     """Keep a corrected transcript; text.asr and everything after it use it from the next run."""
@@ -83,8 +83,8 @@ def import_(
 
 @app.command("check")
 def check(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
 ) -> None:
     """Have the model in coding.llm mark lines that look misheard, made up or cut off, to check against the recording.
     The transcript is not changed; the lines go on tiers of their own in the ELAN export."""
@@ -117,8 +117,8 @@ def check(
 
 @app.command("reset")
 def reset(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
 ) -> None:
     """Drop the corrected transcript, so the next run recognises speech again."""
     layout = layout_for(resolve_config(config), create=False)

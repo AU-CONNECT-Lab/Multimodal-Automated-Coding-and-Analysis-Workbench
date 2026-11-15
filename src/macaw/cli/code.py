@@ -29,15 +29,15 @@ app = typer.Typer()
 _LAYER_STEPS = {"A": "coding.layer_a", "B": "coding.judge"}
 
 
-@app.command("code")
+@app.command("code", rich_help_panel="Coding and rating")
 def code(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     layer: list[str] = typer.Option(None, "--layer", "-l", help="A or B; defaults to coding.layers."),
     codebook: Path = typer.Option(None, "--codebook", help="Overrides coding.codebook; required for layer B."),
-    set_: list[str] = typer.Option(None, "--set"),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Apply rule-based (A) and LLM (B) coding. Low-confidence items go to the review queue."""
+    """Code speech by rule (layer A) and with a language model (layer B); uncertain codes go to the review queue."""
     resolved = resolve_config(config, cli_overrides=set_ or ())
     if codebook is not None:
         resolved.coding.codebook = codebook
@@ -59,14 +59,14 @@ def code(
         raise typer.Exit(code=1)
 
 
-@app.command("review")
+@app.command("review", rich_help_panel="Coding and rating")
 def review(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     export_to: Path = typer.Option(None, "--export", help="Write the queue to a file (.csv to edit by hand)."),
     apply_from: Path = typer.Option(None, "--apply", help="Merge back reviewed decisions."),
 ) -> None:
-    """Export or re-import the human review queue. Fill in decision (a code) and reviewer, then --apply."""
+    """Write the queue of uncertain codes to a file, or read it back: fill in decision (a code) and reviewer, then give the file to --apply."""
     if (export_to is None) == (apply_from is None):
         raise MacawError("Give one of --export <file> or --apply <file>.")
     resolved = resolve_config(config)
@@ -87,9 +87,9 @@ def review(
         typer.echo(f"random check: a person coded {changed} of {checked} units the model was sure of otherwise")
 
 
-@app.command("agreement")
+@app.command("agreement", rich_help_panel="Coding and rating")
 def agreement(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     tier: str = typer.Option(None, "--tier", help="Restrict to one annotation tier."),
     layer: str = typer.Option(None, "--layer", "-l", help="A, B, or C."),
@@ -106,9 +106,9 @@ def agreement(
     segment: str = typer.Option(
         None, "--segment", help="Compare inside this named segment only, the coding cut at its edges; recordings without it are left out."
     ),
-    set_: list[str] = typer.Option(None, "--set"),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Inter-annotator agreement over the annotations table: Krippendorff alpha and Cohen kappa."""
+    """Agreement between coders, people and models, over the coded units: Krippendorff's alpha and Cohen's kappa."""
     if grid_s is not None and units is not None:
         raise MacawError("give --grid-s or --units, not both")
     if out is not None and out.is_file():
@@ -134,12 +134,12 @@ def agreement(
         typer.echo(f"\nreport.json and units.csv in {out}")
 
 
-@app.command("import-codes")
+@app.command("import-codes", rich_help_panel="Coding and rating")
 def import_codes(
     paths: list[Path] = typer.Argument(..., help="Coding files (.eaf, .csv, .tsv, .xlsx), or folders of them."),
     coder: str = typer.Option(..., "--coder", help="Who coded. Importing again replaces this coder's codes on the same tiers."),
     recording: str = typer.Option(None, "--recording", "-r", help="The recording, when one file's name does not start with it."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Bring your own coding in beside the machine's, for macaw agreement, describe-codes and the gesture measures.
     coding.imports says whose each tier is and what it is called here. Each file's name starts with its recording."""
@@ -169,14 +169,14 @@ def import_codes(
             typer.echo(f"  note  {line}")
 
 
-@app.command("draw-examples")
+@app.command("draw-examples", rich_help_panel="Coding and rating")
 def draw_examples_command(
     out: Path = typer.Argument(..., help="The table to write (.csv), for coding.llm.examples."),
     coder: str = typer.Option(..., "--coder", help="Whose codes to draw from, as macaw agreement names them."),
     per_code: int = typer.Option(3, "--per-code", min=1, help="Units drawn for each code."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Draw only from these (comma-separated ids or a txt file)."),
     seed: int = typer.Option(0, "--seed", help="Fixes the draw, so running it again picks the same units."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Draw units a person coded into a table of examples the language model is shown. Open it, change what you like,
     fill in why if you want the model to read a reason, and set coding.llm.examples (or a version's) to it."""
@@ -218,14 +218,14 @@ def _recording_of(path: Path, recordings: list[str]) -> str | None:
     return max(found, key=len) if found else None
 
 
-@app.command("describe-codes")
+@app.command("describe-codes", rich_help_panel="Coding and rating")
 def describe_codes_command(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     tier: str = typer.Option(None, "--tier", help="Restrict to one annotation tier."),
     layer: str = typer.Option(None, "--layer", "-l", help="A, B, or C."),
     out: Path = typer.Option(None, "--out", help="Write the table as csv."),
-    set_: list[str] = typer.Option(None, "--set"),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
     """How each code was used in each recording: units, time, runs of one code, and how many runs last one unit."""
     resolved = resolve_config(config, cli_overrides=set_ or ())

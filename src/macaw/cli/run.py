@@ -28,9 +28,9 @@ app = typer.Typer()
 logger = get_logger("run")
 
 
-@app.command("run")
+@app.command("run", rich_help_panel="Running")
 def run(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     extractor: list[str] = typer.Option(
         None,
@@ -38,8 +38,8 @@ def run(
         "-e",
         help="Extractor or group name, repeatable. Defaults to pipeline.run, else everything installed.",
     ),
-    resume: bool = typer.Option(True, "--resume/--no-resume"),
-    workers: int = typer.Option(None, "--workers", "-j"),
+    resume: bool = typer.Option(True, "--resume/--no-resume", help="Skip steps whose results are still current; --no-resume runs every step again."),
+    workers: int = typer.Option(None, "--workers", "-j", help="Tasks run at once. Default: execution.n_workers."),
     output_dir: Path = typer.Option(
         None, "--output", "-o", help="Overrides project.output_dir. Also read from $MACAW_OUTPUT_DIR."
     ),
@@ -47,9 +47,9 @@ def run(
         None, "--work", "-w", help="Logs, job records and cache. Also read from $MACAW_WORK_DIR."
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and exit."),
-    set_: list[str] = typer.Option(None, "--set"),
+    set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Run the extraction pipeline. Archives the resolved config into the output directory."""
+    """Run the steps whose results are not yet current, and save the settings in effect beside the output."""
     overrides = list(set_ or ())
     # -j goes through the same merge as everything else; no extractor declares the execution
     # section, so it cannot move a config hash and invalidate a cache
@@ -178,10 +178,10 @@ def _echo_waiting(waiting) -> None:
     typer.echo("everything after these steps runs on the next `macaw run` once they are cleared")
 
 
-@app.command("run-task")
+@app.command("run-task", hidden=True)
 def run_task(
     config: Path = typer.Option(..., "--config", "-c"),
-    recording: str = typer.Option(..., "--recording", "-r"),
+    recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     extractor: str = typer.Option(..., "--extractor", "-e"),
     execution_id: str = typer.Option(..., "--execution-id"),
 ) -> None:
@@ -204,16 +204,16 @@ def fetch_models_command(
         raise typer.Exit(code=1)
 
 
-@app.command("status")
+@app.command("status", rich_help_panel="Running")
 def status(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    execution_id: str = typer.Option(None, "--execution-id"),
-    failed_only: bool = typer.Option(False, "--failed"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    execution_id: str = typer.Option(None, "--execution-id", help="A run other than the latest."),
+    failed_only: bool = typer.Option(False, "--failed", help="List the failed tasks and their messages."),
     work_dir: Path = typer.Option(
         None, "--work", "-w", help="Where the job records are. Also read from $MACAW_WORK_DIR."
     ),
 ) -> None:
-    """Show task states from the job database."""
+    """Count the tasks of the latest run by state, or list those that failed."""
     resolved = resolve_config(config, work_dir=work_dir)
     layout = layout_for(resolved, create=False)
     database = JobDB(layout.job_db_path)
@@ -235,13 +235,13 @@ def status(
     typer.echo("  ".join(f"{name} {count}" for name, count in counts.items() if count))
 
 
-@app.command("list-extractors")
+@app.command("list-extractors", rich_help_panel="Running")
 def list_registered(
-    group: str = typer.Option(None, "--group"),
+    group: str = typer.Option(None, "--group", help="Only the extractors of this group, such as audio."),
     backends: bool = typer.Option(False, "--backends", help="Also show registered backends."),
     config: Path = typer.Option(None, "--config", "-c", help="Also report which ones can run here."),
 ) -> None:
-    """List registered extractors and, with a config, which of them are installed."""
+    """List the processing steps and, given a settings file, whether each can run on this computer."""
     resolved = resolve_config(config) if config is not None else None
     for name in list_extractors(group):
         cls = get_extractor(name)
@@ -260,10 +260,10 @@ def list_registered(
             typer.echo(f"{backend_group}\t{', '.join(list_backends(backend_group))}")
 
 
-@app.command("clean")
+@app.command("clean", rich_help_panel="Running")
 def clean(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
-    extractor: str = typer.Option(None, "--extractor", "-e"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
+    extractor: str = typer.Option(None, "--extractor", "-e", help="Only this extractor's results. Default: every one."),
     cache_only: bool = typer.Option(
         True, "--cache-only/--all", help="--all also deletes the computed output, keeping what people did by hand."
     ),
@@ -272,7 +272,7 @@ def clean(
         None, "--work", "-w", help="Where the cache is. Also read from $MACAW_WORK_DIR."
     ),
 ) -> None:
-    """Invalidate cached results."""
+    """Delete stored results so the steps run again: the cache only, or with --all the computed output too."""
     resolved = resolve_config(config, output_dir=output_dir, work_dir=work_dir)
     layout = layout_for(resolved, create=False)
     cache_root = (

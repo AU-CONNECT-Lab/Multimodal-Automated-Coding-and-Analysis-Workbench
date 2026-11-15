@@ -30,7 +30,7 @@ def _folder(out: Path) -> Path:
 @app.command("export")
 def export(
     out: Path = typer.Argument(..., help="A folder for scores.csv and answers.csv."),
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     prompts: bool = typer.Option(False, "--prompts", help="Also write prompts.csv: the text sent to the model for each recording, segment and scale."),
 ) -> None:
@@ -63,7 +63,7 @@ def export(
 
 @app.command("agreement")
 def agreement(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     raters: str = typer.Option(None, "--raters", help="Comma-separated raters to compare, version names and coders; default all."),
     cluster: str = typer.Option(

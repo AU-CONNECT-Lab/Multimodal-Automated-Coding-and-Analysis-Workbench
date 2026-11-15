@@ -18,9 +18,9 @@ from macaw.qc.look import project_summary
 app = typer.Typer()
 
 
-@app.command("methods")
+@app.command("methods", rich_help_panel="Results")
 def methods(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     out: Path = typer.Option(None, "--out", help="Directory to write into; output_dir/methods by default."),
 ) -> None:
     """Write a Methods section and its BibTeX for the steps this project has run."""

@@ -38,22 +38,22 @@ FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton")
 SEQUENCES = ("speech", "floor", "annotations")
 
 
-@app.command("export")
+@app.command("export", rich_help_panel="Results")
 def export(
-    config: Path = typer.Option(Path("project.yaml"), "--config", "-c"),
+    config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence | skeleton"),
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
-    wide: bool = typer.Option(True, "--wide/--long"),
+    wide: bool = typer.Option(True, "--wide/--long", help="One column per measure, or one row per measure and value."),
     step: float = typer.Option(1.0, "--step", help="Sequence format only: sampling step in seconds."),
     of: str = typer.Option(
         "speech", "--of",
         help="Sequence format only: speech (one speaking/none series per person), floor (whose turn, or overlap) "
         "or annotations.",
     ),
-    out: Path = typer.Option(None, "--out"),
+    out: Path = typer.Option(None, "--out", help="Where to write. Default: a file or folder under exports in the output directory."),
 ) -> None:
-    """Export features for downstream analysis, annotations as .eaf, a nominal state sequence, or each person's body points."""
+    """Export the measures for analysis, the codes as ELAN files, a state sequence, or each person's body points."""
     if format_ not in FORMATS:
         raise MacawError(f"Unknown format '{format_}'. Choose one of: {', '.join(FORMATS)}")
     if scale is not None and scale not in {member.value for member in Scale}:
