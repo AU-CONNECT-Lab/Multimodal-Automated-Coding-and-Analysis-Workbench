@@ -31,6 +31,12 @@ DPI = 300
 EXCERPT_S = 30.0
 # a headset's bursts reach many times its 99th percentile and would flatten everything else
 LOUDNESS_CLIP = 1.5
+# a grey that reads on a light page and a dark one, for figures shown on a transparent ground
+EITHER_INK = "#8c8c8c"
+EITHER_THEME = {
+    "text.color": EITHER_INK, "axes.labelcolor": EITHER_INK, "axes.edgecolor": EITHER_INK, "xtick.color": EITHER_INK,
+    "ytick.color": EITHER_INK, "axes.facecolor": "none", "figure.facecolor": "none", "savefig.transparent": True,
+}
 
 
 def require_matplotlib():
@@ -70,6 +76,13 @@ def alignment_figure(
     against its nearest rival, both loudness envelopes on the recording clock, and whether the
     segments keep finding the same offset."""
     Figure = require_matplotlib()
+    from matplotlib import rc_context
+
+    with rc_context(EITHER_THEME):
+        return _alignment_figure(Figure, reference, target, sample_rate, result, cfg, path)
+
+
+def _alignment_figure(Figure, reference, target, sample_rate, result, cfg, path) -> Path:
     figure = Figure(figsize=(12, 11), layout="constrained")
     coarse, fine, envelopes, segments = figure.subplots(4, 1)
     figure.suptitle(f"{result.target} against {result.reference}: offset {result.offset_s:+.3f} s")
@@ -110,7 +123,7 @@ def alignment_figure(
         target_part = np.minimum(target_part, LOUDNESS_CLIP)
         envelopes.fill_between(t, 0, reference_part, color="C0", lw=0, label=result.reference)
         envelopes.fill_between(t, 0, -target_part, color="C1", lw=0, label=f"{result.target}, shifted")
-        envelopes.axhline(0, color="0.2", lw=0.5)
+        envelopes.axhline(0, color=EITHER_INK, lw=0.5)
         envelopes.set_ylim(-LOUDNESS_CLIP * 1.05, LOUDNESS_CLIP * 1.05)
         envelopes.set(xlabel="recording time (s)", ylabel="loudness", title="aligned, the two should rise and fall together")
         _legend(envelopes)
@@ -131,10 +144,10 @@ def _peaks(axes, lags, window, exclusion: int, unit: str) -> None:
     # lines behind the curve and a dot on each peak, so a line never hides the peak it marks
     axes.axvline(lags[best], color="C3", lw=1, alpha=0.5, zorder=1)
     axes.axvline(lags[rival], color="C0", lw=1, ls="--", alpha=0.5, zorder=1)
-    axes.plot(lags, window, lw=0.6, color="0.45", zorder=2)
+    axes.plot(lags, window, lw=0.6, color=EITHER_INK, zorder=2)
     axes.plot(lags[best], window[best], "o", color="C3", ms=6, zorder=3, label=f"chosen {lags[best]:+.3f} {unit}")
     axes.plot(
-        lags[rival], window[rival], "o", color="C0", mfc="white", ms=6, zorder=3,
+        lags[rival], window[rival], "o", color="C0", mfc="none", ms=6, zorder=3,
         label=f"runner-up {lags[rival]:+.3f} {unit}",
     )
     _legend(axes)
@@ -149,7 +162,7 @@ def _segments(axes, result: AlignResult, cfg: AlignSection) -> None:
     if same.any():
         axes.plot(t[same], difference[same], "o", ms=5, color="C0", label="same offset")
     if not same.all():
-        axes.plot(t[~same], difference[~same], "o", ms=5, color="C3", mfc="white", label="another offset")
+        axes.plot(t[~same], difference[~same], "o", ms=5, color="C3", mfc="none", label="another offset")
     title = describe_agreement(result)
     sharp = confidence >= cfg.min_confidence
     if result.drift_ppm is not None and sharp.sum() >= 2:
