@@ -605,12 +605,19 @@ def test_the_3d_view_opens_where_most_points_were_placed():
     assert results.fullest_moment(points) == 1.0
 
 
-def test_the_3d_strip_has_no_player_and_opens_at_the_fullest_moment(project):
+def test_the_3d_plays_beside_the_recording_once_it_has_a_copy_and_opens_at_the_fullest_moment(project):
     import json
 
     points = pd.DataFrame({"t": [0.0, 1.0, 1.0, 2.5], "joint": list("abcd")})
-    shown = json.loads(results.strip_3d(project, "dyad01", points).to_plotly_json()["props"]["data-strip"])
-    assert shown["start"] == 1.0 and shown["length"] == 2.5 and shown["timeStore"] == results.TIME_3D and "video" not in shown
+    copy, strip = results.strip_3d(project, "dyad01", points)
+    shown = json.loads(strip.to_plotly_json()["props"]["data-strip"])
+    assert shown["start"] == 1.0 and shown["length"] >= 2.5 and shown["timeStore"] == results.TIME_3D and shown["video"] is None
+    assert "Make a copy to play here" in text_of(copy)
+    preview = layout_for(resolve_config(project)).preview_path("dyad01")
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    preview.write_bytes(b"mp4")
+    player, strip = results.strip_3d(project, "dyad01", points)
+    assert player.id == results.PLAYER_3D and json.loads(strip.to_plotly_json()["props"]["data-strip"])["video"] == results.PLAYER_3D
 
 
 def test_choosing_a_setup_writes_it_into_the_project(project):

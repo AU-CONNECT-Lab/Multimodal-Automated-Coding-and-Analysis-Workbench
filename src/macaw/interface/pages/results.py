@@ -7,9 +7,10 @@ from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
-from dash import Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
+from macaw.exceptions import MacawError
 from macaw.interface import cli_bridge, ui
 from macaw.interface.files import file_url
 from macaw.project.layout import layout_for
@@ -23,7 +24,7 @@ from macaw.store.schema import Scale
 
 LABEL = "Results"
 PATH = "/results"
-STRIP_3D, TIME_3D = "results-3d-strip", "results-3d-time"
+STRIP_3D, TIME_3D, PLAYER_3D, ACT_3D = "results-3d-strip", "results-3d-time", "results-3d-player", "results-3d-act"
 # colours of the QC report figures, one per person in order
 COLOURS = ["#1d4e89", "#d1495b", "#2a9d8f", "#e9a03b", "#6c5b7b", "#57606a"]
 
@@ -53,10 +54,13 @@ def layout(config_path: Path):
             ),
             ui.card(
                 "In 3D",
-                html.Div(id="results-3d-strip-box"),
-                dcc.Store(id=TIME_3D),
-                dcc.Loading(html.Div(id="results-3d")),
-                desc="Drag to turn it; stretching bones mean misplaced points.",
+                html.Div(
+                    [html.Div(id="results-3d-strip-box", className="three-d-play"), dcc.Store(id=TIME_3D),
+                     dcc.Loading(html.Div(id="results-3d"), parent_className="three-d-view")],
+                    className="three-d",
+                ),
+                html.Div(id="results-3d-message"),
+                desc="Drag to turn it; stretching bones mean misplaced points. The 3D follows the video when it stops.",
             ),
         ]
     )
@@ -160,12 +164,26 @@ def fullest_moment(points) -> float:
 
 
 def strip_3d(config_path: Path, rid: str, points):
-    """The time strip over the recording's analysed part, opening where the most points were placed."""
-    from macaw.interface.pages.segments import window_of
+    """The recording's copy beside the 3D and its time strip under both, opening where the most points were placed."""
+    from macaw.interface.pages.segments import recording_length, window_of
 
+    config = resolve_config(config_path)
     own = resolve_config(config_path, recording_id=rid)
-    length = float(points["t"].max())
-    return ui.time_strip(STRIP_3D, length=length, start=fullest_moment(points), window=window_of(own.segment, length), timeStore=TIME_3D)
+    preview = layout_for(config, create=False).preview_path(rid)
+    length = max(recording_length(config, own, rid), float(points["t"].max()))
+    if preview.is_file():
+        player = html.Video(src=f"{file_url(preview)}?v={int(preview.stat().st_mtime)}", id=PLAYER_3D, preload="metadata", className="player")
+    else:
+        player = html.Div(
+            [ui.note("The recording is made into a small copy with its sound first, once; a long recording takes a minute or two."),
+             ui.button("Make a copy to play here", {"type": ACT_3D, "action": "prepare"}, primary=True, icon_name="play")],
+            className="three-d-copy",
+        )
+    strip = ui.time_strip(
+        STRIP_3D, video=PLAYER_3D if preview.is_file() else None, length=length, start=fullest_moment(points),
+        window=window_of(own.segment, length), timeStore=TIME_3D,
+    )
+    return [player, strip]
 
 
 def in_first_camera(setup, xyz: np.ndarray) -> np.ndarray:
@@ -305,12 +323,29 @@ def register(app, config_path: Path) -> None:
             return html.P("Nothing to show yet.", className="none")
         return view(config_path, rid, source, feature)
 
-    @app.callback(Output("results-3d-strip-box", "children"), Input(ui.SHOWN["results"], "data"))
-    def span_3d(rid):
+    @app.callback(
+        Output("results-3d-strip-box", "children"), Output("results-3d-message", "children"),
+        Input(ui.SHOWN["results"], "data"), Input({"type": ACT_3D, "action": ALL}, "n_clicks"), State(ui.RECORDING, "value"),
+    )
+    def span_3d(shown, _acted, rid):
+        trigger = ctx.triggered_id
+        # a button appearing fires this too, with no click behind it
+        if isinstance(trigger, dict) and not ctx.triggered[0]["value"]:
+            return no_update, no_update
+        rid = shown or rid
         points = points_3d(config_path, rid) if rid else None
         if points is None or points.empty:
-            return None
-        return strip_3d(config_path, rid, points)
+            return None, None
+        if isinstance(trigger, dict):
+            from macaw.interface.pages.segments import played
+            from macaw.media.ffmpeg import make_preview
+
+            config = resolve_config(config_path)
+            try:
+                make_preview(played(config, rid), layout_for(config).preview_path(rid))
+            except MacawError as error:
+                return no_update, ui.note(str(error), "bad")
+        return strip_3d(config_path, rid, points), None
 
     @app.callback(Output("results-3d", "children"), Input(TIME_3D, "data"), Input(ui.SHOWN["results"], "data"), State(ui.RECORDING, "value"))
     def show_3d(at, _, rid):
