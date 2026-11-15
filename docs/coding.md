@@ -317,6 +317,13 @@ The report gives Krippendorff's alpha across all coders, Cohen's kappa for each 
 
 The Agreement page of the workbench runs the same comparison. Choose the tier, how units are formed (*One coder's units*, *A time grid* or *Shared intervals*) and, if needed, a segment, then press **Compare**. The page shows the report's tables and writes the folder named under *Save to folder*. The *Your coding* card on the Review page opens it with that tier and coder selected.
 
+```{figure} screens/agreement.png
+:width: 100%
+:alt: The Agreement page: the choices of tier, segment, recordings and units on the left, and on the right the result, with Krippendorff's alpha, the number of units and coders, and tables for each pair of coders and each code.
+
+The Agreement page after **Compare**, for a tier coded by two people and a language model.
+```
+
 :::{note}
 A coder who coded only part of a recording leaves the rest uncoded, which counts as disagreement. Mark the part all coders coded as a segment and compare within it with `--segment`.
 :::

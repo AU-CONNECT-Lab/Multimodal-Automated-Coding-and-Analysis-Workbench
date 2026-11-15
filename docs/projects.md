@@ -9,7 +9,16 @@ When a recording contains several phases, for example free play followed by clea
 
 ### Marking segments
 
-On the Segments page, select the recording and press **Make a copy to play here**. Under the player, drag along an empty stretch of the *Segments* lane to make a segment, drag its edges or its middle to change it, and click it to name it or to set its ends to the hundredth of a second; **Start here** and **End here** set an end to where the player stands. Each change is saved when the mouse is released. The loudness of the sound is drawn behind the lane, so pauses and changes of activity are easy to find. All segments of the recording are listed as a table below the strip. Segments can also be written directly into the file `segments.csv` next to `project.yaml`, one row per segment, which is convenient when the times come from session logs:
+On the Segments page, select the recording and press **Make a copy to play here**. Under the player, drag along an empty stretch of the *Segments* lane to make a segment, drag its edges or its middle to change it, and click it to name it or to set its ends to the hundredth of a second; **Start here** and **End here** set an end to where the player stands. Each change is saved when the mouse is released. The loudness of the sound is drawn behind the lane, so pauses and changes of activity are easy to find. All segments of the recording are listed as a table below the strip.
+
+```{figure} screens/segments.png
+:width: 100%
+:alt: The time strip of the Segments page: the analysed part, and three named segments in a lane below it with their lengths, followed by the same segments as a table.
+
+The time strip of the Segments page with three segments, and the table below it.
+```
+
+Segments can also be written directly into the file `segments.csv` next to `project.yaml`, one row per segment, which is convenient when the times come from session logs:
 
 ```text
 recording,segment,start_s,end_s
