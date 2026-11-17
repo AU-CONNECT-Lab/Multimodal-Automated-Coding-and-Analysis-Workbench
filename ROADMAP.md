@@ -32,6 +32,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - A model that reads pictures checking the review frames, and a person checking the model.
 - Your own body measures, and a project scripts folder for measure functions, steps and backends used without installing.
 - Kinematics of each coded gesture, and a summary of how each code was used.
+- Stretches in which a hand moves, frame by frame and as a tier a coder picks gestures from.
 - Lengths in one unit for the project (centimetres, metres or inches) beside pixels for each person's place, from an object of known length measured in the recording or in a calibration clip, or a number set by hand.
 - 3D from two or more cameras calibrated with a printed board or a calibration file: each person's points in metres, measures in 3D (your own and coded gestures included), a 3D view, and the cameras calibrated on the Setup page and placed in its room from the calibration.
 - 3D from a depth camera: a RealSense, Azure Kinect or Orbbec Femto recording imported with the maker's own alignment, or depth images beside any video, each person's points placed on the depth in metres, with the same 3D measures.

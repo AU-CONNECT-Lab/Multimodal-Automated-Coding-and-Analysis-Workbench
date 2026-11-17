@@ -361,10 +361,18 @@ class GestureSection(_Section):
         return self
 
 
+class MovingSection(_Section):
+    # in the keypoints' length unit per second, so each project sets it for its own videos; unset leaves pose.moving out
+    speed: float | None = Field(default=None, gt=0)
+    min_s: float = Field(default=0.15, ge=0)
+    join_s: float = Field(default=0.15, ge=0)
+
+
 class KinematicsSection(_Section):
     smoothing_s: float = 0.3
     measures: list[MeasureSection] = Field(default_factory=list)
     gestures: GestureSection = Field(default_factory=GestureSection)
+    moving: MovingSection = Field(default_factory=MovingSection)
     # movement series averaged over the frames where another person talks alone, e.g. upper_body_speed or motion_energy
     listening: list[str] = Field(default_factory=list)
     # the lengths among them (distances, speeds) divided by the person's shoulder width; motion_energy and angles stay as they are

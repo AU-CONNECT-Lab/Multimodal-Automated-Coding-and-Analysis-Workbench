@@ -25,7 +25,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
+    "pose.kinematics", "pose.moving", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
     "face.movement", "face.speaking", "face.shares", "gaze.target",
 )
 SECTIONS = {
@@ -268,10 +268,6 @@ def settings_by_recording(specs_by_recording: dict[str, dict[str, FeatureSpec]])
         return ""
     steps = "; ".join(f"for {step}, " + "; ".join(texts.values()) for step, texts in said.items())
     return f"Some recordings were processed under settings of their own: {steps}."
-
-
-def _listed(names: list[str]) -> str:
-    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
 def render(sections: dict[str, list[str]], references: dict[str, dict]) -> tuple[str, list[str]]:
@@ -924,6 +920,17 @@ def _kinematics(config, spec, names) -> str:
     ) + _measures(config.kinematics.measures)
 
 
+def _moving(config, spec, names) -> str:
+    moving = config.kinematics.moving
+    unit = spec.params.get("length_unit", "px")
+    return (
+        f"Stretches of hand movement were marked wherever a wrist moved faster than {moving.speed:g} {unit}/s, with stretches "
+        f"less than {_seconds(moving.join_s)} apart joined and those shorter than {_seconds(moving.min_s)} left out, after "
+        "[ripperda2020]. They mark that a hand moved, not that it gestured, and were offered to the coders as the places to "
+        "look for gestures."
+    )
+
+
 def _gestures(config, spec, names) -> str:
     gestures = config.kinematics.gestures
     unit = spec.unit.split("/")[0] if spec.unit and "/" in spec.unit else "px"
@@ -1263,6 +1270,7 @@ _WRITERS = {
     "pose.kinematics": _kinematics,
     "pose.listening": _listening,
     "face.shares": _face_shares,
+    "pose.moving": _moving,
     "pose.gestures": _gestures,
     "pose.kinematics3d": _kinematics_3d,
     "pose.gestures3d": _gestures_3d,

@@ -210,6 +210,15 @@ trujillo2019:
   number: 2
   pages: 769--777
   year: 2019
+ripperda2020:
+  type: article
+  author: "Ripperda, Jordy and Drijvers, Linda and Holler, Judith"
+  title: "Speeding up the detection of non-iconic and iconic gestures (SPUDNIG): A toolkit for the automatic detection of hand movements and gestures in video data"
+  journal: Behavior Research Methods
+  volume: 52
+  number: 4
+  pages: 1783--1794
+  year: 2020
 pouw2021:
   type: article
   author: "Pouw, Wim and Dingemanse, Mark and Motamedi, Yasamin and Özyürek, Aslı"

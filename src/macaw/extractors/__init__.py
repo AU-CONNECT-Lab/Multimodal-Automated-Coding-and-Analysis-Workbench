@@ -37,6 +37,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.video.face.movement",
     "macaw.extractors.video.face.shares",
     "macaw.extractors.video.pose.listening",
+    "macaw.extractors.video.pose.moving",
     "macaw.extractors.segments",
 )
 

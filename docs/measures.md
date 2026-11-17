@@ -239,6 +239,25 @@ A measure can also report how much of the time it stays below a value, for examp
 
 The results then give the proportion of the frames in which the measure was below the value, out of the frames in which it could be measured, and the number of unbroken stretches below it. Each stretch is also stored as a code, so that it can be inspected in ELAN or compared with human coding. `below` is in the unit of the measure: pixels for a distance in the picture, and shoulder widths with `per_body_size`. There is no default, because the appropriate value depends on the camera and on the study. A threshold given in centimetres in the literature, such as 76 cm (30 inches), can be converted to pixels with the scale of the recording ({ref}`scale`), which holds only while the participants stay at the distance from the camera at which the scale was measured. With several calibrated cameras ({ref}`three-d`), `below_3d` sets the threshold for the measure in three dimensions in the project's unit of length, which needs no such condition.
 
+(moving)=
+## Stretches of hand movement to code gestures from
+
+Finding the gestures in a recording takes a coder longer than judging them. With a speed set, MACAW marks every stretch in which a wrist moves faster than that speed and writes the stretches to a tier named `moving`, one per participant, labelled `left`, `right` or `both` after the hand that moved. Exported to ELAN ({ref}`own-coding`), the tier lets a coder step from stretch to stretch, copy those that are gestures to the gesture tier and correct their boundaries, instead of watching the whole recording.
+
+```yaml
+kinematics:
+  moving:
+    speed: 15
+    min_s: 0.15
+    join_s: 0.15
+```
+
+`speed` has no default, because it is in pixels per second and therefore depends on the camera; the wrist speeds in the results help to choose it. Stretches less than `join_s` apart count as one, and stretches shorter than `min_s` are left out. The same decision is exported frame by frame as `left_hand_moving` and `right_hand_moving` (1 while the hand moves).
+
+:::{important}
+The tier says that a hand moved, not that it gestured: reaching, fidgeting and handling objects are marked as well, and which stretches are gestures remains the coder's decision. A coder who looks only at the marked stretches does not see a gesture slower than `speed`, so the speed is best set low, at the cost of more stretches to skip, and checked against a passage coded without the tier.
+:::
+
 (gestures)=
 ## Gesture kinematics
 
