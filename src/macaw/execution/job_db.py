@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from macaw.exceptions import MacawError
+from macaw.store._io import swap_in
 
 STATUSES = ("pending", "running", "done", "failed", "cached", "cancelled")
 
@@ -71,7 +72,7 @@ class JobDB:
         # atomic swap, so a reader polling for progress never sees half a record
         staging = target.with_name(f"{target.name}.tmp.{os.getpid()}")
         staging.write_text(json.dumps(asdict(record), indent=2), encoding="utf-8")
-        os.replace(staging, target)
+        swap_in(staging, target)
 
     def _read(self, path: Path) -> JobRecord | None:
         try:

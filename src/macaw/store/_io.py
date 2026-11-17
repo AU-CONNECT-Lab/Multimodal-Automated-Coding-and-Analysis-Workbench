@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -23,6 +24,7 @@ from macaw.store.schema import coerce_frame, empty_frame
 
 COMPRESSION = "zstd"
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+_SWAP_TRIES, _SWAP_WAIT_S = 40, 0.05
 
 
 def _slug(value) -> str:
@@ -30,11 +32,23 @@ def _slug(value) -> str:
     return _UNSAFE.sub("_", text)
 
 
+def swap_in(staging: Path, target: Path) -> None:
+    """os.replace, tried again for a moment while Windows refuses because another process is reading the target."""
+    for attempt in range(_SWAP_TRIES):
+        try:
+            os.replace(staging, target)
+            return
+        except PermissionError:
+            if attempt == _SWAP_TRIES - 1:
+                raise
+            time.sleep(_SWAP_WAIT_S)
+
+
 def _write_atomic(df: pd.DataFrame, target: Path) -> None:
-    # a half-written parquet that a later run mistakes for a cache hit is worse than a crash
-    tmp = target.with_suffix(target.suffix + ".tmp")
+    # written whole beside the target first; the leading dot keeps one a killed write left out of what reads the directory
+    tmp = target.with_name(f".{target.name}.tmp")
     pq.write_table(pa.Table.from_pandas(df, preserve_index=False), tmp, compression=COMPRESSION)
-    os.replace(tmp, target)
+    swap_in(tmp, target)
 
 
 def read_file(path: Path, schema: dict[str, str], name: str) -> pd.DataFrame:
