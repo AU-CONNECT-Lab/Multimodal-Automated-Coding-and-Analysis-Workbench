@@ -94,16 +94,14 @@ def completed_tasks(output_dir: Path, rules: list[OutputRule]) -> set[str]:
     if not recordings_root.is_dir():
         return set()
 
-    extractors = sorted({rule.extractor for rule in rules})
+    declared = {rule.extractor for rule in rules}
     done: set[str] = set()
     for recording_dir in sorted(recordings_root.iterdir()):
         if not recording_dir.is_dir():
             continue
-        # without declared rules the written parquet files are the only evidence available
-        candidates = extractors or [
-            path.stem for path in sorted((recording_dir / "features").glob("*.parquet"))
-        ]
-        for extractor in candidates:
+        # a step without a rule of its own is known by the parquet file it wrote
+        written = {path.stem for path in (recording_dir / "features").glob("*.parquet")}
+        for extractor in sorted(declared | written):
             task_id = f"{recording_dir.name}:{extractor}"
             if check_task(recording_dir, extractor, rules, task_id).complete:
                 done.add(task_id)

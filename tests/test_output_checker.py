@@ -147,8 +147,14 @@ class TestResume:
         output_dir = recording_dir({}).parent.parent
         assert completed_tasks(output_dir, []) == {"rec1:a", "rec1:b"}
 
-    def test_declared_rules_decide_which_extractors_are_looked_for(self, recording_dir):
+    def test_a_rule_for_one_step_leaves_the_others_to_their_parquet_files(self, recording_dir):
         recording_dir({"features/a.parquet": 10})
         output_dir = recording_dir({}).parent.parent
         rules = [OutputRule(extractor="b", pattern="features/b.parquet")]
-        assert completed_tasks(output_dir, rules) == set()
+        assert completed_tasks(output_dir, rules) == {"rec1:a"}
+
+    def test_a_step_with_a_rule_is_judged_by_it_alone(self, recording_dir):
+        recording_dir({"features/a.parquet": 10, "features/b.parquet": 10})
+        output_dir = recording_dir({}).parent.parent
+        rules = [OutputRule(extractor="b", pattern="artifacts/b/*.mp4")]
+        assert completed_tasks(output_dir, rules) == {"rec1:a"}
