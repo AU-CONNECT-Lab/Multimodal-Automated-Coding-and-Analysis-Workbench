@@ -66,11 +66,11 @@ def person(subject_id, *, centre=300.0, frames=range(60), confidence=None, overr
     return coerce_frame(pd.DataFrame(rows), KEYPOINT_SCHEMA, "keypoints")
 
 
-def fake_results(keypoints=None, f0=None, swaps=None, extractor_warnings=()):
+def fake_results(keypoints=None, f0=None, swaps=None, ignored=None, extractor_warnings=()):
     return SimpleNamespace(
         keypoints=lambda: keypoints if keypoints is not None else empty_frame(KEYPOINT_SCHEMA),
         long_table=lambda source, features=None: f0 if f0 is not None else pd.DataFrame(),
-        artifact=lambda extractor, name: swaps,
+        artifact=lambda extractor, name: {"swaps.json": swaps, "ignored.json": ignored}.get(name),
         extractor_warnings=lambda: list(extractor_warnings),
     )
 
@@ -124,6 +124,15 @@ class TestTrackQuality:
         assert flagged.subject_id.isna().all()
         assert flagged.t_start.iloc[0] == pytest.approx(5 / FPS)
         assert flagged.t_end.iloc[0] == pytest.approx(7 / FPS)
+
+    def test_a_track_left_out_for_its_area_is_not_a_place_to_look(self, tmp_path):
+        mirror = person("parent", centre=700.0, frames=range(5, 8)).assign(subject_id=pd.NA, track_id=7)
+        poster = person("parent", centre=900.0, frames=range(20, 22)).assign(subject_id=pd.NA, track_id=8)
+        ignored = tmp_path / "ignored.json"
+        ignored.write_text(json.dumps({"room.mp4": {"tracks": [7], "frames": 3, "seconds": 0.1}}))
+        result = check_track_quality(RECORDING, None, fake_results(pd.concat([two_people(), mirror, poster]), ignored=ignored))
+        flagged = result.candidates[result.candidates.reason == "unassigned_detection"]
+        assert list(flagged.t_start) == [pytest.approx(20 / FPS)]
 
     def test_a_repaired_swap_is_a_place_to_look(self, tmp_path):
         swaps = tmp_path / "swaps.json"

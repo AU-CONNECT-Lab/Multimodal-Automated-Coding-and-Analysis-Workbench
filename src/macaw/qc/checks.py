@@ -357,7 +357,7 @@ def check_track_quality(recording: Recording, config: MacawConfig, results) -> C
 
     rid = recording.recording_id
     standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
-    pieces = [_unassigned(rid, standard), _swaps(rid, results)]
+    pieces = [_unassigned(rid, standard, _ignored_tracks(results)), _swaps(rid, results)]
     span = (float(keypoints["t"].min()), float(keypoints["t"].max()))
     # with several cameras, leaving one camera's view is ordinary; a person is missing only when none sees them
     for subject_id, person in standard.groupby("subject_id", dropna=True, observed=True):
@@ -370,13 +370,20 @@ def check_track_quality(recording: Recording, config: MacawConfig, results) -> C
     return CheckResult(warnings=_summary("track_quality", rid, candidates), candidates=candidates)
 
 
-def _unassigned(rid: str, keypoints: pd.DataFrame) -> pd.DataFrame:
+def _ignored_tracks(results) -> dict[str, set[int]]:
+    """camera -> the tracks left unnamed for lying in an area the setup says to ignore."""
+    path = results.artifact(POSE_SOURCE, "ignored.json")
+    if path is None:
+        return {}
+    return {camera: set(kept["tracks"]) for camera, kept in json.loads(path.read_text(encoding="utf-8")).items()}
+
+
+def _unassigned(rid: str, keypoints: pd.DataFrame, ignored: dict[str, set[int]]) -> pd.DataFrame:
     """A detection no subject was matched to: a third person, a poster, a coat on a chair."""
     pieces = []
-    for _, view in keypoints.groupby("video", observed=True):
-        per_frame = (
-            view.assign(stray=view["subject_id"].isna()).groupby("frame").agg(t=("t", "first"), stray=("stray", "any"))
-        )
+    for camera, view in keypoints.groupby("video", observed=True):
+        stray = view["subject_id"].isna() & ~view["track_id"].isin(ignored.get(str(camera), ()))
+        per_frame = view.assign(stray=stray).groupby("frame").agg(t=("t", "first"), stray=("stray", "any"))
         pieces.append(
             candidate_spans(
                 rid, None, "track_quality", "unassigned_detection",
