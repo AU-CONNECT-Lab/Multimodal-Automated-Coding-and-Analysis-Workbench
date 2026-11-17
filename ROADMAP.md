@@ -51,3 +51,4 @@ Reviewing the output works the same way. The quality report points at the frames
 ## Milestones
 
 - A language-model observation pass before coding.
+- Other signals recorded alongside the video and sound, such as fNIRS or physiology, brought onto the recording's clock and exported beside the behaviour measures, as an optional install. The joint analysis stays yours.
