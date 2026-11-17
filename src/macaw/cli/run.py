@@ -47,9 +47,12 @@ def run(
         None, "--work", "-w", help="Logs, job records and cache. Also read from $MACAW_WORK_DIR."
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan and exit."),
+    report: bool = typer.Option(
+        True, "--report/--no-report", help="Afterwards, run the quality checks and write the QC page of each recording whose results changed, and the project's."
+    ),
     set_: list[str] = typer.Option(None, "--set", help="section.key=value: a setting for this command only. Repeatable."),
 ) -> None:
-    """Run the steps whose results are not yet current, and save the settings in effect beside the output."""
+    """Run the steps whose results are not yet current, save the settings in effect beside the output, and write the QC pages."""
     overrides = list(set_ or ())
     # -j goes through the same merge as everything else; no extractor declares the execution
     # section, so it cannot move a config hash and invalidate a cache
@@ -95,8 +98,21 @@ def run(
         typer.echo(
             "qc " + "  ".join(f"{severity} {count}" for severity, count in sorted(by_severity.items()))
         )
+    _qc_pages(resolved, recording_ids, report)
     if summary.n_failed:
         raise typer.Exit(code=1)
+
+
+def _qc_pages(resolved, recording_ids: list[str], write: bool) -> None:
+    from macaw.cli.qc import write_stale_pages
+    from macaw.qc.report import stale_pages
+
+    if write:
+        write_stale_pages(resolved, recording_ids)
+        return
+    stale = stale_pages(layout_for(resolved, create=False), recording_ids)
+    if stale:
+        typer.echo(f"qc pages out of date for {len(stale)} recording(s); write them with `macaw qc --report`")
 
 
 def _echo_reporting(config, dag, recording_ids: list[str]) -> None:

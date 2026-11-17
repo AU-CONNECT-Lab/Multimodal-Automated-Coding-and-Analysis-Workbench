@@ -95,9 +95,12 @@ def finish(
     execution_id: str = typer.Option(..., "--execution-id"),
     extractor: list[str] = typer.Option(..., "--extractor", "-e"),
 ) -> None:
-    """The closing job: merges the feature manifest and lists what failed and who waits for a person."""
+    """The closing job: merges the feature manifest, lists what failed and who waits for a person, and writes the QC pages."""
+    from macaw.cli.qc import write_stale_pages
+
     resolved = resolve_config(config)
     summary = runner.finish(resolved, sorted(read_map(map_path)), list(extractor), execution_id)
+    write_stale_pages(resolved, sorted(read_map(map_path)))
     typer.echo(f"execution_id {execution_id}")
     typer.echo(f"tasks {summary.n_tasks}  done {summary.n_done}  cached {summary.n_cached}  failed {summary.n_failed}")
     for record in JobDB(layout_for(resolved, create=False).job_db_path).failed(execution_id):

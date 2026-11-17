@@ -404,6 +404,9 @@ def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monke
     assert results.chosen_source(["text.asr", "turns.structure"], "turns.structure", "text.asr") == "turns.structure"
     assert results.chosen_source(["text.asr", "turns.structure"], "prep.video", "turns.structure") == "turns.structure"
     assert results.chosen_source(["text.asr"], None, None) == "text.asr" and results.chosen_source([], "x", None) is None
+    assert results.out_of_date([], []) == []
+    late = text_of(results.out_of_date(["pose.keypoints", "face.au"], ["names.json"]))
+    assert "out of date" in late and "2 steps ran and 1 decision changed since" in late and "names.json" in late
 
     fill = callback(app, "..run-recordings.options...run-recordings.value...run-steps.options...run-steps.value...run-more.options...run-more.value...run-more-summary.children...run-summary.children..")
     monkeypatch.setattr(run, "ctx", SimpleNamespace(triggered_id="url"))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from macaw.cli.main import app, entrypoint
 from macaw.config.loader import resolve_config, scaffold_project_config
 from macaw.config.schema import MacawConfig
 from macaw.execution.job_db import JobDB, JobRecord
+from macaw.execution.runner import resolve_recordings
 from macaw.logging_setup import LOGGER_NAME, setup_logging
 from macaw.project.layout import layout_for, make_layout
 from setup_helpers import camera, write_setup
@@ -454,6 +456,94 @@ class TestQC:
         result = invoke("qc", "-c", str(project.config))
         checked = list(project.output.glob("recordings/*/qc/warnings.json"))
         assert (result.exit_code, len(checked)) == ((1, 1) if fail_fast else (0, 2))
+
+    def test_a_page_for_one_recording_leaves_the_others_on_the_project_page(self, project):
+        invoke("qc", "-c", str(project.config), "--report")
+        first, second = sorted(path.name for path in project.output.glob("reports/qc_0*.html"))
+        result = invoke("qc", "-c", str(project.config), "-r", first.removeprefix("qc_").removesuffix(".html"), "--report")
+        assert result.exit_code == 0, result.output
+        project_page = (project.output / "reports" / "qc_project.html").read_text(encoding="utf-8")
+        assert f'href="{first}"' in project_page and f'href="{second}"' in project_page
+
+
+def step_ran(layout, recording_id, step="prep.media", at=None):
+    stamp = layout.completion_path(recording_id, step)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("key", encoding="utf-8")
+    if at is not None:
+        os.utime(stamp, (at, at))
+
+
+@needs_pydantic
+class TestPagesAfterARun:
+    def finished_run(self, monkeypatch, project):
+        import macaw.cli.run as run_module
+        from macaw.execution.runner import RunSummary
+
+        summary = RunSummary(execution_id=EXECUTION, n_tasks=1, n_done=1, n_cached=0, n_failed=0, warnings=[], output_dir=project.output)
+        monkeypatch.setattr(run_module.runner, "run", lambda *args, **kwargs: summary)
+
+    def test_a_run_writes_the_page_of_each_recording_with_results_and_the_projects(self, project, monkeypatch):
+        self.finished_run(monkeypatch, project)
+        layout = layout_for(resolve_config(project.config))
+        first, second = resolve_recordings(resolve_config(project.config), None)
+        step_ran(layout, first)
+        result = invoke("run", "-c", str(project.config), "-e", "prep.media")
+        assert result.exit_code == 0, result.output
+        assert "qc pages 1 written" in result.output
+        assert layout.qc_report_path(first).is_file() and layout.qc_report_path().is_file()
+        assert not layout.qc_report_path(second).exists()
+
+    def test_a_page_that_is_current_is_left_alone(self, project, monkeypatch):
+        self.finished_run(monkeypatch, project)
+        layout = layout_for(resolve_config(project.config))
+        first, _ = resolve_recordings(resolve_config(project.config), None)
+        step_ran(layout, first)
+        invoke("run", "-c", str(project.config), "-e", "prep.media")
+        written = layout.qc_report_path(first).stat().st_mtime_ns
+        result = invoke("run", "-c", str(project.config), "-e", "prep.media")
+        assert "qc pages" not in result.output
+        assert layout.qc_report_path(first).stat().st_mtime_ns == written
+
+    def test_no_report_only_says_which_pages_are_out_of_date(self, project, monkeypatch):
+        self.finished_run(monkeypatch, project)
+        layout = layout_for(resolve_config(project.config))
+        first, _ = resolve_recordings(resolve_config(project.config), None)
+        step_ran(layout, first)
+        result = invoke("run", "-c", str(project.config), "-e", "prep.media", "--no-report")
+        assert "qc pages out of date for 1 recording(s)" in result.output
+        assert not layout.qc_report_path(first).exists()
+
+    def test_a_page_is_out_of_date_once_a_step_ran_or_a_person_decided_after_it(self, project):
+        from macaw.qc.report import changed_since_page, stale_pages
+
+        layout = layout_for(resolve_config(project.config))
+        first, second = resolve_recordings(resolve_config(project.config), None)
+        assert changed_since_page(layout, first) is None
+        invoke("qc", "-c", str(project.config), "--report")
+        written = layout.qc_report_path(first).stat().st_mtime
+        step_ran(layout, first, "prep.media", at=written - 60)
+        assert changed_since_page(layout, first) == ([], [])
+        assert stale_pages(layout, [first, second]) == []
+        step_ran(layout, first, "pose.keypoints", at=written + 60)
+        layout.names_path(first).write_text("{}", encoding="utf-8")
+        os.utime(layout.names_path(first), (written + 60, written + 60))
+        assert changed_since_page(layout, first) == (["pose.keypoints"], ["names.json"])
+        assert stale_pages(layout, [first, second]) == [first]
+
+    def test_a_page_that_cannot_be_written_does_not_fail_the_run(self, project, monkeypatch):
+        import macaw.cli.qc as qc_module
+
+        def broken(config, recording_id):
+            raise RuntimeError("no page today")
+
+        self.finished_run(monkeypatch, project)
+        monkeypatch.setattr(qc_module, "write_recording_report", broken)
+        layout = layout_for(resolve_config(project.config))
+        step_ran(layout, resolve_recordings(resolve_config(project.config), None)[0])
+        result = invoke("run", "-c", str(project.config), "-e", "prep.media")
+        assert result.exit_code == 0, result.output
+        assert "no page today" in result.output
 
 
 class TestEafExport:

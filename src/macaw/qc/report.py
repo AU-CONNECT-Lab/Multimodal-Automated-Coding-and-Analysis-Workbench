@@ -862,6 +862,41 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     return page, {"counts": counts, "waiting": [gate for gate, _ in waiting]}
 
 
+def standing_page(config: MacawConfig, recording_id: str) -> tuple[Path, dict]:
+    """A page written earlier, with the counts and waiting gates the project page lists for it."""
+    layout = layout_for(config, create=False)
+    warnings = _warnings(layout, RecordingResults(layout, recording_id), recording_id)
+    waiting = _waiting(config, build_recording(recording_id, config))
+    summary = {"counts": Counter(warning.severity for warning in warnings), "waiting": [gate for gate, _ in waiting]}
+    return layout.qc_report_path(recording_id), summary
+
+
+def changed_since_page(layout, recording_id: str) -> tuple[list[str], list[str]] | None:
+    """(steps that ran, files of a person's decisions that changed) since the recording's page was written; None without a page."""
+    page = layout.qc_report_path(recording_id)
+    if not page.is_file():
+        return None
+    written = page.stat().st_mtime
+    by_hand = [*layout.human_made(recording_id), layout.review_notes_path(recording_id)]
+    steps = sorted(path.stem for path in _stamps(layout, recording_id) if path.stat().st_mtime > written)
+    decided = sorted(path.name for path in by_hand if path.is_file() and path.stat().st_mtime > written)
+    return steps, decided
+
+
+def stale_pages(layout, recording_ids: list[str]) -> list[str]:
+    """The recordings with results whose page is missing or older than a step or a person's decision."""
+    stale = []
+    for recording_id in recording_ids:
+        changed = changed_since_page(layout, recording_id)
+        if any(changed) if changed is not None else any(_stamps(layout, recording_id)):
+            stale.append(recording_id)
+    return stale
+
+
+def _stamps(layout, recording_id: str) -> list[Path]:
+    return list(layout.completion_path(recording_id, "x").parent.glob("*.key"))
+
+
 def write_project_report(config: MacawConfig, pages: dict[str, tuple[Path, dict]]) -> Path:
     layout = layout_for(config, create=False)
     page = layout.qc_report_path()

@@ -20,6 +20,7 @@ from macaw.project.scale import CM_PER_METRE, shown_in
 from macaw.project.segments import segments_of, summaries
 from macaw.qc.checks import RecordingResults
 from macaw.qc.downsample import min_max_downsample
+from macaw.qc.report import changed_since_page
 from macaw.store.schema import Scale
 
 LABEL = "Results"
@@ -269,6 +270,15 @@ def axes_3d(units: str, axis: dict) -> dict:
     }
 
 
+def out_of_date(steps: list[str], decided: list[str]) -> list:
+    """What changed since the QC page was written, beside its time; nothing when it is current."""
+    parts = [f"{len(steps)} step{'s' if len(steps) > 1 else ''} ran"] if steps else []
+    parts += [f"{len(decided)} decision{'s' if len(decided) > 1 else ''} changed"] if decided else []
+    if not parts:
+        return []
+    return [ui.pill("out of date", "warn"), html.Span(f"{' and '.join(parts)} since", className="hint", title=", ".join(steps + decided))]
+
+
 def register(app, config_path: Path) -> None:
     @app.callback(
         Output("results-report", "children"),
@@ -283,11 +293,13 @@ def register(app, config_path: Path) -> None:
         if ctx.triggered_id == "results-write-report":
             argv = cli_bridge.build_command(["qc"], config_path=config_path, recordings=[rid], extra_flags=["--report"])
             message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
-        page = layout_for(resolve_config(config_path), create=False).qc_report_path(rid)
+        files = layout_for(resolve_config(config_path), create=False)
+        page = files.qc_report_path(rid)
         link = (
             html.Div([
                 html.A([ui.icon("open"), "Open the QC page"], href=file_url(page), target="_blank", className="button"),
                 html.Span(f"written {datetime.fromtimestamp(page.stat().st_mtime):%Y-%m-%d %H:%M}", className="hint"),
+                *out_of_date(*changed_since_page(files, rid)),
             ], className="buttons")
             if page.is_file() else html.P("No QC page yet for this recording.", className="none")
         )

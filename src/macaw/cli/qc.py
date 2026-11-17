@@ -12,7 +12,7 @@ import typer
 
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
-from macaw.execution.runner import resolve_recordings
+from macaw.execution.runner import recording_configs, resolve_recordings
 from macaw.extractors.audio.content.diarization import NO_ONE, further_voice_id, read_further_voice, read_voices, voices_mixed
 from macaw.extractors.audio.content.speaker_id import offered_suggestion
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
@@ -21,7 +21,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
 from macaw.qc.look import PLAIN
-from macaw.qc.report import write_project_report, write_recording_report
+from macaw.qc.report import stale_pages, standing_page, write_project_report, write_recording_report
 
 app = typer.Typer()
 logger = get_logger("qc")
@@ -60,23 +60,9 @@ def qc(
     for recording_id in resolve_recordings(resolved, recordings):
         # what this recording ran with, its own recordings/<id>.yaml included
         own = resolve_config(config, recording_id=recording_id)
-        recording = build_recording(recording_id, own)
-        results = RecordingResults(layout, recording_id)
-        outcome = run_checks(recording, own, results, only=check)
-
-        directory = layout.qc_dir(recording_id)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "warnings.json").write_text(
-            json.dumps([asdict(warning) for warning in outcome.warnings], indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        write_candidates(outcome.candidates, directory / "candidates.parquet")
+        recording, results, outcome = check_recording(own, layout, recording_id, only=check)
         severities = Counter(warning.severity for warning in outcome.warnings)
-        logger.info(
-            "%s: %d fail, %d warn, %d info, %d candidate span(s)",
-            recording_id, severities["fail"], severities["warn"], severities["info"], len(outcome.candidates),
-        )
-        typer.echo(str(directory))
+        typer.echo(str(layout.qc_dir(recording_id)))
 
         if render or look:
             index = _render(resolved, layout, recording, results, outcome.candidates, plain=look)
@@ -89,13 +75,61 @@ def qc(
             break
 
     if pages:
-        project_page = write_project_report(resolved, pages)
+        project_page = write_project_page(resolved, pages)
         typer.echo(str(project_page))
         if open_report:
             webbrowser.open(project_page.resolve().as_uri())
     if failed is not None:
         typer.echo(f"qc.fail_fast: {failed} failed a check, the remaining recordings were not checked", err=True)
         raise typer.Exit(code=1)
+
+
+def check_recording(own, layout, recording_id: str, only=None):
+    """Runs the checks and keeps their warnings and moments to review where the page and the review frames read them."""
+    recording = build_recording(recording_id, own)
+    results = RecordingResults(layout, recording_id)
+    outcome = run_checks(recording, own, results, only=only)
+    directory = layout.qc_dir(recording_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "warnings.json").write_text(
+        json.dumps([asdict(warning) for warning in outcome.warnings], indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    write_candidates(outcome.candidates, directory / "candidates.parquet")
+    severities = Counter(warning.severity for warning in outcome.warnings)
+    logger.info(
+        "%s: %d fail, %d warn, %d info, %d candidate span(s)",
+        recording_id, severities["fail"], severities["warn"], severities["info"], len(outcome.candidates),
+    )
+    return recording, results, outcome
+
+
+def write_project_page(resolved, written: dict) -> Path:
+    """The project's page over the pages just written and every other recording's page that stands."""
+    layout = layout_for(resolved, create=False)
+    others = [rid for rid in resolve_recordings(resolved, None) if rid not in written and layout.qc_report_path(rid).is_file()]
+    standing = {rid: standing_page(own, rid) for rid, own in recording_configs(resolved, others).items()}
+    return write_project_report(resolved, {**standing, **written})
+
+
+def write_stale_pages(resolved, recording_ids: list[str]) -> None:
+    """After a run: the checks and the page of each recording whose page is missing or out of date, then the project's."""
+    layout = layout_for(resolved, create=False)
+    written, failed = {}, []
+    # the run's results stand whether or not their pages could be written
+    for recording_id, own in recording_configs(resolved, stale_pages(layout, recording_ids)).items():
+        try:
+            check_recording(own, layout, recording_id)
+            written[recording_id] = write_recording_report(own, recording_id)
+        except Exception as error:
+            failed.append(f"{recording_id} ({type(error).__name__}: {error})")
+    try:
+        if written:
+            typer.echo(f"qc pages {len(written)} written  {write_project_page(resolved, written)}")
+    except Exception as error:
+        failed.append(f"the project ({type(error).__name__}: {error})")
+    if failed:
+        typer.echo(f"note: no QC page written for {'; '.join(failed)}; try `macaw qc --report`", err=True)
 
 
 def _render(resolved, layout, recording, results, candidates, *, plain: bool = False):
