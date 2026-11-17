@@ -238,14 +238,18 @@ def resolve_config(
     overrides = parse_cli_overrides(cli_overrides)
 
     # below the recording's own file, which may choose another setup or change parts of it
+    project_setup = (merged.get("setup") or {}).get("name")
     setup_file = setup_file_for(merged, recording_data, overrides, project_yaml)
     if setup_file.is_file():
         setup_data, setup_sources = load_yaml(setup_file, layer="setup")
         if "name" in setup_data:
             raise ConfigError(f"{setup_file}: a setup is named by its file, so the file does not set name")
-        merged = deep_merge(merged, {"setup": setup_data})
+        # the file is the whole setup; settings that already hold another setup's devices keep none of them
+        merged["setup"] = {**setup_data, "name": setup_file.stem}
         sources["setup"] = KeySource("setup", setup_file)
         sources.update({f"setup.{key}": source for key, source in setup_sources.items()})
+    elif setup_file.stem != project_setup:
+        raise ConfigError(f"setup {setup_file.stem} has no file: {setup_file} is not there")
 
     if recording_data:
         merged = deep_merge(merged, recording_data)

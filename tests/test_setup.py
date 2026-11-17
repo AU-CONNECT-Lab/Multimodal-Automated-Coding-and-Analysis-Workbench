@@ -5,7 +5,7 @@ import yaml
 from typer.testing import CliRunner
 
 from macaw.cli.main import app
-from macaw.config.loader import resolve_config, scaffold_project_config
+from macaw.config.loader import archive_resolved, resolve_config, scaffold_project_config
 from macaw.exceptions import ConfigError, MacawError, RecordingNotFoundError
 from macaw.project.recording import build_recording, camera_clips
 from macaw.project.setup import require_setup, setup_path, write_setup
@@ -107,6 +107,22 @@ class TestSetupFile:
         (project.parent / "recordings" / "004.yaml").write_text("setup:\n  name: home\n", encoding="utf-8")
         assert [item.name for item in built(project, "003").media] == ["front"]
         assert [item.name for item in build_recording("004", resolve_config(project, recording_id="004")).media] == ["camcorder"]
+
+    def test_a_task_reads_the_other_setup_alone_from_the_archived_settings(self, project):
+        write_devices(project, cameras={"front": camera()})
+        write_devices(project, cameras={"camcorder": camera()}, name="home")
+        (project.parent / "recordings").mkdir()
+        (project.parent / "recordings" / "004.yaml").write_text("setup:\n  name: home\n", encoding="utf-8")
+        archived = archive_resolved(resolve_config(project), project.parent / "out")
+        assert list(resolve_config(archived, recording_id="004").setup.cameras) == ["camcorder"]
+        assert list(resolve_config(archived, recording_id="003").setup.cameras) == ["front"]
+
+    def test_a_recording_naming_a_setup_without_a_file_is_refused(self, project):
+        write_devices(project, cameras={"front": camera()})
+        (project.parent / "recordings").mkdir()
+        (project.parent / "recordings" / "004.yaml").write_text("setup:\n  name: hom\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="setup hom has no file"):
+            resolve_config(project, recording_id="004")
 
     def test_the_file_is_named_by_its_name_and_written_without_it(self, project):
         write_devices(project, cameras={"front": camera()})
