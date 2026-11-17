@@ -38,6 +38,7 @@ Reviewing the output works the same way. The quality report points at the frames
 - 3D from a depth camera: a RealSense, Azure Kinect or Orbbec Femto recording imported with the maker's own alignment, or depth images beside any video, each person's points placed on the depth in metres, with the same 3D measures.
 - 3D from one ordinary camera, as an option: a body model that covers every age fitted to each person, run in its own environment, and set to each person's stated height.
 - Body points exported per recording, in pixels and in 3D.
+- Copies of the videos with the people hidden, the heads blurred or only the skeletons left, with a list of the moments a head was not hidden.
 - Who looks at whom and at which named things, from the picture or from where the room places people and things, mutual gaze, joint attention with who led, and labelled frames to check it.
 - Paired values for convergence between speakers (each turn's voice measures beside the previous speaker's, lexical overlap with the previous turn), time spent below a threshold the study sets, and body orientation toward the other person in 3D.
 - Named segments of a recording, each with every recording-level measure and the turn checks worked out again as if the recording had been cut there, marked on the video in the workbench.

@@ -364,6 +364,13 @@ Run one of the following commands in the project folder. Each reports where it s
 `macaw export -f skeleton`
 : Each participant's body keypoints frame by frame, one CSV per recording, in pixels with the detector's confidence for each point. With several calibrated cameras ({ref}`three-d`), a second file gives the points in metres.
 
+`macaw export -f video`
+: A copy of each camera's video with the participants hidden, for showing or sharing. By default every head that was found is blurred and the rest of the picture stays; `--hide everything` leaves only the skeletons on a plain ground. The sound is left out unless `--sound` is given, since a voice identifies a person.
+
+  :::{important}
+  A head is blurred only where the body was found. It stays blurred for one second before, after and across a moment in which it was not, but a participant missed for longer is shown as filmed, as is anyone the pose step never found. Beside each copy, a table lists the stretches in which a named participant had no blur, whether out of the picture or missed. Bodies, clothes, the room and any sound kept remain as recorded, so a blurred copy is harder to recognise, not anonymous. Watch each copy before it leaves the laboratory.
+  :::
+
 `macaw methods`
 : A Methods section describing the steps that were actually run, with references.
 

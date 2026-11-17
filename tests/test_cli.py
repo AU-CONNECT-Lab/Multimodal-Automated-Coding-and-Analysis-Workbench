@@ -639,6 +639,52 @@ class TestSkeletonExport:
         result, _ = self.export(project, "--long")
         assert result.exit_code != 0 and "one layout" in str(result.exception)
 
+
+class TestHiddenVideoExport:
+    @pytest.fixture
+    def filmed(self, project):
+        import numpy as np
+
+        from macaw.media.ffmpeg import encode_frames
+        from macaw.media.probe import require_ffmpeg
+        from macaw.store.keypoints import write_keypoints
+        from test_kinematics import person
+
+        try:
+            require_ffmpeg()
+        except Exception:
+            pytest.skip("needs ffmpeg")
+        pytest.importorskip("cv2")
+        pictures = (np.full((120, 160, 3), shade, dtype=np.uint8) for shade in range(40, 130))
+        encode_frames(pictures, project.raw / "003" / "room" / "room.mp4", size=(160, 120), fps=30.0)
+        # the parent is found only in the last second of three, so the first is listed as not hidden
+        parent = person("parent", centre=(80.0, 80.0), scale=0.25, n_frames=90)
+        people = parent[parent.frame >= 60].assign(video="room", recording_id="003", source="pose.keypoints")
+        write_keypoints(people, make_layout(project.output).keypoints_path("003"))
+        return project
+
+    def export(self, project, *extra):
+        out = project.root / "hidden"
+        return invoke("export", "-c", str(project.config), "-f", "video", "--out", str(out), *extra), out
+
+    def test_a_copy_per_camera_with_the_stretches_left_unhidden_beside_it(self, filmed):
+        result, out = self.export(filmed)
+        assert result.exit_code == 0, result.output + str(result.exception)
+        assert sorted(path.name for path in out.iterdir()) == ["003_room_faces_hidden.mp4", "003_room_faces_hidden_not_hidden.csv"]
+        gaps = pd.read_csv(out / "003_room_faces_hidden_not_hidden.csv")
+        assert gaps.values.tolist() == [["parent", 0.0, 1.0]]
+        assert "Watch each copy before sharing it" in result.output
+
+    def test_skeletons_alone_have_nothing_left_to_list(self, filmed):
+        result, out = self.export(filmed, "--hide", "everything")
+        assert result.exit_code == 0, result.output + str(result.exception)
+        assert [path.name for path in out.iterdir()] == ["003_room_skeletons.mp4"]
+        assert "Watch each copy" not in result.output
+
+    def test_an_unknown_way_to_hide_is_refused(self, filmed):
+        result, _ = self.export(filmed, "--hide", "bodies")
+        assert result.exit_code != 0 and "faces, everything" in str(result.exception)
+
     def test_exporting_before_the_pose_steps_says_so(self, project):
         result, _ = self.export(project)
         assert result.exit_code != 0 and "macaw run" in str(result.exception)

@@ -5,6 +5,7 @@ import subprocess
 from fractions import Fraction
 from functools import cache
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 
@@ -183,6 +184,37 @@ def extract_thumbnails(src: Path, dest_dir: Path, *, every_s: float = 10.0) -> l
         ["-i", str(src), "-vf", f"fps=1/{every_s:g}", str(dest_dir / "thumb_%05d.jpg")]
     )
     return sorted(dest_dir.glob("thumb_*.jpg"))
+
+
+def encode_frames(
+    frames: Iterable[np.ndarray], dest: Path, *, size: tuple[int, int], fps: float, sound_from: Path | None = None,
+) -> Path:
+    """Pictures (BGR, each width by height) written as an H.264 video, with the sound of another file when one is given."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name(dest.stem + ".partial.mp4")
+    command = [require_ffmpeg(), *_BASE, "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{size[0]}x{size[1]}", "-r", f"{fps:.6f}", "-i", "-"]
+    if sound_from is not None:
+        command += ["-i", str(sound_from), "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "128k", "-shortest"]
+    # yuv420p takes even sizes only
+    command += [
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", str(partial),
+    ]
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        for image in frames:
+            process.stdin.write(np.ascontiguousarray(image).tobytes())
+        process.stdin.close()
+    except OSError:
+        # ffmpeg stopped reading; what it said is read below
+        pass
+    said = process.stderr.read().decode(errors="replace").strip()
+    if process.wait() != 0:
+        partial.unlink(missing_ok=True)
+        raise ExternalToolError(f"ffmpeg failed writing {dest.name}\n{said}")
+    partial.replace(dest)
+    return dest
 
 
 def make_preview(src: Path, dest: Path, *, height: int = 360, sound: Path | None = None, sound_at_s: float = 0.0) -> Path:

@@ -84,7 +84,9 @@ def _colour(subject_id, subjects: list[str]) -> tuple[int, int, int]:
     return _PALETTE[subjects.index(subject_id) % len(_PALETTE)]
 
 
-def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], header: list[str], *, labels: bool = True) -> np.ndarray:
+def draw_overlay(
+    image: np.ndarray, people: pd.DataFrame, subjects: list[str], header: list[str], *, labels: bool = True, boxes: bool = True,
+) -> np.ndarray:
     """people is one frame's keypoint rows. Each person gets a box labelled with who they were
     assigned to and the mean confidence of the joints drawn, so a reviewer can name the box
     that is wrong."""
@@ -109,7 +111,7 @@ def draw_overlay(image: np.ndarray, people: pd.DataFrame, subjects: list[str], h
                 cv2.line(out, points[a], points[b], colour, thickness, cv2.LINE_AA)
         for point in points.values():
             cv2.circle(out, point, thickness + 2, colour, -1, cv2.LINE_AA)
-        if not points:
+        if not points or not boxes:
             continue
 
         xs, ys = zip(*points.values())

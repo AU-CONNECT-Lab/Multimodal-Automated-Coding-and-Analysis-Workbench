@@ -34,7 +34,7 @@ from macaw.store.wide import to_wide, with_segment
 app = typer.Typer()
 logger = get_logger("export")
 
-FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton")
+FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton", "video")
 SEQUENCES = ("speech", "floor", "annotations")
 
 
@@ -42,7 +42,7 @@ SEQUENCES = ("speech", "floor", "annotations")
 def export(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence | skeleton"),
+    format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence | skeleton | video"),
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
     wide: bool = typer.Option(True, "--wide/--long", help="One column per measure, or one row per measure and value."),
     step: float = typer.Option(1.0, "--step", help="Sequence format only: sampling step in seconds."),
@@ -51,9 +51,15 @@ def export(
         help="Sequence format only: speech (one speaking/none series per person), floor (whose turn, or overlap) "
         "or annotations.",
     ),
+    hide: str = typer.Option(
+        "faces", "--hide",
+        help="Video format only: faces (every head found is blurred, the rest of the picture stays) or everything (only the "
+        "skeletons, on a plain ground).",
+    ),
+    sound: bool = typer.Option(False, "--sound/--no-sound", help="Video format only: keep the video's own sound. A voice identifies a person."),
     out: Path = typer.Option(None, "--out", help="Where to write. Default: a file or folder under exports in the output directory."),
 ) -> None:
-    """Export the measures for analysis, the codes as ELAN files, a state sequence, or each person's body points."""
+    """Export the measures for analysis, the codes as ELAN files, a state sequence, each person's body points, or a copy of the videos with the people hidden."""
     if format_ not in FORMATS:
         raise MacawError(f"Unknown format '{format_}'. Choose one of: {', '.join(FORMATS)}")
     if scale is not None and scale not in {member.value for member in Scale}:
@@ -71,6 +77,9 @@ def export(
         if not wide:
             raise MacawError("The skeleton export has one layout, a row per person and frame; leave out --long")
         _export_skeleton(layout, recording_ids, out)
+        return
+    if format_ == "video":
+        _export_video(resolved, layout, recording_ids, hide, sound, out)
         return
     if format_ == "sequence":
         if of not in SEQUENCES:
@@ -248,6 +257,49 @@ def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None
             written += 1
     if not written:
         raise MacawError(f"No body points under {layout.recordings_dir}. Run the pose steps (macaw run) before exporting.")
+
+
+def _export_video(resolved, layout, recording_ids: list[str], hide: str, sound: bool, out: Path | None) -> None:
+    """A copy of each camera's video with the people hidden, and beside it the stretches in which a head was not."""
+    from macaw.extractors.video.pose.keypoints import PoseExtractor
+    from macaw.media.hide import HIDE, write_hidden
+    from macaw.store.keypoints import read_keypoints
+
+    if hide not in HIDE:
+        raise MacawError(f"Unknown --hide '{hide}'. Choose one of: {', '.join(HIDE)}")
+    directory = out or (layout.output_dir / "exports" / "video")
+    suffix = "faces_hidden" if hide == "faces" else "skeletons"
+    written = 0
+    for recording_id in recording_ids:
+        path = layout.keypoints_path(recording_id) / f"{PoseExtractor.name}.parquet"
+        if not path.is_file():
+            logger.info("no body points yet for %s", recording_id)
+            continue
+        keypoints = read_keypoints(path, recording_id=recording_id)
+        recording = build_recording(recording_id, resolved)
+        subjects = [subject.subject_id for subject in recording.subjects]
+        for camera in recording.cameras():
+            people = keypoints[keypoints["video"] == camera.name]
+            # a camera nobody was found on is not copied, as nothing on it could be hidden
+            if people.empty or not camera.frames_path.is_file():
+                logger.info("%s %s: no body points on this camera, so no copy was made", recording_id, camera.name)
+                continue
+            target = directory / f"{recording_id}_{Path(camera.name).stem}_{suffix}.mp4"
+            on_camera = [subject for subject in subjects if subject in set(people["subject_id"].dropna())]
+            gaps = write_hidden(camera.frames_path, target, people, on_camera, hide=hide, sound=sound)
+            typer.echo(str(target))
+            written += 1
+            if hide == "faces":
+                listed = target.with_name(f"{target.stem}_not_hidden.csv")
+                gaps.round({"t_start": 3, "t_end": 3}).to_csv(listed, index=False, encoding="utf-8")
+                typer.echo(str(listed))
+    if not written:
+        raise MacawError(f"No body points under {layout.recordings_dir}. Run the pose steps (macaw run) before exporting.")
+    if hide == "faces":
+        typer.echo(
+            "Heads are blurred only where a body was found. Watch each copy before sharing it; the _not_hidden.csv beside it "
+            "lists when a named person had no blur, in or out of the picture. Bodies, clothes and the room stay visible."
+        )
 
 
 def _tiers(found: list[tuple[str, pd.DataFrame]]) -> set[str]:
