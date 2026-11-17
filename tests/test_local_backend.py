@@ -149,6 +149,24 @@ class TestFailure:
         assert database.get("rec1:prosody.frame").status == "cancelled"
         assert not downstream_marker.is_file()
 
+    def test_a_task_whose_bookkeeping_breaks_counts_as_failed_and_the_rest_still_run(self, database, make_spec, monkeypatch):
+        broken, _ = make_spec("rec1:a")
+        downstream, downstream_marker = make_spec("rec1:b", depends_on=["rec1:a"])
+        other, other_marker = make_spec("rec2:a")
+        backend = LocalBackend(n_workers=1, job_db=database)
+        run_one = backend._run_one
+
+        def breaks(spec):
+            if spec.task_id == "rec1:a":
+                raise RuntimeError("the record could not be written")
+            return run_one(spec)
+
+        monkeypatch.setattr(backend, "_run_one", breaks)
+        backend.wait(backend.submit([broken, downstream, other]))
+        assert database.get("rec1:a").status == "failed" and "could not be written" in database.get("rec1:a").message
+        assert database.get("rec1:b").status == "cancelled" and not downstream_marker.is_file()
+        assert database.get("rec2:a").status == "done" and other_marker.is_file()
+
     def test_a_cancelled_task_says_why(self, database, make_spec):
         failing, _ = make_spec("rec1:prep.media", code=1)
         downstream, _ = make_spec("rec1:prosody.frame", depends_on=["rec1:prep.media"])

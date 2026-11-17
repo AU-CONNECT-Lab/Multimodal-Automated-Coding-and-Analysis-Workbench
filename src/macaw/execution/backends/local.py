@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import threading
@@ -116,7 +117,12 @@ class LocalBackend(ExecBackend):
                     time.sleep(0.05)
                     continue
                 for task_id in done:
-                    code = running.pop(task_id).result()
+                    try:
+                        code = running.pop(task_id).result()
+                    except Exception as error:
+                        # bookkeeping around the task broke; it counts as failed, and the tasks left still get their turn
+                        code = 1
+                        self._record_broken(task_id, error)
                     if task_id in on_card and (card := on_card.pop(task_id)) is not None:
                         load[card] -= 1
                     self._results[task_id] = code
@@ -175,6 +181,12 @@ class LocalBackend(ExecBackend):
         message = None if code == 0 else f"exit code {code}, see {log_path}"
         self._finish(spec.task_id, time.monotonic() - started, status, message, exit_code=code)
         return code
+
+    def _record_broken(self, task_id: str, error: Exception) -> None:
+        try:
+            self._finish(task_id, None, "failed", f"{type(error).__name__}: {error}")
+        except Exception:
+            logging.getLogger("macaw").error("%s failed and its record could not be written: %s", task_id, error)
 
     def _finish(
         self,
