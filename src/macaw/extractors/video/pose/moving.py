@@ -32,8 +32,7 @@ _SPAN_COLUMNS = ["t_start", "t_end"]
 
 
 def moving_spans(times, speed, *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, int]:
-    """(each kept stretch with speed over above, how many were dropped as shorter than min_s); stretches less than
-    join_s apart count as one, and a frame without a speed is not moving."""
+    """(stretches with speed over above, joined when under join_s apart; how many were dropped as shorter than min_s)."""
     times, speed = np.asarray(times, dtype=float), np.asarray(speed, dtype=float)
     with np.errstate(invalid="ignore"):
         fast = speed > above
