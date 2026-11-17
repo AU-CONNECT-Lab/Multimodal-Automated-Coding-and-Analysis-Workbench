@@ -491,6 +491,21 @@ def test_the_body_faces_the_other_person_whichever_shoulder_is_called_left(facin
     assert "body_toward_deg_3d" not in without_hips
 
 
+def test_speed_toward_in_the_room_counts_movement_in_depth():
+    from macaw.config.schema import MeasureSection
+    from macaw.extractors.video.pose.triangulate import measure_spec_3d, measure_values_3d
+
+    steps = np.arange(30)
+    hand = np.column_stack([np.zeros(30), np.zeros(30), 1.0 + 0.02 * steps])
+    nose = np.column_stack([np.zeros(30), np.zeros(30), 3.0 - 0.01 * steps])
+    reach = MeasureSection(name="reach", person="parent", joints=["left_wrist"], to_person="child", to_joints=["nose"], method="speed_toward")
+    lean = MeasureSection(name="lean", person="child", joints=["nose"], to_person="parent", to_joints=["left_wrist"], method="speed_toward")
+    a, b = placed_points({"left_wrist": hand}, "parent"), placed_points({"nose": nose}, "child")
+    assert np.allclose(measure_values_3d(reach, a, b, smoothing_s=0.3)["reach_3d"], 0.6)
+    assert np.allclose(measure_values_3d(lean, b, a, smoothing_s=0.3)["lean_3d"], 0.3)
+    assert measure_spec_3d(reach)[1] == "m/s"
+
+
 def test_a_3d_version_may_not_take_a_name_in_use(seated, project):
     settings(project, "kinematics:\n  measures:\n    - {name: head_distance, person: parent, joints: [nose], to_person: child, to_joints: [nose]}\n")
     with pytest.raises(ConfigError, match="head_distance_3d"):

@@ -18,6 +18,7 @@ from macaw.extractors.video.pose.kinematics import (
     _CENTRES,
     BODY_UNIT,
     BUILTIN_MEASURES,
+    MEASURE_SPEEDS,
     POLYORDER,
     SELF,
     _keypoints_file,
@@ -29,6 +30,7 @@ from macaw.extractors.video.pose.kinematics import (
     check_measures,
     joined_annotations,
     measure_ends,
+    speed_toward,
 )
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
@@ -361,7 +363,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.4.1"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -581,6 +583,14 @@ def measure_values_3d(
         toward = target - centre
         with np.errstate(invalid="ignore", divide="ignore"):
             values = np.sum((own - centre) * toward, axis=1) / np.linalg.norm(toward, axis=1)
+    elif measure.method == "speed_toward":
+        ends = np.stack([_at(a, joint, len(frames)) for joint in measure.joints], axis=1)
+        targets = np.stack([_at(b, joint, len(frames)) for joint in measure.to_joints], axis=1)
+        step = _step(frames, times)
+        moving = np.stack(
+            [_smoothed_derivative(ends[:, joint], frames, step, smoothing_s, 1, stride) for joint in range(ends.shape[1])], axis=1
+        )
+        values = speed_toward(ends, targets, moving)
     else:
         ends = np.stack([_at(a, joint, len(frames)) for joint in measure.joints], axis=1)[:, :, None, :]
         targets = np.stack([_at(b, joint, len(frames)) for joint in measure.to_joints], axis=1)[:, None, :, :]
@@ -627,7 +637,7 @@ def below_3d_to_metres(measure, units: str) -> float:
 def below_3d_unit(measure, units: str) -> str | None:
     if measure.method not in BUILTIN_MEASURES or measure.per_body_size:
         return measure_spec_3d(measure)[1]
-    return f"{units}/s" if measure.method == "approach_speed" else units
+    return f"{units}/s" if measure.method in MEASURE_SPEEDS else units
 
 
 def measure_spec_3d(measure) -> tuple[str, str | None, bool]:
@@ -639,6 +649,12 @@ def measure_spec_3d(measure) -> tuple[str, str | None, bool]:
         text, unit = f"Distance in the room from {who} to {target}, the nearest pair where several are listed.", "m"
     elif measure.method == "approach_speed":
         text, unit = f"Rate at which the distance in the room from {who} to {target} shrinks; positive while closing in.", "m/s"
+    elif measure.method == "speed_toward":
+        text, unit = (
+            f"Velocity in the room of {who} along the line to {target}, of the nearest pair where several are listed; positive "
+            f"while moving toward it, whatever {target} does.",
+            "m/s",
+        )
     else:
         text, unit = f"How far {who} sits from their own shoulder midpoint in the direction of {target}; negative when away from it.", "m"
     if measure.per_body_size:
@@ -657,6 +673,8 @@ def measure_missing_3d(measure) -> str:
         where = f"none of {who} or none of {target} was placed in the room"
     if measure.method == "approach_speed":
         where += f", and across any unbroken run of frames with a distance {_SHORT_RUN}"
+    if measure.method == "speed_toward":
+        where += f", and across any unbroken run of frames with the nearest of {who} placed that is {_SHORT_RUN}"
     throughout = [f"when {measure.person}'s two shoulders are never placed in the same frame"] if measure.per_body_size else []
     if measure.to_person != SELF:
         throughout.append("for two people placed in 3D from different cameras")

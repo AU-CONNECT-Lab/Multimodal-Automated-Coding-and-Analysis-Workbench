@@ -200,7 +200,7 @@ kinematics:
 : Keypoints of the skeleton: `nose`, `left_eye`, `right_eye`, `left_ear`, `right_ear`, `left_shoulder`, `right_shoulder`, `left_elbow`, `right_elbow`, `left_wrist`, `right_wrist`, `left_hip`, `right_hip`, `left_knee`, `right_knee`, `left_ankle`, `right_ankle`, and the derived `shoulder_center` and `hip_center`. When several are listed, the nearest pair counts.
 
 `method`
-: `distance`; `approach_speed`, the rate at which that distance shrinks (positive while approaching); `offset_toward`, how far a point lies from the participant's own shoulder midpoint in the direction of the other participant, such as a head turned toward them; or a function of one's own (below).
+: `distance`; `approach_speed`, the rate at which that distance shrinks (positive while approaching); `speed_toward`, how fast the participant's own point moves along the line to the other point (positive while moving toward it), which tells who closes the distance: the `speed_toward` of each participant toward the other add up to about the `approach_speed` between the same points; `offset_toward`, how far a point lies from the participant's own shoulder midpoint in the direction of the other participant, such as a head turned toward them; or a function of one's own (below).
 
 `per_body_size`
 : Divides by the participant's shoulder width, so that the measure is in shoulder widths and does not depend on the distance from the camera. In the picture the width is the 95th percentile of the distance between the shoulders over the recording, which holds where the participant stays at about the same distance and faces the camera for part of the recording; in the room it is the median.

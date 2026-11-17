@@ -51,7 +51,9 @@ _DERIVATIVES = (("speed", 1), ("acceleration", 2), ("jerk", 3))
 # points a measure may name besides the skeleton's joints
 _CENTRES = {"shoulder_center": ("left_shoulder", "right_shoulder"), "hip_center": ("left_hip", "right_hip")}
 SELF = "self"
-BUILTIN_MEASURES = ("distance", "approach_speed", "offset_toward")
+BUILTIN_MEASURES = ("distance", "approach_speed", "speed_toward", "offset_toward")
+# the built-in measures whose unit is a length per second
+MEASURE_SPEEDS = ("approach_speed", "speed_toward")
 
 # description, unit ({length} is px or m), comparable across subjects; a length in pixels
 # depends on how far each person sits from the camera
@@ -142,7 +144,7 @@ _MISSING = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -544,6 +546,13 @@ def measure_values(
         values = _script_values(measure.method, function, kp_a, kp_b, frames)
     elif measure.method == "offset_toward":
         values = _offset_toward(kp_a, measure.joints[0], kp_b, measure.to_joints[0], frames)
+    elif measure.method == "speed_toward":
+        ends, targets = _joint_xy(kp_a, measure.joints, frames), _joint_xy(kp_b, measure.to_joints, frames)
+        step = _seconds_per_frame(kp_a)
+        moving = np.stack(
+            [_smoothed_derivative(ends[:, joint], frames, step, smoothing_s, 1) for joint in range(ends.shape[1])], axis=1
+        )
+        values = speed_toward(ends, targets, moving)
     else:
         values = _nearest_distance(kp_a, measure.joints, kp_b, measure.to_joints, frames)
         if measure.method == "approach_speed":
@@ -568,6 +577,19 @@ def _nearest_distance(kp_a, joints, kp_b, to_joints, frames) -> np.ndarray:
     b = _joint_xy(kp_b, to_joints, frames)[:, None, :, :]
     gaps = np.hypot(a[..., 0] - b[..., 0], a[..., 1] - b[..., 1]).reshape(len(frames), -1)
     return np.fmin.reduce(gaps, axis=1)
+
+
+def speed_toward(ends: np.ndarray, targets: np.ndarray, moving: np.ndarray) -> np.ndarray:
+    """Of the nearest (end, target) pair in each frame, the end's velocity along the line to the target; arrays are (frame, joint, axis)."""
+    gaps = np.linalg.norm(ends[:, :, None, :] - targets[:, None, :, :], axis=-1).reshape(len(ends), -1)
+    nearest = np.where(np.isnan(gaps), np.inf, gaps).argmin(axis=1)
+    end, target = np.divmod(nearest, targets.shape[1])
+    rows = np.arange(len(ends))
+    line = targets[rows, target] - ends[rows, end]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        values = np.sum(moving[rows, end] * line, axis=1) / np.linalg.norm(line, axis=1)
+    # two points on the same spot have no line between them
+    return np.where(np.isfinite(values), values, np.nan)
 
 
 def _offset_toward(kp_a, joint, kp_b, to_joint, frames) -> np.ndarray:
@@ -700,6 +722,12 @@ def measure_spec(measure) -> tuple[str, str | None, bool]:
         text, unit = f"Distance from {who} to {target}, the nearest pair where several are listed.", "{length}"
     elif measure.method == "approach_speed":
         text, unit = f"Rate at which the distance from {who} to {target} shrinks; positive while closing in.", "{length}/s"
+    elif measure.method == "speed_toward":
+        text, unit = (
+            f"Velocity of {who} along the line to {target}, of the nearest pair where several are listed; positive while "
+            f"moving toward it, whatever {target} does.",
+            "{length}/s",
+        )
     elif measure.method == "offset_toward":
         text, unit = f"Horizontal offset of {who} from their own shoulder midpoint, positive toward {target}.", "{length}"
     else:
@@ -712,7 +740,7 @@ def measure_spec(measure) -> tuple[str, str | None, bool]:
 
 def measure_missing(measure) -> str:
     who, target = measure_ends(measure)
-    if measure.method in ("distance", "approach_speed"):
+    if measure.method in ("distance", *MEASURE_SPEEDS):
         where = f"none of {who} or none of {target} was found"
     elif measure.method == "offset_toward":
         where = f"{who}, either of {measure.person}'s shoulders or {target} was not found"
@@ -720,6 +748,8 @@ def measure_missing(measure) -> str:
         where = f"the project script {measure.method} returned no value or where the person (or either person of the pair) was not detected"
     if measure.method == "approach_speed":
         where += f", and across any unbroken run of frames with a distance {_SHORT_RUN}"
+    if measure.method == "speed_toward":
+        where += f", and across any unbroken run of frames with the nearest of {who} found that is {_SHORT_RUN}"
     throughout = [f"when {measure.person}'s two shoulders are never found in the same frame"] if measure.per_body_size else []
     if measure.to_person != SELF:
         throughout.append("for a pair no camera is set to read both bodies from, or whom that camera never showed together")

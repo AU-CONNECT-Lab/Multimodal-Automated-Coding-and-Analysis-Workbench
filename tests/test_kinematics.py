@@ -438,7 +438,10 @@ class TestMeasureValues:
         from macaw.extractors.video.pose.kinematics import measure_spec
         from macaw.extractors.video.pose.triangulate import measure_spec_3d
 
-        for method, unit in (("distance", "shoulder widths"), ("approach_speed", "shoulder widths/s"), ("offset_toward", "shoulder widths")):
+        for method, unit in (
+            ("distance", "shoulder widths"), ("approach_speed", "shoulder widths/s"), ("speed_toward", "shoulder widths/s"),
+            ("offset_toward", "shoulder widths"),
+        ):
             sized = measure(joints=["nose"], to_joints=["nose"], method=method, per_body_size=True)
             assert measure_spec(sized)[1] == unit and measure_spec_3d(sized)[1] == unit
 
@@ -447,6 +450,52 @@ class TestMeasureValues:
         a = person("parent", centre=PARENT, moves={"left_wrist": path})
         values = measure_values(measure(joints=["left_wrist"], to_joints=["nose"], method="approach_speed"), a, person("child", centre=CHILD))
         assert values.to_numpy() == pytest.approx(np.full(20, 3.0 * FPS))
+
+    def test_speed_toward_is_the_movers_own_share_of_the_approach(self):
+        steps = np.arange(20)
+        hand = np.column_stack([205.0 + 3.0 * steps, np.full(20, 160.0)])
+        nose = np.column_stack([450.0 - 1.0 * steps, np.full(20, 160.0)])
+        a, b = person("parent", centre=PARENT, moves={"left_wrist": hand}), person("child", centre=CHILD, moves={"nose": nose})
+        reach = measure(joints=["left_wrist"], to_joints=["nose"], method="speed_toward")
+        lean = measure(person="child", to_person="parent", joints=["nose"], to_joints=["left_wrist"], method="speed_toward")
+        closing = measure(joints=["left_wrist"], to_joints=["nose"], method="approach_speed")
+        assert measure_values(reach, a, b).to_numpy() == pytest.approx(np.full(20, 3.0 * FPS))
+        assert measure_values(lean, b, a).to_numpy() == pytest.approx(np.full(20, 1.0 * FPS))
+        assert measure_values(closing, a, b).to_numpy() == pytest.approx(np.full(20, 4.0 * FPS))
+
+    def test_speed_toward_is_zero_for_the_one_who_stays_and_negative_moving_away(self):
+        away = np.column_stack([205.0 - 2.0 * np.arange(20), np.full(20, 160.0)])
+        a, b = person("parent", centre=PARENT, moves={"left_wrist": away}), person("child", centre=CHILD)
+        reach = measure(joints=["left_wrist"], to_joints=["nose"], method="speed_toward")
+        still = measure(person="child", to_person="parent", joints=["nose"], to_joints=["left_wrist"], method="speed_toward")
+        assert measure_values(reach, a, b).to_numpy() == pytest.approx(np.full(20, -2.0 * FPS))
+        assert measure_values(still, b, a).to_numpy() == pytest.approx(np.zeros(20), abs=1e-9)
+
+    def test_speed_toward_follows_whichever_listed_point_is_nearest(self):
+        steps = np.arange(40)
+        left = np.column_stack([np.full(40, 250.0), 160.0 + 5.0 * steps])
+        right = np.column_stack([150.0 + 4.0 * steps, np.full(40, 160.0)])
+        nose = np.tile([450.0, 160.0], (40, 1))
+        a = person("parent", centre=PARENT, n_frames=40, moves={"left_wrist": left, "right_wrist": right})
+        b = person("child", centre=CHILD, n_frames=40, moves={"nose": nose})
+        values = measure_values(measure(joints=["left_wrist", "right_wrist"], to_joints=["nose"], method="speed_toward"), a, b).to_numpy()
+        gap_left, gap_right = np.hypot(200.0, 5.0 * steps), 300.0 - 4.0 * steps
+        from_left = -5.0 * FPS * (5.0 * steps) / gap_left
+        assert values == pytest.approx(np.where(gap_left <= gap_right, from_left, 4.0 * FPS), abs=1e-6)
+        assert (gap_left <= gap_right).any() and (gap_left > gap_right).any()
+
+    def test_the_two_speeds_toward_add_up_to_about_the_approach_speed(self):
+        t = np.arange(120) / FPS
+        hand = np.column_stack([200.0 + 60.0 * np.sin(2.0 * t), 160.0 + 40.0 * np.cos(1.5 * t)])
+        nose = np.column_stack([450.0 + 30.0 * np.cos(1.2 * t), 180.0 + 50.0 * np.sin(0.8 * t)])
+        a = person("parent", centre=PARENT, n_frames=120, moves={"left_wrist": hand})
+        b = person("child", centre=CHILD, n_frames=120, moves={"nose": nose})
+        reach = measure_values(measure(joints=["left_wrist"], to_joints=["nose"], method="speed_toward"), a, b).to_numpy()
+        lean = measure_values(
+            measure(person="child", to_person="parent", joints=["nose"], to_joints=["left_wrist"], method="speed_toward"), b, a
+        ).to_numpy()
+        closing = measure_values(measure(joints=["left_wrist"], to_joints=["nose"], method="approach_speed"), a, b).to_numpy()
+        assert np.abs(reach + lean - closing).max() < 0.01 * np.abs(closing).max()
 
     def test_offset_toward_is_signed_by_where_the_other_is(self):
         toward = np.tile([CHILD[0] - 10.0, CHILD[1] - 60.0], (20, 1))
