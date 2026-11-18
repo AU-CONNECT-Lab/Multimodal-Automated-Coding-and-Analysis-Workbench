@@ -378,3 +378,14 @@ def test_lines_changed_without_listening_are_described_by_what_they_went_on(monk
         monkeypatch.setattr(boilerplate, "lines_reassigned", lambda config, kinds=kinds: (1, 5, 3, kinds))
         text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
         assert "3 of them without listening" in text and said in text and unsaid not in text
+
+
+def test_the_objects_are_described_once_where_gaze_and_hands_both_read_them():
+    point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="m", in_frame_cut=0.5)
+    touch = spec("objects.touch", "left_hand_on_ball")
+    settings = config(objects={"names": ["ball"], "touch_px": 12, "review": "flagged"})
+    text, used = render(describe(manifest(point, touch), settings), load_references())
+    assert text.count("Objects named ball were located by name") == 1 and "## Objects" in text and "within 12 px" in text
+    assert "A person checked the starting points in doubt" in text and "ravi2024" in used
+    alone, _ = render(describe(manifest(touch), settings), load_references())
+    assert alone.count("Objects named ball were located by name") == 1

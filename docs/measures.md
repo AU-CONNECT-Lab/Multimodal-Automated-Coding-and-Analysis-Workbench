@@ -59,6 +59,22 @@ The same is done in a terminal: `macaw objects -r REC` lists the starts, `--keep
 
 When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. The tracker is SAM 2.1 by default; `objects.tracker: sam3` uses the tracker of SAM 3 instead, whose model is given on request on Hugging Face (accept its terms there and log in with `hf auth login` first).
 
+### Hands on objects
+
+With objects followed, MACAW can also give, for each participant, how far each hand is from each object, frame by frame, and when a hand is on one:
+
+```yaml
+objects:
+  names: [ball, book]
+  touch_px: 40
+```
+
+`touch_px` is the distance in pixels within which a wrist puts the hand on an object; it has no default, since it depends on the size of the people in the picture. The pose model marks the wrist, not the fingers, so it is best set to about the length of a hand in the picture, checked on a few frames. The results give `left_wrist_to_ball` and `right_wrist_to_ball` (pixels to the outline, 0 inside it; exports add the project's unit beside them when a scale is set) and `left_hand_on_ball` and `right_hand_on_ball` (1 or 0) per frame, and each participant's stretches with a hand on an object as codes on a tier per object (`on_ball`, labelled left, right or both), which can be exported to ELAN. Words in an object's name are joined by underscores in these names, so *toy car* gives `left_hand_on_toy_car`.
+
+:::{important}
+The distance is read from the picture, so a hand in front of or behind an object counts as on it: the measure marks a hand over the object as the camera sees it, not contact.
+:::
+
 (motion)=
 ## Motion energy in a region of the picture
 

@@ -485,6 +485,8 @@ class ObjectsSection(_Section):
     tracker_model: str | None = added(default=None)
     device: str = added(default="auto")
     review: Literal["always", "flagged", "skip"] = added(default="always")
+    # px of the picture, so each project sets it for its own videos; unset leaves objects.touch out
+    touch_px: float | None = added(default=None, ge=0)
 
     @model_validator(mode="after")
     def _names(self) -> "ObjectsSection":

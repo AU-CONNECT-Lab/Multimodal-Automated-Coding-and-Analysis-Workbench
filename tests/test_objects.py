@@ -388,3 +388,78 @@ class TestReviewPage:
         once = with_point(figure, [1.0, 2.0])
         twice = with_point(once, [3.0, 4.0])
         assert len(twice["data"]) == 2 and twice["data"][-1]["name"] == OBJECT_POINT and twice["data"][-1]["x"] == [3.0]
+
+
+class TestTouch:
+    @pytest.fixture
+    def run(self, tmp_path, monkeypatch):
+        from macaw.extractors.video.objects import touch as touch_module
+        from macaw.extractors.video.objects.touch import ObjectTouchExtractor
+        from macaw.extractors.video.pose import kinematics as kinematics_module
+        from macaw.store.keypoints import write_keypoints
+        from test_kinematics import person
+
+        def build(touch_px=10.0):
+            stored = tmp_path / "keypoints"
+            path = np.column_stack([np.linspace(100, 390, 30), np.full(30, 200.0)])
+            write_keypoints(person("parent", n_frames=30, moves={"left_wrist": path}), stored)
+            monkeypatch.setattr(kinematics_module, "_keypoints_file", lambda config, rid: stored / "pose.keypoints.parquet")
+            square = [[200, 180, 240, 180, 240, 220, 200, 220]]
+            things = pd.DataFrame(
+                [{"video": "parent.mp4", "frame": f, "label": "ball", "outline": square} for f in range(30)]
+                + [{"video": "parent.mp4", "frame": f, "label": "toy car", "outline": [[0, 0, 5, 0, 5, 5, 0, 5]]} for f in range(10)]
+                + [{"video": "other.mp4", "frame": f, "label": "book", "outline": square} for f in range(30)]
+            )
+            monkeypatch.setattr(touch_module, "load_objects", lambda config, rid: things)
+            config = SimpleNamespace(objects=ObjectsSection(names=["ball", "toy car", "book"], touch_px=touch_px))
+            return ObjectTouchExtractor(config).run(recording_of([], ["parent"]), tmp_path)
+
+        return build
+
+    def test_a_wrist_near_the_outline_puts_the_hand_on_the_thing_frame_by_frame_and_on_a_tier(self, run):
+        from macaw.store.schema import ANNOTATION_SCHEMA, LONG_TABLE_SCHEMA, validate_frame
+
+        result = run()
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        validate_frame(result.annotations, ANNOTATION_SCHEMA, "annotations")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature) == {
+            f"{side}_{kind}_{thing}" for side in ("left", "right") for kind in ("wrist_to", "hand_on") for thing in ("ball", "toy_car")
+        }
+        far = result.rows[result.rows.feature == "left_wrist_to_ball"].sort_values("t_start")["value"].to_numpy()
+        on = result.rows[result.rows.feature == "left_hand_on_ball"].sort_values("t_start")["value"].to_numpy()
+        x = np.linspace(100, 390, 30)
+        assert far == pytest.approx(np.where(x < 200, 200 - x, np.where(x > 240, x - 240, 0.0)))
+        assert on.tolist() == [float(abs(value) <= 10) for value in far]
+        car = result.rows[result.rows.feature == "left_hand_on_toy_car"].sort_values("t_start")["value"]
+        assert car.iloc[:10].tolist() == [0.0] * 10 and car.iloc[10:].isna().all()
+        tier = result.annotations[result.annotations.tier == "on_ball"]
+        assert tier.label.tolist() == ["left"] and tier.subject_id.tolist() == ["parent"]
+        inside = np.flatnonzero(on == 1) / 30.0
+        assert tier.t_start.iloc[0] == pytest.approx(inside[0]) and tier.t_end.iloc[0] == pytest.approx(inside[-1] + 1 / 30.0)
+        assert "stretches with a hand on a thing: ball 1, toy car 0" in [w.message for w in result.warnings if w.severity == "info"][0]
+        assert "not contact" in result.specs[0].description
+
+    def test_the_step_runs_only_with_a_distance(self):
+        from macaw.exceptions import ConfigError
+        from macaw.extractors.video.objects.touch import ObjectTouchExtractor
+
+        assert not ObjectTouchExtractor.wanted_by_default(SimpleNamespace(objects=ObjectsSection(names=["ball"])))
+        assert ObjectTouchExtractor.wanted_by_default(SimpleNamespace(objects=ObjectsSection(names=["ball"], touch_px=5)))
+        with pytest.raises(ConfigError, match="objects.touch_px"):
+            ObjectTouchExtractor(SimpleNamespace(objects=ObjectsSection(names=["ball"]))).check_available()
+
+    def test_stretches_break_at_a_jump_in_time(self):
+        from macaw.extractors.video.objects.touch import on_spans, slug
+
+        times = np.array([0.0, 0.1, 0.2, 0.3, 0.7, 0.8])
+        found = on_spans(times, [1, 1, 0, 1, 1, np.nan])
+        assert [(round(a, 2), round(b, 2)) for a, b in zip(found["t_start"], found["t_end"])] == [(0.0, 0.2), (0.3, 0.4), (0.7, 0.8)]
+        assert slug(" Toy Car! ") == "toy_car"
+
+
+def test_the_methods_text_tells_the_objects_once_and_says_the_touch_is_read_from_the_picture():
+    from macaw.qc.boilerplate import _followed_things, _touch
+
+    config = SimpleNamespace(objects=ObjectsSection(names=["ball"], touch_px=12))
+    text = _touch(config, None, set())
+    assert text.startswith(_followed_things(config)) and "within 12 px" in text and "not contact" in text and "[ravi2024]" in text
