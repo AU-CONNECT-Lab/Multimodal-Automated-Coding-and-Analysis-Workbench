@@ -802,11 +802,23 @@ def _rating(config, spec, names) -> str:
         "only each scale's name, the person it rates and its range" if params.get("names_only")
         else "each scale's name, the person it rates, its range, and its definition, anchors and rules as written"
     )
+    transcript = (
+        f"for each scale only the lines of the transcript that overlapped the stretches marked for that scale and recording in "
+        f"\"{params['excerpts']}\", whole and in time order, scales with no marked stretch in a recording not being rated, with,"
+        if params.get("excerpts") else "the whole transcript in time order with,"
+    )
     text = (
         f"In a rating named {params['rating']}, the language model {model} ({params.get('provider')}) rated {what} on the "
-        f"{params.get('n_scales')} scales of \"{params.get('scales')}\", one scale per request. It was given {given}, and the "
-        f"whole transcript in time order with, for each line, {_shown(params.get('show', []), speaker='the role of the person speaking')}."
+        f"{params.get('n_scales')} scales of \"{params.get('scales')}\", one scale per request. It was given {given}, and "
+        f"{transcript} for each line, {_shown(params.get('show', []), speaker='the role of the person speaking')}."
     )
+    if params.get("examples"):
+        reasons = params.get("n_examples_with_reasons", 0)
+        text += (
+            f" After each scale's definition it was shown the examples of that scale in \"{params['examples']}\", "
+            f"{params.get('n_examples')} in all, parts of other conversations rated by people, each with their score"
+            + (f" and, for {reasons} of them, their reason." if reasons else ".")
+        )
     samples = params.get("n_samples", 1)
     if samples > 1:
         text += (

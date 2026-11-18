@@ -131,3 +131,64 @@ def validate_scales(scales: ScaleSet, roles: list[str]) -> list[str]:
         if described and not scale.described():
             problems.append(f"scale '{name}' has no definition, anchors or rules while other scales do")
     return problems
+
+
+@dataclass
+class ScaleExample:
+    """A part of another conversation people rated on a scale: its lines with their speakers' roles, or a description of
+    it, the score they gave, and their reason where they wrote one."""
+
+    score: int
+    lines: list[tuple[str, str]] = field(default_factory=list)
+    description: str = ""
+    why: str = ""
+
+
+_EXAMPLE_FIELDS = frozenset({"lines", "description", "score", "why"})
+
+
+def read_examples(path: Path, scales: ScaleSet, speakers: list[str]) -> dict[str, list[ScaleExample]]:
+    """Examples by scale from a YAML file whose examples key maps each scale's name to its list; speakers are the roles a
+    line may name."""
+    path = Path(path)
+    if not path.is_file():
+        raise InputNotFoundError(f"Rating examples not found: {path}")
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise CodebookError(f"{path}: not readable as YAML ({error})") from None
+    given = data.get("examples") if isinstance(data, dict) else None
+    if not isinstance(given, dict):
+        raise CodebookError(f"{path}: expected examples: a mapping from each scale's name to a list of examples")
+    found: dict[str, list[ScaleExample]] = {}
+    for name, entries in given.items():
+        scale = scales.get(str(name))
+        if not isinstance(entries, list):
+            raise CodebookError(f"{path}: the examples of {name} must be a list")
+        found[scale.scale] = [_example_from(entry, scale, speakers, path, number) for number, entry in enumerate(entries, 1)]
+    return found
+
+
+def _example_from(entry: Any, scale: RatingScale, speakers: list[str], path: Path, number: int) -> ScaleExample:
+    where = f"{path}: example {number} of {scale.scale}"
+    if not isinstance(entry, dict):
+        raise CodebookError(f"{where} must be a mapping")
+    unknown = sorted(set(entry) - _EXAMPLE_FIELDS)
+    if unknown:
+        raise CodebookError(f"{where} has unknown key(s) {', '.join(unknown)}. Available: {', '.join(sorted(_EXAMPLE_FIELDS))}")
+    if bool(entry.get("lines")) == bool(str(entry.get("description") or "").strip()):
+        raise CodebookError(f"{where} needs either lines or a description, not both")
+    if entry.get("score") is None:
+        raise CodebookError(f"{where} has no score")
+    score = _whole(entry["score"], f"the score of {where.split(': ', 1)[1]}", path)
+    if not scale.low <= score <= scale.high:
+        raise CodebookError(f"{where} scores {score}, outside the scale's range {scale.low} to {scale.high}")
+    lines = []
+    for line in entry.get("lines") or []:
+        if not isinstance(line, dict) or len(line) != 1:
+            raise CodebookError(f"{where}: each line is one role and what they said, such as - parent: How was it?")
+        (role, text), = line.items()
+        if str(role) not in speakers:
+            raise CodebookError(f"{where}: {role} is not one of the speakers ({', '.join(speakers)})")
+        lines.append((str(role), str(text).strip()))
+    return ScaleExample(score=score, lines=lines, description=str(entry.get("description") or "").strip(), why=str(entry.get("why") or "").strip())

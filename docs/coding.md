@@ -198,6 +198,33 @@ scales:
 
 Each scale names the person it rates, its lowest and highest score, and any of a definition, anchors and further rules. Anchors may be given for some scores only; the model is told that scores without an anchor lie between the anchors around them. A coding manual can also be copied into `definition` word for word, with anchors and rules left empty. A file that gives every scale by its name, person and range alone is rated as it stands, which shows what the model makes of the names; a file in which only some scales are described is treated as an unfinished draft, and rating stops.
 
+### Examples rated by people
+
+A version can show the model, after each scale's definition, examples that people rated in other conversations. They are kept in a file of their own, so that versions with and without examples share one scales file:
+
+```yaml
+coding:
+  ratings:
+    full_text: {scales: scales.yaml, show: []}
+    full_text_examples: {scales: scales.yaml, show: [], examples: examples.yaml}
+```
+
+```yaml
+# examples.yaml
+examples:
+  warmth:
+    - lines:
+        - parent: Did you have fun at the party?
+        - child: Yes, we played tag.
+        - parent: Oh, I'm so glad.
+      score: 4
+      why: Warm interest, though brief.
+    - description: The parent answers the child's questions briefly and turns back to the task each time.
+      score: 2
+```
+
+Each example gives either a few lines, each with the role of the person speaking (one of the project's roles, or `other`), or a description written by a person, together with the score people gave and, where they wrote one, their reason. A scale may have any number of examples or none. Which conversations the examples come from is the researcher's choice; examples taken from a recording that the version also rates show the model the people's score for that recording, so for a comparison with human ratings they are drawn from recordings outside the ones compared. Examples lengthen every request: the run plan states how many tokens they add at most, and the step stops before rating when a prompt does not fit what the server reads (see below). The examples file is part of the version's settings, so editing it rates the recordings again, while a version without one is unaffected.
+
 ### Setting up
 
 Ratings are set up in the text part of the settings as named versions, each a step of its own. A version names its scales file and whatever it changes in the *Coding* group's model settings; everything else follows that group (model, answers per scale, what the model is shown, note, reasons).
@@ -232,6 +259,15 @@ A model server reads only a limited number of tokens per request, and some, Olla
 ### Rating parts of a recording
 
 Without further settings, a version rates the analysed part of each recording as a whole. `segments: [first_half, second_half]` rates the named segments of the segments table one by one instead (see {ref}`segments`); recordings without such a segment are left out of that version and the quality report says so.
+
+A version with `excerpts: excerpts.csv` rates each scale from marked stretches only, for example the moments human coders noted for that scale, so that the step from single events to a score can be examined apart from finding the events. The table has one row per stretch, on the recording's clock:
+
+| recording | scale | start_s | end_s |
+|---|---|---|---|
+| dyad01 | warmth | 62.0 | 75.5 |
+| dyad01 | warmth | 140.2 | 140.2 |
+
+For each scale, the model is shown the lines of the analysed part that overlap one of that scale's stretches in the recording, whole and in time order, with `...` where one stretch ends and the next begins; with *timing* shown, the first line after `...` is marked as opening an excerpt. A stretch may be a single moment (start and end alike), which brings the line said at that moment. A scale with no stretch in a recording is not rated there, and the quality report lists such scales. The score counts as a rating of the whole recording, so that `macaw ratings agreement` sets it beside people's ratings of the whole recording. A version cannot take both excerpts and segments. Only each recording's own rows are part of its settings, so marking stretches in one recording rates only that one again. Since each scale is shown other lines, the requests about one recording no longer begin with the same transcript, and a server that reuses what it read for the previous request cannot do so; as the excerpts are short, this costs little time.
 
 ### The effect of speaker errors
 

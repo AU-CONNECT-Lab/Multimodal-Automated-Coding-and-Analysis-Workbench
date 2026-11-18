@@ -8,7 +8,7 @@ from typing import Sequence
 import pandas as pd
 
 from macaw.coding.codebook import Codebook
-from macaw.coding.scales import ALL, RatingScale
+from macaw.coding.scales import ALL, RatingScale, ScaleExample
 from macaw.extractors.audio.content.diarization import OTHER
 
 ABSTAIN = "abstain"
@@ -114,7 +114,9 @@ def _details(row, show: Sequence[str]) -> list[str]:
     parts = []
     if "timing" in show:
         gap = row.gap_before
-        if pd.isna(gap):
+        if getattr(row, "opens", False):
+            timing = "opens an excerpt"
+        elif pd.isna(gap):
             timing = "opens the conversation"
         elif gap < 0:
             timing = f"overlaps the talk before by {-gap:.1f} s"
@@ -142,10 +144,13 @@ def build_rating_prompt(
     notes: str = "",
     reasons: bool = False,
     evidence: bool = False,
+    examples: Sequence[ScaleExample] = (),
+    excerpts: bool = False,
 ) -> tuple[str, str]:
     """Returns (system, user). lines carry speaker (a role), t_start and t_end from the start of what is rated, gap_before,
-    text and the voice items of show, and with evidence the line number each is shown with. Only the end of the user part
-    names the scale, so every scale asked about one conversation starts the same and a server can reuse what it read."""
+    text and the voice items of show, with evidence the line number each is shown with, and with excerpts opens, true on
+    the first line of each excerpt. Only the end of the user part names the scale, so every scale asked about one
+    conversation starts the same and a server can reuse what it read; examples follow the scale."""
     system = [
         "You rate a recorded conversation on one rating scale, as a trained observer would. The transcript gives what was "
         "said in time order; each line starts with the role of the person who said it.",
@@ -182,12 +187,15 @@ def build_rating_prompt(
     if reasons:
         system.append("The reason names in a few words what the score rests on: what was said, the timing or the voice.")
 
-    user = [f"Transcript ({minutes:.1f} minutes):"]
+    if excerpts:
+        user = [f"Excerpts of the transcript of a {minutes:.1f}-minute conversation, the stretches marked for this scale; ... stands between two stretches:"]
+    else:
+        user = [f"Transcript ({minutes:.1f} minutes):"]
     numbers = lines["line"].tolist() if "line" in lines.columns else range(1, len(lines) + 1)
-    user.extend(
-        f"{' | '.join([*([str(number)] if evidence else []), str(row.speaker), *_details(row, show)])}: {row.text}"
-        for number, row in zip(numbers, lines.itertuples(index=False))
-    )
+    for position, (number, row) in enumerate(zip(numbers, lines.itertuples(index=False))):
+        if excerpts and position and getattr(row, "opens", False):
+            user.append("...")
+        user.append(f"{' | '.join([*([str(number)] if evidence else []), str(row.speaker), *_details(row, show)])}: {row.text}")
     user += ["", "Rate the conversation on this scale.", f"Scale: {scale.scale}", f"Who is rated: {_rated(scale, people)}"]
     user.append(f"Scores: whole numbers from {scale.low} to {scale.high}.")
     if scale.definition:
@@ -200,10 +208,24 @@ def build_rating_prompt(
     if scale.rules:
         user.append("Rules:")
         user.extend(f"- {rule}" for rule in scale.rules)
+    user += example_lines(examples)
     if evidence and scale.person != ALL:
         user.append(f"Cite lines said by the {scale.person}.")
     user.append("Answer with the JSON object.")
     return "\n".join(system), "\n".join(user)
+
+
+def example_lines(examples: Sequence[ScaleExample]) -> list[str]:
+    """Examples people rated, in the words of the prompt."""
+    if not examples:
+        return []
+    lines = ["Examples people rated in other conversations, not this one:"]
+    for number, example in enumerate(examples, 1):
+        lines.append(f"Example {number}, scored {example.score}:")
+        lines += [f"{role}: {text}" for role, text in example.lines] if example.lines else [example.description]
+        if example.why:
+            lines.append(f"Why: {example.why}")
+    return lines
 
 
 def _rated(scale: RatingScale, people: Sequence[str]) -> str:

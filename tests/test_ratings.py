@@ -970,3 +970,121 @@ class TestEvidence:
         assert len(evidence) == 3 and set(evidence["speaker"]) == {"child"} and "group_id" in evidence.columns
         assert (out / "evidence_dictionary.csv").is_file()
         assert "before each score the model was asked to list the lines" in " ".join(describe(fragment, config)["Ratings"])
+
+
+EXAMPLES = {
+    "examples": {
+        "warmth": [
+            {"lines": [{"parent": "Did you have fun?"}, {"child": "Yes."}], "score": 4, "why": "Warm interest."},
+            {"description": "The parent answers briefly and turns back to the task.", "score": 2},
+        ],
+    },
+}
+
+
+class TestExamples:
+    def test_examples_are_read_and_checked(self, tmp_path):
+        from macaw.coding.scales import read_examples
+
+        scales = read_scales_from(SCALES)
+        found = read_examples(write_yaml(tmp_path / "e.yaml", EXAMPLES), scales, ["parent", "child", "other"])
+        assert [example.score for example in found["warmth"]] == [4, 2] and found["warmth"][0].lines[1] == ("child", "Yes.")
+        for entry, message in (
+            ({"cheer": []}, "is not a scale"),
+            ({"warmth": [{"lines": [{"parent": "a"}], "description": "b", "score": 3}]}, "either lines or a description"),
+            ({"warmth": [{"description": "b", "score": 7}]}, "outside the scale's range"),
+            ({"warmth": [{"lines": [{"teacher": "a"}], "score": 3}]}, "teacher is not one of the speakers"),
+            ({"warmth": [{"description": "b"}]}, "has no score"),
+        ):
+            with pytest.raises(CodebookError, match=message):
+                read_examples(write_yaml(tmp_path / "bad.yaml", {"examples": entry}), scales, ["parent", "child", "other"])
+
+    def test_examples_follow_the_scale_and_the_transcript_still_comes_first(self, tmp_path):
+        from macaw.coding.scales import read_examples
+
+        scales = read_scales_from(SCALES)
+        examples = read_examples(write_yaml(tmp_path / "e.yaml", EXAMPLES), scales, ["parent", "child"])
+        lines = TestPrompt().lines()
+        _, warmth = build_rating_prompt(scales.get("warmth"), lines, people=["parent", "child"], minutes=1.0, examples=examples["warmth"])
+        _, flow = build_rating_prompt(scales.get("flow"), lines, people=["parent", "child"], minutes=1.0)
+        assert warmth.index("Rules:") < warmth.index("Examples people rated in other conversations, not this one:") < warmth.index("Answer with")
+        assert "Example 1, scored 4:\nparent: Did you have fun?\nchild: Yes.\nWhy: Warm interest.\nExample 2, scored 2:\nThe parent answers" in warmth
+        transcript = warmth.split("\n\nRate the conversation")[0]
+        assert flow.startswith(transcript)
+
+    def test_a_version_shows_its_examples_says_so_and_is_keyed_on_them(self, monkeypatch, tmp_path, server, capsys):
+        from macaw.cli.run import _echo_reporting
+        from macaw.project.manifest import FeatureManifest
+        from macaw.qc.boilerplate import describe
+
+        write_yaml(tmp_path / "examples.yaml", EXAMPLES)
+        llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 1}
+        path = project(tmp_path, {"plain": {"scales": "scales.yaml"}, "shown": {"scales": "scales.yaml", "examples": "examples.yaml"}}, llm=llm)
+        config = transcribed(path)
+        before = {name: hash_extractor_config(config, f"coding.rate.{name}") for name in ("plain", "shown")}
+        result = rate(monkeypatch, config, "shown")
+        scale_of = re.compile(r"^Scale: (\S+)$", re.MULTILINE)
+        sent = {scale_of.search(body["messages"][-1]["content"]).group(1): body["messages"][-1]["content"] for body in server.requests}
+        assert "Example 2, scored 2" in sent["warmth"] and "Example" not in sent["flow"]
+        assert result.specs[0].params["n_examples"] == 2 and result.specs[0].params["n_examples_with_reasons"] == 1
+        manifest = FeatureManifest()
+        manifest.extend(result.specs)
+        assert 'shown the examples of that scale in "examples.yaml", 2 in all' in " ".join(describe(manifest, config)["Ratings"])
+        _echo_reporting(config, build_dag(config), [])
+        assert "coding.rate.shown shows 2 examples people rated; they add up to about" in capsys.readouterr().out
+        write_yaml(tmp_path / "examples.yaml", {"examples": {"warmth": EXAMPLES["examples"]["warmth"][:1]}})
+        after = {name: hash_extractor_config(resolve_config(path), f"coding.rate.{name}") for name in before}
+        assert after["plain"] == before["plain"] and after["shown"] != before["shown"]
+
+
+class TestExcerpts:
+    def shown(self):
+        frame = transcript_frame(TALK).assign(speaker=lambda f: f["subject_id"])
+        return module.part_lines(frame, words_frame(TALK), 0.0, 60.0)
+
+    def test_the_lines_overlapping_a_stretch_are_shown_whole_and_numbered_again(self):
+        found = module.excerpt_lines(self.shown(), [(4.0, 4.9), (21.0, 21.0)], 0.0)
+        assert found["text"].tolist() == ["It was fine.", "Just fine?", "We had a test."]
+        assert found["line"].tolist() == [1, 2, 3] and found["opens"].tolist() == [True, False, False]
+        assert module.excerpt_lines(self.shown(), [(14.0, 15.0)], 0.0).empty
+
+    def test_each_scale_is_rated_from_its_own_stretches_and_one_without_any_is_not_rated(self, monkeypatch, tmp_path, server):
+        pd.DataFrame(
+            [("r1", "warmth", 1.0, 2.0), ("r1", "warmth", 21.0, 21.0), ("r1", "flow", 14.0, 15.0), ("r2", "on_task", 0.0, 60.0)],
+            columns=["recording", "scale", "start_s", "end_s"],
+        ).to_csv(tmp_path / "excerpts.csv", index=False)
+        llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 1, "show": ["timing"]}
+        config = transcribed(project(tmp_path, {"marked": {"scales": "scales.yaml", "excerpts": "excerpts.csv"}}, llm=llm))
+        result = rate(monkeypatch, config, "marked")
+        [user] = [body["messages"][-1]["content"] for body in server.requests]
+        assert "parent | at 1.0 s, lasts 2.0 s, opens an excerpt: How was school today?\n...\nchild | at 20.0 s" in user
+        assert "It was fine." not in user and "Excerpts of the transcript of a 1.0-minute conversation" in user
+        ratings = pd.read_parquet(result.artifacts["ratings.parquet"])
+        assert ratings["scale"].tolist() == ["warmth"] and ratings["segment"].tolist() == [""]
+        [skipped] = [warning for warning in result.warnings if warning.check == "rating_skipped"]
+        assert "on_task, flow" in skipped.message and "those scales were not rated" in skipped.message
+        assert result.specs[0].params["excerpts"] == "excerpts.csv"
+
+    def test_only_a_recording_s_own_stretches_are_part_of_its_key(self, tmp_path):
+        def key(rows):
+            pd.DataFrame(rows, columns=["recording", "scale", "start_s", "end_s"]).to_csv(tmp_path / "excerpts.csv", index=False)
+            config = resolve_config(path)
+            return module._VERSIONS["marked"](config).extra_key(build_recording("r1", config))
+
+        path = project(tmp_path, {"marked": {"scales": "scales.yaml", "excerpts": "excerpts.csv"}})
+        first = key([("r1", "warmth", 1.0, 2.0)])
+        assert key([("r1", "warmth", 1.0, 2.0), ("r2", "flow", 0.0, 9.0)]) == first
+        assert key([("r1", "warmth", 1.0, 3.0)]) != first
+
+    @pytest.mark.parametrize("rows,message", [
+        ([("r1", "cheer", 1.0, 2.0)], "cheer is not a scale"),
+        ([("r1", "warmth", 3.0, 2.0)], "start_s and end_s must be seconds, the start not after the end"),
+    ])
+    def test_a_table_that_does_not_fit_says_where(self, tmp_path, rows, message):
+        pd.DataFrame(rows, columns=["recording", "scale", "start_s", "end_s"]).to_csv(tmp_path / "excerpts.csv", index=False)
+        with pytest.raises(ConfigError, match=f"line 2: {message}"):
+            module.read_excerpts(tmp_path / "excerpts.csv", read_scales_from(SCALES))
+
+    def test_excerpts_and_segments_do_not_go_together(self):
+        with pytest.raises(ValidationError, match="excerpts or segments"):
+            CodingSection.model_validate({"ratings": {"both": {"scales": "s.yaml", "excerpts": "e.csv", "segments": ["a"]}}})

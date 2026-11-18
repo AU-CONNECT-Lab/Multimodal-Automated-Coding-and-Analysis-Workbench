@@ -620,6 +620,10 @@ class RatingVersion(_Section):
     think: bool | None = None
     # the model lists the numbered lines its score rests on, each checked against the transcript
     evidence: bool = added(default=False)
+    # parts of other conversations people rated, shown after each scale's definition
+    examples: Path | None = added(default=None)
+    # recording, scale, start_s, end_s: each scale rated from the lines in its marked stretches only
+    excerpts: Path | None = added(default=None)
 
     @field_validator("segments")
     @classmethod
@@ -627,6 +631,12 @@ class RatingVersion(_Section):
         if len(set(value)) != len(value):
             raise ValueError("segments names a segment twice")
         return value
+
+    @model_validator(mode="after")
+    def _excerpts_or_segments(self) -> "RatingVersion":
+        if self.excerpts is not None and self.segments:
+            raise ValueError("a rating takes excerpts or segments, not both")
+        return self
 
 
 # what a rating takes from coding.llm, unless the version says otherwise
@@ -867,6 +877,7 @@ CONTENT_HASHED_PATHS: tuple[str, ...] = (
     "coding.codebook",
     "coding.judges.*.codebook",
     "coding.ratings.*.scales",
+    "coding.ratings.*.examples",
     "coding.llm.examples",
     "coding.judges.*.examples",
     "execution.output_rules",

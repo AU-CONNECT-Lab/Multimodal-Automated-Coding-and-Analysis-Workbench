@@ -147,14 +147,16 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         notices.append(said_by_entity(name))
     for name in sorted(node for node in dag.nodes if node.startswith("coding.rate.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
-        from macaw.coding.llm.rate import rating_notice, scales_asked
+        from macaw.coding.llm.rate import examples_notice, rating_notice, scales_asked
 
         own, llm = get_extractor(name).settings(config)
         backend = get_backend(LLM_BACKENDS, llm.provider)(llm)
         notices.append(rating_notice(name, backend) if backend.reporting else None)
         scales = scales_asked(config, get_extractor(name).rating)
         where = f"each of {len(own.segments)} segments of each recording" if own.segments else "each recording"
-        notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where} to {llm.provider}")
+        marked = f", each scale from the stretches {own.excerpts.name} marks for it" if own.excerpts is not None else ""
+        notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where}{marked} to {llm.provider}")
+        notices.append(examples_notice(config, name))
         notices.append(concurrency_notice(name, backend, llm, config.execution.n_workers))
         notices.append(said_by_entity(name))
     if "pose.listening" in dag.nodes:
