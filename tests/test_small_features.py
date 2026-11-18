@@ -153,7 +153,7 @@ class TestListening:
             recording_id="r1", entities=lambda: ENTITIES,
             subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],
         )
-        step = ListeningExtractor(SimpleNamespace(kinematics=KinematicsSection(listening=["upper_body_speed"])))
+        step = ListeningExtractor(SimpleNamespace(text=TextSection(), kinematics=KinematicsSection(listening=["upper_body_speed"])))
         values = step._rows(recording, 0.0, 10.0).set_index(["subject_id", "feature"])["value"]
         # the child listens while the parent talks alone (0 to 3 and 9 to 10), not while the researcher does
         assert values["child", "listening_s"] == 4.0 and values["child", "upper_body_speed_listening"] == pytest.approx((6 * 2.0 + 2 * 10.0) / 8)
@@ -166,7 +166,7 @@ class TestListening:
         assert ListeningExtractor.wanted_by_default(config)
         assert not ListeningExtractor.wanted_by_default(SimpleNamespace(kinematics=KinematicsSection()))
         with pytest.raises(ConfigError, match="it takes"):
-            ListeningExtractor(SimpleNamespace(kinematics=KinematicsSection(listening=["smiles"]))).check_available()
+            ListeningExtractor(SimpleNamespace(text=TextSection(), kinematics=KinematicsSection(listening=["smiles"]))).check_available()
 
     def test_the_methods_name_the_series(self):
         assert "upper body speed and motion energy was averaged" in _listening(None, SimpleNamespace(params={"listening": ["upper_body_speed", "motion_energy"]}), set())
@@ -182,7 +182,7 @@ class TestListening:
         monkeypatch.setattr(ListeningExtractor, "_series", lambda self, recording: series)
         monkeypatch.setattr(ListeningExtractor, "body_sizes", lambda self, recording: sizes)
         kinematics = KinematicsSection(listening=["upper_body_speed", "motion_energy"], listening_per_body_size=True)
-        return ListeningExtractor(SimpleNamespace(kinematics=kinematics))
+        return ListeningExtractor(SimpleNamespace(text=TextSection(), kinematics=kinematics))
 
     def test_per_body_size_divides_the_lengths_by_each_person_s_shoulder_width_and_leaves_motion_energy(self, monkeypatch):
         step = self.sized(monkeypatch, {"parent": 40.0, "child": 20.0})

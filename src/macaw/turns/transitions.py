@@ -9,7 +9,7 @@ import pandas as pd
 
 from macaw.config.schema import TurnsSection
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.diarization import turn_takers
+from macaw.extractors.audio.content.diarization import SHARED_MODE, turn_takers
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -19,7 +19,9 @@ from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns, turns_between, turns_saved
+from macaw.turns.segmentation import (
+    TURNS_NAME, TurnStructureExtractor, floor_turns, load_turns, mark_within, turns_between, turns_saved,
+)
 
 TRANSITIONS_NAME = "transitions.parquet"
 
@@ -35,6 +37,7 @@ TRANSITION_SCHEMA: dict[str, str] = {
     "next_start": "float64",
     "fto_s": "float64",
     "transition_type": "string",
+    "within": "bool",
 }
 
 _TRANSITION_COLUMNS = [column for column in TRANSITION_SCHEMA if column != "recording_id"]
@@ -47,29 +50,40 @@ _OVERLAP_WARN = 0.5
 def detect_transitions(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
     """Gap is positive, overlap negative. Stored per speaker pair, never as A/B.
 
-    Consecutive turns are not always by different people: a speaker who pauses for longer than
-    max_gap_s with nobody cutting in starts a new turn of their own. Those rows are kept as
-    holds so the transition matrix has a diagonal, and every floor transfer statistic filters
-    on is_switch."""
+    The floor passes between the turns that hold it, in order of their start. Consecutive ones are not always by
+    different people: a speaker who pauses for longer than max_gap_s with nobody cutting in starts a new turn of their
+    own. Those rows are kept as holds so the transition matrix has a diagonal, and every floor transfer statistic
+    filters on is_switch. A turn that starts and ends inside a longer turn of somebody else's leaves the floor where it
+    was: it gets a row marked within, from the turn it lies in, its offset minus its own length."""
     if len(turns) < 2:
         return empty_frame(TRANSITION_SCHEMA).loc[:, _TRANSITION_COLUMNS]
 
-    frame = turns.sort_values("t_start", kind="stable").reset_index(drop=True)
-    previous = frame.iloc[:-1].reset_index(drop=True)
-    following = frame.iloc[1:].reset_index(drop=True)
+    frame = turns.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    if "within" not in frame.columns:
+        frame = mark_within(frame)
+    inside = frame["within"].astype(bool).to_numpy()
+    floor = frame[~inside].reset_index(drop=True)
+    parts = [_floor_rows(floor)] if len(floor) > 1 else []
+    if inside.any():
+        parts.append(_within_rows(frame[inside], floor))
+    if not parts:
+        return empty_frame(TRANSITION_SCHEMA).loc[:, _TRANSITION_COLUMNS]
+    out = pd.concat(parts, ignore_index=True).sort_values(["next_start", "within"], kind="stable").reset_index(drop=True)
+    out["transition_index"] = np.arange(len(out), dtype=np.int64)
+    return out.loc[:, _TRANSITION_COLUMNS]
 
+
+def _floor_rows(floor: pd.DataFrame) -> pd.DataFrame:
+    previous = floor.iloc[:-1].reset_index(drop=True)
+    following = floor.iloc[1:].reset_index(drop=True)
     from_values = previous["subject_id"].astype(str).to_numpy()
     to_values = following["subject_id"].astype(str).to_numpy()
     prev_end = previous["t_end"].to_numpy(dtype=float)
     next_start = following["t_start"].to_numpy(dtype=float)
     fto = next_start - prev_end
     is_switch = from_values != to_values
-
-    kind = np.where(~is_switch, "hold", np.where(fto >= 0.0, "gap", "overlap"))
-
-    out = pd.DataFrame(
+    return pd.DataFrame(
         {
-            "transition_index": np.arange(len(fto), dtype=np.int64),
             "from_subject": from_values,
             "to_subject": to_values,
             "from_turn_index": previous["turn_index"].to_numpy(dtype=np.int64),
@@ -78,45 +92,87 @@ def detect_transitions(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
             "prev_end": prev_end,
             "next_start": next_start,
             "fto_s": fto,
-            "transition_type": kind,
+            "transition_type": np.where(~is_switch, "hold", np.where(fto >= 0.0, "gap", "overlap")),
+            "within": False,
         }
     )
-    return out.loc[:, _TRANSITION_COLUMNS]
 
 
-def classify_overlaps(transitions: pd.DataFrame, *, interruption_s: float) -> pd.DataFrame:
-    """Overlap beyond interruption_s takes the floor; shorter is a backchannel.
+def _within_rows(inside: pd.DataFrame, floor: pd.DataFrame) -> pd.DataFrame:
+    """One row per turn inside another's, from the latest-starting floor turn of somebody else's that holds it; one
+    held by no floor turn, as when it lies inside talk that is itself inside a turn, names its own speaker on both sides."""
+    starts, ends = floor["t_start"].to_numpy(dtype=float), floor["t_end"].to_numpy(dtype=float)
+    speakers = floor["subject_id"].astype(str).to_numpy()
+    indices = floor["turn_index"].to_numpy(dtype=np.int64)
+    own = inside["subject_id"].astype(str).to_numpy()
+    start = inside["t_start"].to_numpy(dtype=float)
+    end = inside["t_end"].to_numpy(dtype=float)
+    givers, given = own.copy(), np.full(len(inside), -1, dtype=np.int64)
+    for position in range(len(inside)):
+        holding = np.flatnonzero((speakers != own[position]) & (starts <= start[position]) & (ends > end[position]))
+        if holding.size:
+            pick = holding[np.argmax(starts[holding])]
+            givers[position], given[position] = speakers[pick], indices[pick]
+    return pd.DataFrame(
+        {
+            "from_subject": givers,
+            "to_subject": own,
+            "from_turn_index": given,
+            "to_turn_index": inside["turn_index"].to_numpy(dtype=np.int64),
+            "is_switch": False,
+            "prev_end": end,
+            "next_start": start,
+            "fto_s": start - end,
+            "transition_type": "within",
+            "within": True,
+        }
+    )
 
-    Length alone is not enough: a short overlap that does take the floor is not a backchannel.
-    The second condition is that the floor came straight back to whoever was talking, which is
-    directly observable here, so nothing has to be inferred from duration."""
+
+def classify_overlaps(transitions: pd.DataFrame, *, interruption_s: float, backchannel_s: float = 1.0) -> pd.DataFrame:
+    """Overlap beyond interruption_s takes the floor; shorter is a backchannel when the floor came straight back, which
+    is directly observable here, so nothing has to be inferred from duration. Talk inside another's turn never took
+    the floor: up to backchannel_s it is a backchannel, longer an attempt to take the floor."""
     if transitions.empty:
         return transitions
 
     out = transitions.copy()
     kind = out["transition_type"].astype(str).to_numpy().copy()
     fto = out["fto_s"].to_numpy(dtype=float)
-    from_values = out["from_subject"].astype(str).to_numpy()
-    to_values = out["to_subject"].astype(str).to_numpy()
+    inside = out["within"].astype(bool).to_numpy()
+    floor = np.flatnonzero(~inside)
+    from_values = out["from_subject"].astype(str).to_numpy()[floor]
+    to_values = out["to_subject"].astype(str).to_numpy()[floor]
 
-    # the floor came back when the next transition hands it to whoever just lost it
+    # the floor came back when the next transfer hands it to whoever just lost it
     returned = np.zeros(len(out), dtype=bool)
-    returned[:-1] = to_values[1:] == from_values[:-1]
+    returned[floor[:-1]] = to_values[1:] == from_values[:-1]
 
     is_overlap = kind == "overlap"
     long_enough = is_overlap & (-fto > interruption_s)
     kind[long_enough] = "interruption"
     kind[is_overlap & ~long_enough & returned] = "backchannel"
+    kind[inside] = np.where(-fto[inside] <= backchannel_s, "backchannel", "attempt")
 
     out["transition_type"] = kind
     return out
 
 
 def transitions_from(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
-    return classify_overlaps(detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s)
+    return classify_overlaps(
+        detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s, backchannel_s=cfg.backchannel_max_s
+    )
+
+
+def floor_rows(transitions: pd.DataFrame) -> pd.DataFrame:
+    """The transfers and holds of the floor, without talk inside another's turn."""
+    if transitions.empty or "within" not in transitions.columns:
+        return transitions
+    return transitions[~transitions["within"].astype(bool).to_numpy()]
 
 
 def floor_transfer_efficiency(transitions: pd.DataFrame, cfg: TurnsSection) -> dict[str, float]:
+    transitions = floor_rows(transitions)
     is_switch = _switch_mask(transitions)
     fto = (
         transitions["fto_s"].to_numpy(dtype=float)
@@ -174,12 +230,14 @@ def response_latency(transitions: pd.DataFrame) -> pd.DataFrame:
 
 
 def transition_matrix(turns: pd.DataFrame, subject_ids: list[str]) -> pd.DataFrame:
-    """N x N, not the hard-coded AA/AB/BA/BB four-state version."""
+    """N x N, not the hard-coded AA/AB/BA/BB four-state version: who held the floor after whom, so talk inside
+    somebody else's turn is left out."""
     matrix = pd.DataFrame(
         np.zeros((len(subject_ids), len(subject_ids)), dtype=np.int64),
         index=pd.Index(list(subject_ids), name="from_subject"),
         columns=pd.Index(list(subject_ids), name="to_subject"),
     )
+    turns = floor_turns(turns)
     if len(turns) < 2:
         return matrix
 
@@ -236,7 +294,14 @@ _SUBJECT_SPECS = {
         "sum",
     ),
     "n_backchannels_made": (
-        "Short overlaps by subject_id after which the floor went straight back.",
+        "Times subject_id spoke without taking the floor: inside somebody else's turn for at most backchannel_max_s, or "
+        "with a short overlap after which the floor went straight back.",
+        "count",
+        "sum",
+    ),
+    "n_interruption_attempts_made": (
+        "Times subject_id spoke inside somebody else's turn for longer than backchannel_max_s while that person kept the "
+        "floor: talking over them without taking it.",
         "count",
         "sum",
     ),
@@ -258,7 +323,7 @@ _PAIR_SPECS = {
 }
 
 _RECORDING_SPECS = {
-    "n_transitions": ("Adjacent turn pairs, switches and holds together.", "count", "sum"),
+    "n_transitions": ("Adjacent turn pairs, switches and holds together; talk inside somebody else's turn is not one.", "count", "sum"),
     "n_switches": ("Adjacent turn pairs where the floor changed hands.", "count", "sum"),
     "n_holds": ("Adjacent turn pairs where the same speaker restarted.", "count", "sum"),
     "median_fto_s": ("Median floor transfer offset across all switches.", "s", "mean"),
@@ -297,7 +362,8 @@ _MISSING = {
     "n_turns_taken_from_other": _TAKEN,
     "n_interruptions_made": f"{_NO_TURN} {_NEVER_INTERRUPTED}",
     "interruptions_per_minute": f"{_NO_TURN} {_NEVER_INTERRUPTED}",
-    "n_backchannels_made": f"{_NO_TURN} 0 means none of their short overlaps was followed by the floor going straight back.",
+    "n_backchannels_made": f"{_NO_TURN} 0 means they never spoke briefly inside somebody else's turn, nor overlapped briefly before the floor went straight back.",
+    "n_interruption_attempts_made": f"{_NO_TURN} 0 means they never spoke inside somebody else's turn for longer than turns.backchannel_max_s.",
     "transition_count": (
         "Empty only outside pair rows: every ordered pair of those who can hold the floor, a person with themselves included, "
         "gets a value in every span. 0 means a turn of subject_id was never followed by one of subject_id_b there."
@@ -325,7 +391,7 @@ _MISSING = {
 @register_extractor
 class TransitionExtractor(Extractor):
     name = "turns.transitions"
-    version = "0.1.1"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns", "text.diarization", "text.extra_voices")
@@ -420,6 +486,7 @@ class TransitionExtractor(Extractor):
             gaps = fto[fto >= 0.0]
             kinds = group["transition_type"].astype(str).to_numpy()
             interruptions = float((kinds == "interruption").sum())
+            mine = transitions[transitions["to_subject"].astype(str).to_numpy() == taker]["transition_type"].astype(str).to_numpy()
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(
@@ -435,7 +502,8 @@ class TransitionExtractor(Extractor):
                                 float(np.std(fto, ddof=1)) if fto.size > 1 else np.nan
                             ],
                             "n_interruptions_made": [interruptions],
-                            "n_backchannels_made": [float((kinds == "backchannel").sum())],
+                            "n_backchannels_made": [float((mine == "backchannel").sum())],
+                            "n_interruption_attempts_made": [float((mine == "attempt").sum())],
                             "interruptions_per_minute": [
                                 interruptions / minutes if minutes > 0 else np.nan
                             ],
@@ -540,8 +608,11 @@ class TransitionExtractor(Extractor):
                     subject_id=None,
                     severity="warn",
                     message=(
-                        f"{overlap_ratio:.0%} of floor transfers in {scope} overlap. Check that crosstalk "
-                        "suppression removed the leaked copies of each utterance."
+                        f"{overlap_ratio:.0%} of floor transfers in {scope} overlap. " + (
+                            "Listen to the voices: one voice found twice, or two voices that hold each other's speech, overlap "
+                            "where only one person spoke." if self.config.text.diarization == SHARED_MODE else
+                            "Check that crosstalk suppression removed the leaked copies of each utterance."
+                        )
                     ),
                     t_start=window[0],
                     t_end=window[1],
@@ -555,6 +626,7 @@ class TransitionExtractor(Extractor):
             "max_gap_s": cfg.max_gap_s,
             "interruption_overlap_s": cfg.interruption_overlap_s,
             "smooth_transfer_gap_s": cfg.smooth_transfer_gap_s,
+            "backchannel_max_s": cfg.backchannel_max_s,
         }
         groups = (
             (_EVENT_SPECS, Scale.EVENT),

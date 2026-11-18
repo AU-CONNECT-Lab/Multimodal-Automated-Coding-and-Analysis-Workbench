@@ -18,7 +18,7 @@ from macaw.project.recording import Recording
 from macaw.project.segments import Segment
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
-from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, load_turns, turns_between, turns_saved
+from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, floor_turns, load_turns, turns_between, turns_saved
 from macaw.turns.transitions import (
     TRANSITIONS_NAME,
     TransitionExtractor,
@@ -95,6 +95,7 @@ def conditional_entropy(x: np.ndarray, y: np.ndarray, *, correct: bool = True) -
 
 
 def _talk_time(turns: pd.DataFrame) -> dict[str, float]:
+    turns = floor_turns(turns)
     if turns.empty:
         return {}
     held = (turns["t_end"] - turns["t_start"]).groupby(turns["subject_id"].astype(str)).sum()
@@ -102,6 +103,7 @@ def _talk_time(turns: pd.DataFrame) -> dict[str, float]:
 
 
 def _speaker_sequence(turns: pd.DataFrame) -> np.ndarray:
+    turns = floor_turns(turns)
     if turns.empty:
         return np.empty(0, dtype=object)
     return turns.sort_values("t_start", kind="stable")["subject_id"].astype(str).to_numpy()
@@ -208,6 +210,7 @@ def window_hop(cfg) -> float:
 
 
 def _turns_in(turns: pd.DataFrame, low: float, high: float) -> pd.DataFrame:
+    turns = floor_turns(turns)
     if turns.empty:
         return turns
     starts = turns["t_start"].to_numpy(dtype=float)
@@ -216,6 +219,7 @@ def _turns_in(turns: pd.DataFrame, low: float, high: float) -> pd.DataFrame:
 
 def turn_pace(turns: pd.DataFrame) -> float:
     """Mean seconds from one turn's start to the next's, the time scale a window has to span many of."""
+    turns = floor_turns(turns)
     if len(turns) < 2:
         return np.nan
     starts = np.sort(turns["t_start"].to_numpy(dtype=float))
@@ -225,7 +229,7 @@ def turn_pace(turns: pd.DataFrame) -> float:
 @register_extractor
 class EntropyExtractor(Extractor):
     name = "turns.entropy"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.WINDOW
     group = "turns"
     config_sections = ("turns", "text.diarization", "text.extra_voices")
@@ -397,7 +401,7 @@ class EntropyExtractor(Extractor):
     def _sample_warnings(self, recording: Recording, turns, transitions, window: tuple[float, float], scope: str) -> list[QCWarning]:
         cfg = self.config.turns
         n_states = max(len(turn_takers(self.config, recording)), 1) ** 2
-        n_transitions = max(len(turns) - 1, 0)
+        n_transitions = max(len(floor_turns(turns)) - 1, 0)
         fto = self._fto_series(transitions)
         patterns = max(len(fto) - cfg.permutation_entropy_order + 1, 0)
         needed_patterns = _MIN_PER_STATE * math.factorial(cfg.permutation_entropy_order)

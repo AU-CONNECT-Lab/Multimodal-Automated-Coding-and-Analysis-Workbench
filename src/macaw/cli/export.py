@@ -330,7 +330,7 @@ def _export_talk_sequence(config, layout, recording_ids: list[str], of: str, ste
     """Talk resampled over the whole task window, so silence before the first word counts too."""
     from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, read_transcript
     from macaw.extractors.prep import load_prep
-    from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, read_turns
+    from macaw.turns.segmentation import TURNS_NAME, TurnStructureExtractor, floor_turns, read_turns
 
     source, name, read = (
         (ASRExtractor.name, TRANSCRIPT_NAME, read_transcript) if of == "speech"
@@ -343,6 +343,15 @@ def _export_talk_sequence(config, layout, recording_ids: list[str], of: str, ste
             logger.warning("%s: no %s output, left out", recording_id, source)
             continue
         table = read(path)
+        if of == "speech":
+            # on a shared microphone the voices say when each person talked, overlaps included
+            from macaw.extractors.audio.content.asr import load_words
+            from macaw.turns.talk import talk_spans, voices_time_talk
+
+            words = load_words(config, recording_id) if voices_time_talk(config, recording_id) else None
+            table = talk_spans(config, recording_id, table, words)[0]
+        else:
+            table = floor_turns(table)
         table["recording_id"] = recording_id
         intervals = speaking_intervals(table) if of == "speech" else floor_intervals(table)
         prep = load_prep(config, recording_id)

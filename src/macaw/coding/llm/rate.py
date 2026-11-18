@@ -27,6 +27,7 @@ from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import (
     CORRECTED_CHECK, TRANSCRIPT_NAME, WORDS_NAME, ASRExtractor, cut_transcript, read_transcript, read_words,
 )
+from macaw.extractors.audio.content.diarization import SHARED_MODE
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
@@ -36,6 +37,7 @@ from macaw.project.recording import Recording
 from macaw.project.segments import segments_of
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
+from macaw.turns.talk import clip_talk, talk_inputs, talk_spans, voice_gaps, voices_time_talk
 
 RATE_STEP = "coding.rate."
 RATINGS_NAME = "ratings.parquet"
@@ -117,7 +119,15 @@ class RatingExtractor(Extractor):
         voice = prosody_rows_file(self.config, rid)
         if {"pitch", "loudness"} & set(cfg.show) and voice.is_file():
             inputs.append(voice)
-        return inputs
+        return inputs + talk_inputs(self.config, rid, by_voices=self.timed_by_voices(rid))
+
+    def timed_by_voices(self, recording_id: str) -> bool:
+        """Whether the pause or overlap before each line comes from the voices: shown, on a shared microphone, for the
+        recogniser's lines."""
+        own, cfg = self.settings(self.config)
+        return "timing" in cfg.show and self.config.text.diarization == SHARED_MODE and (
+            own.transcript == "recognised" or voices_time_talk(self.config, recording_id)
+        )
 
     @classmethod
     def notes_settings(cls, config: MacawConfig) -> tuple[str, LLMSection]:
@@ -167,13 +177,15 @@ class RatingExtractor(Extractor):
         prompts = []
         told = self.prompt_note(recording)
         if parts:
-            lines = rating_lines(read_transcript(files[0]))
+            transcript = read_transcript(files[0])
+            lines = rating_lines(transcript)
             words = read_words(files[1]) if files[1].is_file() else pd.DataFrame()
+            talk = talk_spans(self.config, rid, transcript, words, by_voices=True)[0] if self.timed_by_voices(rid) else None
             if set(VOICE) & set(cfg.show):
                 lines = voice_figures(self.config, rid, lines, cfg.show)
             people = [subject.subject_id for subject in recording.subjects]
             for segment, start, end in parts:
-                shown = part_lines(lines, words, start, end)
+                shown = part_lines(lines, words, start, end, talk)
                 if shown.empty:
                     note("rating_skipped", "info", f"nothing was said in {segment or 'the analysed window'}, so it was not rated")
                     continue
@@ -286,15 +298,17 @@ def rating_lines(transcript: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: float) -> pd.DataFrame:
-    """The lines within start to end, cut at its edges, timed from start, with the pause or overlap before each."""
+def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: float, talk: pd.DataFrame | None = None) -> pd.DataFrame:
+    """The lines within start to end, cut at its edges, timed from start, with the pause or overlap before each: by the
+    lines themselves, or with talk by the voices they were said in."""
     columns = ["n_words"] if "n_words" not in lines.columns else []
     source = lines.assign(n_words=lines["text"].str.split().str.len()) if columns else lines
     cut = cut_transcript(source, words, start, end)
     cut = cut[cut["text"].astype(str).str.strip() != ""].drop(columns=columns).reset_index(drop=True)
+    gaps = voice_gaps(cut, clip_talk(talk, start, end)) if talk is not None else cut["t_start"] - cut["t_end"].cummax().shift()
     cut["t_start"] = cut["t_start"] - start
     cut["t_end"] = cut["t_end"] - start
-    cut["gap_before"] = cut["t_start"] - cut["t_end"].cummax().shift()
+    cut["gap_before"] = gaps
     return cut
 
 

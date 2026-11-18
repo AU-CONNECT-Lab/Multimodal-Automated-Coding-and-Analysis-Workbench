@@ -512,6 +512,10 @@ class TurnsSection(_Section):
     window_s: float | None = None
     window_hop_s: float | None = None
     permutation_entropy_order: int = 3
+    # on a shared microphone, a voice stretch this short with no word in it is taken for noise
+    min_voice_s: float = added(default=0.2, ge=0)
+    # talk inside another person's turn up to this long is a backchannel, longer an attempt to take the floor
+    backchannel_max_s: float = added(default=1.0, gt=0)
 
 
 ShownToModel = Literal["timing", "pitch", "loudness", "rate", "frames"]

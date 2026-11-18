@@ -24,7 +24,7 @@ from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
 from macaw.coding.review_queue import apply_review, export_review, read_queue
 from macaw.config.hashing import hash_extractor_config
 from macaw.config.loader import resolve_config, scaffold_project_config
-from macaw.config.schema import CodingSection, LLMSection
+from macaw.config.schema import CodingSection, LLMSection, TextSection
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.execution.dag import build_dag
 from macaw.project.layout import layout_for
@@ -141,6 +141,8 @@ RECORDING = SimpleNamespace(
     subjects=[SimpleNamespace(subject_id="mother"), SimpleNamespace(subject_id="child")],
     entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None},
 )
+# each person on a microphone of their own, so the lines time themselves
+PER_TRACK = SimpleNamespace(text=TextSection())
 TALK = [("mother", 0.0, 2.0, "where is it?"), ("child", 1.5, 3.0, "it is red"), ("mother", 4.0, 5.0, "ok")]
 # a researcher's question between them, as text.asr gives it when others take turns
 WITH_OTHER = [
@@ -188,7 +190,7 @@ class TestParse:
 class TestUnitsAndPrompt:
     def test_units_get_letters_times_and_the_gap_before(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        found = coding_units(None, RECORDING, "utterance")
+        found = coding_units(PER_TRACK, RECORDING, "utterance")
         assert found["speaker"].tolist() == ["A", "B", "A"]
         assert found["unit_id"].tolist() == ["u0", "u1", "u2"]
         assert pd.isna(found["gap_before"].iloc[0])
@@ -196,7 +198,7 @@ class TestUnitsAndPrompt:
 
     def test_the_prompt_names_letters_not_subject_ids_and_marks_context(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        found = coding_units(None, RECORDING, "utterance")
+        found = coding_units(PER_TRACK, RECORDING, "utterance")
         system, user = build_annotation_prompt(CODEBOOK, found.iloc[1:], found.iloc[:1])
         assert "## question" in system and "ends in a question" in system and '"abstain"' in system
         assert "mother" not in user and "child" not in user
@@ -207,7 +209,7 @@ class TestUnitsAndPrompt:
 
     def test_other_voices_and_people_not_coded_are_lines_without_an_id(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(WITH_OTHER))
-        found = coding_units(None, RECORDING, "utterance", ["child"])
+        found = coding_units(PER_TRACK, RECORDING, "utterance", ["child"])
         assert found["speaker"].tolist() == ["A", "other", "B", "A"]
         assert found["unit_id"].isna().tolist() == [True, True, False, True]
         assert found["unit_id"].iloc[2] == "u0"
@@ -216,7 +218,7 @@ class TestUnitsAndPrompt:
 
     def test_lines_not_coded_sit_in_place_between_the_units(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(WITH_OTHER))
-        found = coding_units(None, RECORDING, "utterance", ["mother"])
+        found = coding_units(PER_TRACK, RECORDING, "utterance", ["mother"])
         system, user = build_annotation_prompt(CODEBOOK, found, None)
         assert "The speaker other is someone besides the people recorded" in system
         assert "lines marked context in between" in user
@@ -365,7 +367,7 @@ def run_judge(monkeypatch, tmp_path, stub, talk=TALK, **llm):
     path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
     monkeypatch.setattr(module, "load_transcript", transcript_of(talk))
     cfg = LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1", **llm)
-    extractor = JudgementExtractor(SimpleNamespace(coding=CodingSection(codebook=path, layers=["A", "B"], llm=cfg)))
+    extractor = JudgementExtractor(SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=path, layers=["A", "B"], llm=cfg)))
     return extractor.run(RECORDING, tmp_path)
 
 
@@ -404,6 +406,7 @@ class TestJudge:
     def test_a_coded_role_that_is_not_a_role_is_refused(self, tmp_path):
         path = write_codebook(CODEBOOK, tmp_path / "codebook.yaml")
         config = SimpleNamespace(
+            text=TextSection(),
             project=SimpleNamespace(roles=["mother", "child"]),
             coding=CodingSection(codebook=path, llm=LLMSection(model="tiny", coded_roles=["kid"])),
         )
@@ -437,11 +440,11 @@ class TestJudge:
         assert {warning.check for warning in result.warnings} >= {"llm_mostly_abstained", "llm_single_sample"}
 
     def test_codebooks_it_cannot_code_are_refused(self, tmp_path):
-        config = SimpleNamespace(coding=CodingSection(codebook=None))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=None))
         with pytest.raises(BackendNotAvailableError, match="coding.codebook"):
             JudgementExtractor(config)._codebook()
         several = Codebook(name="x", unit="utterance", mutually_exclusive=False, codes=CODEBOOK.codes)
-        config = SimpleNamespace(coding=CodingSection(codebook=write_codebook(several, tmp_path / "c.yaml")))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=write_codebook(several, tmp_path / "c.yaml")))
         with pytest.raises(CodebookError, match="mutually exclusive"):
             JudgementExtractor(config)._codebook()
 
@@ -460,14 +463,14 @@ class TestJudge:
 class TestShow:
     def test_words_only_leave_the_timing_out(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        found = coding_units(None, RECORDING, "utterance")
+        found = coding_units(PER_TRACK, RECORDING, "utterance")
         _, user = build_annotation_prompt(CODEBOOK, found, None, show=[])
         assert "id u0 | speaker A: where is it?" in user
         assert " s," not in user and "pause" not in user
 
     def test_voice_is_measured_against_the_speaker_s_own_lines(self, monkeypatch, tmp_path):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        found = coding_units(None, RECORDING, "utterance")
+        found = coding_units(PER_TRACK, RECORDING, "utterance")
         frames = pd.DataFrame({
             "subject_id": ["mother"] * 4 + ["child"] * 2,
             "t_start": [0.5, 1.0, 4.2, 4.6, 2.0, 2.5],
@@ -485,7 +488,7 @@ class TestShow:
 
     def test_the_prompt_says_what_the_voice_figures_are_and_leaves_out_a_missing_one(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        found = coding_units(None, RECORDING, "utterance").assign(pitch=[-1.0, float("nan"), 1.0], rate=[20.0, 0.0, -20.0])
+        found = coding_units(PER_TRACK, RECORDING, "utterance").assign(pitch=[-1.0, float("nan"), 1.0], rate=[20.0, 0.0, -20.0])
         system, user = build_annotation_prompt(CODEBOOK, found, None, show=["timing", "pitch", "rate"])
         assert "pitch in semitones, speech rate in percent, against the median of that speaker's lines" in system
         assert "after a 1.0 s pause | pitch +1.0 st, rate -20%: ok" in user
@@ -493,7 +496,7 @@ class TestShow:
 
     @pytest.mark.parametrize("show,needed", [(["timing", "loudness"], True), (["pitch"], True), (["timing", "rate"], False)])
     def test_pitch_or_loudness_put_the_voice_step_before_it(self, show, needed):
-        config = SimpleNamespace(coding=CodingSection(layers=["A", "B"], llm=LLMSection(show=show)))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(layers=["A", "B"], llm=LLMSection(show=show)))
         assert ("prosody.frame" in JudgementExtractor.dependencies(config)) == needed
 
 
@@ -508,7 +511,7 @@ class TestAtOnce:
 
     def test_the_codes_are_the_same_table_in_the_same_order_whichever_comes_back_first(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        lines = coding_units(None, RECORDING, "utterance")
+        lines = coding_units(PER_TRACK, RECORDING, "utterance")
         one = CountingBackend(label_by_text_and_seed)
         four = CountingBackend(label_by_text_and_seed, gate=4, delay=lambda user, seed: 0.03 if "id u0 |" in user else 0.0)
         alone = sample_labels(lines, CODEBOOK, one, self.cfg(1))
@@ -523,12 +526,12 @@ class TestAtOnce:
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
         backend = CountingBackend(lambda user, seed: "", gate=4, cut_off=True)
         with pytest.raises(LLMBackendError, match="raise coding.llm.max_tokens"):
-            sample_labels(coding_units(None, RECORDING, "utterance"), CODEBOOK, backend, self.cfg(4))
+            sample_labels(coding_units(PER_TRACK, RECORDING, "utterance"), CODEBOOK, backend, self.cfg(4))
         assert len(backend.calls) == 1
 
     def test_a_try_after_a_failure_asks_only_for_the_answers_still_missing(self, monkeypatch, tmp_path):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        lines, kept = coding_units(None, RECORDING, "utterance"), tmp_path / "unfinished" / "answers.jsonl"
+        lines, kept = coding_units(PER_TRACK, RECORDING, "utterance"), tmp_path / "unfinished" / "answers.jsonl"
         failing = CountingBackend(label_by_text_and_seed, fail_at=5)
         with pytest.raises(RuntimeError, match="fell over"):
             sample_labels(lines, CODEBOOK, failing, self.cfg(1), kept_at=kept)
@@ -541,7 +544,7 @@ class TestAtOnce:
 
     def test_an_answer_is_kept_only_for_the_same_frames(self, monkeypatch, tmp_path):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        lines, kept = coding_units(None, RECORDING, "utterance"), tmp_path / "answers.jsonl"
+        lines, kept = coding_units(PER_TRACK, RECORDING, "utterance"), tmp_path / "answers.jsonl"
         frames = {unit_id: [unit_id.encode()] for unit_id in ("u0", "u1", "u2")}
         sample_labels(lines, CODEBOOK, CountingBackend(label_by_text_and_seed), self.cfg(1), frames=frames, kept_at=kept)
         same = CountingBackend(label_by_text_and_seed)
@@ -631,7 +634,7 @@ class TestVersions:
             codebook=path, layers=["A", "B"], llm=LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1", n_samples=3),
             judges={"words": {"show": []}},
         )
-        config = SimpleNamespace(coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
+        config = SimpleNamespace(text=TextSection(), coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
         module.register_judge_versions(config)
         version = module._VERSIONS["words"]
         result = version(config).run(RECORDING, tmp_path)
@@ -651,7 +654,7 @@ class TestVersions:
             notes_by={"task": {"alpha": "They sort cards.", "beta": ""}},
         )
         coding = CodingSection(codebook=path, layers=["A", "B"], llm=llm, judges={"plain": {"notes_by": {}}})
-        config = SimpleNamespace(coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
+        config = SimpleNamespace(text=TextSection(), coding=coding, project=SimpleNamespace(roles=["mother", "child"]))
         module.register_judge_versions(config)
         recording = SimpleNamespace(**{**vars(RECORDING), "entities": lambda: {"group_id": "1", "session_id": None, "task": "alpha", "run": None}})
         result = JudgementExtractor(config).run(recording, tmp_path)
@@ -776,19 +779,19 @@ class TestRandomCheck:
 class TestWhatTheModelIsTold:
     def test_a_codebook_of_names_alone_is_coded_and_a_half_written_one_is_not(self, monkeypatch, tmp_path):
         names = Codebook(name="acts", unit="utterance", codes=[CodeDefinition("question", ""), CodeDefinition("inform", "")])
-        config = SimpleNamespace(coding=CodingSection(codebook=write_codebook(names, tmp_path / "k0.yaml")))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=write_codebook(names, tmp_path / "k0.yaml")))
         assert JudgementExtractor(config)._codebook().names_only()
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        system, _ = build_annotation_prompt(names, coding_units(None, RECORDING, "utterance"))
+        system, _ = build_annotation_prompt(names, coding_units(PER_TRACK, RECORDING, "utterance"))
         assert "## question\n\n## inform\n" in system
         half = Codebook(name="acts", unit="utterance", codes=[CODEBOOK.codes[0], CodeDefinition("inform", "")])
-        config = SimpleNamespace(coding=CodingSection(codebook=write_codebook(half, tmp_path / "half.yaml")))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=write_codebook(half, tmp_path / "half.yaml")))
         with pytest.raises(CodebookError, match="'inform' has no description"):
             JudgementExtractor(config)._codebook()
 
     def test_the_researchers_note_goes_in_as_written(self, monkeypatch):
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        system, _ = build_annotation_prompt(CODEBOOK, coding_units(None, RECORDING, "utterance"), notes=" A is the mother, on the left. ")
+        system, _ = build_annotation_prompt(CODEBOOK, coding_units(PER_TRACK, RECORDING, "utterance"), notes=" A is the mother, on the left. ")
         assert "Notes from the researchers: A is the mother, on the left.\n" in system
 
     def test_reasons_are_asked_for_and_kept_with_each_answer(self, monkeypatch, tmp_path, stub):
@@ -874,7 +877,7 @@ class TestFrames:
 
     def test_frames_need_the_prepared_video_and_a_cloud_service_is_told_they_go_too(self):
         cfg = LLMSection(provider="openai", model="x", show=["frames"])
-        config = SimpleNamespace(coding=CodingSection(layers=["A", "B"], llm=cfg))
+        config = SimpleNamespace(text=TextSection(), coding=CodingSection(layers=["A", "B"], llm=cfg))
         assert {"prep.media", "prep.video"} <= set(JudgementExtractor.dependencies(config))
         assert module.cloud_notice(OpenAIBackend(cfg), cfg).endswith("Frames of the video are sent there too.")
         assert module.cloud_notice(OllamaBackend(cfg), cfg) is None
@@ -893,7 +896,7 @@ class TestExamples:
         from macaw.coding.examples import draw_examples
 
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
-        lines = {"r1": coding_units(None, RECORDING, "utterance")}
+        lines = {"r1": coding_units(PER_TRACK, RECORDING, "utterance")}
         table, report = draw_examples(self.CODED, lines, CODEBOOK, per_code=5)
         assert report.counts == {"question": (1, 1), "inform": (2, 2)}
         assert report.no_words == 1 and report.not_in_codebook == {"greeting": 1}

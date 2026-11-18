@@ -51,8 +51,9 @@ _CLOSING = re.compile(r"[.!?\"')\]\s]*$")
 # a row per change of speaker and its mean per pair, subject_id taking the floor from subject_id_b
 _OVERLAP_SPECS = {
     "lexical_overlap": (
-        "Share of the distinct words in subject_id's turn that subject_id_b used in the turn just before it, the words in "
-        "text.exclude_words left out; missing for a turn with no counted word.",
+        "Share of the distinct words in subject_id's turn that subject_id_b used in the turn with words just before it, the "
+        "words in text.exclude_words left out; missing for a turn with no counted word. Turns without words and talk inside "
+        "somebody else's turn are passed over.",
         None, Scale.EVENT,
     ),
     "mean_lexical_overlap": ("Mean lexical_overlap over the turns subject_id took straight after subject_id_b's.", None, Scale.RECORDING),
@@ -110,7 +111,7 @@ _INSTALL = (
 @register_extractor
 class TextFeatureExtractor(Extractor):
     name = "text.features"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
@@ -425,7 +426,11 @@ def lexical_overlap(turns: pd.DataFrame, exclude: frozenset[str]) -> pd.DataFram
     """A row per turn taken straight after someone else's: taker, giver, the taker's t_start and t_end, and overlap,
     the share of the taker's distinct counted words found in the giver's turn."""
     columns = ["taker", "giver", "t_start", "t_end", "overlap"]
-    turns = turns.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    # only turns that held the floor and said something follow one another in words
+    spoken = turns["text"].fillna("").astype(str).str.strip() != ""
+    if "within" in turns.columns:
+        spoken &= ~turns["within"].astype(bool)
+    turns = turns[spoken].sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
     words = [set(tokenize(str(text))) - exclude for text in turns["text"].fillna("")]
     speakers = turns["subject_id"].astype(str).tolist()
     rows = [

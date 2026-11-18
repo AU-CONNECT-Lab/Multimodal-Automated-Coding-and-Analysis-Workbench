@@ -25,7 +25,7 @@ from macaw.config.hashing import canonical
 from macaw.config.schema import RUN_ONLY_KEYS, JudgeVersion, LLMSection, MacawConfig
 from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, LLMBackendError, UnreadableMediaError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
+from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript, load_words
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
@@ -39,6 +39,7 @@ from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_frame
 from macaw.turns.segmentation import TurnStructureExtractor, load_turns
+from macaw.turns.talk import talk_spans, voice_gaps, voices_time_talk
 
 LAYER = "B"
 # each version under coding.judges is its own step with its own layer, so none overwrites another
@@ -360,8 +361,12 @@ def coding_units(config: MacawConfig, recording: Recording, unit: str, coded_rol
     coded = frame["subject_id"].isin(list(coded_roles) or list(letters)).to_numpy()
     frame["unit_id"] = pd.array([pd.NA] * len(frame), dtype="string")
     frame.loc[coded, "unit_id"] = [f"u{index}" for index in range(int(coded.sum()))]
-    reached = frame["t_end"].cummax().shift()
-    frame["gap_before"] = frame["t_start"] - reached
+    if unit == "utterance" and voices_time_talk(config, recording.recording_id):
+        # one recogniser's words never overlap: the voices say where one line ran into the talk before
+        talk, _ = talk_spans(config, recording.recording_id, source, load_words(config, recording.recording_id))
+        frame["gap_before"] = voice_gaps(frame, talk)
+    else:
+        frame["gap_before"] = frame["t_start"] - frame["t_end"].cummax().shift()
     return frame[["unit_id", "subject_id", "speaker", "t_start", "t_end", "gap_before", "text"]]
 
 

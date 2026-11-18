@@ -406,7 +406,7 @@ def test_the_methods_say_how_segments_were_summarised(saved, project, tmp_path):
 
     config, _ = _summarised(saved, project, tmp_path, "recording,segment,start_s,end_s\n003,free_play,0,12\n003,clean_up,12,30\n")
     manifest = FeatureManifest()
-    manifest.extend(TurnStructureExtractor(config)._specs())
+    manifest.extend(TurnStructureExtractor(config)._specs(SimpleNamespace(recording_id="003")))
     text = " ".join(describe(manifest, config)["Segments"])
     assert "(clean_up and free_play)" in text and "cut at the segment's edges" in text
 

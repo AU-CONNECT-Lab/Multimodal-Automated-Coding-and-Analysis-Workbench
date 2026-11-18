@@ -23,7 +23,7 @@ def cfg():
 
 @pytest.fixture
 def extractor(cfg):
-    return TurnStructureExtractor(SimpleNamespace(turns=cfg))
+    return TurnStructureExtractor(SimpleNamespace(turns=cfg, text=SimpleNamespace(diarization="per_track")))
 
 
 @pytest.fixture
@@ -60,9 +60,9 @@ def test_rows_satisfy_the_schema(rows):
     validate_frame(rows, LONG_TABLE_SCHEMA, "long table")
 
 
-def test_manifest_and_rows_agree(extractor, rows):
+def test_manifest_and_rows_agree(extractor, rows, scene):
     """Every feature emitted is documented, and nothing is documented that is never emitted."""
-    assert {spec.name for spec in extractor._specs()} == set(rows.feature)
+    assert {spec.name for spec in extractor._specs(scene.recording)} == set(rows.feature)
 
 
 def test_floor_time(rows):

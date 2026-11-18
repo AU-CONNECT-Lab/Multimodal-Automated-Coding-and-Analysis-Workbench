@@ -12,7 +12,9 @@ from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import (
     ASRExtractor,
     TRANSCRIPT_NAME,
+    WORDS_NAME,
     load_transcript,
+    load_words,
     transcript_between,
 )
 from macaw.extractors.audio.content.diarization import OTHER
@@ -25,6 +27,7 @@ from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
+from macaw.turns.talk import clip_talk, said_units, talk_inputs, talk_params, talk_spans, voices_time_talk
 
 TURNS_NAME = "turns.parquet"
 
@@ -37,7 +40,9 @@ TURN_SCHEMA: dict[str, str] = {
     "n_utterances": "int64",
     "n_words": "int64",
     "text": "string",
+    "within": "bool",
 }
+_COLUMNS = ["subject_id", "turn_index", "t_start", "t_end", "n_utterances", "n_words", "text", "within"]
 
 # a conversation this short has no stable turn statistics, whatever the numbers say
 _MIN_TURNS = 10
@@ -57,18 +62,13 @@ def _other_speaker_in(
     return bool(((speakers != speaker) & (ends > low) & (starts < high)).any())
 
 
-def utterances_to_turns(transcript: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
-    """Merge consecutive same-speaker utterances separated by less than max_gap_s.
+def _turn_index(frame: pd.DataFrame, cfg: TurnsSection) -> np.ndarray:
+    """The turn of each row of frame, in time order: one speaker's rows separated by less than max_gap_s.
 
     The gap also has to be uninterrupted: once somebody else speaks the floor has changed, so
     the turn ends there even if the same person picks up again straight away. Without that
     condition a turn is only a speaking spurt, and a floor transfer stops being a well defined
     event for turns.transitions to measure."""
-    columns = ["subject_id", "turn_index", "t_start", "t_end", "n_utterances", "n_words", "text"]
-    if transcript.empty:
-        return empty_frame(TURN_SCHEMA).loc[:, columns]
-
-    frame = transcript.sort_values("t_start", kind="stable").reset_index(drop=True)
     starts = frame["t_start"].to_numpy(dtype=float)
     ends = frame["t_end"].to_numpy(dtype=float)
     speakers = frame["subject_id"].astype("object").to_numpy()
@@ -96,8 +96,16 @@ def utterances_to_turns(transcript: pd.DataFrame, cfg: TurnsSection) -> pd.DataF
             open_turn[speaker] = n_turns
             open_end[speaker] = ends[index]
             n_turns += 1
+    return assigned
 
-    frame = frame.assign(turn_index=assigned)
+
+def utterances_to_turns(transcript: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
+    """Merge consecutive same-speaker utterances separated by less than max_gap_s, nobody else speaking in between."""
+    if transcript.empty:
+        return empty_frame(TURN_SCHEMA).loc[:, _COLUMNS]
+
+    frame = transcript.sort_values("t_start", kind="stable").reset_index(drop=True)
+    frame = frame.assign(turn_index=_turn_index(frame, cfg))
     turns = (
         frame.groupby("turn_index", sort=True)
         .agg(
@@ -110,7 +118,56 @@ def utterances_to_turns(transcript: pd.DataFrame, cfg: TurnsSection) -> pd.DataF
         )
         .reset_index()
     )
-    return turns.loc[:, columns]
+    return mark_within(turns.loc[:, _COLUMNS[:-1]])
+
+
+def talk_to_turns(talk: pd.DataFrame, said: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
+    """Turns timed by the stretches of talk, merged as utterances are, each holding what its speaker said in it: a word
+    or utterance goes to its speaker's turn holding its middle, else to their nearest. A turn in which nothing was
+    recognised, such as a laugh or a murmur of assent, has no words."""
+    if talk.empty:
+        return empty_frame(TURN_SCHEMA).loc[:, _COLUMNS]
+
+    frame = talk.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    turns = (
+        frame.assign(turn_index=_turn_index(frame, cfg))
+        .groupby("turn_index", sort=True)
+        .agg(subject_id=("subject_id", "first"), t_start=("t_start", "min"), t_end=("t_end", "max"))
+        .reset_index()
+    )
+    owner = np.full(len(said), -1, dtype=np.int64)
+    middle = (said["t_start"].to_numpy(dtype=float) + said["t_end"].to_numpy(dtype=float)) / 2.0
+    speakers = said["subject_id"].astype(str).to_numpy()
+    for speaker, group in turns.groupby(turns["subject_id"].astype(str)):
+        mine = speakers == speaker
+        low, high = group["t_start"].to_numpy(dtype=float), group["t_end"].to_numpy(dtype=float)
+        distance = np.maximum(low[:, None] - middle[None, mine], middle[None, mine] - high[:, None]).clip(min=0.0)
+        owner[mine] = group["turn_index"].to_numpy()[np.argmin(distance, axis=0)]
+    placed = said.assign(turn_index=owner)
+    placed = placed[placed["turn_index"] >= 0]
+    held = placed.groupby("turn_index", sort=True).agg(
+        n_utterances=("utterance_index", "nunique"), n_words=("n_words", "sum"), text=("text", _join_text)
+    )
+    turns = turns.join(held, on="turn_index")
+    turns = turns.fillna({"n_utterances": 0, "n_words": 0, "text": ""}).astype({"n_utterances": "int64", "n_words": "int64"})
+    return mark_within(turns.loc[:, _COLUMNS[:-1]])
+
+
+def mark_within(turns: pd.DataFrame) -> pd.DataFrame:
+    """Adds within: the turn starts inside a turn of somebody else's who is still talking when it ends, so the floor
+    stayed where it was."""
+    starts = turns["t_start"].to_numpy(dtype=float)
+    ends = turns["t_end"].to_numpy(dtype=float)
+    speakers = turns["subject_id"].astype(str).to_numpy()
+    holds = (speakers[None, :] != speakers[:, None]) & (starts[None, :] <= starts[:, None]) & (ends[:, None] < ends[None, :])
+    return turns.assign(within=holds.any(axis=1))
+
+
+def floor_turns(turns: pd.DataFrame) -> pd.DataFrame:
+    """The turns that held the floor, without talk inside somebody else's turn."""
+    if "within" not in turns.columns or turns.empty:
+        return turns
+    return turns[~turns["within"].astype(bool).to_numpy()]
 
 
 def _join_text(values) -> str:
@@ -190,16 +247,45 @@ def turns_saved(config, recording_id: str) -> bool:
     return (layout_for(config, create=False).artifacts_dir(recording_id, TurnStructureExtractor.name) / TURNS_NAME).is_file()
 
 
+def build_turns(config, recording_id: str, transcript: pd.DataFrame, words: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """(talk, turns, voice stretches left out as noise) of a transcript and its words, OTHER included."""
+    talk, left_out = talk_spans(config, recording_id, transcript, words)
+    if voices_time_talk(config, recording_id):
+        turns = talk_to_turns(talk, said_units(transcript, words), config.turns)
+    else:
+        turns = utterances_to_turns(transcript, config.turns)
+    turns["recording_id"] = recording_id
+    return talk, turns, left_out
+
+
+def talk_between(config, recording_id: str, start_s: float, end_s: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """The transcript cut at both edges, OTHER included, and the talk and turns as from a recording cut there."""
+    transcript = transcript_between(config, recording_id, start_s, end_s, others=True)
+    if not voices_time_talk(config, recording_id):
+        turns = utterances_to_turns(transcript, config.turns)
+        turns["recording_id"] = recording_id
+        return transcript, talk_spans(config, recording_id, transcript, None)[0], turns
+    words = load_words(config, recording_id)
+    talk, _ = talk_spans(config, recording_id, load_transcript(config, recording_id, others=True), words)
+    talk = clip_talk(talk, start_s, end_s)
+    middle = (words["t_start"].to_numpy(dtype=float) + words["t_end"].to_numpy(dtype=float)) / 2.0
+    words = words[(middle >= start_s) & (middle < end_s)]
+    turns = talk_to_turns(talk, said_units(transcript, words), config.turns)
+    turns["recording_id"] = recording_id
+    return transcript, talk, turns
+
+
 def turns_between(config, recording_id: str, start_s: float, end_s: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The transcript cut at both edges, OTHER included, and the turns made from it as from a recording cut there."""
-    transcript = transcript_between(config, recording_id, start_s, end_s, others=True)
-    turns = utterances_to_turns(transcript, config.turns)
-    turns["recording_id"] = recording_id
+    transcript, _, turns = talk_between(config, recording_id, start_s, end_s)
     return transcript, turns
 
 
 _TURN_SPECS = {
-    "turn_duration_s": ("Length of one turn, from its first word to its last.", "s"),
+    "turn_duration_s": (
+        "Length of one turn, from when its speaker started to when they stopped: by the words, or on a shared microphone by "
+        "the voice, which also hears what was not recognised as words.", "s",
+    ),
     "n_utterances_in_turn": ("Utterances merged into this turn.", "count"),
     "turn_n_words": ("Words in the turn.", "count"),
     "turn_speech_rate_wps": (
@@ -213,7 +299,10 @@ _SILENCE_SPECS = {
 }
 
 _SUBJECT_SPECS = {
-    "n_turns": ("Turns this speaker took.", "count"),
+    "n_turns": (
+        "Turns this speaker took. Talk inside somebody else's turn leaves the floor where it was and is not a turn here; "
+        "turns.transitions counts it as a backchannel or an attempt to take the floor.", "count",
+    ),
     "talk_time_s": ("Seconds this speaker held the floor, pauses inside turns included.", "s"),
     "talk_ratio": ("Share of all floor time held by this speaker; 0.5 is an even split.", None),
     "mean_turn_s": ("Mean turn length.", "s"),
@@ -230,7 +319,7 @@ _RECORDING_SPECS = {
     "joint_silence_fraction": ("joint_silence_total_s as a share of the analysed part, or of the segment.", None),
 }
 
-_NO_WORDS = "0 means the transcript gave the turn no words."
+_NO_WORDS = "0 means the transcript gave the turn no words, as for a laugh or a murmur heard on a shared microphone."
 _NO_TURN = "Empty for a person who took no turn in the span: they get no row, not 0."
 _EVERY_SPAN = "Empty only outside the rows of the recording as a whole: every span gets a value."
 _NO_SILENCE = (
@@ -239,7 +328,7 @@ _NO_SILENCE = (
 )
 _MISSING = {
     "turn_duration_s": "Empty only in rows that are not this person's turns: every turn has a value.",
-    "n_utterances_in_turn": "Empty only in rows that are not this person's turns: every turn has a value.",
+    "n_utterances_in_turn": f"Empty only in rows that are not this person's turns: every turn has a value. {_NO_WORDS}",
     "turn_n_words": f"Empty only in rows that are not this person's turns: every turn has a value. {_NO_WORDS}",
     "turn_speech_rate_wps": f"Empty for a turn that lasts no time, its first and last word at the same instant. {_NO_WORDS}",
     "joint_silence_s": (
@@ -257,7 +346,7 @@ _MISSING = {
 @register_extractor
 class TurnStructureExtractor(Extractor):
     name = "turns.structure"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns",)
@@ -267,35 +356,34 @@ class TurnStructureExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        root = layout_for(self.config, create=False).artifacts_dir(
-            recording.recording_id, ASRExtractor.name
-        )
-        return [root / TRANSCRIPT_NAME]
+        rid = recording.recording_id
+        root = layout_for(self.config, create=False).artifacts_dir(rid, ASRExtractor.name)
+        return [root / TRANSCRIPT_NAME, *([root / WORDS_NAME] if voices_time_talk(self.config, rid) else []), *talk_inputs(self.config, rid)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.turns
-        transcript = load_transcript(self.config, recording.recording_id, others=True)
-        prep = load_prep(self.config, recording.recording_id)
+        rid = recording.recording_id
+        transcript = load_transcript(self.config, rid, others=True)
+        prep = load_prep(self.config, rid)
 
-        turns = utterances_to_turns(transcript, cfg)
-        turns["recording_id"] = recording.recording_id
-        quiet = silences(transcript, min_s=cfg.silence_min_s)
+        talk, turns, left_out = build_turns(self.config, rid, transcript, load_words(self.config, rid))
+        quiet = silences(talk, min_s=cfg.silence_min_s)
 
         artifacts = {
             TURNS_NAME: _io.write_file(turns, workspace / TURNS_NAME, TURN_SCHEMA, "turns")
         }
         return ExtractorResult(
             rows=self._rows(recording, turns, quiet, prep),
-            specs=self._specs(),
+            specs=self._specs(recording),
             artifacts=artifacts,
-            warnings=self._warnings(recording, turns, prep),
+            warnings=self._warnings(recording, turns, prep) + self._noise(recording, left_out, prep),
         )
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         if not turns_saved(self.config, recording.recording_id):
             return None
-        transcript, turns = turns_between(self.config, recording.recording_id, start_s, end_s)
-        return self._summary(recording, turns, silences(transcript, min_s=self.config.turns.silence_min_s), (start_s, end_s))
+        _, talk, turns = talk_between(self.config, recording.recording_id, start_s, end_s)
+        return self._summary(recording, turns, silences(talk, min_s=self.config.turns.silence_min_s), (start_s, end_s))
 
     def segment_warnings(self, recording: Recording, segment: Segment) -> list[QCWarning]:
         if not turns_saved(self.config, recording.recording_id):
@@ -310,7 +398,7 @@ class TurnStructureExtractor(Extractor):
     def _events(self, recording: Recording, turns, quiet) -> pd.DataFrame:
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         frames = []
-        for subject_id, group in turns.groupby("subject_id", dropna=False, observed=True):
+        for subject_id, group in floor_turns(turns).groupby("subject_id", dropna=False, observed=True):
             duration = (group["t_end"] - group["t_start"]).to_numpy(dtype=float)
             words = group["n_words"].to_numpy(dtype=float)
             frames.append(
@@ -355,6 +443,7 @@ class TurnStructureExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         length = window[1] - window[0]
         minutes = length / 60.0
+        turns = floor_turns(turns)
         shares = dominance(turns)
         frames = []
         for subject_id, group in turns.groupby("subject_id", dropna=False, observed=True):
@@ -401,8 +490,23 @@ class TurnStructureExtractor(Extractor):
     def _warnings(self, recording: Recording, turns, prep) -> list[QCWarning]:
         return self._warnings_over(recording, turns, (prep.t_origin_s, prep.t_origin_s + prep.duration_s), "the task window")
 
+    def _noise(self, recording: Recording, left_out: int, prep) -> list[QCWarning]:
+        if not left_out:
+            return []
+        return [
+            QCWarning(
+                check="turns_voice_noise", recording_id=recording.recording_id, subject_id=None, severity="info",
+                message=(
+                    f"{left_out} stretch(es) of voice shorter than turns.min_voice_s ({self.config.turns.min_voice_s:g} s) with no "
+                    "word recognised in them were taken for noise and left out of the turns; the diarization keeps them."
+                ),
+                t_start=prep.t_origin_s, t_end=prep.t_origin_s + prep.duration_s,
+            )
+        ]
+
     def _warnings_over(self, recording: Recording, turns, window: tuple[float, float], scope: str) -> list[QCWarning]:
         warnings = []
+        turns = floor_turns(turns)
         if len(turns) < _MIN_TURNS:
             warnings.append(
                 QCWarning(
@@ -452,9 +556,9 @@ class TurnStructureExtractor(Extractor):
                 )
         return warnings
 
-    def _specs(self) -> list[FeatureSpec]:
+    def _specs(self, recording: Recording) -> list[FeatureSpec]:
         cfg = self.config.turns
-        params = {"max_gap_s": cfg.max_gap_s, "silence_min_s": cfg.silence_min_s}
+        params = {"max_gap_s": cfg.max_gap_s, "silence_min_s": cfg.silence_min_s, **talk_params(self.config, recording.recording_id)}
         groups = (
             (_TURN_SPECS, Scale.EVENT),
             (_SILENCE_SPECS, Scale.EVENT),

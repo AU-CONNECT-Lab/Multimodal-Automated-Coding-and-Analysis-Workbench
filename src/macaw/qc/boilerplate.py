@@ -653,6 +653,19 @@ def _text_features(config, spec, names) -> str:
 
 def _turns(config, spec, names) -> str:
     turns = config.turns
+    if spec.params.get("talk_timed_by") == "voices":
+        timed = (
+            "On the shared microphone, when each person talked was taken from the speaker diarization that allows two voices at "
+            "once rather than from the recognised words, which never overlap, so that talk over another speaker and vocal "
+            "sounds without recognised words, such as laughter or murmurs of assent, were kept; stretches of a voice shorter "
+            f"than {_seconds(turns.min_voice_s)} in which no word was recognised were taken for noise. Each recognised word was "
+            "placed in the turn of its speaker that held it. "
+        )
+        return timed + (
+            "Consecutive stretches of one speaker were merged into a turn when no one else spoke in between and the pause "
+            f"was at most {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
+            "nobody spoke were counted as joint silences."
+        )
     return (
         "Consecutive utterances of one speaker were merged into a turn when no one else spoke in between and the pause "
         f"was at most {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
@@ -663,11 +676,14 @@ def _turns(config, spec, names) -> str:
 def _transitions(config, spec, names) -> str:
     turns = config.turns
     return (
-        "For each pair of adjacent turns by different speakers, the floor transfer offset was the time from the end of "
-        "one turn to the start of the next, positive for gaps and negative for overlaps [heldner2010]. Transfers within "
-        f"{_seconds(turns.smooth_transfer_gap_s)} were counted as smooth; taking the floor with an overlap longer than "
-        f"{_seconds(turns.interruption_overlap_s)} was counted as an interruption, and a shorter overlap after which "
-        "the floor returned to the first speaker as a backchannel."
+        "A turn that began and ended while another speaker went on talking was taken as an overlap within that speaker's "
+        "turn, which leaves the floor where it was [heldner2010]: up to "
+        f"{_seconds(turns.backchannel_max_s)} long it was counted as a backchannel, and longer as an attempt to take the "
+        "floor. For each pair of adjacent turns that held the floor and were by different speakers, the floor transfer "
+        "offset was the time from the end of one turn to the start of the next, positive for gaps and negative for overlaps "
+        f"[heldner2010]. Transfers within {_seconds(turns.smooth_transfer_gap_s)} were counted as smooth; taking the floor "
+        f"with an overlap longer than {_seconds(turns.interruption_overlap_s)} was counted as an interruption, and a shorter "
+        "overlap after which the floor returned to the first speaker as a backchannel."
     )
 
 
@@ -1269,7 +1285,11 @@ def _listening(config, spec, names) -> str:
     listed = _listed([name.replace("_", " ") for name in spec.params.get("listening", [])])
     text = (
         f"Each person's {listed} was averaged over the frames in which another person was talking and nobody else was, "
-        "by the start and end of each utterance in the transcript, as their movement while listening."
+        + (
+            "by the voices in the speaker diarization of the shared microphone, the listener's own laughter or murmurs "
+            "included," if spec.params.get("talk_timed_by") == "voices" else "by the start and end of each utterance in the transcript,"
+        )
+        + " as their movement while listening."
     )
     divided = spec.params.get("per_body_size") or []
     if divided:

@@ -1,4 +1,4 @@
-"""How much each person moves while another person talks alone: listening behaviour from the transcript and a movement series."""
+"""How much each person moves while another person talks alone: listening behaviour from when each talks and a movement series."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pandas as pd
 
 from macaw.exceptions import ConfigError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript
+from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, WORDS_NAME, ASRExtractor, load_transcript, load_words
 from macaw.extractors.base import Extractor, ExtractorResult, Phase
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.extractors.video.motion.mea import MEAExtractor
@@ -21,6 +21,7 @@ from macaw.project.manifest import FeatureSpec, read_manifest
 from macaw.project.recording import Recording
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import Scale
+from macaw.turns.talk import talk_inputs, talk_params, talk_spans, voices_time_talk
 
 LISTENING_S = "listening_s"
 
@@ -38,7 +39,7 @@ def body_lengths() -> set[str]:
 @register_extractor
 class ListeningExtractor(Extractor):
     name = "pose.listening"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "pose"
     phase = Phase.DERIVE
@@ -63,8 +64,10 @@ class ListeningExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         rid = recording.recording_id
         steps = sorted({producers()[name] for name in self.config.kinematics.listening})
+        heard = layout.artifacts_dir(rid, ASRExtractor.name)
         return [
-            layout.artifacts_dir(rid, ASRExtractor.name) / TRANSCRIPT_NAME,
+            heard / TRANSCRIPT_NAME,
+            *([heard / WORDS_NAME, *talk_inputs(self.config, rid)] if voices_time_talk(self.config, rid) else []),
             layout.artifacts_dir(rid, MediaPrepExtractor.name) / PREP_INFO_NAME,
             *(layout.long_table_path(rid) / f"{step}.parquet" for step in steps),
             *([_keypoints_file(self.config, rid)] if self.divided() else []),
@@ -93,7 +96,9 @@ class ListeningExtractor(Extractor):
 
     def _rows(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame:
         people = [subject.subject_id for subject in recording.subjects]
-        talk = load_transcript(self.config, recording.recording_id, others=True)
+        rid = recording.recording_id
+        words = load_words(self.config, rid) if voices_time_talk(self.config, rid) else None
+        talk, _ = talk_spans(self.config, rid, load_transcript(self.config, rid, others=True), words)
         spans = alone_spans(talk, start_s, end_s)
         series = self._series(recording)
         divided = self.divided()
@@ -138,7 +143,7 @@ class ListeningExtractor(Extractor):
             comparable[feature] = spec.comparable_across_subjects if spec is not None else True
             if feature in divided:
                 units[feature], comparable[feature] = _SUBJECT_SPECS[feature][1].format(length=BODY_UNIT), True
-        params = {"listening": list(self.config.kinematics.listening), "per_body_size": divided}
+        params = {"listening": list(self.config.kinematics.listening), "per_body_size": divided, **talk_params(self.config, recording.recording_id)}
         sized = {
             feature: (
                 f" Divided by this person's shoulder width over the recording, so in {units[feature]}; comparable between "
@@ -150,7 +155,7 @@ class ListeningExtractor(Extractor):
             for feature in self.config.kinematics.listening
         }
         missing = {
-            LISTENING_S: "Never empty. 0 means no other person of the recording talked alone in the span, by the transcript.",
+            LISTENING_S: "Never empty. 0 means no other person of the recording talked alone in the span.",
             **{
                 f"{feature}_listening": (
                     "Empty where no other person of the recording talked alone in the span, or where this person's "
@@ -175,7 +180,8 @@ class ListeningExtractor(Extractor):
             **{
                 f"{feature}_listening": (
                     f"Mean {feature} of this person over the frames in which another person talked and nobody else did, by the "
-                    f"transcript's utterances; empty where they were not measured then.{sized[feature]}",
+                    "transcript's utterances, or on a shared microphone by the voices heard, a laugh or murmur of the listener's "
+                    f"included; empty where they were not measured then.{sized[feature]}",
                     units[feature],
                 )
                 for feature in self.config.kinematics.listening
@@ -210,7 +216,7 @@ def body_size_notice(config) -> str | None:
 
 
 def alone_spans(talk: pd.DataFrame, start_s: float, end_s: float) -> list[tuple[str, tuple[float, float]]]:
-    """(speaker, (start, end)) for each stretch inside start_s to end_s where exactly one voice talks, by the utterances."""
+    """(speaker, (start, end)) for each stretch inside start_s to end_s where exactly one voice talks."""
     talk = talk[(talk["t_end"] > start_s) & (talk["t_start"] < end_s)]
     edges = sorted({start_s, end_s, *np.clip(talk["t_start"].to_numpy(dtype=float), start_s, end_s), *np.clip(talk["t_end"].to_numpy(dtype=float), start_s, end_s)})
     starts, ends = talk["t_start"].to_numpy(dtype=float), talk["t_end"].to_numpy(dtype=float)
