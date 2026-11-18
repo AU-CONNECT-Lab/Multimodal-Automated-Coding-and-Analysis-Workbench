@@ -39,6 +39,12 @@ PLAYING = "playing"
 # a frame's graph takes no room until there is a frame
 HIDDEN = {"display": "none"}
 GAZE_T, GAZE_NOTE, GAZE_PICK = "gaze-t", "gaze-note", "gaze-pick"
+OBJECT_GRAPH, OBJECT_NOTE, OBJECT_PICK = "object-graph", "object-note", "object-pick"
+# the point clicked on a thing, and the camera and time of the frame it was clicked on
+OBJECT_POINT, OBJECT_T = "object-point", "object-t"
+OBJECT_ACTIONS = {"object-start", "object-not-here", "object-keep", "object-clear"}
+# a thing keeps one colour wherever it is drawn
+_THING_COLOURS = ("#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#76b7b2", "#edc948", "#ff9da7", "#9c755f")
 CLIP = "clip:"
 UPLOAD = "review-upload"
 # what each upload carries, and the files it takes
@@ -47,6 +53,7 @@ TRANSCRIPT_UPLOAD, CODING_UPLOAD = "transcript", "coding"
 NAMED = {
     "accept-offset", "accept-owner", "accept-voices", "apply-review", "set-scale", "label-gaze", "look-right", "look-wrong",
     "name-people", "add-note", "further-nobody", "lines-suggested", "lines-apply", "lines-as-they-are",
+    "object-start", "object-not-here", "object-keep",
 }
 VOICES_MIXED = "voices-mixed"
 LINE_PICK, LINE_PERSON, LINE_HERE, LINE_AT = "line-pick", "line-split-person", "line-split-here", "line-split-at"
@@ -600,6 +607,126 @@ def gaze_frame(config_path: Path, rid: str, video: str, at_s: float):
 
 
 
+def _objects(config, layout, recording):
+    from macaw.extractors.video.objects.decisions import ABSENT, KEPT, STARTS, read_decisions
+    from macaw.extractors.video.objects.review import waiting
+    from macaw.extractors.video.objects.track import FINDER, load_starts
+
+    names = list(config.objects.names)
+    if not names:
+        return None
+    rid = recording.recording_id
+    starts = load_starts(config, rid)
+    said = read_decisions(layout.objects_path(rid))
+    open_items = {(item.camera, item.name): item.why for item in waiting(config, rid)}
+    rows, found_by_name = [], False
+    for camera, entries in starts.items():
+        for name, entry in entries.items():
+            kept = said[KEPT].get(camera, {}).get(name, {}).get("by")
+            spoken = bool(kept) or name in said[STARTS].get(camera, {}) or name in said[ABSENT].get(camera, {})
+            if (camera, name) in open_items:
+                status = ui.pill(open_items[camera, name], "warn")
+                found_by_name |= entry["from"] == FINDER
+            else:
+                status = ui.pill(f"kept by {kept.split(' ')[0]}" if kept else "clear", "ok")
+            share = f"{entry['found'] / entry['frames']:.0%}" if entry.get("frames") else ""
+            gap = f"{entry['longest_gap_s']:g}" if entry.get("frames") else ""
+            rows.append([
+                camera, name, seek(entry["t"]) if "t" in entry else "", entry["from"], share, gap, status,
+                _button("Forget", "object-clear", f"{camera}|{name}", small=True) if spoken else "",
+            ])
+    key = {"key": rid}
+    keep_all = [_button("Keep the starts found by name", "object-keep")] if found_by_name else []
+    return ui.card(
+        "Things followed",
+        ui.table(["Camera", "Thing", "Starts at (s)", "From", "In view", "Longest out of view (s)", "Status", ""], rows, numeric={"In view", "Longest out of view (s)"})
+        if rows else ui.note("Not followed yet: the next run finds them by name."),
+        html.Div([
+            dcc.Graph(id={"type": OBJECT_GRAPH, **key}, figure=scale_figure(None, []), config={"displayModeBar": False}, style=HIDDEN),
+            html.Div([
+                html.Div(id={"type": OBJECT_NOTE, **key}),
+                html.Div([ui.field("Thing", dcc.Dropdown(names, names[0] if len(names) == 1 else None, id={"type": OBJECT_PICK, **key}, className="picker small"))], className="toolbar"),
+                html.Div([_button("Start it here", "object-start", primary=True), _button("Not on this camera", "object-not-here"), *keep_all], className="buttons"),
+            ], className="frame-controls"),
+        ], className="frame-side"),
+        dcc.Store(id={"type": OBJECT_POINT, **key}, data=None),
+        dcc.Store(id={"type": OBJECT_T, **key}, data=None),
+        desc="Check where each thing starts; to start one elsewhere, click on it.",
+    )
+
+
+def object_frame(config_path: Path, rid: str, camera: str, at_s: float):
+    """The frame with each thing's outline as followed there and each start found by name on it, and a note; or why not."""
+    import plotly.graph_objects as go
+
+    from macaw.extractors.prep import apply_prep_timing
+    from macaw.extractors.video.objects.outline import polygons
+    from macaw.extractors.video.objects.track import FINDER, load_starts, objects_file
+
+    uri, problem = frame_uri(config_path, rid, camera, at_s)
+    if problem:
+        return scale_figure(None, []), ui.note(problem, "warn")
+    config = resolve_config(config_path, recording_id=rid)
+    recording = build_recording(rid, config)
+    try:
+        apply_prep_timing(config, recording)
+    except Exception:   # before prep.media there is nothing followed to draw anyway
+        pass
+    item = next(item for item in recording.media if item.name == camera)
+    figure = scale_figure(uri, [])
+    path = objects_file(config, rid)
+    if not item.fps or not path.is_file():
+        return figure, ui.note("Nothing followed yet. Click on a thing, pick its name and press Start it here.")
+    frame = round((at_s - item.offset_s) * item.fps)
+    shown = pd.read_parquet(path, filters=[("video", "==", camera), ("frame", "==", frame)])
+    names = list(config.objects.names)
+    for row in shown.itertuples():
+        colour = _THING_COLOURS[names.index(row.label) % len(_THING_COLOURS)] if row.label in names else _MARK
+        for part in polygons(row.outline):
+            closed = [*part.tolist(), part[0].tolist()]
+            figure.add_trace(go.Scatter(
+                x=[x for x, _ in closed], y=[y for _, y in closed], mode="lines", fill="toself", line={"color": colour, "width": 2},
+                opacity=0.45, hoverinfo="skip",
+            ))
+        figure.add_annotation(x=row.x0, y=row.y0, text=row.label, showarrow=False, yshift=10, xanchor="left", font={"color": colour}, bgcolor="rgba(0,0,0,0.6)")
+    for name, entry in load_starts(config, rid).get(camera, {}).items():
+        if entry.get("from") == FINDER and entry.get("frame") == frame:
+            x0, y0, x1, y1 = entry["box"]
+            figure.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1, line={"color": _MARK, "width": 2, "dash": "dash"})
+            figure.add_annotation(x=x0, y=y1, text=f"{name} found here", showarrow=False, yshift=-10, xanchor="left", font={"color": _MARK}, bgcolor="rgba(0,0,0,0.6)")
+    seen = ", ".join(sorted(set(shown["label"]))) or "none of the things"
+    return figure, ui.note(f"Frame at {at_s:.2f} s: {seen} in view. To start a thing here, click on it, pick its name and press Start it here.")
+
+
+def with_point(figure: dict, point: list[float]) -> dict:
+    """The frame's figure with the clicked point on it, in place of one clicked before."""
+    data = [trace for trace in figure.get("data", []) if trace.get("name") != OBJECT_POINT]
+    marker = {"type": "scatter", "name": OBJECT_POINT, "x": [point[0]], "y": [point[1]], "mode": "markers", "hoverinfo": "skip",
+              "marker": {"size": 14, "color": _MARK, "symbol": "x"}}
+    return {**figure, "data": [*data, marker]}
+
+
+def object_command(config_path: Path, rid: str, action: str, target: str, by: str, name: str | None, point, shown) -> list[str] | str:
+    """The macaw objects command a button stands for, or what is missing for it."""
+    def command(*extra):
+        return cli_bridge.build_command(["objects"], config_path=config_path, recordings=[rid], extra_flags=[*extra, *(["--by", by] if by else [])])
+
+    if action == "object-keep":
+        return command("--keep")
+    if action == "object-clear":
+        camera, _, thing = target.partition("|")
+        return cli_bridge.build_command(["objects"], config_path=config_path, recordings=[rid], extra_flags=["--clear", thing, "--camera", camera])
+    if not shown:
+        return "Play or seek to a frame of the camera first."
+    if not name:
+        return "Pick the thing first."
+    if action == "object-not-here":
+        return command("--not-here", name, "--camera", shown["camera"])
+    if not point:
+        return "Click on the thing in the frame first."
+    return command("--start", name, "--camera", shown["camera"], "--at", f"{shown['t']:g}", "--point", f"{point[0]:g},{point[1]:g}")
+
+
 def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str | None, str | None]:
     """The frame the video steps read at a recording time, or a calibration clip's frame at its own time, as an
     image the page can show; or why not."""
@@ -811,6 +938,7 @@ def body(config_path: Path, rid: str | None, camera: str | None = None):
         _coding(layout, rid),
         _scale(resolve_config(config_path, recording_id=rid), layout, recording),
         _gaze(resolve_config(config_path, recording_id=rid), layout, recording),
+        _objects(own, layout, recording),
     ]
     if results.artifact("text.asr", "transcript.parquet") is not None:
         parts.append(_transcript(config, layout, rid, results.artifact("text.asr", "transcript.parquet")))
@@ -1046,6 +1174,30 @@ def register(app, config_path: Path) -> None:
         figure, note = gaze_frame(config_path, ctx.outputs_list[0]["id"]["key"], time["camera"], time["t"])
         return figure, graph_style(figure), time["t"], note
 
+    @app.callback(
+        Output({"type": OBJECT_GRAPH, "key": MATCH}, "figure"),
+        Output({"type": OBJECT_GRAPH, "key": MATCH}, "style"),
+        Output({"type": OBJECT_POINT, "key": MATCH}, "data"),
+        Output({"type": OBJECT_T, "key": MATCH}, "data"),
+        Output({"type": OBJECT_NOTE, "key": MATCH}, "children"),
+        Input({"type": TIME, "key": MATCH}, "data"),
+        Input({"type": OBJECT_GRAPH, "key": MATCH}, "clickData"),
+        State({"type": OBJECT_GRAPH, "key": MATCH}, "figure"),
+        State({"type": OBJECT_T, "key": MATCH}, "data"),
+    )
+    def show_object_frame(time, click, figure, shown):
+        trigger = ctx.triggered_id
+        if trigger is not None and trigger["type"] == OBJECT_GRAPH:
+            if not click or not shown:
+                return no_update, no_update, no_update, no_update, no_update
+            point = [round(float(click["points"][0]["x"]), 1), round(float(click["points"][0]["y"]), 1)]
+            note = ui.note(f"Clicked at {point[0]:g}, {point[1]:g} on the frame at {shown['t']:.2f} s. Pick the thing and press Start it here.")
+            return with_point(figure, point), no_update, point, no_update, note
+        if not time:
+            return no_update, no_update, no_update, no_update, no_update
+        figure, note = object_frame(config_path, ctx.outputs_list[0]["id"]["key"], time["camera"], time["t"])
+        return figure, graph_style(figure), None, {"camera": time["camera"], "t": time["t"]}, note
+
     app.clientside_callback(
         "function (clicks) { if (clicks && window.macawStrip) { window.macawStrip.random(); } return window.dash_clientside.no_update; }",
         Output({"type": GAZE_RANDOM, "key": MATCH}, "title"), Input({"type": GAZE_RANDOM, "key": MATCH}, "n_clicks"),
@@ -1086,6 +1238,9 @@ def register(app, config_path: Path) -> None:
         State({"type": LINE_PICK, "t": ALL}, "value"),
         State({"type": LINE_PICK, "t": ALL}, "id"),
         State({"type": TIME, "key": ALL}, "data"),
+        State({"type": OBJECT_PICK, "key": ALL}, "value"),
+        State({"type": OBJECT_POINT, "key": ALL}, "data"),
+        State({"type": OBJECT_T, "key": ALL}, "data"),
         State(RECORDING, "options"),
         prevent_initial_call="initial_duplicate",
     )
@@ -1097,7 +1252,7 @@ def register(app, config_path: Path) -> None:
         return content, message, relabelled(options, rid)
 
     def _acted(rid, clicks, uploads, split, filenames, by, picks, pick_ids, acts, act_ids, gaze_t, looks, look_ids, *rest):
-        *scale, cameras, marks, shown, corners, tags, text, mixed, split_person, line_picks, line_ids, times = rest
+        *scale, cameras, marks, shown, corners, tags, text, mixed, split_person, line_picks, line_ids, times, things, thing_points, thing_frames = rest
         camera = cameras[0] if cameras else None
         marks, shown, corners = (marks or [None])[0], (shown or [None])[0], (corners or [None])[0]
         trigger = ctx.triggered_id
@@ -1129,6 +1284,12 @@ def register(app, config_path: Path) -> None:
                 if not shown or not marks:
                     return no_update, ui.note("Show a frame and click on the people first.", "warn")
                 argv = naming.name_command(config_path, shown, marks, by)
+            elif action in OBJECT_ACTIONS:
+                argv = object_command(
+                    config_path, rid, action, target, by, (things or [None])[0], (thing_points or [None])[0], (thing_frames or [None])[0],
+                )
+                if isinstance(argv, str):
+                    return no_update, ui.note(argv, "warn")
             elif action == "add-note":
                 if not (tags and tags[0]) and not (text and (text[0] or "").strip()):
                     return no_update, ui.note("Tick a tag or write the note first.", "warn")

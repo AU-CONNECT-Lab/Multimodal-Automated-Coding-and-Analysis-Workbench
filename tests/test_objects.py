@@ -359,3 +359,32 @@ class TestReview:
         project.starts({"ball": BALL, "cup": {"from": NOT_HERE}})
         row = _object_starts(config, layout_for(config), "003")
         assert row["by"] == "person" and "1 found by name (1 kept by a person), 1 said not to be on a camera" in row["decided"]
+
+
+class TestReviewPage:
+    def test_the_card_lists_each_start_with_its_state_and_the_buttons_stand_for_macaw_objects(self, project):
+        from macaw.interface.pages import review
+
+        project.starts({"ball": BALL, "cup": {"from": NOT_FOUND}})
+        shown = json.dumps(review.body(project.config, "003")[-1].to_plotly_json(), default=lambda item: item.to_plotly_json())
+        assert "Things followed" in shown and "found by name, not looked at yet" in shown and "Keep the starts found by name" in shown
+        assert '"t": "0.60"' in shown and "86%" in shown
+        frame = {"camera": "room", "t": 1.5}
+        start = review.object_command(project.config, "003", "object-start", "", "ann", "ball", [10.0, 20.5], frame)
+        assert start[1:2] == ["objects"] and start[-8:] == ["--camera", "room", "--at", "1.5", "--point", "10,20.5", "--by", "ann"]
+        assert review.object_command(project.config, "003", "object-start", "", "ann", "ball", None, frame) == "Click on the thing in the frame first."
+        assert review.object_command(project.config, "003", "object-not-here", "", "ann", None, None, frame) == "Pick the thing first."
+        assert review.object_command(project.config, "003", "object-clear", "room|cup", "", None, None, None)[-4:] == ["--clear", "cup", "--camera", "room"]
+        macaw(project, "--keep")
+        macaw(project, "--not-here", "cup", "--camera", "room")
+        project.starts({"ball": BALL, "cup": {"from": NOT_HERE}})
+        shown = json.dumps(review.body(project.config, "003")[-1].to_plotly_json(), default=lambda item: item.to_plotly_json())
+        assert "kept by" in shown and "Forget" in shown and "Keep the starts found by name" not in shown
+
+    def test_a_click_puts_one_point_on_the_frame(self):
+        from macaw.interface.pages.review import OBJECT_POINT, with_point
+
+        figure = {"data": [{"type": "image"}], "layout": {}}
+        once = with_point(figure, [1.0, 2.0])
+        twice = with_point(once, [3.0, 4.0])
+        assert len(twice["data"]) == 2 and twice["data"][-1]["name"] == OBJECT_POINT and twice["data"][-1]["x"] == [3.0]

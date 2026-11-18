@@ -391,7 +391,7 @@ def review_update(app):
 # the states after the recording, the clicks, the uploads and the split: name, voices, acts, gaze, scale, camera, names, note, mixed, lines, picker
 def review_states(by="", cameras=(), marks=None, frame=None, tags=None, text=None, corners=None, times=()):
     return [by, [], [], [], [], [], [], [], *([[]] * 6), list(cameras), [marks] if marks else [], [frame] if frame else [],
-            [corners] if corners else [], [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], list(times), []]
+            [corners] if corners else [], [tags] if tags is not None else [], [text] if text is not None else [], [], [], [], [], list(times), [], [], [], []]
 
 
 def test_a_link_picks_the_recording_and_step_on_the_page_it_opens(project, monkeypatch):
@@ -1386,3 +1386,26 @@ def test_the_agreement_result_puts_the_overall_figures_first():
     assert shown.index("headline") < shown.index("result-grid") and "94%" in shown and "0.713" in shown
     page = text_of(agreement.layout(Path("project.yaml")))
     assert "page-split" in page and "choices" in page and "segmented" not in page
+
+
+def test_a_person_starts_a_thing_where_they_clicked_and_the_button_says_what_is_missing(project, monkeypatch):
+    from macaw.cli.main import app as cli
+    from macaw.extractors.video.objects.decisions import STARTS, read_decisions
+    from typer.testing import CliRunner
+
+    data = yaml.safe_load(project.read_text(encoding="utf-8"))
+    data["objects"] = {"names": ["ball"]}
+    project.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(review.cli_bridge, "run_now", lambda argv, cwd=None, **_: (0, CliRunner().invoke(cli, argv[1:]).output))
+    update = review_update(create_app(project))
+    pressed = {"type": review.ACT, "action": "object-start", "target": ""}
+    monkeypatch.setattr(review, "ctx", SimpleNamespace(triggered_id=pressed, triggered=[{"value": 1}]))
+    states = review_states("ann")
+    shown = {"camera": "room", "t": 2.0}
+    _, said, _ = update("003", [1], [], [], [], *states[:-4], ["ball"], [], [shown], [])
+    assert "Click on the thing in the frame first" in text_of(said)
+    body, said, _ = update("003", [1], [], [], [], *states[:-4], ["ball"], [[120.0, 80.5]], [shown], [])
+    assert "follows it from there" in text_of(said) and "--point 120,80.5" in text_of(said).replace('", "', " ")
+    point = read_decisions(layout_for(resolve_config(project)).objects_path("003"))[STARTS]["room"]["ball"][0]
+    assert (point["t"], point["x"], point["y"], point["by"].split()[0]) == (2.0, 120.0, 80.5, "ann")
+    assert "Things followed" in text_of(body)
