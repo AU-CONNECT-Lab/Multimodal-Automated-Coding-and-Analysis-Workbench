@@ -876,7 +876,7 @@ class TestEvidence:
         lines = module.part_lines(frame, words_frame(TALK), 0.0, 60.0)
         scales = read_scales_from(SCALES)
         system, user = build_rating_prompt(scales.get("warmth"), lines, people=["parent", "child"], minutes=1.0, evidence=True, reasons=True)
-        assert "1 | parent: How was school today?" in user and "4 | child: We had a test." in user
+        assert "parent: How was school today? [line 1]" in user and "child: We had a test. [line 4]" in user
         assert "cite only the numbered lines given" in system and '{"evidence": [{"line": <number>' in system and '"reason"' in system
         assert user.rstrip().endswith("Cite lines said by the parent.\nAnswer with the JSON object.")
         _, flow = build_rating_prompt(scales.get("flow"), lines, people=["parent", "child"], minutes=1.0, evidence=True)

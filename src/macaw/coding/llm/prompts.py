@@ -174,7 +174,8 @@ def build_rating_prompt(
         system.append(f"Notes from the researchers: {notes.strip()}")
     reason = ', "reason": "<what it rests on>"' if reasons else ""
     if evidence:
-        system.append("Each line starts with its number. Rate only from the transcript, and cite only the numbered lines given.")
+        # a number after the words is cited for its own line; one in front was often taken for the line below
+        system.append("Each line ends with its number. Rate only from the transcript, and cite only the numbered lines given.")
         entry = '{"evidence": [{"line": <number>, "quote": "<a few words copied exactly from that line>"}], "score": <score>' + reason + "}"
         system.append(
             f"Answer with one JSON object and nothing else: {entry}. First list every line the score rests on, each by its number "
@@ -195,7 +196,7 @@ def build_rating_prompt(
     for position, (number, row) in enumerate(zip(numbers, lines.itertuples(index=False))):
         if excerpts and position and getattr(row, "opens", False):
             user.append("...")
-        user.append(f"{' | '.join([*([str(number)] if evidence else []), str(row.speaker), *_details(row, show)])}: {row.text}")
+        user.append(f"{' | '.join([str(row.speaker), *_details(row, show)])}: {row.text}" + (f" [line {number}]" if evidence else ""))
     user += ["", "Rate the conversation on this scale.", f"Scale: {scale.scale}", f"Who is rated: {_rated(scale, people)}"]
     user.append(f"Scores: whole numbers from {scale.low} to {scale.high}.")
     if scale.definition:
