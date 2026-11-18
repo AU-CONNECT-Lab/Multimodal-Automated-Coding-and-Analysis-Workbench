@@ -1208,12 +1208,20 @@ def _followed_things(config) -> str:
         else f"SAM 2.1 [ravi2024] ({cfg.tracker_model or 'facebook/sam2.1-hiera-base-plus'})" if cfg.tracker == "sam2"
         else cfg.tracker
     )
+    checked = {
+        "always": "A person checked every starting point found by name before the outlines were used.",
+        "flagged": (
+            "A person checked the starting points in doubt: more than one candidate box in the starting frame, or the object "
+            "in view in fewer than half of the frames after it."
+        ),
+        "skip": "The starting points found by name were used without a person checking them.",
+    }[cfg.review]
     return (
         f"Objects named {', '.join(cfg.names)} were located by name with Grounding DINO [liu2024], taking the highest-scoring "
         f"box (at least {cfg.finder_score:g}) in the first ten seconds in which the object was found, five frames per second "
         "being searched, unless a person clicked on the object at a moment of their choosing. From there each object was "
         f"followed frame by frame as an outline with {tracker}, and counted as out of view in frames where the tracker gave "
-        f"it less than an even chance of being visible."
+        f"it less than an even chance of being visible. {checked}"
     )
 
 

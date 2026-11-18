@@ -223,3 +223,129 @@ class TestSettings:
         project.write_text(project.read_text(encoding="utf-8") + f"objects:\n  names: [{roles[0]}]\n", encoding="utf-8")
         with pytest.raises(Exception, match="which are roles"):
             resolve_config(project)
+
+
+@pytest.fixture
+def project(tmp_path):
+    """One recording with a room camera read for everyone, following a ball and a cup."""
+    import yaml
+
+    from macaw.config.loader import resolve_config, scaffold_project_config
+    from setup_helpers import camera, mics, put, write_setup
+
+    raw = tmp_path / "raw"
+    for device, name in (("parent_mic", "a.wav"), ("child_mic", "a.wav"), ("room", "a.mp4")):
+        put(raw, "003", device, name)
+    config = tmp_path / "project.yaml"
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    write_setup(config, cameras={"room": camera()}, microphones=mics())
+
+    def configure(**values):
+        data = yaml.safe_load(config.read_text(encoding="utf-8"))
+        data.setdefault("objects", {}).update(values)
+        config.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    def starts(entries):
+        from macaw.project.layout import layout_for
+
+        folder = layout_for(resolve_config(config)).artifacts_dir("003", "objects.track")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "starts.json").write_text(json.dumps({"room": {name: {**entry, "doubts": doubts(entry)} for name, entry in entries.items()}}), encoding="utf-8")
+
+    configure(names=["ball", "cup"])
+    return SimpleNamespace(config=config, configure=configure, starts=starts, resolved=lambda: resolve_config(config))
+
+
+BALL = {"from": FINDER, "frame": 6, "t": 0.6, "box": [30.0, 30.0, 40.0, 40.0], "score": 0.9, "candidates": 1, "frames": 35, "found": 30, "longest_gap_s": 0.5}
+
+
+def macaw(project, *args):
+    from typer.testing import CliRunner
+
+    from macaw.cli.main import app
+
+    return CliRunner().invoke(app, ["objects", "-c", str(project.config), "-r", "003", *args])
+
+
+class TestReview:
+    def gate(self, project):
+        from macaw.extractors.video.objects.review import ObjectReviewGate
+        from macaw.project.recording import build_recording
+
+        config = project.resolved()
+        return ObjectReviewGate(config), build_recording("003", config)
+
+    def test_every_start_found_by_name_waits_until_kept_and_a_thing_not_found_until_a_person_says_where(self, project):
+        from macaw.extractors.base import PERSON as BY_PERSON
+        from macaw.extractors.video.objects.review import waiting
+
+        project.starts({"ball": BALL, "cup": {"from": NOT_FOUND}})
+        gate, recording = self.gate(project)
+        assert [(item.name, item.why) for item in waiting(project.resolved(), "003")] == [
+            ("ball", "found by name, not looked at yet"), ("cup", "not found by name: click it on a frame, or say it is not on this camera"),
+        ]
+        assert "macaw objects -r 003" in gate.pending(recording)
+        listed = macaw(project)
+        assert listed.exit_code == 0 and "room ball: starts at 0.6 s, found by name (score 0.90); in view 86%" in listed.output
+        assert "[waits: found by name, not looked at yet]" in listed.output
+        kept = macaw(project, "--keep", "--by", "ann")
+        assert kept.exit_code == 0 and "kept the starts of ball on room" in kept.output
+        said = macaw(project, "--not-here", "cup", "--camera", "room")
+        assert said.exit_code == 0 and "stops looking for it there" in said.output
+        assert [item.why for item in waiting(project.resolved(), "003")] == ["followed again from what a person said on the next run"]
+        project.starts({"ball": BALL, "cup": {"from": NOT_HERE}})
+        gate, recording = self.gate(project)
+        assert gate.pending(recording) is None and gate.decided_by(recording) == BY_PERSON
+        assert "kept by ann" in macaw(project).output
+
+    def test_a_kept_start_no_longer_counts_once_the_name_finds_another(self, project):
+        from macaw.extractors.video.objects.review import waiting
+
+        project.configure(names=["ball"])
+        project.starts({"ball": BALL})
+        macaw(project, "--keep")
+        assert waiting(project.resolved(), "003") == []
+        project.starts({"ball": {**BALL, "frame": 9, "box": [1.0, 1.0, 5.0, 5.0]}})
+        assert [item.name for item in waiting(project.resolved(), "003")] == ["ball"]
+
+    def test_flagged_waits_only_for_doubts_and_skip_leaves_a_note(self, project):
+        from macaw.extractors.base import SOFTWARE
+        from macaw.extractors.video.objects.review import waiting
+
+        project.starts({"ball": BALL, "cup": {**BALL, "candidates": 2}})
+        project.configure(review="flagged")
+        assert [(item.name, item.why) for item in waiting(project.resolved(), "003")] == [("cup", "2 things in the start frame could be it")]
+        project.configure(review="skip")
+        project.starts({"ball": BALL, "cup": {"from": NOT_FOUND}})
+        gate, recording = self.gate(project)
+        assert gate.pending(recording) is None and gate.decided_by(recording) == SOFTWARE
+        notes = gate.notes(recording)
+        assert len(notes) == 1 and "not found by name and so not followed: cup on room" in notes[0].message
+
+    def test_a_start_needs_a_known_name_a_camera_a_time_and_a_point(self, project):
+        from macaw.extractors.video.objects.decisions import STARTS
+        from macaw.project.layout import layout_for
+
+        assert "not in objects.names" in str(macaw(project, "--start", "book", "--camera", "room", "--at", "1", "--point", "1,2").exception)
+        assert "--camera takes one of room" in str(macaw(project, "--start", "ball", "--camera", "front", "--at", "1", "--point", "1,2").exception)
+        assert "needs --at and --point" in str(macaw(project, "--start", "ball", "--camera", "room").exception)
+        given = macaw(project, "--start", "ball", "--camera", "room", "--at", "2.5", "--point", "100,50", "--by", "ann")
+        assert given.exit_code == 0 and "follows it from there" in given.output
+        said = read_decisions(layout_for(project.resolved()).objects_path("003"))
+        assert said[STARTS]["room"]["ball"][0]["x"] == 100.0
+        cleared = macaw(project, "--clear", "ball", "--camera", "room")
+        assert cleared.exit_code == 0 and "looks for it by name" in cleared.output
+
+    def test_the_quality_page_counts_the_starts_and_who_looked(self, project):
+        from macaw.project.layout import layout_for
+        from macaw.qc.report import _object_starts
+
+        project.starts({"ball": BALL, "cup": {"from": NOT_FOUND}})
+        config = project.resolved()
+        row = _object_starts(config, layout_for(config), "003")
+        assert row["by"] == "waiting" and "1 found by name (0 kept by a person), 1 not found and not followed" in row["decided"]
+        macaw(project, "--keep")
+        macaw(project, "--not-here", "cup", "--camera", "room")
+        project.starts({"ball": BALL, "cup": {"from": NOT_HERE}})
+        row = _object_starts(config, layout_for(config), "003")
+        assert row["by"] == "person" and "1 found by name (1 kept by a person), 1 said not to be on a camera" in row["decided"]

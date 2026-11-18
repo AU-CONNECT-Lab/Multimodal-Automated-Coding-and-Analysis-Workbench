@@ -39,6 +39,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.video.pose.listening",
     "macaw.extractors.video.pose.moving",
     "macaw.extractors.video.objects.track",
+    "macaw.extractors.video.objects.review",
     "macaw.extractors.segments",
 )
 

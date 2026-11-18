@@ -164,6 +164,7 @@ objects:
   tracker: sam2                      # sam2: SAM 2.1 (Apache-2.0) | sam3: SAM 3 (SAM License, weights on request)
   tracker_model: null                # sam2: facebook/sam2.1-hiera-base-plus (default), -tiny, -small or -large | sam3: facebook/sam3
   device: auto                       # auto | cpu | cuda
+  review: always                     # always: a person looks at every start found by name | flagged: only those in doubt | skip
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea

@@ -17,7 +17,8 @@ from macaw.extractors.video.gaze import angles
 from macaw.extractors.video.gaze.backends import BACKEND_GROUP, resolve_backend
 from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.objects.outline import inside
-from macaw.extractors.video.objects.track import ObjectTrackExtractor, load_objects, objects_file
+from macaw.extractors.video.objects.review import ObjectReviewGate
+from macaw.extractors.video.objects.track import load_objects, objects_file
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.gaze_labels import labels_frame, read_labels
 from macaw.project.room import seats as room_seats
@@ -178,7 +179,7 @@ class GazeTargetExtractor(Extractor):
 
         if not finds_points(config):
             return cls.requires + (FaceExtractor.name,)
-        return cls.requires + ((ObjectTrackExtractor.name,) if config.objects.names else ())
+        return cls.requires + ((ObjectReviewGate.name,) if config.objects.names else ())
 
     def backend(self):
         return resolve_backend(self.config.gaze.backend)

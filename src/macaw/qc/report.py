@@ -338,6 +338,31 @@ def _voice_checks(config: MacawConfig, layout, recording_id: str) -> list[dict]:
     return rows
 
 
+def _object_starts(config: MacawConfig, layout, recording_id: str) -> dict | None:
+    """Where each followed thing starts, and how many starts found by name a person looked at."""
+    from macaw.extractors.video.objects.decisions import KEPT, read_decisions
+    from macaw.extractors.video.objects.review import start_of, waiting
+    from macaw.extractors.video.objects.track import FINDER, NOT_FOUND, NOT_HERE, PERSON, load_starts
+
+    entries = [(camera, name, entry) for camera, found in load_starts(config, recording_id).items() for name, entry in found.items()]
+    if not config.objects.names or not entries:
+        return None
+    kept = read_decisions(layout.objects_path(recording_id))[KEPT]
+    looked = sum(1 for camera, name, entry in entries if entry["from"] == FINDER and kept.get(camera, {}).get(name, {}).get("start") == start_of(entry))
+    count = {kind: sum(1 for _, _, entry in entries if entry["from"] == kind) for kind in (FINDER, PERSON, NOT_HERE, NOT_FOUND)}
+    parts = [f"{count[FINDER]} found by name ({looked} kept by a person)"] if count[FINDER] else []
+    parts += [f"{count[PERSON]} started by a person"] if count[PERSON] else []
+    parts += [f"{count[NOT_HERE]} said not to be on a camera"] if count[NOT_HERE] else []
+    parts += [f"{count[NOT_FOUND]} not found and not followed"] if count[NOT_FOUND] else []
+    open_items = waiting(config, recording_id)
+    by = "waiting" if open_items else "software" if count[FINDER] > looked else "person"
+    return {
+        "what": "Where each thing starts",
+        "decided": f"{len(entries)} thing(s) on the cameras: " + ", ".join(parts) + f"; check on the Review page or with macaw objects -r {recording_id}",
+        "by": by, "href": None,
+    }
+
+
 def _who_and_when(stamp: str | None) -> str:
     """'ann 2026-10-26T10:00:00' as 'ann, 2026-10-26'."""
     if not stamp:
@@ -439,6 +464,9 @@ def _decisions(
             "decided": ", ".join(f"{count} as {reason}" for reason, count in reasons.items()),
             "by": "software", "href": "#Dropped",
         })
+    things = _object_starts(config, layout, recording_id)
+    if things is not None:
+        rows.append(things)
     coded = _model_coding(config, layout, recording_id)
     if coded is not None:
         rows.append(coded)

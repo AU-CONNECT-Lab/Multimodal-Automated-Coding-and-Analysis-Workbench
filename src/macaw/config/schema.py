@@ -484,6 +484,7 @@ class ObjectsSection(_Section):
     tracker: str = added(default="sam2")
     tracker_model: str | None = added(default=None)
     device: str = added(default="auto")
+    review: Literal["always", "flagged", "skip"] = added(default="always")
 
     @model_validator(mode="after")
     def _names(self) -> "ObjectsSection":
