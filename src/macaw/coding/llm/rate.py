@@ -8,6 +8,7 @@ import re
 import time
 from functools import partial
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -15,11 +16,12 @@ import pandas as pd
 from macaw.coding.llm.backends import (
     KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
 )
+from macaw.coding.llm.evidence import EVIDENCE_NAME, evidence_table, evidence_warnings
 from macaw.coding.llm.judge import prosody_rows_file, voice_figures
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import VOICE, build_rating_prompt
-from macaw.coding.scales import ScaleSet, read_scales, validate_scales
+from macaw.coding.scales import RatingScale, ScaleSet, read_scales, validate_scales
 from macaw.config.hashing import canonical
 from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingVersion
 from macaw.exceptions import CodebookError, ConfigError, InputNotFoundError, LLMBackendError
@@ -47,6 +49,8 @@ PROMPTS_NAME = "prompts.parquet"
 WHOLE = ""
 CUT_OFF = "cut off"
 _EDGE_S = 1e-3
+# an answer that lists its evidence first runs longer
+_EVIDENCE_ROOM = 1024
 # words in Latin letters; any other character but a space counts alone, as in scripts written without spaces
 _DIGIT, _WORD, _SYMBOL = re.compile(r"\d"), re.compile(r"[A-Za-zÀ-ɏ]+"), re.compile(r"[^\sA-Za-zÀ-ɏ\d]")
 
@@ -56,7 +60,7 @@ RATING_COLUMNS = [
 ]
 ANSWER_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
-    "completion_tokens", "reasoning_tokens", "seconds",
+    "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "evidence_problem",
 ]
 KEPT_NAME = "answers.jsonl"
 _COUNTS = ("prompt_tokens", "completion_tokens", "reasoning_tokens")
@@ -66,6 +70,18 @@ _MISSING = (
     "this one, nothing was said in the parts it rates, or none of the segments it names lies in the analysed part. 0 means "
     "every answer gave a whole score in the scale's range."
 )
+
+
+class Prompt(NamedTuple):
+    """One scale asked about one part: the text sent, and the numbered lines it shows."""
+
+    segment: str
+    start: float
+    end: float
+    scale: RatingScale
+    system: str
+    user: str
+    lines: pd.DataFrame
 
 
 class RatingExtractor(Extractor):
@@ -192,15 +208,24 @@ class RatingExtractor(Extractor):
                 for scale in scales.scales:
                     system, user = build_rating_prompt(
                         scale, shown, people=people, minutes=(end - start) / 60.0, show=cfg.show, notes=told, reasons=cfg.reasons,
+                        evidence=own.evidence,
                     )
-                    prompts.append((segment, start, end, scale, system, user))
-        answers = ask(prompts, backend, cfg, layout_for(self.config, create=False).unfinished_path(rid, self.name) / KEPT_NAME)
+                    prompts.append(Prompt(segment, start, end, scale, system, user, shown))
+        kept = layout_for(self.config, create=False).unfinished_path(rid, self.name) / KEPT_NAME
+        answers = ask(prompts, backend, cfg, kept, room=_EVIDENCE_ROOM if own.evidence else 0)
         answers.insert(0, "recording_id", rid)
         answers.insert(3, "rater", self.rating)
         ratings = rating_table(answers, prompts, self.rating, recording)
         warnings += answer_warnings(answers, ratings, cfg, backend, rid)
 
         paths = {name: workspace / name for name in (RATINGS_NAME, ANSWERS_NAME, PROMPTS_NAME)}
+        if own.evidence:
+            evidence, answers = evidence_table(answers, prompts)
+            warnings += evidence_warnings(evidence, answers, rid)
+            paths[EVIDENCE_NAME] = workspace / EVIDENCE_NAME
+            evidence.to_parquet(paths[EVIDENCE_NAME], index=False)
+        else:
+            answers = answers.assign(n_evidence=pd.array([pd.NA] * len(answers), dtype="Int64"), evidence_problem=pd.NA)
         ratings.to_parquet(paths[RATINGS_NAME], index=False)
         answers[ANSWER_COLUMNS].to_parquet(paths[ANSWERS_NAME], index=False)
         prompt_table(prompts, self.rating, rid).to_parquet(paths[PROMPTS_NAME], index=False)
@@ -247,7 +272,7 @@ class RatingExtractor(Extractor):
             "rating": self.rating, "scales": scales.name, "n_scales": len(scales.scales), "names_only": scales.names_only(),
             "provider": cfg.provider, "model": cfg.model, "n_samples": cfg.n_samples, "temperature": cfg.temperature,
             "seed": cfg.seed, "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording),
-            "reasons": cfg.reasons, "think": cfg.think, "transcript": own.transcript, "segments": list(own.segments),
+            "reasons": cfg.reasons, "think": cfg.think, "transcript": own.transcript, "segments": list(own.segments), "evidence": own.evidence,
             **concurrency_params(cfg),
         }
         return [
@@ -305,6 +330,7 @@ def part_lines(lines: pd.DataFrame, words: pd.DataFrame, start: float, end: floa
     source = lines.assign(n_words=lines["text"].str.split().str.len()) if columns else lines
     cut = cut_transcript(source, words, start, end)
     cut = cut[cut["text"].astype(str).str.strip() != ""].drop(columns=columns).reset_index(drop=True)
+    cut["line"] = np.arange(1, len(cut) + 1)
     gaps = voice_gaps(cut, clip_talk(talk, start, end)) if talk is not None else cut["t_start"] - cut["t_end"].cummax().shift()
     cut["t_start"] = cut["t_start"] - start
     cut["t_end"] = cut["t_end"] - start
@@ -321,13 +347,13 @@ def _answer(backend: LLMBackend, system: str, user: str, seed: int | None) -> di
     }
 
 
-def ask(prompts: list, backend: LLMBackend, cfg: LLMSection, kept_at: Path | None = None) -> pd.DataFrame:
+def ask(prompts: list, backend: LLMBackend, cfg: LLMSection, kept_at: Path | None = None, *, room: int = 0) -> pd.DataFrame:
     """One row per prompt and sample: segment, scale, sample, score, problem, reason, answer, the tokens and seconds it
     took, and whether it was kept from an earlier try. A server whose context is shorter than the longest prompt and its
-    answer stops the step after the first answer. With kept_at each answer is written there as it comes, and one already
-    there is not asked for again."""
-    longest = max((estimated_tokens(system + user) for *_, system, user in prompts), default=0)
-    asked = [(segment, scale, sample, system, user) for segment, _, _, scale, system, user in prompts for sample in range(cfg.n_samples)]
+    answer, room more tokens of it, stops the step after the first answer. With kept_at each answer is written there as it
+    comes, and one already there is not asked for again."""
+    longest = max((estimated_tokens(prompt[4] + prompt[5]) for prompt in prompts), default=0) + room
+    asked = [(prompt[0], prompt[3], sample, prompt[4], prompt[5]) for prompt in prompts for sample in range(cfg.n_samples)]
     seeds = [cfg.seed + sample if backend.takes_seed else None for _, _, sample, _, _ in asked]
     kept = KeptAnswers(kept_at)
     keys = [
@@ -401,14 +427,14 @@ def _room(needed: int) -> int:
 
 def prompt_table(prompts: list, rater: str, recording_id: str) -> pd.DataFrame:
     """The text sent for each segment and scale, once: every sample of a scale is asked with the same."""
-    rows = [(recording_id, segment, scale.scale, rater, system, user) for segment, _, _, scale, system, user in prompts]
+    rows = [(recording_id, prompt[0], prompt[3].scale, rater, prompt[4], prompt[5]) for prompt in prompts]
     return pd.DataFrame(rows, columns=PROMPT_COLUMNS)
 
 
 def rating_table(answers: pd.DataFrame, prompts: list, rater: str, recording: Recording) -> pd.DataFrame:
     """One row per segment and scale: the median of the answers that gave a score, their spread and how many there were."""
     rows = []
-    for segment, start, end, scale, *_ in prompts:
+    for segment, start, end, scale, *_ in (prompt[:4] for prompt in prompts):
         mine = answers[(answers["segment"] == segment) & (answers["scale"] == scale.scale)]
         scores = mine["score"].dropna().to_numpy(dtype=float)
         rows.append({

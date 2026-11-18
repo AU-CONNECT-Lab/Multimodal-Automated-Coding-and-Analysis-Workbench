@@ -865,3 +865,108 @@ class TestNotesBy:
         }
         found = varying_settings(params)
         assert isinstance(found, list) and len(found) == 3
+
+
+class TestEvidence:
+    def llm(self, server):
+        return {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 1}
+
+    def test_lines_are_numbered_and_the_answer_lists_its_evidence_before_the_score(self):
+        frame = transcript_frame(TALK).assign(speaker=lambda f: f["subject_id"])
+        lines = module.part_lines(frame, words_frame(TALK), 0.0, 60.0)
+        scales = read_scales_from(SCALES)
+        system, user = build_rating_prompt(scales.get("warmth"), lines, people=["parent", "child"], minutes=1.0, evidence=True, reasons=True)
+        assert "1 | parent: How was school today?" in user and "4 | child: We had a test." in user
+        assert "cite only the numbered lines given" in system and '{"evidence": [{"line": <number>' in system and '"reason"' in system
+        assert user.rstrip().endswith("Cite lines said by the parent.\nAnswer with the JSON object.")
+        _, flow = build_rating_prompt(scales.get("flow"), lines, people=["parent", "child"], minutes=1.0, evidence=True)
+        assert "Cite lines said by" not in flow
+        other, _ = build_rating_prompt(scales.get("flow"), lines, people=["parent", "child"], minutes=1.0, evidence=True)
+        assert other == system.replace(', "reason": "<what it rests on>"', "").replace(
+            "\nThe reason names in a few words what the score rests on: what was said, the timing or the voice.", ""
+        )
+
+    def test_each_cited_line_is_checked_three_ways(self):
+        from macaw.coding.llm.evidence import NO_LINE, NO_QUOTE, NOT_IN_LINE, OTHER_SPEAKER, check_cited
+
+        lines = pd.DataFrame({"line": [1, 2], "speaker": ["parent", "child"], "t_start": [1.0, 3.5], "t_end": [3.0, 5.0], "text": ["How was school today?", "It's fine."]})
+        warmth = module_scale(SCALES["scales"][0])
+        rows = check_cited(
+            [{"line": 1, "quote": "how was SCHOOL"}, {"line": "2", "quote": "its fine"}, {"line": 9, "quote": "x"}, {"line": 1, "quote": ""},
+             {"line": 1, "quote": "was school yesterday"}, {"line": 1.5}],
+            lines, warmth, 10.0,
+        )
+        assert [row["problem"] for row in rows] == ["", f"{OTHER_SPEAKER}", NO_LINE, NO_QUOTE, NOT_IN_LINE, NO_LINE]
+        assert (rows[0]["t_start"], rows[0]["t_end"], rows[0]["speaker"]) == (11.0, 13.0, "parent")
+        flow = module_scale(SCALES["scales"][2])
+        assert check_cited([{"line": 2, "quote": "It's fine"}], lines, flow, 0.0)[0]["problem"] == ""
+
+    def test_evidence_is_kept_with_recording_times_failures_counted_and_scores_kept(self, monkeypatch, tmp_path, server):
+        def answer(scale, sample):
+            if scale == "warmth":
+                return json.dumps({"evidence": [{"line": 1, "quote": "we had a test"}], "score": 4})
+            if scale == "on_task":
+                return json.dumps({"score": 1})
+            return json.dumps({"evidence": [{"line": 1, "quote": "We had"}, {"line": 7, "quote": "x"}], "score": 2})
+
+        server.score = answer
+        config = transcribed(project(
+            tmp_path, {"cited": {"scales": "scales.yaml", "segments": ["late"], "evidence": True}}, llm=self.llm(server),
+            segments=[("r1", "late", 15, 25)],
+        ))
+        result = rate(monkeypatch, config, "cited")
+        ratings = pd.read_parquet(result.artifacts["ratings.parquet"]).set_index("scale")
+        assert ratings.loc["warmth", "score"] == 4 and ratings.loc["flow", "score"] == 2 and ratings.loc["on_task", "score"] == 1
+        answers = pd.read_parquet(result.artifacts["answers.parquet"]).set_index("scale")
+        assert answers.loc["warmth", "evidence_problem"] == "said by another person 1" and answers.loc["warmth", "n_evidence"] == 1
+        assert answers.loc["on_task", "evidence_problem"] == "no list of evidence" and pd.isna(answers.loc["on_task", "n_evidence"])
+        assert answers.loc["flow", "evidence_problem"] == "no such line 1" and answers.loc["flow", "problem"] == ""
+        evidence = pd.read_parquet(result.artifacts["evidence.parquet"])
+        cited = evidence[(evidence["scale"] == "flow") & (evidence["line"] == 1)].iloc[0]
+        assert (cited["speaker"], cited["t_start"], cited["t_end"], cited["said"]) == ("child", 20.0, 22.0, "We had a test.")
+        [warned] = [warning for warning in result.warnings if warning.check == "rating_evidence_unchecked"]
+        assert "2 of the 3 lines the model cited failed the check" in warned.message and "1 of 3 answers gave no list" in warned.message
+        assert result.specs[0].params["evidence"] is True
+
+    def test_without_evidence_the_answers_say_nothing_of_it_and_the_key_is_as_before(self, monkeypatch, tmp_path, server):
+        path = project(tmp_path, {"plain": {"scales": "scales.yaml"}}, llm=self.llm(server))
+        before = hash_extractor_config(resolve_config(path), "coding.rate.plain")
+        result = rate(monkeypatch, transcribed(path), "plain")
+        answers = pd.read_parquet(result.artifacts["answers.parquet"])
+        assert "evidence.parquet" not in result.artifacts and answers["n_evidence"].isna().all() and answers["evidence_problem"].isna().all()
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["coding"]["ratings"]["plain"]["evidence"] = False
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        assert hash_extractor_config(resolve_config(path), "coding.rate.plain") == before
+        data["coding"]["ratings"]["plain"]["evidence"] = True
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        assert hash_extractor_config(resolve_config(path), "coding.rate.plain") != before
+
+    def test_the_export_writes_the_cited_lines_with_a_dictionary_and_the_methods_say_how_they_were_checked(self, monkeypatch, tmp_path, server):
+        from typer.testing import CliRunner
+
+        from macaw.cli.main import app
+        from macaw.project.manifest import FeatureManifest, write_manifest
+        from macaw.qc.boilerplate import describe
+
+        server.score = lambda scale, sample: json.dumps({"evidence": [{"line": 2, "quote": "fine"}], "score": 1})
+        path = project(tmp_path, {"cited": {"scales": "scales.yaml", "evidence": True}}, llm=self.llm(server))
+        config = transcribed(path)
+        result = rate(monkeypatch, config, "cited")
+        # as the runner leaves a finished task: its files among the step's artifacts, its specs in the manifest
+        layout = layout_for(config)
+        folder = layout.artifacts_dir("r1", "coding.rate.cited")
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, made in result.artifacts.items():
+            shutil.copy(made, folder / name)
+        fragment = FeatureManifest()
+        fragment.extend(result.specs)
+        write_manifest(fragment, layout.manifest_fragment_path("r1", "coding.rate.cited"))
+        out = tmp_path / "exported"
+        shown = CliRunner().invoke(app, ["ratings", "export", str(out), "-c", str(path)])
+        assert shown.exit_code == 0, shown.output
+        assert "3 lines they cited" in shown.output
+        evidence = pd.read_csv(out / "evidence.csv")
+        assert len(evidence) == 3 and set(evidence["speaker"]) == {"child"} and "group_id" in evidence.columns
+        assert (out / "evidence_dictionary.csv").is_file()
+        assert "before each score the model was asked to list the lines" in " ".join(describe(fragment, config)["Ratings"])

@@ -618,6 +618,8 @@ class RatingVersion(_Section):
     notes_by: NotesBy | None = None
     reasons: bool | None = None
     think: bool | None = None
+    # the model lists the numbered lines its score rests on, each checked against the transcript
+    evidence: bool = added(default=False)
 
     @field_validator("segments")
     @classmethod

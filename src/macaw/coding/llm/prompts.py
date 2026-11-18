@@ -141,10 +141,11 @@ def build_rating_prompt(
     show: Sequence[str] = (),
     notes: str = "",
     reasons: bool = False,
+    evidence: bool = False,
 ) -> tuple[str, str]:
     """Returns (system, user). lines carry speaker (a role), t_start and t_end from the start of what is rated, gap_before,
-    text and the voice items of show. Only the end of the user part names the scale, so every scale asked about one
-    conversation starts the same and a server can reuse what it read."""
+    text and the voice items of show, and with evidence the line number each is shown with. Only the end of the user part
+    names the scale, so every scale asked about one conversation starts the same and a server can reuse what it read."""
     system = [
         "You rate a recorded conversation on one rating scale, as a trained observer would. The transcript gives what was "
         "said in time order; each line starts with the role of the person who said it.",
@@ -166,13 +167,27 @@ def build_rating_prompt(
         )
     if notes.strip():
         system.append(f"Notes from the researchers: {notes.strip()}")
-    entry = '{"score": <score>, "reason": "<what it rests on>"}' if reasons else '{"score": <score>}'
-    system.append(f"Answer with one JSON object and nothing else: {entry}, the score a whole number in the scale's range.")
+    reason = ', "reason": "<what it rests on>"' if reasons else ""
+    if evidence:
+        system.append("Each line starts with its number. Rate only from the transcript, and cite only the numbered lines given.")
+        entry = '{"evidence": [{"line": <number>, "quote": "<a few words copied exactly from that line>"}], "score": <score>' + reason + "}"
+        system.append(
+            f"Answer with one JSON object and nothing else: {entry}. First list every line the score rests on, each by its number "
+            "with a few words copied exactly from it, or an empty list where no line bears on the scale; then the score, a whole "
+            "number in the scale's range."
+        )
+    else:
+        entry = "{" + '"score": <score>' + reason + "}"
+        system.append(f"Answer with one JSON object and nothing else: {entry}, the score a whole number in the scale's range.")
     if reasons:
         system.append("The reason names in a few words what the score rests on: what was said, the timing or the voice.")
 
     user = [f"Transcript ({minutes:.1f} minutes):"]
-    user.extend(f"{' | '.join([str(row.speaker), *_details(row, show)])}: {row.text}" for row in lines.itertuples(index=False))
+    numbers = lines["line"].tolist() if "line" in lines.columns else range(1, len(lines) + 1)
+    user.extend(
+        f"{' | '.join([*([str(number)] if evidence else []), str(row.speaker), *_details(row, show)])}: {row.text}"
+        for number, row in zip(numbers, lines.itertuples(index=False))
+    )
     user += ["", "Rate the conversation on this scale.", f"Scale: {scale.scale}", f"Who is rated: {_rated(scale, people)}"]
     user.append(f"Scores: whole numbers from {scale.low} to {scale.high}.")
     if scale.definition:
@@ -185,6 +200,8 @@ def build_rating_prompt(
     if scale.rules:
         user.append("Rules:")
         user.extend(f"- {rule}" for rule in scale.rules)
+    if evidence and scale.person != ALL:
+        user.append(f"Cite lines said by the {scale.person}.")
     user.append("Answer with the JSON object.")
     return "\n".join(system), "\n".join(user)
 

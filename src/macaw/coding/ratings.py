@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from macaw.coding.llm.evidence import EVIDENCE_COLUMNS, EVIDENCE_NAME, NO_LINE, NO_LIST, NO_QUOTE, NOT_IN_LINE, OTHER_SPEAKER
 from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, PROMPT_COLUMNS, PROMPTS_NAME, RATE_STEP, RATINGS_NAME, WHOLE
 from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
@@ -23,6 +24,7 @@ TABLE_COLUMNS = [
 # answers.csv carries the recording's entities after its id, as scores.csv does
 ANSWER_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *ANSWER_COLUMNS[1:]]
 PROMPT_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *PROMPT_COLUMNS[1:]]
+EVIDENCE_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *EVIDENCE_COLUMNS[1:]]
 STATISTICS = ("icc", "kappa", "exact", "within_one")
 _UNIT = ["recording_id", "segment"]
 
@@ -62,6 +64,14 @@ def model_prompts(config, recording_ids: list[str]) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame(columns=PROMPT_TABLE_COLUMNS)
     return _with_entities(config, pd.concat(frames, ignore_index=True)).reindex(columns=PROMPT_TABLE_COLUMNS)
+
+
+def model_evidence(config, recording_ids: list[str]) -> pd.DataFrame:
+    """The lines each answer cited, from the versions that ask for evidence."""
+    frames = _artifacts(config, recording_ids, EVIDENCE_NAME)
+    if not frames:
+        return pd.DataFrame(columns=EVIDENCE_TABLE_COLUMNS)
+    return _with_entities(config, pd.concat(frames, ignore_index=True)).reindex(columns=EVIDENCE_TABLE_COLUMNS)
 
 
 def _with_entities(config, table: pd.DataFrame) -> pd.DataFrame:
@@ -336,6 +346,36 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
         "Seconds from sending the request to its whole answer, its wait in the server's queue and any further tries included.", "s",
         "Empty for answers rated before the time was kept.",
     ),
+    "n_evidence": (
+        "How many lines the answer cited as its evidence; evidence.csv holds each.", "count",
+        f"Empty when the version does not ask for evidence (evidence under coding.ratings), or the answer gave {NO_LIST}. 0 means "
+        "it cited none.",
+    ),
+    "evidence_problem": (
+        f"The checks the cited lines failed, each with how many lines failed it: {NO_LINE}, {OTHER_SPEAKER} than the one the scale "
+        f"rates, {NO_QUOTE}, or {NOT_IN_LINE}; or {NO_LIST}. The score is kept either way.", None,
+        "Empty where every cited line passed, and when the version does not ask for evidence.",
+    ),
+}
+EVIDENCE_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
+    "segment": _SEGMENT,
+    "scale": _SCALE,
+    "rater": ("The version of the language model under coding.ratings that answered.", None, "Never empty."),
+    "sample": ("Which of the model's answers to this scale cited the line, as in answers.csv.", None, "Never empty."),
+    "line": (
+        "The number of the line cited, as the transcript sent to the model numbered its lines from 1.", None,
+        "Empty where the answer gave something other than a whole number.",
+    ),
+    "speaker": ("Who said the line, as the transcript named them.", None, f"Empty where the line does not exist ({NO_LINE})."),
+    "t_start": ("When the line starts, in seconds on the recording's clock.", "s", f"Empty where the line does not exist ({NO_LINE})."),
+    "t_end": ("When the line ends, in seconds on the recording's clock.", "s", f"Empty where the line does not exist ({NO_LINE})."),
+    "quote": ("The words the answer copied from the line.", None, "Empty where the answer copied none."),
+    "said": ("The line as the model was shown it.", None, f"Empty where the line does not exist ({NO_LINE})."),
+    "problem": (
+        f"What failed: {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; {NO_QUOTE}; or "
+        f"{NOT_IN_LINE}, the copied words not found in the line once case, punctuation and spacing are set aside. Several are "
+        "joined by a semicolon.", None, "Empty where the line passed every check.",
+    ),
 }
 PROMPT_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     "segment": _SEGMENT,
@@ -368,6 +408,10 @@ def scores_dictionary(config, table: pd.DataFrame, base: Path) -> list[dict]:
 
 def answers_dictionary(config, answers: pd.DataFrame, base: Path) -> list[dict]:
     return _with_raters_and_scales(config, [_rating_entry(column, ANSWER_COLUMNS_SAID) for column in answers.columns], answers, base)
+
+
+def evidence_dictionary(config, evidence: pd.DataFrame, base: Path) -> list[dict]:
+    return _with_raters_and_scales(config, [_rating_entry(column, EVIDENCE_COLUMNS_SAID) for column in evidence.columns], evidence, base)
 
 
 def prompts_dictionary(config, prompts: pd.DataFrame, base: Path) -> list[dict]:

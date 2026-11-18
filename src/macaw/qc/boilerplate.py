@@ -821,6 +821,14 @@ def _rating(config, spec, names) -> str:
             "corrected transcript were rated."
         )
     text += _prompt_extras({key: value for key, value in params.items() if key != "reasons"})
+    if params.get("evidence"):
+        text += (
+            " The lines of the transcript were numbered, and before each score the model was asked to list the lines the score "
+            "rested on, each with a few words copied from it, to rate only from the transcript and to cite only the lines given. "
+            "Each cited line was checked to exist, to have been said by the person rated where a scale rated one person, and to "
+            "hold the copied words once case and punctuation were set aside; answers that failed a check kept their scores, and "
+            "the failures were counted."
+        )
     if params.get("reasons"):
         text += " The model was asked to name in a few words what each score rested on, after the score."
     return text
