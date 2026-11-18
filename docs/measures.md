@@ -57,6 +57,8 @@ Until a person has looked, the recording waits under *Waiting for a person*, and
 
 The same is done in a terminal: `macaw objects -r REC` lists the starts, `--keep` keeps those found by name, `--start NAME --camera CAM --at T --point X,Y` gives a start by a point on the object at time *T* (in seconds), and `--not-here NAME --camera CAM` says that an object is not on that camera. With `objects.review: flagged` only the starts in doubt wait: more than one candidate in the starting frame, the object in view in fewer than half of the frames after its start, or not found at all. With `skip` nothing waits, and the quality-control report lists the starts in doubt that were used without a look.
 
+After the start, the review frames of the quality-control report show the outlines too, so that an object picked up on something else can be seen there. With a model looking at the review frames ({ref}`model-look`), it is also asked of each outline whether it is on the object named.
+
 When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. The tracker is SAM 2.1 by default; `objects.tracker: sam3` uses the tracker of SAM 3 instead, whose model is given on request on Hugging Face (accept its terms there and log in with `hf auth login` first).
 
 ### Hands on objects

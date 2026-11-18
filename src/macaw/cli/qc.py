@@ -154,8 +154,11 @@ def _render(resolved, layout, recording, results, candidates, *, plain: bool = F
         seed=cfg.review_seed,
     )
     out_dir = layout.renders_dir(recording.recording_id)
+    from macaw.extractors.video.objects.track import load_objects
+
+    things = load_objects(resolved, recording.recording_id) if resolved.objects.names else None
     index = render_review(
-        recording, keypoints, sample, out_dir, plain_dir=out_dir / PLAIN if plain else None,
+        recording, keypoints, sample, out_dir, plain_dir=out_dir / PLAIN if plain else None, things=things,
     )
     logger.info("%s: %d frame(s) rendered", recording.recording_id, len(index))
     typer.echo(str(out_dir))
@@ -165,7 +168,10 @@ def _render(resolved, layout, recording, results, candidates, *, plain: bool = F
 def _look(resolved, layout, recording, results, index, backend) -> None:
     from macaw.qc.look import describe, look_at_recording, summary
 
-    look_at_recording(backend, resolved.qc.look, layout, recording, results.keypoints(), index, seed=resolved.qc.review_seed)
+    from macaw.extractors.video.objects.track import load_objects
+
+    things = load_objects(resolved, recording.recording_id) if resolved.objects.names else None
+    look_at_recording(backend, resolved.qc.look, layout, recording, results.keypoints(), index, seed=resolved.qc.review_seed, things=things)
     typer.echo(f"{recording.recording_id}: {describe(summary(layout, recording.recording_id))}")
 
 

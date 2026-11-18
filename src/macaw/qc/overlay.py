@@ -131,6 +131,21 @@ def draw_overlay(
     return out
 
 
+def draw_things(image: np.ndarray, things: pd.DataFrame, *, labels: bool = True) -> np.ndarray:
+    """things is one frame's rows of objects.track: each outline drawn in white over black, with its name above it."""
+    cv2 = cv2_module()
+    out = image.copy()
+    height = out.shape[0]
+    font_scale, thickness = max(0.4, height / 1200.0), max(1, int(round(height / 500.0)))
+    for row in things.itertuples():
+        parts = [np.asarray(part, dtype=np.int32).reshape(-1, 1, 2) for part in row.outline if len(part) >= 6]
+        cv2.polylines(out, parts, True, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+        cv2.polylines(out, parts, True, (255, 255, 255), thickness, cv2.LINE_AA)
+        if labels:
+            _text(cv2, out, str(row.label), (int(row.x0), int(row.y0) - 6), font_scale, (255, 255, 255), thickness)
+    return out
+
+
 def _text(cv2, image, text, origin, scale, colour, thickness) -> None:
     """One pass on a dark box, kept inside the frame. A thicker outline pass gets wider glyph
     advances, drifts off the text and garbles it on small frames."""
@@ -182,8 +197,10 @@ def render_review(
     out_dir: Path,
     *,
     plain_dir: Path | None = None,
+    things: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """One image per sampled moment and camera, plus an index.csv that says why each was drawn; plain_dir also keeps each frame undrawn."""
+    """One image per sampled moment and camera, plus an index.csv that says why each was drawn; plain_dir also keeps each
+    frame undrawn; things, objects.track's rows, are outlined too."""
     cv2 = cv2_module()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -214,7 +231,10 @@ def render_review(
                     row.reason if row.reason == BASELINE else f"{row.check}: {row.reason}",
                 ]
                 name = f"{index:03d}_{row.reason}_{row.t:09.3f}s_{device}.jpg"
-                cv2.imwrite(str(out_dir / name), draw_overlay(image, people, subjects, header))
+                drawn = draw_overlay(image, people, subjects, header)
+                if things is not None and not things.empty:
+                    drawn = draw_things(drawn, things[(things["frame"] == frame) & (things["video"] == device)])
+                cv2.imwrite(str(out_dir / name), drawn)
                 if plain_dir is not None:
                     cv2.imwrite(str(plain_dir / name), image)
                 entries.append(

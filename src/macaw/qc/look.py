@@ -20,9 +20,9 @@ from macaw.config.schema import LookSection
 from macaw.exceptions import MacawError
 from macaw.extractors import get_backend
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-from macaw.qc.overlay import cv2_module, draw_overlay
+from macaw.qc.overlay import cv2_module, draw_overlay, draw_things
 
-MISSED, TWICE, ON_NO_ONE, WRONG_NAME = "missed", "twice", "on_no_one", "wrong_name"
+MISSED, TWICE, ON_NO_ONE, WRONG_NAME, NOT_THE_THING = "missed", "twice", "on_no_one", "wrong_name", "not_the_thing"
 RIGHT, WRONG = "right", "wrong"
 UNSURE = "unsure"
 PLAIN = "plain"           # the review frames undrawn, beside the drawn ones
@@ -57,6 +57,14 @@ Answer two questions about what the skeleton is drawn on:
 - who: which of these people is it? Give the name only when the picture clearly shows it; otherwise answer "unsure".
 
 Answer in JSON: {{{{"person": true or false, "who": "<a name>" or "unsure"}}}}."""
+
+
+THING = """You check the work of an object tracker. The picture is cut out of a video frame around one thing the tracker \
+followed through the video; it drew the thing's outline in a thin white line. The study calls this thing "{name}".
+
+Is what the outline holds a {name}, or part of one? Answer "unsure" when the picture does not show it clearly.
+
+Answer in JSON: {{"is_it": true, false or "unsure"}}."""
 
 
 def backend_for(cfg: LookSection) -> LLMBackend:
@@ -114,6 +122,16 @@ def person_picture(image: np.ndarray, person: dict, subjects: list[str]) -> byte
     return _jpeg(drawn[y0:y1, x0:x1], CROP_SIDE)
 
 
+def thing_picture(image: np.ndarray, thing) -> bytes:
+    """One followed thing cut out with its outline drawn and no name on it."""
+    drawn = draw_things(image, pd.DataFrame([thing]), labels=False)
+    height, width = drawn.shape[:2]
+    pad_x, pad_y = CROP_MARGIN * (thing["x1"] - thing["x0"]) + 20, CROP_MARGIN * (thing["y1"] - thing["y0"]) + 20
+    x0, y0 = int(max(0, thing["x0"] - pad_x)), int(max(0, thing["y0"] - pad_y))
+    x1, y1 = int(min(width, thing["x1"] + pad_x)), int(min(height, thing["y1"] + pad_y))
+    return _jpeg(drawn[y0:y1, x0:x1], CROP_SIDE)
+
+
 def parsed_answer(text: str) -> dict | None:
     try:
         parsed = json.loads(repair_json(text))
@@ -129,8 +147,9 @@ def question(described: dict[str, str]) -> str:
     return PERSON_AND_WHO.format(people=", ".join(f'"{name}" ({looks})' for name, looks in described.items()))
 
 
-def problems(people_seen: int | None, boxes: list[dict], names: list[str]) -> list[dict]:
-    """Where the answers disagree with what was drawn: someone in view without a skeleton, someone drawn twice, a box on no one, a name on the wrong person."""
+def problems(people_seen: int | None, boxes: list[dict], names: list[str], things: list[dict] = ()) -> list[dict]:
+    """Where the answers disagree with what was drawn: someone in view without a skeleton, someone drawn twice, a box on no one, a name on the wrong person,
+    an outline on something other than its thing."""
     found = []
     on_people = sum(box["person"] is not False for box in boxes)
     if people_seen is not None and people_seen > on_people:
@@ -145,11 +164,16 @@ def problems(people_seen: int | None, boxes: list[dict], names: list[str]) -> li
             found.append({"kind": ON_NO_ONE, "box": box["name"], "says": f"the box named {shown} is not on a person"})
         elif box["name"] and box["who"] in names and box["who"] != box["name"] and given[box["who"]] == 1:
             found.append({"kind": WRONG_NAME, "box": box["name"], "says": f"the box named {box['name']} looks like {box['who']}"})
+    for thing in things:
+        if thing["is_it"] is False:
+            found.append({"kind": NOT_THE_THING, "box": thing["name"], "says": f"the outline of {thing['name']} is not on a {thing['name']}"})
     return found
 
 
-def look_at_frame(backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, subjects: list[str], described: dict[str, str]) -> dict:
-    """described is qc.look.people for this recording's people; only their names are checked."""
+def look_at_frame(
+    backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, subjects: list[str], described: dict[str, str], things: pd.DataFrame | None = None,
+) -> dict:
+    """described is qc.look.people for this recording's people; only their names are checked. things are the frame's outlines from objects.track."""
     counted = parsed_answer(backend.complete(COUNT, "Count the people.", seed=0, images=[_jpeg(image, LONG_SIDE)]).text)
     seen = counted.get("people") if counted else None
     unreadable = int(not isinstance(seen, (int, float)) or isinstance(seen, bool))
@@ -166,21 +190,32 @@ def look_at_frame(backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, 
             "name": person["name"], "track": person["track"], "person": is_person if isinstance(is_person, bool) else None,
             "who": who if who in names else UNSURE,
         })
-    return {"people_seen": people_seen, "boxes": boxes, "problems": problems(people_seen, boxes, names), "unreadable": unreadable}
+    asked = []
+    for thing in (things.to_dict("records") if things is not None else []):
+        said = parsed_answer(backend.complete(THING.format(name=thing["label"]), "Check this thing.", seed=0, images=[thing_picture(image, thing)]).text)
+        is_it = said.get("is_it") if said else None
+        unreadable += int(not isinstance(is_it, bool) and is_it != UNSURE)
+        asked.append({"name": str(thing["label"]), "is_it": is_it if isinstance(is_it, bool) else None})
+    return {
+        "people_seen": people_seen, "boxes": boxes, "things": asked, "problems": problems(people_seen, boxes, names, asked), "unreadable": unreadable,
+    }
 
 
-def _look_at_file(backend, cv2, path, people, subjects, described) -> dict:
-    return look_at_frame(backend, cv2.imread(str(path)), people, subjects, described)
+def _look_at_file(backend, cv2, path, people, subjects, described, things=None) -> dict:
+    return look_at_frame(backend, cv2.imread(str(path)), people, subjects, described, things)
 
 
-def _key(picture: bytes, people: list[dict], model: str, described: dict[str, str]) -> str:
+def _key(picture: bytes, people: list[dict], model: str, described: dict[str, str], things: pd.DataFrame | None = None) -> str:
     drawn = [(person["name"], person["track"], [round(value, 1) for value in person["bounds"]]) for person in people]
-    text = json.dumps([QUESTIONS, model, described, drawn])
+    asked = [] if things is None else [(str(row.label), [round(float(value), 1) for value in (row.x0, row.y0, row.x1, row.y1)]) for row in things.itertuples()]
+    # a frame without outlines keeps the key it had before things were asked about
+    text = json.dumps([QUESTIONS, model, described, drawn] + ([asked] if asked else []))
     return hashlib.sha1(picture + text.encode("utf-8")).hexdigest()[:16]
 
 
 def look_at_recording(
     backend: LLMBackend, cfg: LookSection, layout, recording, keypoints: pd.DataFrame, index: pd.DataFrame, *, seed: int,
+    things: pd.DataFrame | None = None,
 ) -> dict:
     """Asks about each review frame not already answered for the same picture, people, model and descriptions, then draws the random check."""
     rid = recording.recording_id
@@ -196,16 +231,20 @@ def look_at_recording(
         if not path.is_file():
             continue
         people = keypoints[(keypoints["frame"] == row.frame) & (keypoints["video"] == row.video)]
-        key = _key(path.read_bytes(), drawn_people(people), model, described)
+        shown = None if things is None else things[(things["frame"] == row.frame) & (things["video"] == row.video)]
+        key = _key(path.read_bytes(), drawn_people(people), model, described, shown)
         entry = earlier.get(row.file)
         if entry is None or entry.get("key") != key:
             entry = {"file": row.file, "t": float(row.t), "video": row.video, "frame": int(row.frame), "reason": row.reason, "key": key}
-            asked.append((entry, functools.partial(_look_at_file, backend, cv2, path, people, subjects, described)))
+            asked.append((entry, functools.partial(_look_at_file, backend, cv2, path, people, subjects, described, shown)))
         found.append(entry)
     for (entry, _), answer in zip(asked, run_in_order([job for _, job in asked], cfg.concurrency)):
         entry.update(answer)
     # read again from the answers, so a changed reading needs no new question
-    entries = [{**entry, "problems": problems(entry["people_seen"], entry["boxes"], list(described)), "random_check": False} for entry in found]
+    entries = [
+        {**entry, "problems": problems(entry["people_seen"], entry["boxes"], list(described), entry.get("things", [])), "random_check": False}
+        for entry in found
+    ]
     passed = [position for position, entry in enumerate(entries) if not entry["problems"] and not entry["unreadable"]]
     rng = np.random.default_rng([seed, zlib.crc32(rid.encode("utf-8"))])
     for position in rng.choice(passed, size=min(cfg.random_check, len(passed)), replace=False) if passed else []:
@@ -272,6 +311,7 @@ def summary(layout, recording_id: str) -> dict | None:
         "drawn": len(drawn), "drawn_checked": sum(said[entry["file"]] is not None for entry in drawn),
         "drawn_wrong": sum(said[entry["file"]] == WRONG for entry in drawn),
         "unreadable": sum(entry.get("unreadable", 0) for entry in frames),
+        "things": sum(len(entry.get("things", [])) for entry in frames),
         "kinds": dict(Counter(item["kind"] for entry in flagged for item in entry["problems"])),
     }
 
@@ -298,7 +338,7 @@ def project_summary(config) -> dict | None:
     found = [item for item in (summary(layout, rid) for rid in resolve_recordings(config, None)) if item]
     if not found:
         return None
-    counts = ("frames", "flagged", "flagged_checked", "flagged_right", "drawn", "drawn_checked", "drawn_wrong")
+    counts = ("frames", "flagged", "flagged_checked", "flagged_right", "drawn", "drawn_checked", "drawn_wrong", "things")
     return {
         **{key: sum(item[key] for item in found) for key in counts},
         "recordings": len(found), "models": sorted({str(item["model"]) for item in found}),

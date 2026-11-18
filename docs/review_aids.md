@@ -80,9 +80,10 @@ This draws the review frames and asks the model, for each frame, how many people
 - someone in view has no skeleton,
 - someone is drawn twice,
 - a skeleton lies on something that is not a person, such as a toy or a picture on the wall,
-- the name of a described participant is on someone else.
+- the name of a described participant is on someone else,
+- the outline of an object followed ({ref}`objects`), shown on its own, is not on that object.
 
-A frame already answered is asked again only when the frame, the people drawn on it, the model or the descriptions change.
+A frame already answered is asked again only when the frame, the people or outlines drawn on it, the model or the descriptions change.
 
 ### Checking the model
 

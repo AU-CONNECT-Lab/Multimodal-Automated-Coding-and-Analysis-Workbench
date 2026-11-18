@@ -177,6 +177,7 @@ def _looked(found: dict) -> str:
         f"({_listed(found['providers'])}). For each frame it was asked how many people were in view and, for each person the "
         "tracker had drawn, cut out with only that person's skeleton, whether it was a real person"
         + (f" and, given a description of the {_listed(found['described'])}, which of them it was" if found.get("described") else "")
+        + ("; for each object outlined on the frame, cut out with its outline, it was asked whether it was that object" if found.get("things") else "")
         + "; a frame where its answers disagreed with the tracker was flagged for a person to check. "
         f"It flagged {found['flagged']} of {found['frames']} frames"
     )

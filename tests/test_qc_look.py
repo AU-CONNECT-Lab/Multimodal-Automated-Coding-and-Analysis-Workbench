@@ -400,3 +400,56 @@ def test_methods_names_the_people_the_model_was_told_about(project):
     look_file.write_text(json.dumps({**json.loads(look_file.read_text(encoding="utf-8")), "described": LOOKS}), encoding="utf-8")
     text = _looked(look.project_summary(resolve_config(project)))
     assert "whether it was a real person and, given a description of the child and parent, which of them it was;" in text
+
+
+class TestThings:
+    SQUARE = {"video": "room.avi", "frame": 5, "label": "ball", "x0": 200.0, "y0": 60.0, "x1": 260.0, "y1": 120.0, "outline": [[200, 60, 260, 60, 260, 120, 200, 120]]}
+
+    def model(self, answers):
+        seen, model = [], Model(people=1)
+        replies = iter(answers)
+
+        def complete(system, user, *, seed=None, images=()):
+            seen.append(system)
+            if system == look.COUNT:
+                return LLMResponse(text='{"people": 1}', model="m")
+            if system.startswith("You check the work of an object tracker"):
+                return LLMResponse(text=next(replies), model="m")
+            return LLMResponse(text='{"person": true, "who": "unsure"}', model="m")
+
+        model.complete = complete
+        return model, seen
+
+    def test_each_outline_is_asked_about_by_its_name_and_a_no_flags_the_frame(self):
+        things = pd.DataFrame([self.SQUARE, {**self.SQUARE, "label": "cup", "x0": 20.0, "x1": 60.0, "outline": [[20, 60, 60, 60, 60, 120, 20, 120]]}])
+        model, seen = self.model(['{"is_it": false}', '{"is_it": "unsure"}'])
+        found = look.look_at_frame(model, np.zeros((240, 320, 3), np.uint8), body("parent"), NAMES, {}, things)
+        assert sum(system.startswith("You check the work of an object tracker") for system in seen) == 2
+        assert '"ball"' in [system for system in seen if "object tracker" in system][0]
+        assert found["things"] == [{"name": "ball", "is_it": False}, {"name": "cup", "is_it": None}] and found["unreadable"] == 0
+        assert [(item["kind"], item["box"]) for item in found["problems"]] == [(look.NOT_THE_THING, "ball")]
+        model, _ = self.model(["nonsense"])
+        assert look.look_at_frame(model, np.zeros((240, 320, 3), np.uint8), body("parent"), NAMES, {}, things.iloc[:1])["unreadable"] == 1
+
+    def test_the_cut_holds_the_outline_and_a_frame_without_one_keeps_its_key(self):
+        picture = decoded(look.thing_picture(np.zeros((240, 320, 3), np.uint8), self.SQUARE))
+        assert max(picture.shape[:2]) == look.CROP_SIDE and (picture > 200).any()
+        people = look.drawn_people(body("parent"))
+        plain = look._key(b"x", people, "m", {})
+        assert look._key(b"x", people, "m", {}, pd.DataFrame(columns=list(self.SQUARE))) == plain
+        assert look._key(b"x", people, "m", {}, pd.DataFrame([self.SQUARE])) != plain
+
+    def test_review_frames_draw_the_outlines(self):
+        from macaw.qc.overlay import draw_things
+
+        image = np.zeros((240, 320, 3), np.uint8)
+        drawn = draw_things(image, pd.DataFrame([self.SQUARE]))
+        assert drawn[60, 230].max() > 200 and drawn[90, 230].max() == 0 and image.max() == 0
+
+    def test_methods_says_the_things_were_asked_about(self):
+        from macaw.qc.boilerplate import _looked
+
+        found = {"recordings": 1, "models": ["m"], "providers": ["ollama"], "described": [], "flagged": 1, "frames": 4,
+                 "flagged_checked": 0, "drawn_checked": 0, "things": 3}
+        assert "for each object outlined on the frame" in _looked(found)
+        assert "for each object outlined" not in _looked({**found, "things": 0})
