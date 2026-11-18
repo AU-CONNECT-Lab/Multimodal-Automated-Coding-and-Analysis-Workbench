@@ -308,6 +308,16 @@ class TestReview:
         project.starts({"ball": {**BALL, "frame": 9, "box": [1.0, 1.0, 5.0, 5.0]}})
         assert [item.name for item in waiting(project.resolved(), "003")] == ["ball"]
 
+    def test_keeping_leaves_a_start_a_person_changed_before_the_next_run(self, project):
+        from macaw.extractors.video.objects.decisions import KEPT
+        from macaw.project.layout import layout_for
+
+        project.starts({"ball": BALL, "cup": {**BALL, "box": [50.0, 5.0, 60.0, 15.0]}})
+        macaw(project, "--start", "cup", "--camera", "room", "--at", "1", "--point", "5,5")
+        kept = macaw(project, "--keep")
+        assert "kept the starts of ball on room" in kept.output and "cup" not in kept.output
+        assert set(read_decisions(layout_for(project.resolved()).objects_path("003"))[KEPT]["room"]) == {"ball"}
+
     def test_flagged_waits_only_for_doubts_and_skip_leaves_a_note(self, project):
         from macaw.extractors.base import SOFTWARE
         from macaw.extractors.video.objects.review import waiting

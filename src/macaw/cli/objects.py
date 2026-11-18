@@ -7,7 +7,7 @@ import typer
 
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
-from macaw.extractors.video.objects.decisions import KEPT, add_start, clear, keep, read_decisions, set_absent, write_decisions
+from macaw.extractors.video.objects.decisions import ABSENT, KEPT, STARTS, add_start, clear, keep, read_decisions, set_absent, write_decisions
 from macaw.extractors.video.objects.review import start_of, waiting
 from macaw.extractors.video.objects.track import FINDER, load_starts, object_cameras
 from macaw.project.layout import layout_for
@@ -88,7 +88,8 @@ def objects(
         kept = []
         for item in waiting(resolved, recording, review="always"):
             entry = starts.get(item.camera, {}).get(item.name, {})
-            if entry.get("from") != FINDER or (camera and item.camera != camera):
+            spoken = item.name in said[STARTS].get(item.camera, {}) or item.name in said[ABSENT].get(item.camera, {})
+            if entry.get("from") != FINDER or spoken or (camera and item.camera != camera):
                 continue
             keep(said, item.camera, item.name, start_of(entry), who)
             kept.append(f"{item.name} on {item.camera}")
