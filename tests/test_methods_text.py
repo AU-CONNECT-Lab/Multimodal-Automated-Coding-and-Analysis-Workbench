@@ -290,8 +290,8 @@ def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
 
 def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats():
     point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitl14_inout_childplay", in_frame_cut=0.5)
-    text, used = render(describe(manifest(point), config(gaze={"targets": ["bottle", "book"]})), load_references())
-    assert {"ryan2025", "tafasca2023", "liu2024"} <= set(used)
+    text, used = render(describe(manifest(point), config(objects={"names": ["bottle", "book"]})), load_references())
+    assert {"ryan2025", "tafasca2023", "liu2024", "ravi2024"} <= set(used) and "outline" in text
     assert "## Gaze" in text and "bottle, book" in text and "at least 0.5" in text and "less than 0.2 s" in text
     every_frame, _ = render(describe(manifest(point), config(gaze={"min_look_s": 0})), load_references())
     assert "less than" not in every_frame and "Each run of frames with the same target" in every_frame
@@ -309,7 +309,7 @@ def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats(
 
 def test_joint_attention_is_described_with_the_things_it_was_read_on():
     point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="m", in_frame_cut=0.5, things=["bottle", "book"])
-    text, _ = render(describe(manifest(point), config(gaze={"targets": ["bottle", "book"]})), load_references())
+    text, _ = render(describe(manifest(point), config(objects={"names": ["bottle", "book"]})), load_references())
     assert "each other at the same moment, and joint attention when two people looked at the same named object (bottle, book)" in text
     assert "began first and the delay before the other joined" in text
 

@@ -116,6 +116,10 @@ class Layout:
     def gaze_labels_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "gaze_labels.json"
 
+    # where a person started a thing to follow, said it is not on a camera, or kept the start found by its name
+    def objects_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "objects.json"
+
     # what a person noted while reviewing it, such as a part to cut or a step to run again
     def review_notes_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "review_notes.json"
@@ -171,6 +175,7 @@ class Layout:
             self.line_speakers_path(recording_id),
             self.further_voice_path(recording_id),
             self.gaze_labels_path(recording_id),
+            self.objects_path(recording_id),
             self.corrected_transcript_path(recording_id),
             self.corrected_transcript_stamp_path(recording_id),
             # no run gives the recogniser's back while the correction stands

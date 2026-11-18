@@ -16,7 +16,8 @@ from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.gaze import angles
 from macaw.extractors.video.gaze.backends import BACKEND_GROUP, resolve_backend
 from macaw.extractors.video.gaze.heads import head_boxes
-from macaw.extractors.video.gaze.objects import EVERY_S, GazeObjectsExtractor, load_objects, objects_file
+from macaw.extractors.video.objects.outline import inside
+from macaw.extractors.video.objects.track import ObjectTrackExtractor, load_objects, objects_file
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.gaze_labels import labels_frame, read_labels
 from macaw.project.room import seats as room_seats
@@ -83,7 +84,7 @@ _LAG_MISSING = (
 def _missing(points: bool) -> dict[str, str]:
     if points:
         unread = "no camera is set to read it, or pose found fewer than two of their nose, eyes and ears in its picture"
-        both, nothing = unread, "gaze.targets names no things"
+        both, nothing = unread, "objects.names names no things"
         unseen = "either one's head never appears in the picture the other's gaze is read from"
         undecided = (
             ", at moments when neither is seen to look at someone or something else but one looks out of the picture while "
@@ -164,10 +165,10 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.4.2"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "gaze"
-    config_sections = ("gaze", "segment", "video", "setup.cameras", "setup.room")
+    config_sections = ("gaze", "objects.names", "segment", "video", "setup.cameras", "setup.room")
     requires = (PoseReviewGate.name,)
     resource_profile = "gpu_standard"
 
@@ -177,7 +178,7 @@ class GazeTargetExtractor(Extractor):
 
         if not finds_points(config):
             return cls.requires + (FaceExtractor.name,)
-        return cls.requires + ((GazeObjectsExtractor.name,) if config.gaze.targets else ())
+        return cls.requires + ((ObjectTrackExtractor.name,) if config.objects.names else ())
 
     def backend(self):
         return resolve_backend(self.config.gaze.backend)
@@ -203,7 +204,7 @@ class GazeTargetExtractor(Extractor):
         if not finds_points(self.config):
             labels = layout_for(self.config, create=False).gaze_labels_path(rid)
             return files + [_face_rows_file(self.config, rid)] + ([labels] if labels.is_file() else [])
-        return files + ([objects_file(self.config, rid)] if self.config.gaze.targets else [])
+        return files + ([objects_file(self.config, rid)] if self.config.objects.names else [])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         backend = self.backend()
@@ -244,7 +245,7 @@ class GazeTargetExtractor(Extractor):
     def _things(self, recording: Recording) -> list[str]:
         """The named things a look can land on, which joint attention is about."""
         if finds_points(self.config):
-            return list(self.config.gaze.targets)
+            return list(self.config.objects.names)
         labels = labels_frame(read_labels(layout_for(self.config, create=False).gaze_labels_path(recording.recording_id)))
         roles = {subject.subject_id for subject in recording.subjects}
         named = set(labels["target"]) if not labels.empty else set()
@@ -253,7 +254,7 @@ class GazeTargetExtractor(Extractor):
     def _points(self, recording, backend, keypoints, views, by_name, span) -> tuple[pd.DataFrame, list[QCWarning]]:
         cfg = self.config.gaze
         heads = head_boxes(keypoints[keypoints["subject_id"].notna()])
-        things = load_objects(self.config, recording.recording_id) if cfg.targets else None
+        things = load_objects(self.config, recording.recording_id) if self.config.objects.names else None
         points, warnings = [], []
         for video in sorted(set(views.values())):
             item, (first, stop) = by_name[video], _frame_span(by_name[video], span)
@@ -273,7 +274,7 @@ class GazeTargetExtractor(Extractor):
             found["t"] = found["frame"] / item.fps + item.offset_s
             named = name_targets(found[(found["t"] >= span[0]) & (found["t"] <= span[1])], shown)
             if things is not None:
-                named = name_objects(named, things[things["video"] == video], max(round(EVERY_S * item.fps), 1))
+                named = name_objects(named, things[things["video"] == video])
             points.append(named)
         return (pd.concat(points, ignore_index=True) if points else _no_points()), warnings
 
@@ -498,27 +499,20 @@ def name_targets(found: pd.DataFrame, heads: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def name_objects(points: pd.DataFrame, things: pd.DataFrame, within_frames: int) -> pd.DataFrame:
-    """A point that is on no one's head but in a named thing's box, as found in the nearest frame read for things,
-    takes that thing's name; the smallest box holding it wins."""
+def name_objects(points: pd.DataFrame, things: pd.DataFrame) -> pd.DataFrame:
+    """A point that is on no one's head but inside a followed thing's outline in the same frame takes that thing's name;
+    the smallest thing holding it wins."""
     out = points.copy()
     free = out[out["target"] == ELSEWHERE]
     if free.empty or things.empty:
         return out
-    read = np.sort(things["frame"].unique())
-    position = np.clip(np.searchsorted(read, free["frame"].to_numpy()), 1, len(read) - 1) if len(read) > 1 else np.zeros(len(free), int)
-    nearest = read[position]
-    if len(read) > 1:
-        earlier = read[position - 1]
-        nearest = np.where(np.abs(free["frame"].to_numpy() - earlier) <= np.abs(nearest - free["frame"].to_numpy()), earlier, nearest)
-    candidates = free[["gaze_x", "gaze_y"]].assign(seen=nearest, gap=np.abs(nearest - free["frame"].to_numpy())).reset_index()
-    candidates = candidates[candidates["gap"] <= within_frames].merge(things, left_on="seen", right_on="frame")
-    inside = (
+    candidates = free[["frame", "gaze_x", "gaze_y"]].reset_index().merge(things[["frame", "label", "x0", "y0", "x1", "y1", "area", "outline"]], on="frame")
+    candidates = candidates[
         (candidates["gaze_x"] >= candidates["x0"]) & (candidates["gaze_x"] <= candidates["x1"])
         & (candidates["gaze_y"] >= candidates["y0"]) & (candidates["gaze_y"] <= candidates["y1"])
-    )
-    candidates = candidates[inside].assign(area=lambda f: (f["x1"] - f["x0"]) * (f["y1"] - f["y0"]))
-    chosen = candidates.sort_values("area").drop_duplicates("index")
+    ]
+    held = [inside(row.outline, row.gaze_x, row.gaze_y) for row in candidates.itertuples()]
+    chosen = candidates[np.array(held, dtype=bool)].sort_values("area").drop_duplicates("index")
     out.loc[chosen["index"].to_numpy(), "target"] = chosen["label"].to_numpy()
     return out
 

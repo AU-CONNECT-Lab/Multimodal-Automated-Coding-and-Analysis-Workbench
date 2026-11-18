@@ -289,6 +289,18 @@ liu2024:
   publisher: Springer
   doi: 10.1007/978-3-031-72970-6_3
   year: 2024
+ravi2024:
+  type: misc
+  author: "Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and Rädle, Roman and Rolland, Chloe and Gustafson, Laura and Mintun, Eric and Pan, Junting and Alwala, Kalyan Vasudev and Carion, Nicolas and Wu, Chao-Yuan and Girshick, Ross and Dollár, Piotr and Feichtenhofer, Christoph"
+  title: "SAM 2: Segment anything in images and videos"
+  howpublished: arXiv:2408.00714
+  year: 2024
+carion2025:
+  type: misc
+  author: "Carion, Nicolas and Gustafson, Laura and Hu, Yuan-Ting and Debnath, Shoubhik and Hu, Ronghang and Suris, Didac and Ryali, Chaitanya and Alwala, Kalyan Vasudev and Khedr, Haitham and Huang, Andrew and Lei, Jie and Ma, Tengyu and Guo, Baishan and Kalla, Arpit and Marks, Markus and Greer, Joseph and Wang, Meng and Sun, Peize and Rädle, Roman and Afouras, Triantafyllos and Mavroudi, Effrosyni and Xu, Katherine and Wu, Tsung-Han and Zhou, Yu and Momeni, Liliane and Hazra, Rishi and Ding, Shuangrui and Vaze, Sagar and Porcher, Francois and Li, Feng and Li, Siyuan and Kamath, Aishwarya and Cheng, Ho Kei and Dollár, Piotr and Ravi, Nikhila and Saenko, Kate and Zhang, Pengchuan and Feichtenhofer, Christoph"
+  title: "SAM 3: Segment anything with concepts"
+  howpublished: arXiv:2511.16719
+  year: 2025
 baradel2024:
   type: inproceedings
   author: "Baradel, Fabien and Armando, Matthieu and Galaaoui, Salma and Brégier, Romain and Weinzaepfel, Philippe and Rogez, Grégory and Lucas, Thomas"

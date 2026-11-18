@@ -472,20 +472,26 @@ class GazeSection(_Section):
     model: str | None = None
     device: str = "auto"
     batch_size: int = Field(default=16, ge=1)
-    targets: list[str] = Field(default_factory=list)
-    object_backend: str = "grounding_dino"
-    object_model: str | None = None
-    object_score: float = Field(default=0.35, gt=0, lt=1)
     tolerance_deg: float | None = Field(default=None, gt=0, lt=180)
     min_look_s: float = Field(default=0.2, ge=0)
 
+
+class ObjectsSection(_Section):
+    names: list[str] = added(default_factory=list)
+    finder: str = added(default="grounding_dino")
+    finder_model: str | None = added(default=None)
+    finder_score: float = added(default=0.35, gt=0, lt=1)
+    tracker: str = added(default="sam2")
+    tracker_model: str | None = added(default=None)
+    device: str = added(default="auto")
+
     @model_validator(mode="after")
-    def _names(self) -> "GazeSection":
-        if len(set(self.targets)) != len(self.targets):
-            raise ValueError("gaze.targets names a thing twice")
-        clash = sorted(set(self.targets) & {"elsewhere", "off_screen", "unsure", "camera"})
+    def _names(self) -> "ObjectsSection":
+        if len(set(self.names)) != len(self.names):
+            raise ValueError("objects.names names a thing twice")
+        clash = sorted(set(self.names) & {"elsewhere", "off_screen", "unsure", "camera"})
         if clash:
-            raise ValueError(f"gaze.targets cannot use {', '.join(clash)}, which MACAW already uses")
+            raise ValueError(f"objects.names cannot use {', '.join(clash)}, which MACAW already uses")
         return self
 
 
@@ -756,6 +762,7 @@ class MacawConfig(_Section):
     pose3d: Pose3DSection = Field(default_factory=Pose3DSection)
     face: FaceSection = Field(default_factory=FaceSection)
     gaze: GazeSection = Field(default_factory=GazeSection)
+    objects: ObjectsSection = added(default_factory=ObjectsSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
     coding: CodingSection = Field(default_factory=CodingSection)
@@ -791,9 +798,9 @@ class MacawConfig(_Section):
         clash = sorted(set(self.setup.room.things) & set(self.project.roles))
         if clash:
             raise ValueError(f"{', '.join(clash)} is both a role and a thing in the room; give the thing another name")
-        clash = sorted(set(self.gaze.targets) & set(self.project.roles))
+        clash = sorted(set(self.objects.names) & set(self.project.roles))
         if clash:
-            raise ValueError(f"gaze.targets names {', '.join(clash)}, which are roles; people are looked for anyway")
+            raise ValueError(f"objects.names names {', '.join(clash)}, which are roles; people are followed anyway")
         board = self.pose3d.board.in_mm(self.project.units)
         if board.marker_mm >= board.square_mm:
             raise ValueError("pose3d.board.marker must be smaller than its square")
@@ -828,6 +835,7 @@ RECORDING_OVERRIDABLE: tuple[str, ...] = (
     "pose3d",
     "face",
     "gaze",
+    "objects",
     "motion",
     "turns",
     "coding",

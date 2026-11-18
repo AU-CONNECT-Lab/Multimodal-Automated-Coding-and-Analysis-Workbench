@@ -1193,13 +1193,28 @@ def _gaze(config, spec, names) -> str:
         "shoulder width if larger). A participant was coded as looking at another while that point lay inside the other's "
         f"head box and the model's in-frame score was at least {spec.params.get('in_frame_cut', 0.5):g}; {people}."
     )
-    if config.gaze.targets:
+    if config.objects.names:
         text += (
-            f" Objects named {', '.join(config.gaze.targets)} were detected five times per second with Grounding DINO "
-            f"[liu2024] (box score at least {config.gaze.object_score:g}); a gaze point on no head but inside an object's box "
-            "in the nearest such frame was assigned to that object, the smallest box first."
+            f" {_followed_things(config)} A gaze point on no head but inside an object's outline in the same frame was "
+            "assigned to that object, the smallest first."
         )
     return text
+
+
+def _followed_things(config) -> str:
+    cfg = config.objects
+    tracker = (
+        f"the tracker of SAM 3 [carion2025] ({cfg.tracker_model or 'facebook/sam3'})" if cfg.tracker == "sam3"
+        else f"SAM 2.1 [ravi2024] ({cfg.tracker_model or 'facebook/sam2.1-hiera-base-plus'})" if cfg.tracker == "sam2"
+        else cfg.tracker
+    )
+    return (
+        f"Objects named {', '.join(cfg.names)} were located by name with Grounding DINO [liu2024], taking the highest-scoring "
+        f"box (at least {cfg.finder_score:g}) in the first ten seconds in which the object was found, five frames per second "
+        "being searched, unless a person clicked on the object at a moment of their choosing. From there each object was "
+        f"followed frame by frame as an outline with {tracker}, and counted as out of view in frames where the tracker gave "
+        f"it less than an even chance of being visible."
+    )
 
 
 def _syntax(config, spec, names) -> str:

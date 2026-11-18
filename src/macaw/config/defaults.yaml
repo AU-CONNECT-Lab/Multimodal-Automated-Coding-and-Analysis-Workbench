@@ -153,12 +153,17 @@ gaze:
   model: null                        # gazelle_dinov2_vit{l,b}14_inout[_childplay]; null = vitl14_inout_childplay
   device: auto                       # auto | cpu | cuda
   batch_size: 16                     # frames the model takes at once
-  targets: []                        # things people may look at, in plain words, e.g. [bottle, book]
-  object_backend: grounding_dino     # grounding_dino: finds things by name, five times a second (Apache-2.0)
-  object_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
-  object_score: 0.35                 # 0-1; lower finds more things and more that are not there
   tolerance_deg: null                # deg; backend angles: a look within this of the direction to someone is a look at them; no default, as it depends on how far apart the people sit
   min_look_s: 0.2                    # s; a look shorter than this joins the one before it (the first look, the one after), so a flicker of a frame or two is not counted as a look; 0 keeps every frame as read
+
+objects:
+  names: []                          # things to follow in the picture, in plain words, e.g. [ball, book]
+  finder: grounding_dino             # grounding_dino: finds where each thing starts by its name (Apache-2.0)
+  finder_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
+  finder_score: 0.35                 # 0-1; lower finds more starts and more that are not the thing
+  tracker: sam2                      # sam2: SAM 2.1 (Apache-2.0) | sam3: SAM 3 (SAM License, weights on request)
+  tracker_model: null                # sam2: facebook/sam2.1-hiera-base-plus (default), -tiny, -small or -large | sam3: facebook/sam3
+  device: auto                       # auto | cpu | cuda
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea

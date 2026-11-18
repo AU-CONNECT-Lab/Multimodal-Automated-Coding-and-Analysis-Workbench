@@ -129,15 +129,15 @@ def test_a_recording_file_may_not_need_a_step_the_project_plan_lacks(tmp_path):
     scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
     own = tmp_path / "recordings" / "rec1.yaml"
     own.parent.mkdir()
-    own.write_text("gaze:\n  targets: [bottle]\n", encoding="utf-8")
+    own.write_text("objects:\n  names: [bottle]\n", encoding="utf-8")
     config = resolve_config(project)
-    with pytest.raises(ConfigError, match="gaze.objects.*project.yaml"):
+    with pytest.raises(ConfigError, match="objects.track.*project.yaml"):
         check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
 
-    project.write_text(project.read_text(encoding="utf-8") + "gaze:\n  targets: [bottle, cup]\n", encoding="utf-8")
+    project.write_text(project.read_text(encoding="utf-8") + "objects:\n  names: [bottle, cup]\n", encoding="utf-8")
     config = resolve_config(project)
     check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
-    own.write_text("gaze:\n  targets: []\n", encoding="utf-8")
+    own.write_text("objects:\n  names: []\n", encoding="utf-8")
     check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
 
 

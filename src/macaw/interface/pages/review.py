@@ -549,7 +549,7 @@ def _gaze(config, layout, recording):
     rows = [[person, target, str(n)] for (person, target), n in sorted(counts.items())]
     checked = check_gaze_labels(recording, config, RecordingResults(layout, rid)).warnings if labels else []
     key = {"key": rid}
-    choices = {person: [role for role in roles if role != person] + list(config.gaze.targets) + ["elsewhere", UNSURE] for person in roles}
+    choices = {person: [role for role in roles if role != person] + list(config.objects.names) + ["elsewhere", UNSURE] for person in roles}
     return ui.card(
         "Where people look",
         ui.table(["Who", "Looks at", "Frames"], rows, numeric={"Frames"}, fit=True) if rows else None,

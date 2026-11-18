@@ -20,7 +20,7 @@ def project(tmp_path):
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
     with open(config, "a", encoding="utf-8") as handle:
-        handle.write("\ngaze:\n  targets: [bottle]\n")
+        handle.write("\nobjects:\n  names: [bottle]\n")
     return config
 
 

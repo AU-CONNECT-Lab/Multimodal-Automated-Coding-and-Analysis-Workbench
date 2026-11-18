@@ -18,7 +18,7 @@ UNSURE = "unsure"
 class GazeLabel:
     t: float                # recording time of the frame
     subject: str            # the role who looks
-    target: str             # a role, a name from gaze.targets, elsewhere, or unsure
+    target: str             # a role, a name from objects.names, elsewhere, or unsure
     by: str | None = None
     at: str | None = None
 

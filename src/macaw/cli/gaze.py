@@ -21,7 +21,7 @@ def label_gaze(
     recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     at: float = typer.Option(None, "--at", help="Time of the frame in seconds, on the recording's clock."),
     person: str = typer.Option(None, "--person", help="The role who looks."),
-    looks_at: str = typer.Option(None, "--looks-at", help=f"A role, a name from gaze.targets, {ELSEWHERE}, or {UNSURE}."),
+    looks_at: str = typer.Option(None, "--looks-at", help=f"A role, a name from objects.names, {ELSEWHERE}, or {UNSURE}."),
     by: str = typer.Option(None, "--by", help="Who labelled. Default: the login name."),
     clear: bool = typer.Option(False, "--clear", help="Remove this recording's labels."),
 ) -> None:
@@ -38,7 +38,7 @@ def label_gaze(
     roles = list(resolved.project.roles)
     if person not in roles:
         raise MacawError(f"--person takes a role, one of {', '.join(roles)}")
-    allowed = [role for role in roles if role != person] + list(resolved.gaze.targets) + [ELSEWHERE, UNSURE]
+    allowed = [role for role in roles if role != person] + list(resolved.objects.names) + [ELSEWHERE, UNSURE]
     if looks_at not in allowed:
         raise MacawError(f"--looks-at takes one of {', '.join(allowed)}")
     fps = [item.fps for item in build_recording(recording, resolved).media if item.kind == "video" and item.fps]

@@ -51,10 +51,6 @@ GazeSection.batch_size
 GazeSection.device
 GazeSection.min_look_s
 GazeSection.model
-GazeSection.object_backend
-GazeSection.object_model
-GazeSection.object_score
-GazeSection.targets
 GazeSection.tolerance_deg
 GestureSection.annotator
 GestureSection.holds

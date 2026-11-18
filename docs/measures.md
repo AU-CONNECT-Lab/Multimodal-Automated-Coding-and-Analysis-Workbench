@@ -11,7 +11,7 @@ For each participant in each frame, MACAW estimates the point in the picture the
 Whom a participant looks at can be determined only when the person looked at is visible in the same picture, so this requires a camera that shows everyone involved. A camera that films one participant alone yields where in the picture they look, not at whom; for that case see *Positions in the room instead of the picture* below. The estimate reflects head and eye orientation as visible in the video and is not a substitute for an eye tracker: it distinguishes the other person's face from the table or the toys, but not one toy from the one beside it.
 :::
 
-Objects to be distinguished are named in plain English under *Things people look at* in the *Tools* group, for example `bottle, book, toy car`. The quality-control report warns when a name is rarely found; another word for the same object often works better. When objects are detected that are not there, raise the detection threshold (`gaze.object_score`, 0.35 by default); when objects that are there are missed, lower it.
+Objects to be distinguished are named under *Things to follow* ({ref}`objects`); MACAW follows each as an outline, and a look whose point falls inside an object's outline is a look at that object.
 
 For each pair of participants the results give, at every moment, whether one looks at the other and whether the two look at each other (mutual gaze), and for the whole recording the proportion of time spent looking at the other, the number of looks and the proportion of mutual gaze. A moment at which a participant looks outside the picture while the other is not in it is left open, since the look may be directed at that person, and counts toward neither proportion. A glance of a frame or two toward something else is merged into the preceding look, so that it does not count as a new look. Every look is also stored as a code, so that it can be exported to ELAN, compared with human gaze coding ({ref}`own-coding`) and summarised with `macaw describe-codes`.
 
@@ -34,6 +34,24 @@ face:
 ```
 
 A look within `tolerance_deg` of the direction to a person or thing counts as a look at it. There is no default, as the appropriate value depends on how far apart the participants sit. Each participant's directions are taken as seen from the camera used for their gaze, so participants filmed by cameras of their own are read as well. The method assumes that participants remain at their positions; a recording with a different arrangement changes the room in its own settings file. Head angles estimated from a single camera carry a bias of their own, so labelling frames as described above is recommended: MACAW then corrects each participant's offset from the labelled frames, and once a participant has three or more labelled frames looking at a target, it takes that target's direction from the frames rather than from the room. Labelled frames alone, without the room, are also sufficient.
+
+(objects)=
+## Things in the picture
+
+Objects such as toys can be followed through the video, so that looks and hands can be related to them. They are named in plain English under *Things to follow* in the *Tools* group, for example `ball, book, toy car`, or in *project.yaml*:
+
+```yaml
+objects:
+  names: [ball, book, toy car]
+```
+
+Each object is first found by its name, in the first ten seconds of video in which it appears, and from there followed frame by frame as an outline, which keeps a toy apart from the one beside it and holds it while a hand covers part of it. The first run downloads two models of about 1 GB together. Following needs a graphics card and takes somewhat longer than the video itself: on a fast card, about a minute and a half per minute of video for one object, and about another minute for each further object. An object is followed only on the cameras from which someone's body or gaze is read.
+
+:::{important}
+Finding an object by its name can pick the wrong thing, for example the parent when the name is *child*, or one of two balls. Two objects that look alike need names that tell them apart, such as `red ball, blue ball`. An object that leaves the picture and comes back elsewhere may be lost or picked up on something else.
+:::
+
+When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. The tracker is SAM 2.1 by default; `objects.tracker: sam3` uses the tracker of SAM 3 instead, whose model is given on request on Hugging Face (accept its terms there and log in with `hf auth login` first).
 
 (motion)=
 ## Motion energy in a region of the picture

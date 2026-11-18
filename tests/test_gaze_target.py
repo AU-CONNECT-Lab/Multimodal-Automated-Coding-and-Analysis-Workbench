@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from macaw.config.schema import GazeSection, RoomSection
+from macaw.config.schema import GazeSection, ObjectsSection, RoomSection
 from macaw.extractors.video.gaze import angles
 from macaw.project.room import seats as room_seats
 from macaw.extractors.video.gaze import target as target_module
@@ -194,7 +194,7 @@ def run(tmp_path, monkeypatch):
         monkeypatch.setattr(target_module, "resolve_backend", lambda name: backend)
         monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
         recording = recording_of(files, recording_id="r1", group_id="1", session_id=None)
-        return backend, GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(targets=list(targets)))).run(recording, tmp_path)
+        return backend, GazeTargetExtractor(SimpleNamespace(gaze=GazeSection(), objects=ObjectsSection(names=list(targets)))).run(recording, tmp_path)
 
     return build
 
@@ -222,7 +222,7 @@ class TestExtractor:
     def test_joint_attention_on_a_named_thing_gives_its_share_stretches_and_who_led(self, run, monkeypatch):
         people = keypoints({"parent": (400, 100), "child": (100, 100)})
         points = pd.concat([gaze("parent", 250, 300), gaze("child", 250, 300)], ignore_index=True)
-        things = pd.DataFrame([{"video": "room.mp4", "frame": f, "label": "toy", "x0": 200, "y0": 250, "x1": 300, "y1": 350, "score": 0.9} for f in range(10)])
+        things = pd.DataFrame([thing("toy", f, (200, 250, 300, 350)) for f in range(10)])
         monkeypatch.setattr(target_module, "load_objects", lambda config, rid: things)
         _, result = run(people, points, [video("room.mp4")], targets=["toy"])
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
@@ -249,24 +249,35 @@ class TestExtractor:
         assert not {"mutual_gaze", "mutual_gaze_share"} & set(result.rows.feature)
 
 
+def thing(label, frame, corners, video="room.mp4"):
+    x0, y0, x1, y1 = corners
+    return {
+        "video": video, "frame": frame, "label": label, "score": 0.9, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+        "area": float((x1 - x0) * (y1 - y0)), "outline": [[x0, y0, x1, y0, x1, y1, x0, y1]],
+    }
+
+
 class TestNameObjects:
-    def things(self, frames=(0, 5)):
-        return pd.DataFrame(
-            [{"video": "room.mp4", "frame": f, "label": label, "x0": x0, "y0": y0, "x1": x1, "y1": y1, "score": 0.9}
-             for f in frames for label, (x0, y0, x1, y1) in {"table": (0, 200, 600, 400), "bottle": (280, 250, 320, 330)}.items()]
-        )
+    def things(self, frames=range(10)):
+        return pd.DataFrame([thing(label, f, corners) for f in frames for label, corners in {"table": (0, 200, 600, 400), "bottle": (280, 250, 320, 330)}.items()])
 
-    def test_the_smallest_box_holding_the_point_names_it(self):
+    def test_the_smallest_outline_holding_the_point_names_it(self):
         points = name_targets(gaze("parent", 300, 300, frames=range(3)), box(380, 80, 440, 140, "child", frames=range(3)))
-        named = target_module.name_objects(points, self.things(), within_frames=2)
-        assert set(named.target) == {"bottle"}
+        assert set(target_module.name_objects(points, self.things()).target) == {"bottle"}
 
-    def test_a_head_comes_before_a_thing_and_a_look_too_far_in_time_takes_nothing(self):
+    def test_a_head_comes_before_a_thing_and_a_frame_without_the_thing_takes_nothing(self):
         heads = box(280, 250, 320, 330, "child", frames=range(10))
         points = name_targets(gaze("parent", 300, 300), heads)
-        assert set(target_module.name_objects(points, self.things(), within_frames=2).target) == {"child"}
+        assert set(target_module.name_objects(points, self.things()).target) == {"child"}
         free = name_targets(gaze("parent", 100, 300, frames=[2, 9]), heads)
-        assert target_module.name_objects(free, self.things(frames=(0,)), within_frames=2).target.tolist() == ["table", ELSEWHERE]
+        assert target_module.name_objects(free, self.things(frames=(2,))).target.tolist() == ["table", ELSEWHERE]
+
+    def test_a_point_in_the_box_but_outside_the_outline_is_not_on_the_thing(self):
+        triangle = {**thing("toy", 0, (0, 0, 100, 100)), "outline": [[0, 0, 100, 0, 0, 100]]}
+        points = name_targets(gaze("parent", 90, 90, frames=[0]), box(380, 80, 440, 140, "child", frames=[0]))
+        assert target_module.name_objects(points, pd.DataFrame([triangle])).target.tolist() == [ELSEWHERE]
+        inside = name_targets(gaze("parent", 10, 10, frames=[0]), box(380, 80, 440, 140, "child", frames=[0]))
+        assert target_module.name_objects(inside, pd.DataFrame([triangle])).target.tolist() == ["toy"]
 
 
 @pytest.fixture
@@ -394,7 +405,7 @@ def test_the_gaze_and_object_models_are_loaded_once_per_setting(monkeypatch):
     import sys
 
     from macaw.extractors.video.gaze.backends import GazeLLEBackend
-    from macaw.extractors.video.gaze.objects import GroundingDinoBackend
+    from macaw.extractors.video.objects.track import GroundingDinoFinder as GroundingDinoBackend
 
     loaded = []
     monkeypatch.setattr(GazeLLEBackend, "_load", lambda self, model, device: loaded.append((model, device)) or object())
