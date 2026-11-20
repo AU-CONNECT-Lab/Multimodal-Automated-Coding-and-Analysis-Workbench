@@ -661,7 +661,8 @@ def placing_rows(config, recording_id: str, people: dict[str, pd.DataFrame], com
     rows = []
     for subject_id, own in people.items():
         mine = quality[quality["subject_id"].astype(str) == subject_id]
-        values = {"body_size_3d": _shoulder_width(_joints(own)[2])}
+        spreads = bone_spread(own)
+        values = {"body_size_3d": _shoulder_width(_joints(own)[2]), "bone_spread_3d": max(spreads.values()) if spreads else np.nan}
         if not mine.empty and step == ONE_CAMERA_STEP:
             seen, placed = float(mine["frames_seen"].sum()), float(mine["frames_placed"].sum())
             model = float(np.nanmedian(mine["model_height_m"])) if mine["model_height_m"].notna().any() else np.nan
@@ -703,6 +704,15 @@ _PLACING_SPECS = {
             "so that their distances are only as right as the fitted body's size."
         ),
         None, "Empty unless people are placed in 3D by a body model on one camera.",
+    ),
+    "bone_spread_3d": (
+        lambda way: (
+            "How much this person's least steady bone changes length in the room: per bone between two placed joints, 1.4826 times "
+            "the median absolute deviation of its length over its median length, the largest of these. A bone keeps its length, so "
+            f"a large value says its ends are misplaced in some frames; the step placing people in 3D warns above {_BONE_SPREAD:.0%} "
+            "and names the bone."
+        ),
+        None, "Empty for a person with no bone whose two ends were placed together in 10 frames or more, and in the rows of a segment.",
     ),
     "body_size_3d": (
         lambda way: (

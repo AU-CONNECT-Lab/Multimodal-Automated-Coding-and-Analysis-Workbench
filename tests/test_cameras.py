@@ -398,6 +398,8 @@ class TestSteps:
         assert units["left_wrist_speed_3d"] == "m/s" and units["head_toward_deg_3d"] == "deg"
         assert values("placed_3d_share").tolist() == [1.0] and values("reprojection_error_px")[0] < 1.0
         assert values("body_size_3d")[0] > 0 and units["body_size_3d"] == "m"
+        # a rigid body: every bone keeps its length
+        assert values("bone_spread_3d")[0] == pytest.approx(0.0, abs=1e-6) and units["bone_spread_3d"] is None
         assert "two cameras or more" in {spec.name: spec for spec in result.specs}["placed_3d_share"].description
 
 
