@@ -179,8 +179,9 @@ class FakeGazeBackend:
         self.points = points
         self.calls = []
 
-    def infer(self, video_path, *, heads, **kwargs):
+    def infer(self, video_path, *, heads, targets, **kwargs):
         self.calls.append((Path(video_path).name, sorted(set(heads["subject_id"]))))
+        self.targets = targets
         return self.points[self.points["subject_id"].isin(set(heads["subject_id"]))].drop(columns="t")
 
 
@@ -233,6 +234,39 @@ class TestExtractor:
         assert value[("joint_attention_lag_s", "child", "parent")] == 0.0
         tier = result.annotations[result.annotations.tier == "joint_attention_with_parent"]
         assert tier.label.tolist() == ["toy"] and tier.subject_id.tolist() == ["child"]
+
+    def test_looks_at_a_named_thing_and_the_heatmaps_shares_are_rows(self, run, monkeypatch):
+        people = keypoints({"parent": (400, 100), "child": (100, 100)})
+        points = pd.concat([gaze("parent", 250, 300).assign(gaze_x=[250] * 4 + [100] * 6, gaze_y=[300] * 4 + [98] * 6), gaze("child", 250, 300)], ignore_index=True)
+        points = points.assign(gaze_peak=0.8, share_toy=0.5, share_parent=0.1, share_child=0.2)
+        things = pd.DataFrame([thing("Toy car", f, (200, 250, 300, 350)) for f in range(10)])
+        monkeypatch.setattr(target_module, "load_objects", lambda config, rid: things)
+        backend, result = run(people, points.rename(columns={"share_toy": "share_Toy car"}), [video("room.mp4")], targets=["Toy car"])
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        assert set(backend.targets["name"]) == {"parent", "child", "Toy car"} and backend.targets["outline"].iloc[-1] is not None
+        value = result.rows[result.rows.scale == "recording"].set_index(["feature", "subject_id"])["value"]
+        assert value[("looks_at_toy_car_share", "parent")] == pytest.approx(0.4) and value[("looks_at_toy_car_share", "child")] == 1.0
+        assert value[("looks_at_toy_car_n", "parent")] == 1.0
+        frame = result.rows[result.rows.scale == "frame"]
+        assert set(frame[frame.feature == "gaze_share_on_toy_car"].value) == {0.5} and set(frame[frame.feature == "gaze_peak"].value) == {0.8}
+        on_head = frame[frame.feature == "gaze_share_on_head"].set_index(["subject_id", "subject_id_b"])["value"].sort_index()
+        assert set(on_head.loc[("parent", "child")]) == {0.2}
+        specs = {spec.name: spec for spec in result.specs}
+        assert specs["looks_at_toy_car_share"].scale == "recording" and "Toy car" in specs["looks_at_toy_car"].description
+
+
+def test_the_heatmaps_share_on_a_box_an_outline_and_a_head_smaller_than_a_cell():
+    from macaw.extractors.video.gaze.backends import heat_shares
+
+    heat = np.zeros((4, 4))
+    heat[0, 0], heat[3, 3], heat[1, 2] = 2.0, 1.0, 1.0
+    targets = pd.DataFrame([
+        {"name": "head", "x0": 0, "y0": 0, "x1": 100, "y1": 100, "outline": None},
+        {"name": "toy", "x0": 300, "y0": 300, "x1": 400, "y1": 400, "outline": [[300, 300, 400, 300, 400, 400, 300, 400]]},
+        {"name": "dot", "x0": 250, "y0": 150, "x1": 252, "y1": 152, "outline": None},
+    ])
+    shares = heat_shares(heat, targets, 400, 400)
+    assert shares == {"head": pytest.approx(0.5), "toy": pytest.approx(0.25), "dot": pytest.approx(0.25)}
 
     def test_without_named_things_there_is_no_joint_attention(self, run):
         _, result = run(keypoints({"parent": (400, 100), "child": (100, 100)}), pd.concat([gaze("parent", 250, 300), gaze("child", 250, 300)]), [video("room.mp4")])
@@ -340,6 +374,10 @@ class TestAngles:
         assert looks.groupby("subject_id")["label"].agg(list).to_dict() == {"child": ["toy"], "parent": ["toy"]}
         joint = result.annotations[result.annotations.tier == "joint_attention_with_parent"]
         assert joint.subject_id.tolist() == ["child"] and joint.label.tolist() == ["toy"]
+        share = result.rows[result.rows.feature == "looks_at_toy_share"].set_index("subject_id")["value"]
+        assert share.to_dict() == {"child": 1.0, "parent": 1.0}
+        off = result.rows[result.rows.feature == "gaze_off_deg_toy"]["value"]
+        assert off.abs().max() < 1.0
 
     def test_a_camera_turned_and_tilted_puts_the_people_where_it_sees_them(self, run_angles):
         """The same people seen by a camera at the parent's right shoulder, looking down at the child."""

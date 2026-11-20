@@ -12,14 +12,22 @@ BACKEND_GROUP = "gaze"
 # what infer returns per head and frame: the point looked at in the video's pixels, and how sure the model is it lies in the picture
 GAZE_POINT_COLUMNS = ("frame", "subject_id", "gaze_x", "gaze_y", "in_frame")
 HEAD_COLUMNS = ("frame", "subject_id", "x0", "y0", "x1", "y1")
+# the regions a look can land on: people's heads (outline empty) and followed things
+TARGET_COLUMNS = ("frame", "name", "x0", "y0", "x1", "y1", "outline")
+# a backend with a heatmap may add, per head, its highest value and the share of it on each target in the frame
+PEAK = "gaze_peak"
+SHARE = "share_{}"
 
 
 class GazeBackend(Backend):
     # whether it finds the point looked at in the picture; one that does not reads head and eye angles instead
     finds_points: bool = True
 
-    def infer(self, video_path, *, heads: pd.DataFrame, device: str, model: str | None, batch_size: int) -> pd.DataFrame:
-        """heads holds HEAD_COLUMNS in the video's pixels and its own frame numbers; one row of GAZE_POINT_COLUMNS back per head."""
+    def infer(
+        self, video_path, *, heads: pd.DataFrame, targets: pd.DataFrame, device: str, model: str | None, batch_size: int
+    ) -> pd.DataFrame:
+        """heads holds HEAD_COLUMNS, targets TARGET_COLUMNS, in the video's pixels and its own frame numbers; one row of
+        GAZE_POINT_COLUMNS back per head, optionally with PEAK and a SHARE column per target name."""
         raise NotImplementedError
 
     def prefetch(self, *, model: str | None) -> None:
@@ -83,7 +91,7 @@ class GazeLLEBackend(GazeBackend):
             ) from error
         return net.eval().to(device)
 
-    def infer(self, video_path, *, heads, device, model, batch_size):
+    def infer(self, video_path, *, heads, targets, device, model, batch_size):
         import cv2
         import numpy as np
         import torch
@@ -102,6 +110,7 @@ class GazeLLEBackend(GazeBackend):
             raise ExternalToolError(f"could not open video: {video_path}")
         width, height = capture.get(cv2.CAP_PROP_FRAME_WIDTH), capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
         by_frame = {frame: group for frame, group in heads.groupby("frame", sort=True)}
+        regions = {frame: group for frame, group in targets.groupby("frame", sort=True)}
         rows: list[dict] = []
         batch: list[tuple[int, np.ndarray]] = []
 
@@ -117,11 +126,15 @@ class GazeLLEBackend(GazeBackend):
             for (frame, _), maps, scores in zip(batch, found["heatmap"], found["inout"]):
                 for head, heat, score in zip(by_frame[frame].itertuples(), maps, scores):
                     row, col = divmod(int(torch.argmax(heat)), heat.shape[1])
+                    heat = heat.float().cpu().numpy()
+                    around = regions.get(frame)
+                    others = around[around["name"] != head.subject_id] if around is not None else None
                     rows.append(
                         {
                             "frame": frame, "subject_id": head.subject_id,
                             "gaze_x": (col + 0.5) / heat.shape[1] * width, "gaze_y": (row + 0.5) / heat.shape[0] * height,
-                            "in_frame": float(score),
+                            "in_frame": float(score), PEAK: float(heat.max()),
+                            **{SHARE.format(name): share for name, share in heat_shares(heat, others, width, height).items()},
                         }
                     )
             batch.clear()
@@ -146,7 +159,36 @@ class GazeLLEBackend(GazeBackend):
                 flush()
         finally:
             capture.release()
-        return pd.DataFrame(rows, columns=list(GAZE_POINT_COLUMNS))
+        return pd.DataFrame(rows).reindex(columns=list(dict.fromkeys([*GAZE_POINT_COLUMNS, *(key for row in rows for key in row)])))
+
+
+def heat_shares(heat, targets: pd.DataFrame | None, width: float, height: float) -> dict[str, float]:
+    """Per target, the share of the heatmap's sum that lies on its outline, or on its box when it has none; a target smaller
+    than one cell of the map takes the cell at its centre."""
+    import cv2
+    import numpy as np
+
+    from macaw.extractors.video.objects.outline import polygons
+
+    if targets is None or targets.empty:
+        return {}
+    rows, cols = heat.shape
+    total = float(heat.sum())
+    to_grid = np.array([cols / width, rows / height])
+    shares = {}
+    for target in targets.itertuples():
+        mask = np.zeros((rows, cols), np.uint8)
+        parts = polygons(target.outline) if isinstance(target.outline, (list, tuple, np.ndarray)) else []
+        if parts:
+            cv2.fillPoly(mask, [np.round(part * to_grid - 0.5).astype(np.int32) for part in parts], 1)
+        else:
+            c0, r0 = int(target.x0 * to_grid[0]), int(target.y0 * to_grid[1])
+            mask[max(r0, 0):max(int(np.ceil(target.y1 * to_grid[1])), r0 + 1), max(c0, 0):max(int(np.ceil(target.x1 * to_grid[0])), c0 + 1)] = 1
+        if not mask.any():
+            centre = np.clip(np.array([(target.x0 + target.x1) / 2, (target.y0 + target.y1) / 2]) * to_grid, 0, [cols - 1, rows - 1]).astype(int)
+            mask[centre[1], centre[0]] = 1
+        shares[str(target.name)] = float(heat[mask > 0].sum()) / total if total > 0 else float("nan")
+    return shares
 
 
 @register_backend(BACKEND_GROUP)

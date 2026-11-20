@@ -14,10 +14,11 @@ from macaw.extractors import get_backend, register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.gaze import angles
-from macaw.extractors.video.gaze.backends import BACKEND_GROUP, resolve_backend
+from macaw.extractors.video.gaze.backends import BACKEND_GROUP, PEAK, SHARE, TARGET_COLUMNS, resolve_backend
 from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.objects.outline import inside
 from macaw.extractors.video.objects.review import ObjectReviewGate
+from macaw.extractors.video.objects.touch import slug
 from macaw.extractors.video.objects.track import load_objects, objects_file
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.gaze_labels import labels_frame, read_labels
@@ -46,7 +47,15 @@ _LOOKER_SPECS = {
     "gaze_x": ("Horizontal position in the picture of the point the person looks at.", "px", "none"),
     "gaze_y": ("Vertical position in the picture of the point the person looks at.", "px", "none"),
     "gaze_in_frame": ("How sure the model is that what the person looks at is in the picture, 0 to 1.", None, "mean"),
+    PEAK: (
+        "Highest value of the model's map of where the person looks: how sharply it places the point looked at, on the "
+        "model's own scale.", None, "mean",
+    ),
 }
+_SHARE_ON_HEAD = (
+    "Share of the model's map of where subject_id looks that lies on subject_id_b's head box, 0 to 1: a graded look at them "
+    "that can be cut where one likes, steadier than the single point when heads are close.", None, "mean",
+)
 _DISTANCE_SPECS = {
     "gaze_to_head": (
         "Distance from the point subject_id looks at to subject_id_b's head box, in widths of that box; 0 on the head.",
@@ -94,10 +103,11 @@ def _missing(points: bool) -> dict[str, str]:
         left_out = " Moments at which it is not known (see looks_at and mutual_gaze) are left out."
         looker = f"Empty in frames where subject_id's gaze was not read ({unread}),"
         own = {
-            name: f"Empty in frames where this person's gaze was not read: {unread}." for name in ("gaze_x", "gaze_y", "gaze_in_frame")
+            name: f"Empty in frames where this person's gaze was not read: {unread}." for name in ("gaze_x", "gaze_y", "gaze_in_frame", PEAK)
         }
         pair = {
             "gaze_to_head": f"{looker} and in frames where subject_id_b's head is not in that picture.",
+            "gaze_share_on_head": f"{looker} and in frames where subject_id_b's head is not in that picture.",
             "looks_at": (
                 f"{looker} throughout the span when subject_id_b's head never appears in that picture, and in frames where "
                 "subject_id looked out of the picture while subject_id_b's head was not in it, as they may have looked at "
@@ -159,6 +169,43 @@ def _missing(points: bool) -> dict[str, str]:
     }
 
 
+def thing_specs(things: list[str], points: bool, tolerance_deg) -> tuple[dict, dict, set]:
+    """(name -> (description, unit, aggregation), name -> missing, the names given once per span) for each named thing."""
+    if points:
+        rule = "1 while the point subject_id looks at lies inside {thing}'s outline and on no one's head, else 0."
+        empty = (
+            "Empty in frames where subject_id's gaze was not read, and where they looked out of the picture, as {thing} may "
+            "have been there. 0 means they looked at someone or something else in the picture."
+        )
+    else:
+        rule = f"1 while subject_id looks within {tolerance_deg:g} deg of {{thing}}, nearer it than anyone or anything else, else 0."
+        empty = (
+            "Empty in frames where subject_id's gaze was not read; not given for a person for whom neither the room laid out in "
+            "the setup nor labelled frames say where {thing} is. 0 means they looked elsewhere."
+        )
+    described, missing, spans = {}, {}, set()
+    for thing in things:
+        name = slug(thing)
+        described[f"looks_at_{name}"] = (rule.format(thing=thing), None, "mean")
+        described[f"looks_at_{name}_share"] = (f"Share of the frames subject_id's gaze was read in during which they looked at {thing}.", None, "mean")
+        described[f"looks_at_{name}_n"] = (f"Looks from subject_id at {thing}: runs of frames with looks_at_{name} 1.", None, "mean")
+        described[f"gaze_off_deg_{name}"] = (
+            f"Angle between where subject_id looks and where the room laid out in the setup or labelled frames put {thing}; 0 straight at it.",
+            "deg", "mean",
+        )
+        described[f"gaze_share_on_{name}"] = (
+            f"Share of the model's map of where subject_id looks that lies inside {thing}'s outline, 0 to 1; on the frames {thing} "
+            "was followed in.", None, "mean",
+        )
+        spans |= {f"looks_at_{name}_share", f"looks_at_{name}_n"}
+        for feature in (f"looks_at_{name}", f"gaze_off_deg_{name}"):
+            missing[feature] = empty.format(thing=thing)
+        missing[f"gaze_share_on_{name}"] = f"Empty in frames where subject_id's gaze was not read or {thing} was not in the picture."
+        for feature in (f"looks_at_{name}_share", f"looks_at_{name}_n"):
+            missing[feature] = f"Empty where subject_id's gaze was never read in the span. 0 means it was read but never rested on {thing}."
+    return described, missing, spans
+
+
 def finds_points(config) -> bool:
     return get_backend(BACKEND_GROUP, config.gaze.backend).finds_points
 
@@ -166,7 +213,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "objects.names", "segment", "video", "setup.cameras", "setup.room")
@@ -268,14 +315,15 @@ class GazeTargetExtractor(Extractor):
                         "no one else is ever in this person's picture, so whom they look at cannot be read off it",
                     )
                 )
+            mine = things[things["video"] == video] if things is not None else None
             found = backend.infer(
-                item.frames_path, heads=shown[shown["subject_id"].isin(lookers)], device=cfg.device,
-                model=cfg.model, batch_size=cfg.batch_size,
+                item.frames_path, heads=shown[shown["subject_id"].isin(lookers)], targets=target_regions(shown, mine),
+                device=cfg.device, model=cfg.model, batch_size=cfg.batch_size,
             )
             found["t"] = found["frame"] / item.fps + item.offset_s
             named = name_targets(found[(found["t"] >= span[0]) & (found["t"] <= span[1])], shown)
-            if things is not None:
-                named = name_objects(named, things[things["video"] == video])
+            if mine is not None:
+                named = name_objects(named, mine)
             points.append(named)
         return (pd.concat(points, ignore_index=True) if points else _no_points()), warnings
 
@@ -335,6 +383,7 @@ class GazeTargetExtractor(Extractor):
                                 "t_start": mine["t"].to_numpy(),
                                 "gaze_x": mine["gaze_x"].to_numpy(), "gaze_y": mine["gaze_y"].to_numpy(),
                                 "gaze_in_frame": mine["in_frame"].to_numpy(),
+                                **({PEAK: mine[PEAK].to_numpy(dtype=float)} if PEAK in mine else {}),
                             }
                         ),
                         scale=Scale.FRAME, subject_id=str(subject), **common,
@@ -348,9 +397,10 @@ class GazeTargetExtractor(Extractor):
                 continue
             measured.add((a, b))
             looks = looks_at(mine, b)
+            share = {"gaze_share_on_head": mine[SHARE.format(b)].to_numpy(dtype=float)} if SHARE.format(b) in mine else {}
             frames.append(
                 build_long_rows(
-                    values=pd.DataFrame({"t_start": mine["t"].to_numpy(), feature: mine[column].to_numpy(), "looks_at": looks.to_numpy()}),
+                    values=pd.DataFrame({"t_start": mine["t"].to_numpy(), feature: mine[column].to_numpy(), "looks_at": looks.to_numpy(), **share}),
                     scale=Scale.FRAME, subject_id=a, subject_id_b=b, **common,
                 )
             )
@@ -365,6 +415,8 @@ class GazeTargetExtractor(Extractor):
                     scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
                 )
             )
+        for a in subjects:
+            frames.extend(self._thing_rows(points[points["subject_id"] == a].sort_values("t"), a, things, common))
         for a, b in [(a, b) for a, b in permutations(subjects, 2) if a < b]:
             # never 0 for a pair where one of the two looks could not be seen at all
             mutual = mutual_gaze(points, a, b) if {(a, b), (b, a)} <= measured else pd.DataFrame()
@@ -386,6 +438,32 @@ class GazeTargetExtractor(Extractor):
             if things:
                 frames.extend(self._joint_rows(joint_attention(points, a, b, things), a, b, common))
         return concat_long_tables(frames)
+
+    def _thing_rows(self, mine: pd.DataFrame, a: str, things: list[str], common: dict) -> list[pd.DataFrame]:
+        """Whether a looks at each named thing, frame by frame and over the span, with the angle or heatmap share to it."""
+        frames = []
+        for thing in things:
+            angle = f"angle_{thing}"
+            # read from angles, only the things the room or labelled frames place for this person can be looked at
+            if mine.empty or ("gaze_x" not in mine and angle not in mine):
+                continue
+            looks, name = looks_at(mine, thing), slug(thing)
+            values = {"t_start": mine["t"].to_numpy(), f"looks_at_{name}": looks.to_numpy()}
+            if angle in mine:
+                values[f"gaze_off_deg_{name}"] = mine[angle].to_numpy(dtype=float)
+            if SHARE.format(thing) in mine:
+                values[f"gaze_share_on_{name}"] = mine[SHARE.format(thing)].to_numpy(dtype=float)
+            frames.append(build_long_rows(values=pd.DataFrame(values), scale=Scale.FRAME, subject_id=a, **common))
+            span = {"t_start": [float(mine["t"].min())], "t_end": [float(mine["t"].max())]}
+            frames.append(
+                build_long_rows(
+                    values=pd.DataFrame(
+                        {**span, f"looks_at_{name}_share": [float(looks.mean())], f"looks_at_{name}_n": [float(len(runs(mine["frame"], looks.to_numpy() > 0)))]}
+                    ),
+                    scale=Scale.RECORDING, subject_id=a, **common,
+                )
+            )
+        return frames
 
     def _joint_rows(self, joint: pd.DataFrame, a: str, b: str, common: dict) -> list[pd.DataFrame]:
         if joint.empty:
@@ -459,15 +537,17 @@ class GazeTargetExtractor(Extractor):
         params["min_look_s"] = cfg.min_look_s
         params["things"] = things
         missing = _missing(backend.finds_points)
+        on_things, about_things, spans = thing_specs(things, backend.finds_points, cfg.tolerance_deg)
+        missing.update(about_things)
         described = {
             **_LOOKER_SPECS, **_DISTANCE_SPECS, "looks_at": (rule, None, "mean"), "mutual_gaze": _MUTUAL_SPEC,
-            "joint_attention": _JOINT_SPEC, "joint_attention_lag_s": _LAG_SPEC,
-            **{name: (text, None, "mean") for name, text in _SUMMARY_SPECS.items()},
+            "joint_attention": _JOINT_SPEC, "joint_attention_lag_s": _LAG_SPEC, "gaze_share_on_head": _SHARE_ON_HEAD,
+            **{name: (text, None, "mean") for name, text in _SUMMARY_SPECS.items()}, **on_things,
         }
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit,
-                scale=Scale.RECORDING if name in _SUMMARY_SPECS else Scale.EVENT if name == "joint_attention_lag_s" else Scale.FRAME,
+                scale=Scale.RECORDING if name in _SUMMARY_SPECS or name in spans else Scale.EVENT if name == "joint_attention_lag_s" else Scale.FRAME,
                 group=self.group,
                 extractor=self.name, extractor_version=self.version, backend=backend.name, backend_version=backend.version,
                 params=params, interpolation="none", aggregation=aggregation, missing=missing.get(name, missing["looks_at"]),
@@ -498,6 +578,14 @@ def name_targets(found: pd.DataFrame, heads: pd.DataFrame) -> pd.DataFrame:
         on_head = (distance == 0) & (out["target"] == ELSEWHERE).to_numpy()
         out.loc[on_head, "target"] = str(other)
     return out
+
+
+def target_regions(heads: pd.DataFrame, things: pd.DataFrame | None) -> pd.DataFrame:
+    """Everyone's head box and each followed thing's outline, per frame, as TARGET_COLUMNS."""
+    parts = [heads.assign(name=heads["subject_id"].astype(str), outline=None)]
+    if things is not None and not things.empty:
+        parts.append(things.assign(name=things["label"].astype(str)))
+    return pd.concat(parts, ignore_index=True).reindex(columns=list(TARGET_COLUMNS))
 
 
 def name_objects(points: pd.DataFrame, things: pd.DataFrame) -> pd.DataFrame:
