@@ -367,6 +367,9 @@ def test_the_overview_grid_is_written_as_a_table(project, tmp_path):
     assert table.columns.tolist() == ["recording_id", *found.columns]
     row = table.set_index("recording_id").loc["003"]
     assert row["prep.media"] == "held" and row["align.review"] == "waiting"
+    said = pd.read_csv(tmp_path / "status_dictionary.csv").set_index("column")
+    assert set(said.index) == set(table.columns)
+    assert said.loc["align.review", "meaning"].startswith("Where the check by a person") and "failed" in said.loc["prep.media", "meaning"]
 
 
 def test_a_failed_step_shows_on_its_own_tile_and_row(project, monkeypatch):

@@ -13,7 +13,9 @@ from macaw.execution.job_db import JobDB
 from macaw.execution.runner import resolve_recordings, task_id_for, task_states
 from macaw.extractors import get_extractor, list_extractors
 from macaw.extractors.base import Gate
+from macaw.project.dictionary import fixed_entry, write_dictionary
 from macaw.project.layout import layout_for
+from macaw.project.tables import DICTIONARY_COLUMNS
 
 # the coded units waiting for a person count as a check of their own, after the judge
 SPEECH_ACTS = "speech acts"
@@ -128,4 +130,20 @@ def write_status(config_path: Path, path: Path) -> Path:
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows, columns=["recording_id", *columns]).to_csv(path, index=False, encoding="utf-8")
+    checked = {name for _, name in checks}
+    write_dictionary([fixed_entry("recording_id"), *(status_entry(name, name in checked) for name in columns)], path, DICTIONARY_COLUMNS)
     return path
+
+
+def status_entry(name: str, check: bool) -> dict:
+    if check:
+        meaning = (
+            f"Where the check by a person {name} stands for the recording: waiting (for a person), person (decided by a person), "
+            "software (left to the software, as its settings allow), none (nothing to check) or new (not reached yet)."
+        )
+    else:
+        meaning = (
+            f"Where the step {name} stands for the recording: current (up to date), stale (to run again, its inputs or settings "
+            "changed), new (not run yet), held (waiting for a check by a person before it) or failed (failed in the last run)."
+        )
+    return {"column": name, "meaning": meaning, "unit": None, "missing": "Never empty.", "step": name}
