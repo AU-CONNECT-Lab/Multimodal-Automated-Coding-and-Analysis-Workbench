@@ -216,3 +216,13 @@ class TestListening:
             "pose.listening divides upper_body_speed by each person's shoulder width and leaves motion_energy unchanged, since it is not a length"
         )
         assert body_size_notice(SimpleNamespace(kinematics=KinematicsSection(listening=["upper_body_speed"]))) is None
+
+
+def test_the_listening_key_moves_with_what_decides_who_talks(tmp_path):
+    from macaw.config.hashing import hash_extractor_config
+    from macaw.config.loader import resolve_config, scaffold_project_config
+
+    config = tmp_path / "project.yaml"
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
+    before = hash_extractor_config(resolve_config(config), "pose.listening")
+    assert hash_extractor_config(resolve_config(config, cli_overrides=["turns.min_voice_s=1.0"]), "pose.listening") != before

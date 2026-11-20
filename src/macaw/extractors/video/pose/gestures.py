@@ -463,7 +463,7 @@ def both_hands_holds(
 def submovement_peaks(t: np.ndarray, speed: np.ndarray, prominence: float) -> np.ndarray:
     """Times of the speed peaks; each tracked stretch on its own, so a gap makes no peak."""
     found = []
-    for run in _runs(np.isfinite(speed)):
+    for run in _runs(np.isfinite(speed), t):
         index, _ = find_peaks(speed[run], prominence=prominence)
         found.append(t[run][index])
     return np.concatenate(found) if found else np.empty(0)
@@ -476,23 +476,18 @@ def holds(t: np.ndarray, speeds: list[np.ndarray], still_speed: float, peaks: np
     step = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
     with np.errstate(invalid="ignore"):
         still = np.logical_and.reduce([speed < still_speed for speed in speeds]) & (t > peaks[0]) & (t < peaks[-1])
-    return [(float(t[run][0]), float(t[run][-1] + step)) for run in _runs(still)]
+    return [(float(t[run][0]), float(t[run][-1] + step)) for run in _runs(still, t)]
 
 
-
-
-
-
-
-
-
-
-def _runs(mask: np.ndarray) -> list[np.ndarray]:
-    """Index arrays of each unbroken stretch where mask holds."""
+def _runs(mask: np.ndarray, t: np.ndarray) -> list[np.ndarray]:
+    """Index arrays of each unbroken stretch where mask holds; frames in which nobody was seen have no row, so a jump in
+    time breaks a stretch too."""
     index = np.flatnonzero(mask)
     if index.size == 0:
         return []
-    return np.split(index, np.flatnonzero(np.diff(index) != 1) + 1)
+    period = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
+    apart = (np.diff(index) != 1) | (np.diff(t[index]) > 1.5 * period)
+    return np.split(index, np.flatnonzero(apart) + 1)
 
 
 def _nanmax(values: np.ndarray) -> float:

@@ -59,6 +59,11 @@ class TestSubmovements:
         speed[25:35] = np.nan
         assert len(submovement_peaks(t, speed, 20.0)) == 0
 
+    def test_frames_nobody_was_seen_in_make_no_peak_where_the_stretches_meet(self):
+        t = np.r_[np.arange(0, 30), np.arange(60, 90)] / 30.0
+        speed = np.r_[np.linspace(10, 60, 30), np.linspace(60, 10, 30)]
+        assert len(submovement_peaks(t, speed, 20.0)) == 0
+
 
 class TestHolds:
     def test_a_hold_lies_between_the_first_and_last_stroke(self):
@@ -73,6 +78,14 @@ class TestHolds:
         t = np.arange(0, 4, 1 / FPS)
         wrist = hump(t, 0.5, 1.0, 100.0) + hump(t, 2.1, 1.0, 100.0)
         assert holds(t, [wrist, np.full_like(t, 50.0)], 5.0, np.array([1.0, 2.6])) == []
+
+    def test_time_nobody_was_seen_in_is_no_hold(self):
+        """Frames without the person have no row at all; the frames either side of them are not neighbours."""
+        t = np.r_[np.arange(0, 60), np.arange(120, 180)] / 30.0
+        still = np.full(t.size, 1.0)
+        found = holds(t, [still, still], 5.0, np.array([0.5, 5.9]))
+        assert sum(end - start for start, end in found) == pytest.approx(5.9 - 0.5 - 2.0, abs=0.1)
+        assert all(not (start < 2.5 < end) for start, end in found)
 
     def test_one_stroke_has_nothing_between(self):
         t = np.arange(0, 2, 1 / FPS)

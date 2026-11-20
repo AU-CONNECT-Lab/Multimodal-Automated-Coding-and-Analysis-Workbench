@@ -43,7 +43,7 @@ class ListeningExtractor(Extractor):
     scale = Scale.RECORDING
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.listening", "kinematics.listening_per_body_size", "segment")
+    config_sections = ("kinematics.listening", "kinematics.listening_per_body_size", "segment", "turns", "text.diarization", "text.extra_voices")
     requires = (ASRExtractor.name, MediaPrepExtractor.name)
 
     @classmethod

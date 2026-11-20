@@ -85,12 +85,13 @@ def either_hand(by_side: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def hands_moving(times, speeds: dict[str, np.ndarray], *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
     """(each hand's 0/1 per frame, the stretches of either hand with the hand as label, the same of the stretches left out
-    as too short, how many of each hand's were)."""
+    as too short, how many of those there are)."""
     values, by_side, short = pd.DataFrame({"t_start": np.asarray(times, dtype=float)}), {}, {}
     for side in SIDES:
         by_side[side], short[side] = moving_spans(values["t_start"], speeds[side], above=above, min_s=min_s, join_s=join_s)
         values[f"{side}_hand_moving"] = moving_frames(values["t_start"], speeds[side], by_side[side])
-    return values, either_hand(by_side), either_hand(short), sum(len(spans) for spans in short.values())
+    dropped = either_hand(short)
+    return values, either_hand(by_side), dropped, len(dropped)
 
 
 @register_extractor

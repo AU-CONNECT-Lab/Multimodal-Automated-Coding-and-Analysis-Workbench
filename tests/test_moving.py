@@ -49,7 +49,7 @@ class TestSpans:
         t, left = speeds(180, [(1.0, 1.5), (3.0, 3.0 + 2 / FPS)])
         _, right = speeds(180, [(3.0, 3.0 + 2 / FPS)])
         _, kept, short, dropped = hands_moving(t, {"left": left, "right": right}, above=10.0, min_s=0.15, join_s=0.15)
-        assert kept["label"].tolist() == ["left"] and short["label"].tolist() == ["both"] and dropped == 2
+        assert kept["label"].tolist() == ["left"] and short["label"].tolist() == ["both"] and dropped == 1
         assert short["t_start"].iloc[0] == pytest.approx(3.0)
 
     def test_nothing_faster_gives_no_stretch(self):
