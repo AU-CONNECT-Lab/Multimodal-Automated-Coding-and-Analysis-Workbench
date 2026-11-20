@@ -633,7 +633,7 @@ def test_the_default_checks_are_the_same_in_the_settings_file_and_the_schema(tmp
 
     (tmp_path / "raw").mkdir()
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     assert resolve_config(config).qc.checks == QCSection().checks
 
 

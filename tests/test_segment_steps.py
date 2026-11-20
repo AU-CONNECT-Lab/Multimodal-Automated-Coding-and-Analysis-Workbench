@@ -41,7 +41,7 @@ def project(tmp_path):
     for who in ("parent", "child"):
         put(tmp_path / "raw", RID, f"{who}_mic", "a.wav")
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(path, microphones=mics())
 
     def config(*overrides):

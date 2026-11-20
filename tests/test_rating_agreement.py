@@ -105,7 +105,7 @@ def project(tmp_path, people=None):
         for task in ("plan", "play"):
             (tmp_path / "raw" / family / task).mkdir(parents=True, exist_ok=True)
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["project"]["recording_pattern"] = "{group_id}/{task}"
     data["coding"] = {"llm": {"model": "tiny"}, "ratings": {"k1": {"scales": "scales.yaml"}}}

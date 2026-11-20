@@ -372,7 +372,7 @@ class TestSetOffsetCommand:
         put(raw, "003", "parent_mic", "a.wav")
         put(raw, "003", "camera", "a.avi")
         config = tmp_path / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+        scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
         write_setup(
             config, cameras={"camera": setup_camera()},
             microphones={"room_mic": {"hears": ["parent", "child"]}, "parent_mic": {"hears": ["parent"]}},

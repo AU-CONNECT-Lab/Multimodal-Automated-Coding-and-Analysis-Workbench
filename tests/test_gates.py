@@ -39,7 +39,7 @@ def project(tmp_path):
         put(raw, name, "child_mic", "a.wav")
         put(raw, name, "room", "a.mp4")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, cameras={"room": camera()}, microphones=mics())
     return SimpleNamespace(config=config, raw=raw, resolved=lambda: resolve_config(config))
 

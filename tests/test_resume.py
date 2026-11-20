@@ -40,7 +40,7 @@ def line(tmp_path, monkeypatch):
     )
 
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     config = resolve_config(project)
     layout = layout_for(config)
     monkeypatch.setattr(runner_module, "hash_extractor_config", lambda config, name: "c")
@@ -109,7 +109,7 @@ def test_a_recording_with_its_own_settings_is_judged_by_them(tmp_path, monkeypat
     from macaw.execution.runner import recording_configs
 
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     (tmp_path / "recordings").mkdir()
     (tmp_path / "recordings" / "rec1.yaml").write_text("segment:\n  task_start_s: 40.0\n", encoding="utf-8")
     config = resolve_config(project)
@@ -126,7 +126,7 @@ def test_a_recording_file_may_not_need_a_step_the_project_plan_lacks(tmp_path):
     from macaw.execution.runner import check_recording_steps
 
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     own = tmp_path / "recordings" / "rec1.yaml"
     own.parent.mkdir()
     own.write_text("objects:\n  names: [bottle]\n", encoding="utf-8")

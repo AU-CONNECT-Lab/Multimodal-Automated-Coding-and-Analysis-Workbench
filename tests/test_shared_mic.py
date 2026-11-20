@@ -50,7 +50,7 @@ def project(tmp_path):
     """One recording of a parent and a child on a single room microphone."""
     put(tmp_path / "raw", "003", "room_mic", "a.wav")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, microphones={"room_mic": {"hears": list(EVERYONE)}})
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     data.setdefault("text", {})["diarization"] = "pyannote"

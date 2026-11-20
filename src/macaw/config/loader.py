@@ -431,21 +431,16 @@ def scaffold_project_config(
     raw_dir: Path | str | None = None,
     output_dir: Path | str | None = None,
     work_dir: Path | str | None = None,
-    n_subjects: int = 2,
+    roles: Sequence[str] = ("subject_1", "subject_2"),
 ) -> Path:
     if dest.exists() and not force:
         raise ConfigError(f"{dest} already exists. Pass --force to overwrite it.")
-    roles = (
-        ["parent", "child"]
-        if n_subjects == 2
-        else [f"subject_{position}" for position in range(1, n_subjects + 1)]
-    )
     text = Template(PROJECT_TEMPLATE).substitute(
         name=_yaml_scalar(name),
         raw_dir=_yaml_scalar(raw_dir),
         output_dir=_yaml_scalar(output_dir),
         work_dir=_yaml_scalar(work_dir),
-        n_subjects=n_subjects,
+        n_subjects=len(roles),
         roles="[" + ", ".join(roles) + "]",
     )
     dest.parent.mkdir(parents=True, exist_ok=True)

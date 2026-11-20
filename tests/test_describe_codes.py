@@ -79,7 +79,7 @@ def test_the_command_prints_the_table_and_writes_it(tmp_path):
     (tmp_path / "raw" / "003").mkdir(parents=True)
     (tmp_path / "raw" / "003" / "003_parent.wav").write_bytes(b"")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     rows = coded(["ask", "ask", "tell"], recording_id="003", subject_id="parent").assign(
         group_id="003", session_id=None, task=None, run=None, confidence=1.0, needs_review=False, execution_id="e", config_hash="h"
     )

@@ -57,7 +57,7 @@ class TestCheckReady:
 
 def test_a_run_whose_pose_backend_is_not_set_starts_no_task(tmp_path):
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     config = resolve_config(project)
     with pytest.raises(ConfigError, match=r"pose\.detect: pose\.backend is not set"):
         runner.run(config, recordings=["rec1"], extractors=["pose.detect"])

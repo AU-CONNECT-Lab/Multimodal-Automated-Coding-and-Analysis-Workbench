@@ -71,12 +71,12 @@ Excluding a recording
 This is the only step that requires the command line. In a terminal, run the following three commands, substituting the project name and the folder that holds the recordings:
 
 ```bash
-macaw init parent-child-play --name "Parent-child play" --raw-dir "D:/recordings"
+macaw init parent-child-play --name "Parent-child play" --raw-dir "D:/recordings" --roles parent,child
 cd parent-child-play
 macaw gui
 ```
 
-The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window. Most steps can also be taken from the command line; the {doc}`commands` lists the commands with their options.
+The first command creates a project folder containing a settings file (`project.yaml`) and a results folder. `--roles` names the people in each recording, one name per person; without it they are `subject_1` and `subject_2`. Roles are best settled before the first run, since cameras and voices are named by them. The last command opens the workbench. In later sessions the last two commands suffice. `macaw gui --browser` opens the workbench in a browser tab instead of a separate window. Most steps can also be taken from the command line; the {doc}`commands` lists the commands with their options.
 
 The workbench has seven pages and a settings page behind the gear icon. **Open folder** opens the project folder on the computer.
 

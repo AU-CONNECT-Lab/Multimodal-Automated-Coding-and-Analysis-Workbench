@@ -12,7 +12,7 @@ def project(tmp_path, folders, pattern="{group_id}/{task}"):
     for folder in folders:
         (tmp_path / "raw" / folder).mkdir(parents=True, exist_ok=True)
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["project"]["recording_pattern"] = pattern
     path.write_text(yaml.safe_dump(data), encoding="utf-8")

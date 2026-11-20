@@ -39,7 +39,7 @@ def project(tmp_path):
         (raw / name).mkdir(parents=True)
     output = tmp_path / "derivatives"
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=output)
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=output, roles=("parent", "child"))
     write_setup(config, cameras={"room": camera()})
     return SimpleNamespace(root=tmp_path, config=config, raw=raw, output=output)
 
@@ -93,20 +93,21 @@ class TestInit:
         invoke("init", str(tmp_path), "--name", "other", "--raw-dir", str(raw), "--force")
         assert resolve_config(tmp_path / "project.yaml").project.name == "other"
 
-    def test_two_subjects_keep_the_default_roles(self, tmp_path):
+    def test_without_roles_two_people_get_neutral_names(self, tmp_path):
+        """Names such as parent and child hold for one kind of study only."""
         raw = tmp_path / "raw"
         raw.mkdir()
         invoke("init", str(tmp_path), "--name", "demo", "--raw-dir", str(raw))
-        assert "[parent, child]" in (tmp_path / "project.yaml").read_text(encoding="utf-8")
+        text = (tmp_path / "project.yaml").read_text(encoding="utf-8")
+        assert "roles: [subject_1, subject_2]" in text and "n_subjects: 2" in text
 
-    def test_other_group_sizes_get_generated_roles(self, tmp_path):
-        """parent/child is a two-person assumption; this is a general-purpose package."""
+    def test_the_roles_given_name_the_people_and_count_them(self, tmp_path):
         raw = tmp_path / "raw"
         raw.mkdir()
-        invoke("init", str(tmp_path), "--name", "demo", "--raw-dir", str(raw), "--n-subjects", "3")
+        invoke("init", str(tmp_path), "--name", "demo", "--raw-dir", str(raw), "--roles", "mother, father,child")
         text = (tmp_path / "project.yaml").read_text(encoding="utf-8")
-        assert "[subject_1, subject_2, subject_3]" in text
-        assert "parent" not in text
+        assert "roles: [mother, father, child]" in text and "n_subjects: 3" in text
+        assert resolve_config(tmp_path / "project.yaml").project.roles == ["mother", "father", "child"]
 
 
 @needs_pydantic

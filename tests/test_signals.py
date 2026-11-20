@@ -57,7 +57,7 @@ def project(tmp_path):
 
     (tmp_path / "raw").mkdir()
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     return path
 
 

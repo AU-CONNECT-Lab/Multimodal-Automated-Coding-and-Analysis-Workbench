@@ -385,7 +385,7 @@ class TestUncachedSteps:
         monkeypatch.setattr(runner, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id))
         monkeypatch.setattr(runner, "hash_extractor_config", lambda config, name: "c")
         project = tmp_path / "project.yaml"
-        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         config = resolve_config(project)
 
         def run_step(cached, check=lambda self: None):

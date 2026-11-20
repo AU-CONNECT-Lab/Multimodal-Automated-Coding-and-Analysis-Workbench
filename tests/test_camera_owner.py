@@ -220,7 +220,7 @@ def project(tmp_path):
     for device in ("parent_cam", "child_cam", "room"):
         put(raw, "003", device, "a.mp4")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, cameras={
         "parent_cam": {"body": ["parent"], "face": ["parent"]},
         "child_cam": {"body": ["child"], "face": ["child"]},

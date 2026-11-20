@@ -38,7 +38,7 @@ def project(tmp_path):
     for device, name in (("parent_mic", "a.wav"), ("child_mic", "a.wav"), ("room", "a.mp4")):
         put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_devices(config, cameras={"room": setup_camera()}, microphones=mics())
     return config
 

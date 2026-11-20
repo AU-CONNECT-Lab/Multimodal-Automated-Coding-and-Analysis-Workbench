@@ -22,7 +22,9 @@ def init_project(
     work_dir: Path = typer.Option(
         None, "--work", "-w", help="Logs, job records and cache. Defaults to under the output dir."
     ),
-    n_subjects: int = typer.Option(2, "--n-subjects", help="How many people take part in each recording."),
+    roles: str = typer.Option(
+        "subject_1,subject_2", "--roles", help="What each person in a recording is called, one name per person, e.g. parent,child."
+    ),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing project.yaml."),
 ) -> None:
     """Create a project: a project.yaml to fill in and the folders the results go to."""
@@ -38,7 +40,7 @@ def init_project(
         raw_dir=raw_dir.resolve(),
         output_dir=output_dir,
         work_dir=work_dir,
-        n_subjects=n_subjects,
+        roles=[role.strip() for role in roles.split(",") if role.strip()],
     )
     make_layout(output_dir, work_dir)
     (directory / "recordings").mkdir(parents=True, exist_ok=True)

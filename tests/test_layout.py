@@ -89,7 +89,7 @@ class TestConfigResolution:
         raw.mkdir()
         config = tmp_path / "project.yaml"
         scaffold_project_config(
-            config, name="demo", raw_dir=raw, output_dir=tmp_path / "derivatives"
+            config, name="demo", raw_dir=raw, output_dir=tmp_path / "derivatives", roles=("parent", "child")
         )
         return config
 
@@ -109,7 +109,7 @@ class TestConfigResolution:
             name="demo",
             raw_dir=raw,
             output_dir=tmp_path / "derivatives",
-            work_dir=tmp_path / "scratch space",
+            work_dir=tmp_path / "scratch space", roles=("parent", "child")
         )
         resolved = resolve_config(config)
         assert resolved.project.work_dir == tmp_path / "scratch space"
@@ -161,7 +161,7 @@ class TestNamesThatArePaths:
         (folder / "models" / "pose.pt").write_bytes(b"weights")
         (folder / "transcripts").mkdir()
         config = folder / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=folder / "raw", output_dir=folder / "derivatives")
+        scaffold_project_config(config, name="demo", raw_dir=folder / "raw", output_dir=folder / "derivatives", roles=("parent", "child"))
         config.write_text(
             config.read_text(encoding="utf-8")
             + "\ntext:\n  asr_model: transcripts\n  syntax_model: en_core_web_sm\npose:\n  model: models/pose.pt\n",

@@ -122,7 +122,7 @@ def depth_project(tmp_path):
         _cv2().imwrite(str(folder / f"{index:06d}.png"), depth_image(missing=(slice(0, 240), slice(0, 110)) if index == 2 else None))
     write_lens(lens(), folder / LENS_FILE)
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(project, cameras={"kinect": {**camera(), "depth": True}})
     config = resolve_config(project)
     layout = layout_for(config)

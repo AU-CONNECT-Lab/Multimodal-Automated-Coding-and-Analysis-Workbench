@@ -477,7 +477,7 @@ class TestJudge:
         raw = tmp_path / "raw" / "r1"
         raw.mkdir(parents=True)
         config = tmp_path / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         assert "coding.judge" not in build_dag(resolve_config(config)).nodes
         data = yaml.safe_load(config.read_text(encoding="utf-8"))
         data.setdefault("coding", {})["layers"] = ["A", "B"]
@@ -615,7 +615,7 @@ class TestAtOnce:
 def project_with(tmp_path, coding):
     (tmp_path / "raw" / "r1").mkdir(parents=True, exist_ok=True)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     data["coding"] = coding
     config.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -725,7 +725,7 @@ class TestReview:
     def project(self, tmp_path):
         (tmp_path / "raw" / "r1").mkdir(parents=True)
         config = tmp_path / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         resolved = resolve_config(config)
         rows = pd.DataFrame({
             "recording_id": "r1", "subject_id": ["a", "b", "a"], "tier": "acts", "t_start": [0.0, 2.0, 4.0],

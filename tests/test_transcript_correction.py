@@ -27,7 +27,7 @@ def project(tmp_path):
     for name in ("003_parent.wav", "003_child.wav"):
         (raw / name).write_bytes(b"")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     resolved = resolve_config(config)
     return SimpleNamespace(config=config, resolved=resolved, recording=build_recording("003", resolved))
 

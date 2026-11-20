@@ -270,7 +270,7 @@ class TestSettings:
         from macaw.config.loader import scaffold_project_config, resolve_config
 
         project = tmp_path / "project.yaml"
-        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         roles = resolve_config(project).project.roles
         project.write_text(project.read_text(encoding="utf-8") + f"objects:\n  names: [{roles[0]}]\n", encoding="utf-8")
         with pytest.raises(Exception, match="which are roles"):
@@ -289,7 +289,7 @@ def project(tmp_path):
     for device, name in (("parent_mic", "a.wav"), ("child_mic", "a.wav"), ("room", "a.mp4")):
         put(raw, "003", device, name)
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, cameras={"room": camera()}, microphones=mics())
 
     def configure(**values):

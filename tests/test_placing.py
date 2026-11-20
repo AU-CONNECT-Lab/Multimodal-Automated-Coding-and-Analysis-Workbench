@@ -286,7 +286,7 @@ def calibrated_project(tmp_path):
     for device, name in (("parent_mic", "a.wav"), ("left", "a.mp4"), ("right", "a.mp4")):
         put(raw, "003", device, name)
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     setup_file = write_setup(project, cameras={"left": camera(), "right": camera(uses=("body",))}, microphones=mics(["parent"]))
     with open(project, "a", encoding="utf-8") as handle:
         handle.write("\nvideo:\n  normalise: false\npose3d:\n  calibration: lab\n")

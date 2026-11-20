@@ -19,7 +19,7 @@ def spec(extractor, name, backend=None, version=None, **params):
 
 
 def config(**sections):
-    base = {"project": {"name": "t", "raw_dir": "raw", "output_dir": "out"}}
+    base = {"project": {"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["parent", "child"]}}
     return MacawConfig.model_validate({**base, **sections})
 
 

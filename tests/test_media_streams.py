@@ -103,7 +103,7 @@ class TestPreparedTrack:
         folder.mkdir(parents=True)
         shutil.copy(sources[which], folder / f"clip{sources[which].suffix}")
         project = tmp_path / "project.yaml"
-        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         write_setup(project, cameras={"room": camera(hears=EVERYONE)})
         config = resolve_config(project)
         (tmp_path / "work").mkdir()
@@ -121,7 +121,7 @@ class TestPreparedTrack:
         folder.mkdir(parents=True)
         shutil.copy(sources["variable"], folder / f"clip{sources['variable'].suffix}")
         project = tmp_path / "project.yaml"
-        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(project, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         write_setup(project, cameras={"room": camera(hears=("parent",))})
         config = resolve_config(project)
         (tmp_path / "work").mkdir()

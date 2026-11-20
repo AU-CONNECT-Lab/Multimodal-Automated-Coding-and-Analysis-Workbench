@@ -97,7 +97,7 @@ def test_a_built_in_is_not_a_script():
 
 def test_reading_a_project_loads_its_scripts_folder(tmp_path):
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "scripted.py").write_text(EXTRACTOR, encoding="utf-8")
     resolved = resolve_config(config)

@@ -45,7 +45,7 @@ class ProjectSection(_Section):
     signals: Path = added(default=Path("signals.csv"))
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
-    roles: list[str] = Field(default_factory=lambda: ["parent", "child"])
+    roles: list[str] = Field(default_factory=lambda: ["subject_1", "subject_2"])
     # every length a person enters or reads; results keep pixels and metres and are converted where shown
     units: Literal["cm", "m", "in"] = "cm"
 

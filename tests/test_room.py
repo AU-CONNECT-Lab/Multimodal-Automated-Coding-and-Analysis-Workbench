@@ -83,7 +83,7 @@ class TestTheSetupFile:
             SetupSection(cameras={"front": {"body": ["parent"]}}, room={"cameras": {"side": {"at": [0, 0]}}})
         with pytest.raises(ValidationError, match="both a device and a thing"):
             SetupSection(cameras={"front": {"body": ["parent"]}}, room={"things": {"front": {"at": [0, 0]}}})
-        base = {"project": {"name": "t", "raw_dir": "raw", "output_dir": "out"}}
+        base = {"project": {"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["parent", "child"]}}
         with pytest.raises(ValidationError, match="places teacher in the room"):
             MacawConfig.model_validate({**base, "setup": {"room": {"people": {"teacher": {"at": [0, 0]}}}}})
         with pytest.raises(ValidationError, match="both a role and a thing"):
@@ -102,7 +102,7 @@ def test_the_room_is_drawn_for_a_paper_at_300_dpi(tmp_path):
 
     pytest.importorskip("matplotlib")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     path = write_setup(config, cameras={"front": camera()})
     refused = CliRunner().invoke(app, ["draw-room", "-c", str(config)])
     assert refused.exit_code != 0 and "places nothing yet" in str(refused.exception)

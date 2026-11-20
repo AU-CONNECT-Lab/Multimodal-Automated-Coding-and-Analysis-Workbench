@@ -104,7 +104,7 @@ def aligned_project(tmp_path):
     raw = tmp_path / "raw"
     put(raw, "003", "room", "room.mp4")
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(project, cameras={"room": camera()})
     rows, aux = synthetic()
     folder = tmp_path / "nirs"

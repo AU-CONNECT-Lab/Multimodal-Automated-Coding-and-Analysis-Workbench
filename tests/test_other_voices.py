@@ -35,7 +35,7 @@ def project(tmp_path):
     raw.mkdir(parents=True)
     (raw / "003_room.wav").write_bytes(b"")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     data.setdefault("text", {}).update(diarization="pyannote", extra_voices=1)
     config.write_text(yaml.safe_dump(data), encoding="utf-8")

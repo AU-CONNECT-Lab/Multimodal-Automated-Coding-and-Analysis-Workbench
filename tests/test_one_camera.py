@@ -63,7 +63,7 @@ def one_camera_project(tmp_path, monkeypatch):
     raw = tmp_path / "raw"
     put(raw, "003", "room", "room.mp4")
     project = tmp_path / "project.yaml"
-    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(project, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(project, cameras={"room": camera()})
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "fake_runner.py").write_text(FAKE_RUNNER, encoding="utf-8")

@@ -26,7 +26,7 @@ def project(tmp_path):
         (tmp_path / "raw" / name).mkdir(parents=True)
         (tmp_path / "raw" / name / "video.mp4").write_bytes(b"")
     config_path = tmp_path / "project.yaml"
-    scaffold_project_config(config_path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config_path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
 
     def configure(text=""):
         if text:

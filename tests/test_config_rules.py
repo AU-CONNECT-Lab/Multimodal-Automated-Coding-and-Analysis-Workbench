@@ -16,7 +16,7 @@ from macaw.exceptions import ConfigError
 @pytest.fixture
 def project(tmp_path):
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     return path
 
 

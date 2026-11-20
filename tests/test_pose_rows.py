@@ -306,7 +306,7 @@ class TestOwnCuts:
         from macaw.config.loader import resolve_config, scaffold_project_config
 
         config = tmp_path / "project.yaml"
-        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         config.write_text(config.read_text(encoding="utf-8") + "\npose:\n  min_confidence_by_role: {baby: 0.2}\n", encoding="utf-8")
         with pytest.raises(Exception, match="baby"):
             resolve_config(config)
@@ -558,7 +558,7 @@ class TestAnAreaToIgnore:
 
         (tmp_path / "raw").mkdir()
         path = tmp_path / "project.yaml"
-        scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
         cameras = {"room": CameraDevice(body=["parent", "child"])}
         steps = ("prep.media", "pose.detect", "pose.keypoints", "pose.review", "motion.mea", "pose.kinematics", "face.au")
         keys = []

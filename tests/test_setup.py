@@ -16,7 +16,7 @@ from setup_helpers import EVERYONE, camera, mics, put, write_setup as write_devi
 def project(tmp_path):
     raw = tmp_path / "raw"
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=raw, output_dir=tmp_path / "out", roles=("parent", "child"))
     raw.mkdir()
     return config
 

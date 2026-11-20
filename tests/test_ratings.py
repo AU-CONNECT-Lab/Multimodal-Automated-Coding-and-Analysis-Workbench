@@ -119,7 +119,7 @@ def no_waiting(monkeypatch):
 def project(tmp_path, ratings, *, llm=None, roles=("parent", "child"), segments=None):
     (tmp_path / "raw" / "r1").mkdir(parents=True, exist_ok=True)
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["project"]["roles"] = list(roles)
     data["coding"] = {"llm": llm or {"model": "tiny"}, "ratings": ratings}
@@ -600,7 +600,7 @@ def task_project(tmp_path, ratings, *, llm=None):
     for rid in TASKS:
         (tmp_path / "raw" / rid.replace("_task", "/task", 1)).mkdir(parents=True, exist_ok=True)
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["project"]["recording_pattern"] = "{group_id}/{task}"
     data["coding"] = {"llm": llm or {"model": "tiny"}, "ratings": ratings}

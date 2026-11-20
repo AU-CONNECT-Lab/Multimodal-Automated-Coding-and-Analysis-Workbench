@@ -42,7 +42,7 @@ def project(tmp_path):
         for who in ("parent", "child"):
             put(tmp_path / "raw", recording, f"{who}_mic", "a.wav")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, microphones=mics())
     hpc = tmp_path / "hpc.yaml"
     hpc.write_text(yaml.safe_dump(HPC), encoding="utf-8")

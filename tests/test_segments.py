@@ -39,7 +39,7 @@ def project(tmp_path):
     for who in ("parent", "child"):
         (raw / f"{RID}_{who}.wav").write_bytes(b"")
     path = tmp_path / "project.yaml"
-    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(path, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     return SimpleNamespace(
         config=lambda *overrides: resolve_config(path, cli_overrides=list(overrides)), table=tmp_path / "segments.csv",
     )

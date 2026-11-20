@@ -18,7 +18,7 @@ def project(tmp_path):
     for name in ("003_parent.wav", "003_child.wav", "003_room.mp4"):
         (raw / name).write_bytes(b"")
     config = tmp_path / "project.yaml"
-    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+    scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     with open(config, "a", encoding="utf-8") as handle:
         handle.write("\nobjects:\n  names: [bottle]\n")
     return config

@@ -15,7 +15,7 @@ project:
   ratings: ratings.csv               # table of people's scores on the rating scales (recording, segment, scale, coder, score)
   signals: signals.csv               # table of other signals recorded alongside, such as fNIRS (recording, person, stage, file); needs pymacaw[signals]
   n_subjects: 2                      # people per recording; tested with 2
-  roles: [parent, child]             # role labels; length must equal n_subjects
+  roles: [subject_1, subject_2]      # what each person is called, e.g. [parent, child]; one per person
   units: cm                          # cm | m | in, for every length entered or shown
   excluded_recordings: []            # recording ids skipped by every command
 
