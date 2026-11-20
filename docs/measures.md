@@ -63,7 +63,7 @@ The same is done in a terminal: `macaw objects -r REC` lists the starts, `--keep
 
 After the start, the review frames of the quality-control report show the outlines too, so that an object picked up on something else can be seen there. With a model looking at the review frames ({ref}`model-look`), it is also asked of each outline whether it is on the object named.
 
-When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. The tracker is SAM 2.1 by default; `objects.tracker: sam3` uses the tracker of SAM 3 instead, whose model is given on request on Hugging Face (accept its terms there and log in with `hf auth login` first).
+When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. Objects are found by name with Grounding DINO and followed with SAM 2.1 by default. SAM 3 can do either instead: `objects.finder: sam3` finds every instance of a name with it, which tends to tell a named object from similar ones better and to count all the candidates in a frame, and `objects.tracker: sam3` follows objects with its tracker, which is slower than SAM 2.1 and needs about twice the graphics memory. Both use the same model, of about 3.4 GB, given on request on Hugging Face under its own licence: accept its terms there and log in with `hf auth login` first.
 
 ### Where objects are
 

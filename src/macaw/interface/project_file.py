@@ -38,7 +38,7 @@ FORM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Tools", "Which program does each kind of measurement, and with which model.", (
         "prosody.backend", "text.asr_backend", "text.asr_model", "text.language", "text.device", "text.diarization",
         "text.extra_voices", "pose.backend", "pose.model", "face.backend", "face.model", "gaze.backend", "gaze.model",
-        "objects.names", "objects.tracker",
+        "objects.names", "objects.finder", "objects.tracker",
     )),
     ("Checks by a person", "Where the software waits for a person before going on: always, only when it is unsure, or never.", (
         "align.review", "pose.review", "pose.suggest_names", "text.voice_review", "objects.review",
@@ -86,6 +86,7 @@ LABELS = {
     "gaze.backend": "Where people look",
     "gaze.model": "Gaze model",
     "objects.names": "Things to follow",
+    "objects.finder": "Finding things by name",
     "objects.tracker": "Following things",
     "align.review": "Offsets between files",
     "pose.review": "Who is on camera",
@@ -121,6 +122,8 @@ BACKEND_GROUPS = {
     "pose.backend": "pose",
     "face.backend": "face",
     "gaze.backend": "gaze",
+    "objects.finder": "object_finders",
+    "objects.tracker": "object_trackers",
     "coding.llm.provider": "llm",
     "qc.look.provider": "llm",
 }

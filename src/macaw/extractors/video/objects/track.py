@@ -27,6 +27,7 @@ OBJECTS_NAME = "objects.parquet"
 STARTS_NAME = "starts.json"
 # one row per frame a thing is in view: its outline and box in the video's pixels, and how sure the tracker is it is there
 OBJECT_COLUMNS = ("video", "frame", "label", "score", "in_view", "x0", "y0", "x1", "y1", "cx", "cy", "area", "outline")
+FOUND_COLUMNS = ("frame", "label", "x0", "y0", "x1", "y1", "score")
 # a thing is looked for by name this often, a stretch at a time, until it is found
 FIND_EVERY_S = 0.2
 FIND_STRETCH_S = 10.0
@@ -121,21 +122,12 @@ class GroundingDinoFinder(ObjectFinder):
         return loaded[name, device]
 
     def infer(self, video_path, *, frames, step, names, device, model, min_score):
-        import cv2
         import torch
-        from PIL import Image
-
-        from macaw.extractors.video.pose.backends import _seek
 
         device = _device(device)
         processor, net = self.network(model, device)
-        capture = cv2.VideoCapture(str(video_path))
-        if not capture.isOpened():
-            raise ExternalToolError(f"could not open video: {video_path}")
         rows: list[dict] = []
-        batch: list[tuple[int, Image.Image]] = []
-
-        def flush():
+        for batch in _batches(_every_step(video_path, frames, step), self.batch_size):
             images = [image for _, image in batch]
             inputs = processor(images=images, text=[list(names)] * len(images), return_tensors="pt").to(device)
             with torch.inference_mode():
@@ -148,29 +140,108 @@ class GroundingDinoFinder(ObjectFinder):
                 for box, score, label in zip(result["boxes"].tolist(), result["scores"].tolist(), result["text_labels"]):
                     if label in names:
                         rows.append({"frame": frame, "label": label, "x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3], "score": score})
-            batch.clear()
+        return pd.DataFrame(rows, columns=list(FOUND_COLUMNS))
 
-        try:
-            first, stop = frames
-            index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
-            while index < stop:
-                if (index - first) % step:
-                    if not capture.grab():
-                        break
-                    index += 1
-                    continue
-                ok, image = capture.read()
-                if not ok:
+
+@register_backend(FINDERS)
+class Sam3Finder(ObjectFinder):
+    """SAM 3 finding every instance of a name through transformers; weights under the SAM License, given on request on the
+    Hugging Face hub."""
+
+    name = "sam3"
+    default_model = "facebook/sam3"
+    batch_size = 4
+
+    @property
+    def version(self) -> str:
+        import transformers
+
+        return transformers.__version__
+
+    def check_available(self) -> None:
+        _torch_and_transformers("objects.finder", self.name)
+        import transformers
+
+        if not hasattr(transformers, "Sam3Model"):
+            raise BackendNotAvailableError(f"objects.finder {self.name} needs a transformers with Sam3Model: pip install -U transformers")
+
+    def prefetch(self, *, model: str | None) -> None:
+        self.network(model, "cpu")
+
+    def network(self, model: str | None, device: str):
+        import torch
+        from transformers import Sam3Model, Sam3Processor
+
+        name = model or self.default_model
+        loaded = self.__dict__.setdefault("_networks", {})
+        if (name, device) not in loaded:
+            dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+            loaded[name, device] = (Sam3Processor.from_pretrained(name), Sam3Model.from_pretrained(name).to(device, dtype=dtype).eval(), dtype)
+        return loaded[name, device]
+
+    def infer(self, video_path, *, frames, step, names, device, model, min_score):
+        import torch
+
+        device = _device(device)
+        processor, net, dtype = self.network(model, device)
+        words = {name: processor(text=name, return_tensors="pt").to(device) for name in names}
+        rows: list[dict] = []
+        for batch in _batches(_every_step(video_path, frames, step), self.batch_size):
+            images = [image for _, image in batch]
+            sizes = [image.size[::-1] for image in images]
+            pixels = processor(images=images, return_tensors="pt").to(device)
+            with torch.inference_mode():
+                # the picture is read once and asked for each name in turn
+                seen = net.get_vision_features(pixel_values=pixels.pixel_values.to(dtype))
+                for name, word in words.items():
+                    found = net(
+                        vision_embeds=seen, input_ids=word["input_ids"].expand(len(images), -1),
+                        attention_mask=word["attention_mask"].expand(len(images), -1),
+                    )
+                    results = processor.post_process_object_detection(found, threshold=min_score, target_sizes=sizes)
+                    for (frame, _), result in zip(batch, results):
+                        for box, score in zip(result["boxes"].float().tolist(), result["scores"].float().tolist()):
+                            rows.append({"frame": frame, "label": name, "x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3], "score": score})
+        return pd.DataFrame(rows, columns=list(FOUND_COLUMNS))
+
+
+def _every_step(video_path, frames: tuple[int, int], step: int):
+    """(frame, RGB picture) for every step-th frame from first to stop - 1, the frames between only skipped over."""
+    import cv2
+    from PIL import Image
+
+    from macaw.extractors.video.pose.backends import _seek
+
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise ExternalToolError(f"could not open video: {video_path}")
+    try:
+        first, stop = frames
+        index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
+        while index < stop:
+            if (index - first) % step:
+                if not capture.grab():
                     break
-                batch.append((index, Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))))
                 index += 1
-                if len(batch) >= self.batch_size:
-                    flush()
-            if batch:
-                flush()
-        finally:
-            capture.release()
-        return pd.DataFrame(rows, columns=["frame", "label", "x0", "y0", "x1", "y1", "score"])
+                continue
+            ok, image = capture.read()
+            if not ok:
+                break
+            yield index, Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            index += 1
+    finally:
+        capture.release()
+
+
+def _batches(items, size: int):
+    batch = []
+    for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 class _SamTracker(ObjectTracker):

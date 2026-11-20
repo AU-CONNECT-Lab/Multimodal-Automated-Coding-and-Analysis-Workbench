@@ -161,8 +161,8 @@ gaze:
 
 objects:
   names: []                          # things to follow in the picture, in plain words, e.g. [ball, book]
-  finder: grounding_dino             # grounding_dino: finds where each thing starts by its name (Apache-2.0)
-  finder_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub
+  finder: grounding_dino             # grounding_dino: Grounding DINO (Apache-2.0) | sam3: SAM 3 (SAM License, on request)
+  finder_model: null                 # grounding_dino: IDEA-Research/grounding-dino-tiny (default) or another on the Hugging Face hub | sam3: facebook/sam3
   finder_score: 0.35                 # 0-1; lower finds more starts and more that are not the thing
   tracker: sam2                      # sam2: SAM 2.1 (Apache-2.0) | sam3: SAM 3 (SAM License, weights on request)
   tracker_model: null                # sam2: facebook/sam2.1-hiera-base-plus (default), -tiny, -small or -large | sam3: facebook/sam3

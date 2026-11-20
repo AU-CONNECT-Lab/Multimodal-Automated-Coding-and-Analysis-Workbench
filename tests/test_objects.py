@@ -279,6 +279,26 @@ def macaw(project, *args):
     return CliRunner().invoke(app, ["objects", "-c", str(project.config), "-r", "003", *args])
 
 
+class TestFinders:
+    def test_every_step_th_frame_is_looked_at_and_handed_out_in_batches(self, tmp_path):
+        cv2 = pytest.importorskip("cv2")
+        pytest.importorskip("PIL")
+        path = tmp_path / "count.avi"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (32, 32))
+        for index in range(30):
+            writer.write(np.full((32, 32, 3), index * 8, dtype=np.uint8))
+        writer.release()
+        batches = list(track_module._batches(track_module._every_step(path, (4, 21), 5), 2))
+        assert [[index for index, _ in batch] for batch in batches] == [[4, 9], [14, 19]]
+        assert all(abs(int(np.asarray(image).mean()) - index * 8) <= 2 for batch in batches for index, image in batch)
+
+    def test_both_finders_are_there_by_name(self):
+        from macaw.extractors import get_backend
+
+        assert get_backend(track_module.FINDERS, "grounding_dino") is track_module.GroundingDinoFinder
+        assert get_backend(track_module.FINDERS, "sam3") is track_module.Sam3Finder
+
+
 class TestFollowingBack:
     def test_frames_are_handed_out_backward_a_stretch_at_a_time(self, tmp_path, monkeypatch):
         cv2 = pytest.importorskip("cv2")
@@ -585,3 +605,12 @@ def test_the_methods_text_tells_the_objects_once_and_says_the_touch_is_read_from
     config = SimpleNamespace(objects=ObjectsSection(names=["ball"], touch_px=12))
     text = _touch(config, None, set())
     assert text.startswith(_followed_things(config)) and "within 12 px" in text and "not contact" in text and "[ravi2024]" in text
+
+
+def test_the_methods_text_names_the_finder_used():
+    from macaw.qc.boilerplate import _followed_things
+
+    dino = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"])))
+    sam3 = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"], finder="sam3")))
+    assert "Grounding DINO [liu2024] (IDEA-Research/grounding-dino-tiny)" in dino and "SAM 3" not in dino
+    assert "located by name with SAM 3 [carion2025] (facebook/sam3)" in sam3 and "Grounding DINO" not in sam3

@@ -1287,6 +1287,11 @@ def _followed_things(config) -> str:
         else f"SAM 2.1 [ravi2024] ({cfg.tracker_model or 'facebook/sam2.1-hiera-base-plus'})" if cfg.tracker == "sam2"
         else cfg.tracker
     )
+    finder = (
+        f"SAM 3 [carion2025] ({cfg.finder_model or 'facebook/sam3'})" if cfg.finder == "sam3"
+        else f"Grounding DINO [liu2024] ({cfg.finder_model or 'IDEA-Research/grounding-dino-tiny'})" if cfg.finder == "grounding_dino"
+        else cfg.finder
+    )
     checked = {
         "always": "A person checked every starting point found by name before the outlines were used.",
         "flagged": (
@@ -1296,7 +1301,7 @@ def _followed_things(config) -> str:
         "skip": "The starting points found by name were used without a person checking them.",
     }[cfg.review]
     return (
-        f"Objects named {', '.join(cfg.names)} were located by name with Grounding DINO [liu2024], taking the highest-scoring "
+        f"Objects named {', '.join(cfg.names)} were located by name with {finder}, taking the highest-scoring "
         f"box (at least {cfg.finder_score:g}) in the first ten seconds in which the object was found, five frames per second "
         "being searched, unless a person clicked on the object at a moment of their choosing. From there each object was "
         f"followed frame by frame as an outline with {tracker}, back to the beginning of the recording and on to its end, and "
