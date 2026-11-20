@@ -59,18 +59,20 @@ def voices(monkeypatch):
 class TestTalkSpans:
     def test_voices_time_the_talk_and_noise_is_left_out(self, voices):
         said, lines = voices
-        talk, left_out = talk_spans(SHARED, "r1", lines, said)
+        talk, record = talk_spans(SHARED, "r1", lines, said)
         child = talk[talk["subject_id"] == "child"]
         # the 0.1 s crackle goes; the 0.15 s voice stays since a word was heard in it; the murmur inside the parent's talk stays
-        assert left_out == 1
+        dropped = record[~record["kept"].astype(bool)]
+        assert len(dropped) == 1 and dropped["source"].tolist() == ["voice"] and "no word recognised" in dropped["reason"].iloc[0]
+        assert len(record[record["kept"].astype(bool)]) == len(talk) and set(record["source"]) >= {"voice", "word"}
         assert list(zip(child["t_start"], child["t_end"])) == [(4.0, 4.4), (8.0, 8.15), (10.3, 13.0)]
         # a word in none of its speaker's stretches stands as its own
         assert ((talk["subject_id"] == "parent") & (talk["t_start"] == 14.0)).any()
 
     def test_without_a_shared_microphone_the_utterances_time_it(self, voices, monkeypatch):
         monkeypatch.setattr(talk_module, "voices_time_talk", lambda config, rid: False)
-        talk, left_out = talk_spans(SHARED, "r1", voices[1], voices[0])
-        assert left_out == 0 and len(talk) == len(voices[1])
+        talk, record = talk_spans(SHARED, "r1", voices[1], voices[0])
+        assert record["kept"].all() and set(record["source"]) == {"utterance"} and len(talk) == len(voices[1])
 
 
 class TestTurnsFromVoices:

@@ -13,6 +13,16 @@ from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
 
 TALK_COLUMNS = ["subject_id", "t_start", "t_end"]
+# every stretch talk_spans looked at: where it came from, and whether the talk keeps it
+TALK_RECORD_SCHEMA: dict[str, str] = {
+    "recording_id": "string",
+    "subject_id": "string",
+    "t_start": "float64",
+    "t_end": "float64",
+    "source": "string",
+    "kept": "bool",
+    "reason": "string",
+}
 SAID_COLUMNS = ["subject_id", "t_start", "t_end", "text", "n_words", "utterance_index"]
 
 
@@ -49,15 +59,17 @@ def said_units(transcript: pd.DataFrame, words: pd.DataFrame) -> pd.DataFrame:
 
 def talk_spans(
     config, recording_id: str, transcript: pd.DataFrame, words: pd.DataFrame, *, by_voices: bool | None = None
-) -> tuple[pd.DataFrame, int]:
-    """Every stretch of talk on the recording clock, and how many voice stretches were left out as noise. by_voices
-    defaults to voices_time_talk; the recogniser's transcript kept beside a correction is timed by voices all the same.
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Every stretch of talk on the recording clock, and the record of every stretch looked at: its source (utterance,
+    voice or word), whether it was kept and why not. by_voices defaults to voices_time_talk; the recogniser's transcript
+    kept beside a correction is timed by voices all the same.
 
     By voices: each named voice's stretches in the diarization that lets voices overlap. One shorter than turns.min_voice_s
     stays only where a word of its person was recognised in it, and a word that lies in none of its person's stretches
     stands as one of its own. Whoever has a microphone of their own is timed by their utterances from it."""
     if not (voices_time_talk(config, recording_id) if by_voices is None else by_voices):
-        return _talk(transcript), 0
+        talk = _talk(transcript)
+        return talk, _record(talk, "utterance")
     own = set(load_prep(config, recording_id).tracks)
     names = speaker_names(config, recording_id)
     regular = read_diarization(config, recording_id, changed=True)
@@ -78,7 +90,21 @@ def talk_spans(
     kept = voices[keep]
     orphans = said[~_holding(kept, said).any(axis=0)]
     spoken = transcript[transcript["subject_id"].astype(str).isin(own)]
-    return _talk(pd.concat([_talk(spoken), kept, _talk(orphans)], ignore_index=True)), int((~keep).sum())
+    noise = f"shorter than turns.min_voice_s ({config.turns.min_voice_s:g} s) with no word recognised in it"
+    record = pd.concat(
+        [
+            _record(_talk(spoken), "utterance"),
+            _record(voices, "voice").assign(kept=keep, reason=np.where(keep, None, noise)),
+            _record(_talk(orphans), "word"),
+        ],
+        ignore_index=True,
+    )
+    record = record.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    return _talk(record[record["kept"].astype(bool)]), record
+
+
+def _record(talk: pd.DataFrame, source: str) -> pd.DataFrame:
+    return talk.loc[:, TALK_COLUMNS].assign(source=source, kept=True, reason=None)
 
 
 def _talk(frame: pd.DataFrame) -> pd.DataFrame:

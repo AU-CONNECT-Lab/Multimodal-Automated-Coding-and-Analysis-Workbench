@@ -27,9 +27,10 @@ from macaw.project.segments import Segment
 from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
-from macaw.turns.talk import clip_talk, said_units, talk_inputs, talk_params, talk_spans, voices_time_talk
+from macaw.turns.talk import TALK_RECORD_SCHEMA, clip_talk, said_units, talk_inputs, talk_params, talk_spans, voices_time_talk
 
 TURNS_NAME = "turns.parquet"
+TALK_NAME = "talk.parquet"
 
 TURN_SCHEMA: dict[str, str] = {
     "recording_id": "string",
@@ -247,15 +248,15 @@ def turns_saved(config, recording_id: str) -> bool:
     return (layout_for(config, create=False).artifacts_dir(recording_id, TurnStructureExtractor.name) / TURNS_NAME).is_file()
 
 
-def build_turns(config, recording_id: str, transcript: pd.DataFrame, words: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, int]:
-    """(talk, turns, voice stretches left out as noise) of a transcript and its words, OTHER included."""
-    talk, left_out = talk_spans(config, recording_id, transcript, words)
+def build_turns(config, recording_id: str, transcript: pd.DataFrame, words: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """(talk, turns, record of every stretch of talk looked at) of a transcript and its words, OTHER included."""
+    talk, record = talk_spans(config, recording_id, transcript, words)
     if voices_time_talk(config, recording_id):
         turns = talk_to_turns(talk, said_units(transcript, words), config.turns)
     else:
         turns = utterances_to_turns(transcript, config.turns)
     turns["recording_id"] = recording_id
-    return talk, turns, left_out
+    return talk, turns, record.assign(recording_id=recording_id)
 
 
 def talk_between(config, recording_id: str, start_s: float, end_s: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -346,7 +347,7 @@ _MISSING = {
 @register_extractor
 class TurnStructureExtractor(Extractor):
     name = "turns.structure"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns",)
@@ -366,11 +367,13 @@ class TurnStructureExtractor(Extractor):
         transcript = load_transcript(self.config, rid, others=True)
         prep = load_prep(self.config, rid)
 
-        talk, turns, left_out = build_turns(self.config, rid, transcript, load_words(self.config, rid))
+        talk, turns, record = build_turns(self.config, rid, transcript, load_words(self.config, rid))
         quiet = silences(talk, min_s=cfg.silence_min_s)
+        left_out = int((~record["kept"].astype(bool)).sum())
 
         artifacts = {
-            TURNS_NAME: _io.write_file(turns, workspace / TURNS_NAME, TURN_SCHEMA, "turns")
+            TURNS_NAME: _io.write_file(turns, workspace / TURNS_NAME, TURN_SCHEMA, "turns"),
+            TALK_NAME: _io.write_file(record, workspace / TALK_NAME, TALK_RECORD_SCHEMA, "talk"),
         }
         return ExtractorResult(
             rows=self._rows(recording, turns, quiet, prep),
@@ -498,7 +501,7 @@ class TurnStructureExtractor(Extractor):
                 check="turns_voice_noise", recording_id=recording.recording_id, subject_id=None, severity="info",
                 message=(
                     f"{left_out} stretch(es) of voice shorter than turns.min_voice_s ({self.config.turns.min_voice_s:g} s) with no "
-                    "word recognised in them were taken for noise and left out of the turns; the diarization keeps them."
+                    "word recognised in them were taken for noise and left out of the turns; talk.parquet lists them."
                 ),
                 t_start=prep.t_origin_s, t_end=prep.t_origin_s + prep.duration_s,
             )
