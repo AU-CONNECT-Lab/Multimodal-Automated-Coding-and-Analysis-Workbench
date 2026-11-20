@@ -17,6 +17,7 @@ NAME = "review queue"
 ABSTAINED = "abstained"
 LOW_CONFIDENCE = "low_confidence"
 FLAGGED = "flagged"
+NO_ANSWER = "no_usable_answer"
 # a unit the model was sure of, drawn at random: the only way to learn how often sure answers are wrong
 RANDOM_CHECK = "random_check"
 
@@ -92,6 +93,9 @@ def build_queue(annotations: pd.DataFrame, *, threshold: float) -> pd.DataFrame:
     reason = pd.Series(pd.NA, index=frame.index, dtype="object")
     reason[flagged] = FLAGGED
     reason[low] = LOW_CONFIDENCE
+    # flagged with no code and no share behind any: none of the model's answers gave this unit a code
+    unanswered = flagged & frame["label"].isna() & ~abstained & (confidence.isna() | (confidence == 0))
+    reason[unanswered] = NO_ANSWER
     reason[abstained] = ABSTAINED       # no label came back at all, so nothing else applies
 
     keep = reason.notna()

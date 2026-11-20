@@ -827,7 +827,7 @@ def _waiting_acts(config, rid) -> pd.DataFrame:
 
 def _speech_acts(config, layout, recording):
     from macaw.coding.codebook import read_codebook
-    from macaw.coding.llm.judge import LAYER, SAMPLES_NAME, JudgementExtractor, coding_units
+    from macaw.coding.llm.judge import LAYER, NO_USABLE_ANSWER, SAMPLES_NAME, JudgementExtractor, coding_units
 
     rid = recording.recording_id
     if not (layout.annotations_path(rid) / f"{LAYER}.parquet").is_file():
@@ -848,7 +848,7 @@ def _speech_acts(config, layout, recording):
     if samples_path.is_file():
         samples = pd.read_parquet(samples_path)
         for (subject, t_start), group in samples.groupby(["subject_id", "t_start"]):
-            counted = group["label"].value_counts()
+            counted = group["label"].fillna(NO_USABLE_ANSWER).value_counts()
             text = ", ".join(f"{label} {count}" for label, count in counted.items())
             # the reason given with the commonest answer, where the model was asked for one
             given = group.loc[group["label"] == counted.index[0], "reason"] if "reason" in group else pd.Series(dtype=str)

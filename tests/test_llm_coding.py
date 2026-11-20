@@ -172,11 +172,18 @@ class TestRepair:
 
 
 class TestParse:
-    def test_missing_unknown_and_unreadable_answers_are_abstentions(self):
-        text = '{"labels": [{"id": "u0", "label": "Question"}, {"id": "u1", "label": "joke"}]}'
-        parsed = parse_annotation_response(text, CODEBOOK, ["u0", "u1", "u2"])
-        assert parsed["label"].tolist() == ["question", ABSTAIN, ABSTAIN]
-        assert parse_annotation_response("no json here", CODEBOOK, ["u0"])["label"].tolist() == [ABSTAIN]
+    def test_missing_unknown_and_unreadable_answers_give_no_label_and_say_why(self):
+        from macaw.coding.llm.parsing import NO_ANSWER_FOR_UNIT, NOT_A_CODE, UNREADABLE
+
+        text = '{"labels": [{"id": "u0", "label": "Question"}, {"id": "u1", "label": "joke"}, {"id": "u3", "label": "abstain"}]}'
+        parsed = parse_annotation_response(text, CODEBOOK, ["u0", "u1", "u2", "u3"])
+        assert parsed["label"].tolist()[0] == "question" and parsed["label"].iloc[1:3].isna().all() and parsed["label"].iloc[3] == ABSTAIN
+        assert parsed["problem"].tolist() == ["", NOT_A_CODE, NO_ANSWER_FOR_UNIT, ""]
+        assert parsed["given"].tolist() == ["Question", "joke", "", "abstain"]
+        unread = parse_annotation_response("no json here", CODEBOOK, ["u0"])
+        assert unread["label"].isna().all() and unread["problem"].tolist() == [UNREADABLE]
+        # without abstaining allowed, saying so is a label outside the codebook
+        assert parse_annotation_response(text, CODEBOOK, ["u3"], allow_abstain=False)["problem"].tolist() == [NOT_A_CODE]
 
     def test_a_bare_list_is_read_too(self):
         parsed = parse_annotation_response('[{"id": "u0", "label": "inform"}]', CODEBOOK, ["u0"])
@@ -246,6 +253,15 @@ class TestAggregate:
         assert out.loc["u1", "confidence"] == 0.6 and out.loc["u1", "needs_review"]
         assert pd.isna(out.loc["u2", "label"]) and not out.loc["u2", "abstained"] and out.loc["u2", "needs_review"]
         assert pd.isna(out.loc["u3", "label"]) and out.loc["u3", "abstained"] and out.loc["u3", "needs_review"]
+
+    def test_an_answer_that_gave_no_code_has_no_vote_and_none_at_all_goes_to_review(self):
+        found = pd.DataFrame({"unit_id": ["u0", "u1", "u2"]})
+        samples = self.samples({"u0": ["inform", None, None], "u1": [None, None, None], "u2": [ABSTAIN, ABSTAIN, None]})
+        out = aggregate_samples(found, samples, LLMSection(n_samples=3)).set_index("unit_id")
+        assert out.loc["u0", "label"] == "inform" and out.loc["u0", "confidence"] == pytest.approx(1 / 3) and out.loc["u0", "needs_review"]
+        assert pd.isna(out.loc["u1", "label"]) and not out.loc["u1", "abstained"] and out.loc["u1", "needs_review"]
+        assert out.loc["u1", "confidence"] == 0.0
+        assert out.loc["u2", "abstained"]
 
     def test_one_sample_measures_no_confidence(self):
         found = pd.DataFrame({"unit_id": ["u0", "u1"]})
@@ -429,15 +445,24 @@ class TestJudge:
     def test_an_answer_cut_off_partway_keeps_what_came_and_warns(self, monkeypatch, tmp_path, stub):
         stub.cut = "part"
         result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, batch_size=10)
-        assert result.annotations.sort_values("t_start")["abstained"].tolist() == [False, True, True]
+        coded = result.annotations.sort_values("t_start")
+        # the units the answer did not reach are not ones the model could not tell
+        assert coded["abstained"].tolist() == [False, False, False] and coded["needs_review"].tolist() == [False, True, True]
         warning = next(warning for warning in result.warnings if warning.check == "llm_cut_off")
         assert warning.message.startswith("1 of 1 answers were cut off")
+        samples = pd.read_parquet(result.artifacts["samples.parquet"]).sort_values("t_start")
+        assert samples["problem"].tolist() == ["", "cut off before this unit", "cut off before this unit"]
+        answers = pd.read_parquet(result.artifacts["answers.parquet"])
+        assert answers["cut_off"].tolist() == [True] and answers["unit_ids"].iloc[0].split() == sorted(samples["unit_id"])
 
-    def test_a_model_that_never_answers_in_format_abstains_and_warns(self, monkeypatch, tmp_path, stub):
+    def test_a_model_that_never_answers_in_format_leaves_every_unit_to_a_person_and_warns(self, monkeypatch, tmp_path, stub):
         stub.label = lambda text: "something else"
         result = run_judge(monkeypatch, tmp_path, stub, n_samples=1)
-        assert result.annotations["abstained"].all()
-        assert {warning.check for warning in result.warnings} >= {"llm_mostly_abstained", "llm_single_sample"}
+        assert not result.annotations["abstained"].any() and result.annotations["needs_review"].all()
+        assert result.annotations["label"].isna().all()
+        warning = next(warning for warning in result.warnings if warning.check == "llm_unusable_answers")
+        assert "a label not in the codebook 3" in warning.message and "something else" in warning.message
+        assert "llm_single_sample" in {warning.check for warning in result.warnings}
 
     def test_codebooks_it_cannot_code_are_refused(self, tmp_path):
         config = SimpleNamespace(text=TextSection(), coding=CodingSection(codebook=None))
@@ -518,7 +543,8 @@ class TestAtOnce:
         together = sample_labels(lines, CODEBOOK, four, self.cfg(4))
         pd.testing.assert_frame_equal(alone, together)
         assert alone["unit_id"].tolist() == ["u0", "u1", "u2"] * 3 and alone["sample"].tolist() == [0] * 3 + [1] * 3 + [2] * 3
-        assert alone.attrs == together.attrs == {"cut_off": 0, "requests": 9, "kept": 0}
+        assert {key: alone.attrs[key] for key in ("cut_off", "requests", "kept")} == {"cut_off": 0, "requests": 9, "kept": 0}
+        assert alone.attrs == together.attrs and len(alone.attrs["answers"]) == 9
         assert [seed for _, seed in one.calls] == [5] * 3 + [6] * 3 + [7] * 3
         assert one.most == 1 and four.most == 4 and sorted(four.calls) == sorted(one.calls) and four.finished != one.finished
 

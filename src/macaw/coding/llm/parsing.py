@@ -18,24 +18,34 @@ _CLOSERS = {"{": "}", "[": "]"}
 def parse_annotation_response(
     text: str, codebook: Codebook, expected_ids: list[str], *, allow_abstain: bool = True
 ) -> pd.DataFrame:
-    """Missing or unparseable items become abstentions, never silent drops. reason is blank where none came."""
+    """A row per expected unit: its code or abstain, the reason, and where the answer gave neither, no label, what was
+    wrong and the label it gave. reason and given are blank where none came."""
     by_code = {code.casefold(): code for code in codebook.labels()}
     if allow_abstain:
         by_code[ABSTAIN] = ABSTAIN
-    labels = dict.fromkeys(expected_ids, ABSTAIN)
-    reasons = dict.fromkeys(expected_ids, "")
-    for item in _items(text):
-        if not isinstance(item, dict):
-            continue
+    items = [item for item in _items(text) if isinstance(item, dict)]
+    labels: dict[str, str | None] = dict.fromkeys(expected_ids)
+    reasons, given = dict.fromkeys(expected_ids, ""), dict.fromkeys(expected_ids, "")
+    problems = dict.fromkeys(expected_ids, NO_ANSWER_FOR_UNIT if items else UNREADABLE)
+    for item in items:
         unit_id = str(item.get("id", "")).strip()
-        label = by_code.get(str(item.get("label", "")).strip().casefold())
-        if unit_id in labels and label is not None:
-            labels[unit_id] = label
-            reasons[unit_id] = str(item.get("reason") or "").strip()
-    return pd.DataFrame({"unit_id": list(labels), "label": list(labels.values()), "reason": list(reasons.values())})
+        if unit_id not in labels or labels[unit_id] is not None:
+            continue
+        said = str(item.get("label", "")).strip()
+        label = by_code.get(said.casefold())
+        given[unit_id] = said
+        if label is None:
+            problems[unit_id] = NOT_A_CODE
+            continue
+        labels[unit_id], problems[unit_id], reasons[unit_id] = label, "", str(item.get("reason") or "").strip()
+    return pd.DataFrame({
+        "unit_id": list(labels), "label": pd.array(list(labels.values()), dtype="string"), "reason": list(reasons.values()),
+        "problem": list(problems.values()), "given": list(given.values()),
+    })
 
 
 UNREADABLE, NOT_WHOLE, OUTSIDE = "unreadable", "not a whole number", "outside the range"
+NO_ANSWER_FOR_UNIT, NOT_A_CODE, CUT_OFF = "no answer for this unit", "a label not in the codebook", "cut off before this unit"
 
 
 def parse_rating(text: str, low: int, high: int) -> tuple[int | None, str, str]:

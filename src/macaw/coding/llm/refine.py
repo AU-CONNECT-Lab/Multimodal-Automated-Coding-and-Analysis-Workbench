@@ -13,7 +13,7 @@ import pandas as pd
 from macaw.coding.agreement import NO_CODE, build_units, load_annotations, unit_table
 from macaw.coding.codebook import Codebook, CodeDefinition
 from macaw.coding.llm.backends import LLMBackend, run_in_order
-from macaw.coding.llm.judge import LAYER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
+from macaw.coding.llm.judge import LAYER, NO_USABLE_ANSWER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
 from macaw.coding.llm.parsing import whole_answer
 from macaw.coding.llm.prompts import ABSTAIN, codebook_lines
 from macaw.exceptions import MacawError
@@ -74,7 +74,7 @@ def _answers(config, recording_ids: list[str]) -> dict[tuple, str]:
             continue
         samples = pd.read_parquet(path)
         for (subject, start, end), group in samples.groupby(["subject_id", "t_start", "t_end"], sort=False):
-            counted = group["label"].astype(str).value_counts()
+            counted = group["label"].fillna(NO_USABLE_ANSWER).astype(str).value_counts()
             said[(rid, str(subject), round(float(start), 3), round(float(end), 3))] = ", ".join(f"{label} {n}" for label, n in counted.items())
     return said
 

@@ -82,6 +82,16 @@ class TestBuildQueue:
         )
         assert list(build_queue(frame, threshold=0.7)["reason"]) == [ABSTAINED]
 
+    def test_a_unit_the_model_gave_no_usable_answer_queues_as_such(self, make_annotations):
+        from macaw.coding.review_queue import NO_ANSWER
+
+        frame = make_annotations([
+            {"t_start": 0.0, "t_end": 1.0, "label": None, "confidence": 0.0, "needs_review": True},
+            {"t_start": 1.0, "t_end": 2.0, "label": None, "confidence": None, "needs_review": True},
+            {"t_start": 2.0, "t_end": 3.0, "label": None, "confidence": 0.4, "needs_review": True},
+        ])
+        assert list(build_queue(frame, threshold=0.7).sort_values("t_start")["reason"]) == [NO_ANSWER, NO_ANSWER, LOW_CONFIDENCE]
+
     def test_a_flagged_row_queues(self, make_annotations):
         frame = make_annotations(
             [{"t_start": 0.0, "t_end": 1.0, "label": "a", "confidence": 0.95, "needs_review": True}]

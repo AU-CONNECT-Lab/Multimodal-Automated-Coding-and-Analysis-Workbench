@@ -19,7 +19,7 @@ from macaw.coding.llm.backends import (
     KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
 )
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
-from macaw.coding.llm.parsing import parse_annotation_response
+from macaw.coding.llm.parsing import CUT_OFF, NO_ANSWER_FOR_UNIT, parse_annotation_response
 from macaw.coding.llm.prompts import ABSTAIN, FRAME_AT, FRAMES, VOICE, build_annotation_prompt
 from macaw.config.hashing import canonical
 from macaw.config.schema import RUN_ONLY_KEYS, JudgeVersion, LLMSection, MacawConfig
@@ -46,6 +46,9 @@ LAYER = "B"
 VERSION_STEP = "coding.judge."
 VERSION_LAYER = "B."
 SAMPLES_NAME = "samples.parquet"
+ANSWERS_NAME = "answers.parquet"
+# how an answer that gave a unit no code shows where answers are counted
+NO_USABLE_ANSWER = "no usable answer"
 KEPT_NAME = "answers.jsonl"
 _FRAME_FEATURES = {"pitch": "f0_semitone", "loudness": "intensity_db"}
 # px; enough for faces at a table in a full frame without the picture costing thousands of tokens more
@@ -54,7 +57,10 @@ FRAME_LONG_SIDE = 960
 _SUBJECT_SPECS = {
     "n_units_judged": ("Units of this speaker the model coded.", "count"),
     "share_abstained": ("Share of those units where the model's majority answer was that it could not tell.", "proportion"),
-    "share_needs_review": ("Share of those units sent to the review queue: abstained, tied, or below coding.llm.review_threshold.", "proportion"),
+    "share_needs_review": (
+        "Share of those units sent to the review queue: abstained, tied, given no usable answer, or below coding.llm.review_threshold.",
+        "proportion",
+    ),
 }
 _UNCODED = "Empty for a person outside the roles this coding codes, where coding.llm.coded_roles or the version's own coded_roles names any"
 _MISSING = {
@@ -75,7 +81,7 @@ _MISSING = {
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
@@ -179,17 +185,18 @@ class JudgementExtractor(Extractor):
         )
         judged = aggregate_samples(units, samples, cfg)
 
-        path = workspace / SAMPLES_NAME
+        path, answered = workspace / SAMPLES_NAME, workspace / ANSWERS_NAME
         samples.merge(units[["unit_id", "subject_id", "t_start", "t_end"]], on="unit_id").to_parquet(path, index=False)
+        pd.DataFrame(samples.attrs["answers"], columns=["sample", "unit_ids", "cut_off", "answer"]).to_parquet(answered, index=False)
         annotator = self.judge or f"llm:{backend.name}/{cfg.model}"
         return ExtractorResult(
             rows=self._rows(recording, judged),
             specs=self._specs(codebook, examples, recording),
             annotations=self._annotations(recording, judged, codebook.name, annotator),
-            artifacts={SAMPLES_NAME: path},
+            artifacts={SAMPLES_NAME: path, ANSWERS_NAME: answered},
             warnings=self._warnings(
                 recording, judged, backend, samples.attrs, int(own.sum()),
-                sum(not pictures for pictures in frames.values()) if frames is not None else 0,
+                sum(not pictures for pictures in frames.values()) if frames is not None else 0, samples,
             ),
         )
 
@@ -270,7 +277,7 @@ class JudgementExtractor(Extractor):
 
     def _warnings(
         self, recording: Recording, judged: pd.DataFrame, backend: LLMBackend, sampled: dict, own_examples: int = 0,
-        unseen: int = 0,
+        unseen: int = 0, samples: pd.DataFrame | None = None,
     ) -> list[QCWarning]:
         _, cfg = self.settings(self.config)
         warnings = []
@@ -295,7 +302,7 @@ class JudgementExtractor(Extractor):
             note(
                 "llm_cut_off", "warn",
                 f"{sampled['cut_off']} of {sampled['requests']} answers were cut off at max_tokens ({cfg.max_tokens}); the units "
-                "they did not reach count as ones the model could not tell. Raise coding.llm.max_tokens.",
+                "they did not reach have no usable answer from them. Raise coding.llm.max_tokens.",
             )
         if sampled.get("kept"):
             note(
@@ -309,6 +316,17 @@ class JudgementExtractor(Extractor):
             note("llm_no_seed", "info", f"{backend.name} takes no seed, so a rerun can give different labels.")
         if seed_caveat(backend, cfg):
             note("llm_at_once", "info", seed_caveat(backend, cfg))
+        failed = samples[samples["problem"] != ""] if samples is not None and len(samples) else pd.DataFrame(columns=["problem", "given"])
+        if len(failed):
+            kinds = ", ".join(f"{kind} {count}" for kind, count in failed["problem"].value_counts().sort_index().items())
+            strange = sorted(set(failed.loc[failed["given"] != "", "given"]))
+            note(
+                "llm_unusable_answers", "warn",
+                f"{len(failed)} of {len(samples)} answers to a unit gave no code ({kinds}); they had no vote, and a unit left "
+                "without any usable answer went to review"
+                + (f". Labels not in the codebook: {', '.join(strange[:5])}{' ...' if len(strange) > 5 else ''}" if strange else "")
+                + f". {ANSWERS_NAME} holds the answers as they came.",
+            )
         if not judged.empty and judged["abstained"].mean() > 0.5:
             note(
                 "llm_mostly_abstained", "warn",
@@ -464,8 +482,8 @@ def sample_annotations(config: MacawConfig, recording_ids: list[str]) -> pd.Data
                 labels = [said.get(key) for key in keys]
                 frames.append(mine.assign(
                     annotator=f"{mine['annotator'].iloc[0]}#{int(sample) + 1}",
-                    label=pd.array([pd.NA if label in (None, ABSTAIN) else label for label in labels], dtype="string"),
-                    abstained=[label == ABSTAIN for label in labels], confidence=np.nan, needs_review=False,
+                    label=pd.array([pd.NA if pd.isna(label) or label == ABSTAIN else label for label in labels], dtype="string"),
+                    abstained=[not pd.isna(label) and label == ABSTAIN for label in labels], confidence=np.nan, needs_review=False,
                 ))
     if not frames:
         return empty_frame(ANNOTATION_SCHEMA)
@@ -527,7 +545,8 @@ def sample_labels(
     examples: pd.DataFrame | None = None, frames: dict[str, list[bytes]] | None = None, notes: str | None = None,
     kept_at: Path | None = None,
 ) -> pd.DataFrame:
-    """One row per unit and sample: unit_id, sample, label (a code or abstain), reason. A batch is
+    """One row per unit and sample: unit_id, sample, label (a code, abstain, or empty where the answer gave neither), reason,
+    problem and the label given; attrs["answers"] holds each request's answer as it came. A batch is
     units_per_request units with the uncoded lines between them in place; notes is the recording's note, coding.llm.notes
     when not given. With kept_at each answer is written there as it comes, and one already there is not asked for again."""
     notes = cfg.notes if notes is None else notes
@@ -547,7 +566,7 @@ def sample_labels(
 
     kept = KeptAnswers(kept_at)
 
-    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool, bool]:
+    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool, bool, str]:
         seed = cfg.seed + sample if backend.takes_seed else None
         key = request_key(backend, cfg, system, user, sample, seed, images) if kept_at is not None else None
         entry = kept.get(key)
@@ -556,33 +575,49 @@ def sample_labels(
             response = backend.complete(system, user, seed=seed, images=images)
             entry = {"text": response.text, "cut_off": response.cut_off}
         parsed = parse_annotation_response(entry["text"], codebook, ids, allow_abstain=cfg.allow_abstain)
+        if entry["cut_off"]:
+            parsed.loc[parsed["problem"] == NO_ANSWER_FOR_UNIT, "problem"] = CUT_OFF
         # an answer that never came is not the model saying it cannot tell
-        if entry["cut_off"] and (parsed["label"] == ABSTAIN).all():
+        if entry["cut_off"] and parsed["label"].isna().all():
             raise LLMBackendError(
                 f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
                 "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
             )
         if not was_kept:
             kept.keep(key, entry)
-        return parsed.assign(sample=sample), entry["cut_off"], was_kept
+        return parsed.assign(sample=sample), entry["cut_off"], was_kept, entry["text"]
 
     given = run_in_order([partial(answer, sample, *batch) for sample in range(cfg.n_samples) for batch in batches], cfg.concurrency)
-    answers = [parsed for parsed, _, _ in given]
-    cut_off = sum(cut for _, cut, _ in given)
+    answers = [parsed for parsed, *_ in given]
+    columns = ("unit_id", "sample", "label", "reason", "problem", "given")
     if not answers:
-        out = pd.DataFrame({column: pd.Series(dtype=int if column == "sample" else str) for column in ("unit_id", "sample", "label", "reason")})
+        out = pd.DataFrame({column: pd.Series(dtype=int if column == "sample" else str) for column in columns})
     else:
-        out = pd.concat(answers, ignore_index=True)[["unit_id", "sample", "label", "reason"]]
-    out.attrs.update(cut_off=cut_off, requests=len(answers), kept=sum(was_kept for *_, was_kept in given))
+        out = pd.concat(answers, ignore_index=True)[list(columns)]
+    requests = [
+        {"sample": int(parsed["sample"].iloc[0]) if len(parsed) else -1, "unit_ids": " ".join(parsed["unit_id"]), "cut_off": bool(cut), "answer": text}
+        for parsed, cut, _, text in given
+    ]
+    out.attrs.update(
+        cut_off=sum(cut for _, cut, _, _ in given), requests=len(answers), kept=sum(was_kept for _, _, was_kept, _ in given),
+        answers=requests,
+    )
     return out
 
 
 def aggregate_samples(units: pd.DataFrame, samples: pd.DataFrame, cfg: LLMSection) -> pd.DataFrame:
-    """The majority answer per unit with its share as confidence. A tie has no label and goes to review."""
+    """The majority answer per unit with its share of all samples as confidence; an answer that gave the unit no code
+    has no vote. A tie, or no usable answer at all, has no label and goes to review."""
     labels, confidence, abstained, review = [], [], [], []
     answers = samples.groupby("unit_id")["label"].apply(list).to_dict()
     for unit_id in units["unit_id"]:
-        counts = pd.Series(answers.get(unit_id, [ABSTAIN] * cfg.n_samples)).value_counts()
+        counts = pd.Series(answers.get(unit_id, []), dtype="string").value_counts()
+        if counts.empty:
+            labels.append(pd.NA)
+            abstained.append(False)
+            confidence.append(np.nan if cfg.n_samples == 1 else 0.0)
+            review.append(True)
+            continue
         top = counts[counts == counts.iloc[0]]
         share = float(counts.iloc[0]) / cfg.n_samples
         tied = len(top) > 1
