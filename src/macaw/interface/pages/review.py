@@ -827,10 +827,10 @@ def _waiting_acts(config, rid) -> pd.DataFrame:
 
 def _speech_acts(config, layout, recording):
     from macaw.coding.codebook import read_codebook
-    from macaw.coding.llm.judge import LAYER, NO_USABLE_ANSWER, SAMPLES_NAME, JudgementExtractor, coding_units
+    from macaw.coding.llm.judge import NO_USABLE_ANSWER, SAMPLES_NAME, JudgementExtractor, coding_units
 
     rid = recording.recording_id
-    if not (layout.annotations_path(rid) / f"{LAYER}.parquet").is_file():
+    if not layout.step_annotations_path(rid, JudgementExtractor.name).is_file():
         return None
     queue = _waiting_acts(config, rid)
     desc = "Pick the right code for each unit; the model's is kept beside yours."

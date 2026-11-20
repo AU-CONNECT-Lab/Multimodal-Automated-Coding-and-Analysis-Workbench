@@ -545,11 +545,11 @@ def _common_rate(rates: list[float]) -> float | None:
 
 
 def _model_coding(config, layout, recording_id: str) -> dict | None:
-    from macaw.coding.llm.judge import LAYER
+    from macaw.coding.llm.judge import JudgementExtractor
     from macaw.coding.review_queue import random_check_result
     from macaw.store.schema import ANNOTATION_SCHEMA
 
-    machine = layout.annotations_path(recording_id) / f"{LAYER}.parquet"
+    machine = layout.step_annotations_path(recording_id, JudgementExtractor.name)
     if not machine.is_file():
         return None
     units = _io.read_file(machine, ANNOTATION_SCHEMA, "annotations")

@@ -162,7 +162,7 @@ def test_the_judges_answers_and_units_come_out_with_reasons_and_votes(project):
         recording_id="003", tier="codes", layer=JudgementExtractor.layer(), annotator="judge", subject_id="parent",
         intervals=pd.DataFrame({"t_start": [1.0], "t_end": [2.0], "label": ["praise"], "confidence": [0.67], "abstained": [False], "needs_review": [False]}),
     )
-    write_annotations(coded, project.layout.annotations_path("003"))
+    write_annotations(coded, project.layout.step_annotations_path("003", JudgementExtractor.name))
     out = export(project, "judge")
     samples = pd.read_csv(out / "samples.csv")
     assert samples[["judge", "sample", "reason"]].fillna("").values.tolist() == [["judge", 0, "warm"], ["judge", 1, "warm words"], ["judge", 2, ""]]

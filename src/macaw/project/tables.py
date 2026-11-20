@@ -303,7 +303,7 @@ def judge_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFra
     def units(recording_id):
         pieces = []
         for step in steps:
-            coded, path = layout.annotations_path(recording_id) / f"{get_extractor(step).layer()}.parquet", layout.artifacts_dir(recording_id, step) / SAMPLES_NAME
+            coded, path = layout.step_annotations_path(recording_id, step), layout.artifacts_dir(recording_id, step) / SAMPLES_NAME
             if not coded.is_file() or not path.is_file():
                 continue
             mine = _io.read_file(coded, ANNOTATION_SCHEMA, "annotations")

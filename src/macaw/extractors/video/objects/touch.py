@@ -56,7 +56,7 @@ def on_spans(times, on) -> pd.DataFrame:
 @register_extractor
 class ObjectTouchExtractor(Extractor):
     name = "objects.touch"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "objects"
     phase = Phase.DERIVE

@@ -186,7 +186,7 @@ _MISSING = {
 @register_extractor
 class LayerACodingExtractor(Extractor):
     name = "coding.layer_a"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "coding"
     # only the coding keys it reads, so a language model setting leaves it alone

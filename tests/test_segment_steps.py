@@ -83,7 +83,7 @@ def test_the_models_units_are_counted_inside_and_peoples_decisions_left_out(proj
             "confidence": [0.9, 0.5, np.nan], "abstained": [False, False, True], "needs_review": [False, True, True],
         }),
     )
-    write_annotations(units, p.layout.annotations_path(RID))
+    write_annotations(units, p.layout.step_annotations_path(RID, step.name))
     decided = units.iloc[[1]].assign(annotator="a person", needs_review=False)
     _io.write_file(decided, p.layout.reviewed_codes_path(RID), *_annotation_schema())
 

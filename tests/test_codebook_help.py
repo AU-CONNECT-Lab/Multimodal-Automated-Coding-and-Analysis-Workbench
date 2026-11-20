@@ -20,7 +20,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import LLMBackendError, MacawError
 from macaw.extractors.audio.content import asr
 from macaw.project.layout import layout_for
-from macaw.store.annotations import write_annotations
+from macaw.store.annotations import read_annotations, write_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame
 from test_llm_coding import PER_TRACK, RECORDING, project_with, transcript_of
 
@@ -84,10 +84,15 @@ def project(tmp_path, monkeypatch):
 
 
 def coded(config, model_labels, person_labels=None, *, person="ann"):
-    folder = layout_for(resolve_config(config)).annotations_path("r1")
-    write_annotations(codes(MODEL, "B", model_labels), folder)
+    write_annotations(codes(MODEL, "B", model_labels), layout_for(resolve_config(config)).step_annotations_path("r1", "coding.judge"))
     if person_labels is not None:
-        write_annotations(codes(person, "C", person_labels), folder, append=True)
+        imported(config, codes(person, "C", person_labels))
+
+
+def imported(config, frame):
+    path = layout_for(resolve_config(config)).imported_codes_path("r1")
+    held = [read_annotations(path)] if path.is_file() else []
+    write_annotations(pd.concat([*held, frame], ignore_index=True), path)
 
 
 def revised(system, user):
@@ -164,7 +169,7 @@ class TestRefine:
 
     def test_whose_codes_to_go_by_is_said_when_several_people_coded(self, project):
         coded(project, ["question", "inform", "inform", "greet", "inform"], ["question"] * 5)
-        write_annotations(codes("bo", "C", ["inform"] * 5), layout_for(resolve_config(project)).annotations_path("r1"), append=True)
+        imported(project, codes("bo", "C", ["inform"] * 5))
         with pytest.raises(MacawError, match="several people coded acts: ann, bo; say whose"):
             gather_evidence(resolve_config(project), CODEBOOK, ["r1"])
         with pytest.raises(MacawError, match="no codes by cy"):
@@ -172,7 +177,7 @@ class TestRefine:
         assert gather_evidence(resolve_config(project), CODEBOOK, ["r1"], coder="bo").coder == "bo"
 
     def test_nothing_to_refine_before_the_model_has_coded(self, project):
-        write_annotations(codes("ann", "C", ["question"] * 5), layout_for(resolve_config(project)).annotations_path("r1"))
+        imported(project, codes("ann", "C", ["question"] * 5))
         with pytest.raises(MacawError, match="run coding.judge first"):
             gather_evidence(resolve_config(project), CODEBOOK, ["r1"])
 

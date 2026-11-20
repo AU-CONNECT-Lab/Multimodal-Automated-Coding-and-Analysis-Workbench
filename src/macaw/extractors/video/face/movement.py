@@ -81,7 +81,7 @@ _MISSING = {
 @register_extractor
 class FaceMovementExtractor(Extractor):
     name = "face.movement"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = ("face.blink_min_eye_px", "segment")

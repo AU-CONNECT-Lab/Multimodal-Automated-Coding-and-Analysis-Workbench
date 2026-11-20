@@ -591,8 +591,7 @@ def run_task(
         caching = config.execution.cache and cls.cached
         entry = cache_store.lookup(cache_root, key) if caching else None
         if entry is not None:
-            shutil.rmtree(layout.artifacts_dir(recording_id, extractor_name), ignore_errors=True)
-            (layout.segment_rows_path(recording_id) / f"{extractor_name}.parquet").unlink(missing_ok=True)
+            _clear_own(layout, recording_id, extractor_name)
             cache_store.restore(entry, layout.recording_dir(recording_id))
             _finished(layout, stamp, key, recording_id, extractor_name)
             database.set_status(task_id, "cached", finished_at=now())
@@ -607,7 +606,7 @@ def run_task(
             payload = Path(workspace) / "_payload"
             _write_result(layout, recording_id, extractor_name, result, execution_id, config_hash)
             if caching:
-                _stage_payload(layout, recording_id, extractor_name, result, payload)
+                _stage_payload(layout, recording_id, extractor_name, payload)
                 cache_store.store(cache_root, key, payload)
 
         _finished(layout, stamp, key, recording_id, extractor_name)
@@ -639,7 +638,28 @@ def _stamp(frame, execution_id: str, config_hash: str):
     return stamped
 
 
+def _own_files(layout, recording_id: str, extractor: str) -> list[tuple[str, Path]]:
+    """Each file one step writes outside its artifacts, with the payload folder a cache entry keeps it in."""
+    return [
+        ("features", layout.long_table_path(recording_id) / f"{extractor}.parquet"),
+        ("keypoints", layout.keypoints_path(recording_id) / f"{extractor}.parquet"),
+        ("body_model", layout.body_model_path(recording_id) / f"{extractor}.parquet"),
+        ("annotations", layout.step_annotations_path(recording_id, extractor)),
+        ("segments", layout.segment_rows_path(recording_id) / f"{extractor}.parquet"),
+        ("manifest", layout.manifest_fragment_path(recording_id, extractor)),
+        ("warnings", layout.warnings_path(recording_id, extractor)),
+    ]
+
+
+def _clear_own(layout, recording_id: str, extractor: str) -> None:
+    """So nothing an earlier run left passes for what this run or replay did not write."""
+    for _, path in _own_files(layout, recording_id, extractor):
+        path.unlink(missing_ok=True)
+    shutil.rmtree(layout.artifacts_dir(recording_id, extractor), ignore_errors=True)
+
+
 def _write_result(layout, recording_id, extractor, result, execution_id, config_hash) -> None:
+    _clear_own(layout, recording_id, extractor)
     if result.rows is not None and not result.rows.empty:
         longtable_store.write_long_table(
             _stamp(result.rows, execution_id, config_hash), layout.long_table_path(recording_id)
@@ -655,15 +675,11 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
         body_model_store.write_body_model(result.body_model, layout.body_model_path(recording_id))
     if result.annotations is not None and not result.annotations.empty:
         annotations_store.write_annotations(
-            _stamp(result.annotations, execution_id, config_hash),
-            layout.annotations_path(recording_id),
+            _stamp(result.annotations, execution_id, config_hash), layout.step_annotations_path(recording_id, extractor)
         )
-    if result.segment_rows is not None:
+    if result.segment_rows is not None and not result.segment_rows.empty:
         target = layout.segment_rows_path(recording_id) / f"{extractor}.parquet"
-        # no rows replaces the old ones too, or a segment taken out of the table would linger
-        target.unlink(missing_ok=True)
-        if not result.segment_rows.empty:
-            longtable_store.write_segment_rows(_stamp(result.segment_rows, execution_id, config_hash), target)
+        longtable_store.write_segment_rows(_stamp(result.segment_rows, execution_id, config_hash), target)
 
     manifest = FeatureManifest()
     manifest.extend(list(result.specs))
@@ -671,8 +687,6 @@ def _write_result(layout, recording_id, extractor, result, execution_id, config_
 
     _write_warnings(layout, recording_id, extractor, result.warnings)
 
-    # an artifact an earlier run left would otherwise pass for this run's
-    shutil.rmtree(layout.artifacts_dir(recording_id, extractor), ignore_errors=True)
     for name, source in result.artifacts.items():
         destination = layout.artifacts_dir(recording_id, extractor) / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -695,27 +709,11 @@ def _write_warnings(layout, recording_id: str, extractor: str, warnings: list[QC
     path.write_text(json.dumps([asdict(warning) for warning in warnings], indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _stage_payload(layout, recording_id: str, extractor: str, result, payload: Path) -> None:
+def _stage_payload(layout, recording_id: str, extractor: str, payload: Path) -> None:
     """Copy exactly what this extractor produced into a cache payload, so a later hit can be
     replayed and look identical to a real run."""
     payload.mkdir(parents=True, exist_ok=True)
-    pieces = [
-        ("features", layout.long_table_path(recording_id) / f"{extractor}.parquet"),
-        ("keypoints", layout.keypoints_path(recording_id) / f"{extractor}.parquet"),
-        ("body_model", layout.body_model_path(recording_id) / f"{extractor}.parquet"),
-        ("segments", layout.segment_rows_path(recording_id) / f"{extractor}.parquet"),
-        ("manifest", layout.manifest_fragment_path(recording_id, extractor)),
-        ("warnings", layout.warnings_path(recording_id, extractor)),
-    ]
-    # annotations are partitioned by layer, not by extractor, so the file name cannot be
-    # derived from the extractor name the way the others can
-    if result.annotations is not None and not result.annotations.empty:
-        for layer in result.annotations["layer"].dropna().unique():
-            pieces.append(
-                ("annotations", layout.annotations_path(recording_id) / f"{layer}.parquet")
-            )
-
-    for group, source in pieces:
+    for group, source in _own_files(layout, recording_id, extractor):
         if source.is_file():
             target = payload / group / source.name
             target.parent.mkdir(parents=True, exist_ok=True)

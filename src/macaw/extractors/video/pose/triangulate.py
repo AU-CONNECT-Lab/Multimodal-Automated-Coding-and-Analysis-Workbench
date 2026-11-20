@@ -383,7 +383,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE

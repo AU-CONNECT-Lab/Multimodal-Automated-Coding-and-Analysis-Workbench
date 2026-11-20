@@ -715,7 +715,8 @@ class TestVersions:
             "confidence": [0.4, 0.4], "abstained": False, "needs_review": True, "group_id": "1", "session_id": None,
             "task": None, "run": None, "execution_id": "e1", "config_hash": "h1",
         })
-        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).annotations_path("r1"))
+        for step, written in zip(("coding.judge", "coding.judge.words"), (rows.iloc[[0]], rows.iloc[[1]])):
+            write_annotations(coerce_frame(written, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).step_annotations_path("r1", step))
         assert export_review(resolved, ["r1"])["annotator"].tolist() == ["llm:vllm/tiny"]
 
 
@@ -733,7 +734,7 @@ class TestReview:
             "needs_review": [False, True, True], "group_id": "1", "session_id": None, "task": None, "run": None,
             "execution_id": "e1", "config_hash": "h1",
         })
-        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).annotations_path("r1"))
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).step_annotations_path("r1", "coding.judge"))
         return SimpleNamespace(config=config, resolved=resolved)
 
     def test_export_fill_in_apply_and_export_again(self, project, tmp_path):
@@ -988,7 +989,7 @@ class TestExamples:
             tier="acts", annotator="ann", layer="C", confidence=float("nan"), abstained=False, needs_review=False,
             group_id="r1", session_id=None, task=None, run=None, execution_id="e1", config_hash="h1",
         )
-        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).annotations_path("r1"))
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolved).imported_codes_path("r1"))
         monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
         out = tmp_path / "examples.csv"
         result = CliRunner().invoke(app, ["draw-examples", str(out), "--coder", "ann", "--per-code", "1", "-c", str(config)])
@@ -1008,7 +1009,7 @@ class TestAgainstItself:
             "abstained": [False, False], "needs_review": [False, True], "group_id": "1", "session_id": None,
             "task": None, "run": None, "execution_id": "e1", "config_hash": "h1",
         })
-        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout.annotations_path("r1"))
+        write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout.step_annotations_path("r1", "coding.judge"))
         samples = pd.DataFrame({
             "unit_id": ["u0", "u1", "u0", "u1"], "sample": [0, 0, 1, 1], "label": ["inform", "question", "inform", ABSTAIN],
             "reason": "", "subject_id": "a", "t_start": [0.0, 2.0, 0.0, 2.0], "t_end": [1.0, 3.0, 1.0, 3.0],

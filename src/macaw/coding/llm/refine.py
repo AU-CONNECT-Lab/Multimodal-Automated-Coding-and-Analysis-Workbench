@@ -13,7 +13,7 @@ import pandas as pd
 from macaw.coding.agreement import NO_CODE, build_units, load_annotations, unit_table
 from macaw.coding.codebook import Codebook, CodeDefinition
 from macaw.coding.llm.backends import LLMBackend, run_in_order
-from macaw.coding.llm.judge import LAYER, NO_USABLE_ANSWER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
+from macaw.coding.llm.judge import NO_USABLE_ANSWER, SAMPLES_NAME, VERSION_LAYER, JudgementExtractor, coding_units
 from macaw.coding.llm.parsing import whole_answer
 from macaw.coding.llm.prompts import ABSTAIN, codebook_lines
 from macaw.exceptions import MacawError
@@ -57,7 +57,7 @@ def _model_codes(config, recording_ids: list[str], tier: str) -> pd.DataFrame:
     layout = layout_for(config, create=False)
     frames = []
     for rid in recording_ids:
-        path = layout.annotations_path(rid) / f"{LAYER}.parquet"
+        path = layout.step_annotations_path(rid, JudgementExtractor.name)
         if path.is_file():
             frames.append(_io.read_file(path, ANNOTATION_SCHEMA, "annotations"))
     found = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=list(ANNOTATION_SCHEMA))

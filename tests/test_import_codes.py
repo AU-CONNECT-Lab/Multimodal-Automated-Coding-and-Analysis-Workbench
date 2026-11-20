@@ -138,7 +138,7 @@ class TestImport:
             recording_id="dyad01", tier="gaze_target", layer="gaze", annotator="gaze.target", subject_id="child",
             intervals=pd.DataFrame({"t_start": [0.0, 1.0], "t_end": [1.0, 2.0], "label": ["parent", "elsewhere"]}),
         )
-        write_annotations(machine, layout_for(config).annotations_path("dyad01"))
+        write_annotations(machine, layout_for(config).step_annotations_path("dyad01", "gaze.target"))
         exported = export_eaf(machine, recording, tmp_path / "export.eaf")
         report = import_coding(config, recording, exported, "anna")
         assert report.kept == {} and "the same as gaze.target's codes" in report.left_out[0]

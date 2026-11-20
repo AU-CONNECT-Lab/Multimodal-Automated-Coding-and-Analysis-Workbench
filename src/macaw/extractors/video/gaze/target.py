@@ -213,7 +213,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "objects.names", "segment", "video", "setup.cameras", "setup.room")

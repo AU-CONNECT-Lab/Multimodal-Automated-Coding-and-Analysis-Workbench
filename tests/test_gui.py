@@ -295,7 +295,7 @@ def test_the_review_page_lists_uncertain_speech_acts_and_saves_a_pick(project):
         "label": ["ask", "tell"], "annotator": "llm:ollama/x", "layer": "B", "confidence": [0.6, 1.0],
         "abstained": False, "needs_review": [True, False], "execution_id": "e", "config_hash": "h",
     })
-    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).annotations_path("003"))
+    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(config).step_annotations_path("003", "coding.judge"))
     samples = layout_for(config).artifacts_dir("003", "coding.judge") / "samples.parquet"
     samples.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"unit_id": ["u0"] * 5, "sample": range(5), "label": ["ask"] * 3 + ["tell"] * 2,

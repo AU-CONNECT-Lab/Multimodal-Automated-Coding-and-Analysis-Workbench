@@ -96,7 +96,7 @@ def hands_moving(times, speeds: dict[str, np.ndarray], *, above: float, min_s: f
 @register_extractor
 class MovingExtractor(Extractor):
     name = "pose.moving"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -192,7 +192,7 @@ class MovingExtractor(Extractor):
 @register_extractor
 class Moving3DExtractor(Extractor):
     name = "pose.moving3d"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE

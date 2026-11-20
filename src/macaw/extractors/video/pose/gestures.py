@@ -135,7 +135,7 @@ _BOTH_HANDS_MISSING = {
 @register_extractor
 class GestureExtractor(Extractor):
     name = "pose.gestures"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -196,7 +196,7 @@ class GestureExtractor(Extractor):
 @register_extractor
 class Gesture3DExtractor(Extractor):
     name = "pose.gestures3d"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE

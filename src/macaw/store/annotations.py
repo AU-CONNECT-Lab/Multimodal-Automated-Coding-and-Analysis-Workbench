@@ -1,5 +1,5 @@
-"""Discrete labelled intervals. Partitioned by layer: A, the LLM layers and the human
-review pass are separate jobs, so they must not share a file."""
+"""Discrete labelled intervals. One file per step, as in the other tables: several steps write
+the same layer, and people's own coding and review decisions keep files of their own beside them."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from macaw.store.schema import ANNOTATION_SCHEMA, ENTITY_COLUMNS, coerce_frame, 
 NAME = "annotations"
 
 
-def write_annotations(df: pd.DataFrame, path: Path, *, append: bool = False) -> Path:
-    return _io.write_partitioned(df, path, ANNOTATION_SCHEMA, NAME, "layer", append=append)
+def write_annotations(df: pd.DataFrame, path: Path) -> Path:
+    return _io.write_file(df, path, ANNOTATION_SCHEMA, NAME)
 
 
 def read_annotations(

@@ -81,7 +81,7 @@ _MISSING = {
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
@@ -245,8 +245,8 @@ class JudgementExtractor(Extractor):
         return name if cls.judge is None else f"{name}_{cls.judge}"
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
-        # the layer's own file: people's review decisions share its layer but are kept apart
-        own = layout_for(self.config, create=False).annotations_path(recording.recording_id) / f"{self.layer()}.parquet"
+        # the step's own file: people's review decisions share its layer but are kept apart
+        own = layout_for(self.config, create=False).step_annotations_path(recording.recording_id, self.name)
         if not own.is_file():
             return None
         return self._rows(recording, clip_intervals(_io.read_file(own, ANNOTATION_SCHEMA, "annotations"), start_s, end_s))
@@ -460,7 +460,6 @@ def version_steps(config: MacawConfig) -> list[str]:
 def sample_annotations(config: MacawConfig, recording_ids: list[str]) -> pd.DataFrame:
     """Every answer of every coding by the language model as a coder of its own, <coder>#<sample>, so that
     agreement can set the model against itself."""
-    from macaw.extractors import get_extractor
     from macaw.store import _io
 
     layout = layout_for(config, create=False)
@@ -468,8 +467,8 @@ def sample_annotations(config: MacawConfig, recording_ids: list[str]) -> pd.Data
     for rid in recording_ids:
         for step in (JudgementExtractor.name, *version_steps(config)):
             path = layout.artifacts_dir(rid, step) / SAMPLES_NAME
-            # the layer's own file: people's review decisions share its layer but are kept apart
-            own = layout.annotations_path(rid) / f"{get_extractor(step).layer()}.parquet"
+            # the step's own file: people's review decisions share its layer but are kept apart
+            own = layout.step_annotations_path(rid, step)
             if not own.is_file() or not path.is_file():
                 continue
             mine = _io.read_file(own, ANNOTATION_SCHEMA, "annotations")

@@ -353,7 +353,7 @@ class TestClean:
     def test_all_keeps_what_people_did_by_hand(self, project):
         layout = make_layout(project.output, create=False)
         made = [layout.voice_owners_path("003"), layout.imported_codes_path("003"), layout.reviewed_codes_path("003"), layout.review_notes_path("003")]
-        computed = [layout.annotations_path("003") / "B.parquet", layout.long_table_path("003") / "part.parquet"]
+        computed = [layout.step_annotations_path("003", "coding.judge"), layout.long_table_path("003") / "part.parquet"]
         for path in made + computed:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("x", encoding="utf-8")

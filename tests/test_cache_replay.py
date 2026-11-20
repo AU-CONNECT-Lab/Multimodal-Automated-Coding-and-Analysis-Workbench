@@ -33,19 +33,17 @@ def produced(tmp_path):
     """Everything one extractor leaves behind after a real run."""
     layout = make_layout(tmp_path / "derivatives")
     _write(layout.long_table_path(RECORDING) / f"{EXTRACTOR}.parquet", "rows")
-    _write(layout.annotations_path(RECORDING) / "A.parquet", "annotations")
+    _write(layout.step_annotations_path(RECORDING, EXTRACTOR), "annotations")
     _write(layout.manifest_fragment_path(RECORDING, EXTRACTOR), "{}")
     _write(layout.warnings_path(RECORDING, EXTRACTOR), "[]")
     _write(layout.artifacts_dir(RECORDING, EXTRACTOR) / "parent.wav", "audio")
-    result = SimpleNamespace(annotations=pd.DataFrame({"layer": ["A", "A"]}))
-    return layout, result
+    return layout
 
 
 @pytest.fixture
 def payload(produced, tmp_path):
-    layout, result = produced
     target = tmp_path / "workspace" / "_payload"
-    _stage_payload(layout, RECORDING, EXTRACTOR, result, target)
+    _stage_payload(produced, RECORDING, EXTRACTOR, target)
     return target
 
 
@@ -58,17 +56,14 @@ class TestStaging:
         assert f"features/{EXTRACTOR}.parquet" in _tree(payload)
 
     def test_annotations_are_staged(self, payload):
-        """They are partitioned by layer, so the file name cannot be guessed from the extractor
-        name the way the others can. Leaving them out made a second run lose the table."""
-        assert "annotations/A.parquet" in _tree(payload)
+        """Leaving them out made a second run lose the table."""
+        assert f"annotations/{EXTRACTOR}.parquet" in _tree(payload)
 
-    def test_several_layers_are_all_staged(self, produced, tmp_path):
-        layout, _ = produced
-        _write(layout.annotations_path(RECORDING) / "B.parquet", "more")
-        result = SimpleNamespace(annotations=pd.DataFrame({"layer": ["A", "B"]}))
+    def test_another_steps_annotations_are_left_alone(self, produced, tmp_path):
+        _write(produced.step_annotations_path(RECORDING, "pose.moving"), "not mine")
         target = tmp_path / "p2"
-        _stage_payload(layout, RECORDING, EXTRACTOR, result, target)
-        assert {"annotations/A.parquet", "annotations/B.parquet"} <= set(_tree(target))
+        _stage_payload(produced, RECORDING, EXTRACTOR, target)
+        assert "annotations/pose.moving.parquet" not in _tree(target)
 
     def test_artifacts_keep_their_extractor_directory(self, payload):
         """Without this level a restored hit lands one directory too high and the next
@@ -82,16 +77,15 @@ class TestStaging:
 
     def test_another_extractors_output_is_left_alone(self, produced, tmp_path):
         """One writer per file: a rerun of one extractor must not carry off its neighbour's."""
-        layout, result = produced
-        _write(layout.long_table_path(RECORDING) / "prosody.frame.parquet", "not mine")
+        _write(produced.long_table_path(RECORDING) / "prosody.frame.parquet", "not mine")
         target = tmp_path / "p3"
-        _stage_payload(layout, RECORDING, EXTRACTOR, result, target)
+        _stage_payload(produced, RECORDING, EXTRACTOR, target)
         assert "features/prosody.frame.parquet" not in _tree(target)
 
     def test_an_extractor_with_no_annotations_stages_the_rest(self, produced, tmp_path):
-        layout, _ = produced
+        produced.step_annotations_path(RECORDING, EXTRACTOR).unlink()
         target = tmp_path / "p4"
-        _stage_payload(layout, RECORDING, EXTRACTOR, SimpleNamespace(annotations=None), target)
+        _stage_payload(produced, RECORDING, EXTRACTOR, target)
         tree = _tree(target)
         assert f"features/{EXTRACTOR}.parquet" in tree
         assert not any(item.startswith("annotations/") for item in tree)
@@ -326,6 +320,47 @@ class TestStaleArtifacts:
         assert (layout.artifacts_dir(RECORDING, EXTRACTOR) / "swaps").is_file()
 
 
+def _result(**given):
+    return SimpleNamespace(**{
+        "rows": None, "annotations": None, "keypoints": None, "body_model": None, "segment_rows": None, "specs": [], "warnings": [],
+        "artifacts": {}, **given,
+    })
+
+
+def _codes(step, layer, label):
+    from macaw.store.annotations import build_annotations
+
+    intervals = pd.DataFrame({"t_start": [0.0], "t_end": [1.0], "label": [label]})
+    return build_annotations(recording_id=RECORDING, tier=f"{step}_tier", layer=layer, annotator=step, intervals=intervals)
+
+
+class TestAnnotationsPerStep:
+    def test_two_steps_that_write_one_layer_both_keep_theirs(self, tmp_path, monkeypatch):
+        from macaw.store.annotations import read_annotations
+
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        for step in ("pose.kinematics", "pose.moving"):
+            runner._write_result(layout, RECORDING, step, _result(annotations=_codes(step, "pose", "on")), "exec-1", "cfg-1")
+        found = read_annotations(layout.annotations_path(RECORDING))
+        assert sorted(found["annotator"]) == ["pose.kinematics", "pose.moving"]
+
+    def test_a_rerun_that_codes_nothing_takes_away_the_codes_before(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        step = "pose.moving"
+        runner._write_result(layout, RECORDING, step, _result(annotations=_codes(step, "pose", "on")), "exec-1", "cfg-1")
+        runner._write_result(layout, RECORDING, step, _result(annotations=pd.DataFrame()), "exec-2", "cfg-1")
+        assert not layout.step_annotations_path(RECORDING, step).exists()
+
+    def test_a_rerun_without_keypoints_or_body_model_takes_away_the_ones_before(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner, "write_manifest", lambda *a, **k: None)
+        layout = make_layout(tmp_path / "derivatives")
+        kept = [_write(layout.keypoints_path(RECORDING) / f"{EXTRACTOR}.parquet"), _write(layout.body_model_path(RECORDING) / f"{EXTRACTOR}.parquet")]
+        runner._write_result(layout, RECORDING, EXTRACTOR, _result(), "exec-1", "cfg-1")
+        assert not any(path.exists() for path in kept)
+
+
 class TestUncachedSteps:
     @pytest.fixture
     def task(self, tmp_path, monkeypatch):
@@ -393,6 +428,17 @@ class TestUncachedSteps:
         assert len(read_long_table(layout.long_table_path(RECORDING))) == 1
         runner._write_result(layout, RECORDING, EXTRACTOR, SimpleNamespace(**{**vars(result), "rows": pd.DataFrame()}), "exec-2", "cfg-1")
         assert read_long_table(layout.long_table_path(RECORDING)).empty
+
+    def test_a_hit_takes_away_what_an_earlier_run_left_and_the_entry_lacks(self, task):
+        layout, _ = task(True)
+        stale = _write(layout.step_annotations_path(RECORDING, "step"), "an earlier run's codes")
+
+        def missing(self):
+            raise RuntimeError("only a hit gets past this")
+
+        task(True, missing)
+        assert not stale.exists()
+        assert (layout.artifacts_dir(RECORDING, "step") / "big.bin").is_file()
 
     def test_a_hit_does_not_check_the_steps_libraries(self, task):
         def missing(self):

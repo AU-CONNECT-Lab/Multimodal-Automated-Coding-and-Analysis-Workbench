@@ -185,7 +185,7 @@ _MISSING = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.9.0"
+    version = "0.10.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE

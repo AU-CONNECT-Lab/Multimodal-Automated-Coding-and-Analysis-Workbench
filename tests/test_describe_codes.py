@@ -83,7 +83,7 @@ def test_the_command_prints_the_table_and_writes_it(tmp_path):
     rows = coded(["ask", "ask", "tell"], recording_id="003", subject_id="parent").assign(
         group_id="003", session_id=None, task=None, run=None, confidence=1.0, needs_review=False, execution_id="e", config_hash="h"
     )
-    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolve_config(config)).annotations_path("003"))
+    write_annotations(coerce_frame(rows, ANNOTATION_SCHEMA, "annotations"), layout_for(resolve_config(config)).step_annotations_path("003", "coding.judge"))
     out = tmp_path / "codes.csv"
     outcome = CliRunner().invoke(app, ["describe-codes", "-c", str(config), "-r", "003", "--out", str(out)])
     assert outcome.exit_code == 0, outcome.output

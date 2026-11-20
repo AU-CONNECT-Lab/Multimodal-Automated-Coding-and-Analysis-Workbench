@@ -157,6 +157,9 @@ class Layout:
     def annotations_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "annotations"
 
+    def step_annotations_path(self, recording_id: str, extractor: str) -> Path:
+        return self.annotations_path(recording_id) / f"{extractor}.parquet"
+
     # the steps' summaries again over each named segment, beside the long table rather than in it
     def segment_rows_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "segments"
@@ -165,7 +168,7 @@ class Layout:
     def imported_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "imported.parquet"
 
-    # beside the layer files, so a rerun of the model pass that rewrites B.parquet leaves people's decisions alone
+    # beside the steps' files, so a rerun of the model pass leaves people's decisions alone
     def reviewed_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "reviewed.parquet"
 
