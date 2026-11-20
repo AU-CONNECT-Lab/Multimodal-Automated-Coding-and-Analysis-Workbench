@@ -419,3 +419,15 @@ def test_the_results_page_puts_each_segment_beside_the_whole_recording(saved, pr
     table = per_person(config, RID, TurnStructureExtractor.name, "talk_time_s", rows.assign(who=_who(rows)))
     head = [cell.children for cell in table.children[0].children.children]
     assert head == ["Person", "Whole recording", "first", "second"]
+
+
+def test_a_cell_of_the_wide_export_never_averages_two_values():
+    from macaw.exceptions import MacawError
+    from macaw.store.longtable import build_long_rows
+    from macaw.store.wide import to_wide
+
+    rows = build_long_rows(recording_id=RID, source="x.step", scale=Scale.RECORDING, subject_id="parent",
+                           values=pd.DataFrame({"t_start": [0.0, 0.0], "t_end": [9.0, 9.0], "n_things": [1.0, 3.0]}))
+    with pytest.raises(MacawError, match="n_things from x.step"):
+        to_wide(rows)
+    assert to_wide(rows.iloc[:1])["n_things"].tolist() == [1.0]
