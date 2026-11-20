@@ -173,6 +173,7 @@ class Layout:
             self.camera_owners_accepted_path(recording_id),
             self.voice_owners_path(recording_id),
             self.line_speakers_path(recording_id),
+            self.line_speakers_path(recording_id).with_name(f"{self.line_speakers_path(recording_id).stem}_lines.csv"),
             self.further_voice_path(recording_id),
             self.gaze_labels_path(recording_id),
             self.objects_path(recording_id),

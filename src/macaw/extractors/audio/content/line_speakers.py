@@ -167,7 +167,16 @@ def _by_faces(lines: pd.DataFrame, scores: dict[str, tuple[np.ndarray, np.ndarra
         doubt.append(found[2])
     out["suggested"] = pd.Series(suggested, index=out.index, dtype=object)
     out["sure"], out["doubt"] = sure, doubt
+    out["scores"] = _per_line(means, len(out), out.index)
     return out
+
+
+def _per_line(values: dict[str, np.ndarray], n: int, index) -> pd.Series:
+    """Each line's score for each person, as the suggestion read it."""
+    return pd.Series(
+        [{who: round(float(found[row]), 3) for who, found in values.items() if np.isfinite(found[row])} for row in range(n)],
+        index=index, dtype=object,
+    )
 
 
 def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series]) -> pd.DataFrame:
@@ -210,6 +219,7 @@ def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series]) -> pd.DataFrame
     # as objects, so a line without a suggestion keeps None
     out["suggested"] = pd.Series(suggested, index=out.index, dtype=object)
     out["sure"], out["doubt"] = sure, doubt
+    out["scores"] = _per_line(moving, len(out), out.index)
     return out
 
 
@@ -293,7 +303,22 @@ def write_line_speakers(config, recording_id: str, lines: pd.DataFrame, stamp: s
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    every_line(lines, payload["evidence"]).to_csv(lines_path(path), index=False, encoding="utf-8")
     return path
+
+
+def lines_path(path: Path) -> Path:
+    return Path(path).with_name(f"{Path(path).stem}_lines.csv")
+
+
+def every_line(lines: pd.DataFrame, kind: str) -> pd.DataFrame:
+    """Every line as it was decided: its voice, the person it was first given, whom the faces suggested and how sure,
+    whom it went to and by whom, and each person's score on it (face.speaking's mean, or mouth movement's z)."""
+    kept = [column for column in ("t_start", "t_end", "voice", "base", "suggested", "sure", "doubt", "person", "by", "why") if column in lines]
+    table = lines[kept].rename(columns={"base": "voice_person"}).reset_index(drop=True)
+    scores = pd.DataFrame(list(lines["scores"]) if "scores" in lines else [{}] * len(lines))
+    scores.columns = [f"{kind.replace(' ', '_')}_{who}" for who in scores.columns]
+    return pd.concat([table, scores.reset_index(drop=True)], axis=1)
 
 
 def describe_kept(kept: dict) -> str:

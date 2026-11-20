@@ -23,7 +23,7 @@ from macaw.extractors.audio.content.diarization import (
     further_voice, read_diarization, voice_sources, with_changes,
 )
 from macaw.extractors.audio.content.line_speakers import (
-    BY_HAND, FACES, MOUTH, SUGGESTED, SUGGESTION, LineSpeakersGate, changes_of, describe_kept, keep_suggested, split_at, spoken_lines,
+    BY_HAND, FACES, MOUTH, SUGGESTED, SUGGESTION, LineSpeakersGate, changes_of, describe_kept, keep_suggested, lines_path, split_at, spoken_lines,
     with_evidence, with_picks,
 )
 from macaw.extractors.base import PERSON, SOFTWARE
@@ -277,6 +277,12 @@ class TestChanging:
         assert macaw(project, "line-speakers", "--suggested").exit_code == 0
         kept = json.loads(project.layout.line_speakers_path("003").read_text(encoding="utf-8"))
         assert kept["route"] == SUGGESTED and [change["by"] for change in kept["changes"]] == [SUGGESTION]
+        # every line is kept with whom the mouths gave it to and each person's score on it, changed or not
+        every = pd.read_csv(lines_path(project.layout.line_speakers_path("003")))
+        assert len(every) == 3 and every["voice_person"].tolist() == ["parent", "parent", "child"]
+        assert every.loc[1, "suggested"] == "child" and bool(every.loc[1, "sure"]) and every.loc[1, "person"] == "child"
+        assert {"mouth_movement_parent", "mouth_movement_child"} <= set(every.columns)
+        assert every.loc[1, "mouth_movement_child"] > every.loc[1, "mouth_movement_parent"]
 
 
 class TestGate:
