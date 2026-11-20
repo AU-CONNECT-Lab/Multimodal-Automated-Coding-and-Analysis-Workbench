@@ -9,7 +9,7 @@ import pytest
 from macaw.config.schema import KinematicsSection, MovingSection
 from macaw.exceptions import ConfigError
 from macaw.extractors.video.pose import kinematics as kinematics_module
-from macaw.extractors.video.pose.moving import MovingExtractor, either_hand, moving_frames, moving_spans
+from macaw.extractors.video.pose.moving import MovingExtractor, either_hand, hands_moving, moving_frames, moving_spans
 from macaw.store.keypoints import write_keypoints
 from macaw.store.schema import ANNOTATION_SCHEMA, LONG_TABLE_SCHEMA, validate_frame
 from setup_helpers import recording_of
@@ -38,17 +38,24 @@ class TestSpans:
         t, speed = speeds(180, [(1.0, 1.5), (1.6, 2.0), (3.0, 3.0 + 2 / FPS), (4.0, 4.5)])
         found, dropped = moving_spans(t, speed, above=10.0, min_s=0.15, join_s=0.15)
         assert spans(found) == [(1.0, 2.0), (4.0, 4.5)]
-        assert dropped == 1
+        assert len(dropped) == 1 and dropped["t_start"].iloc[0] == pytest.approx(3.0)
 
     def test_stretches_are_joined_before_the_short_ones_go(self):
         t, speed = speeds(90, [(1.0, 1.1), (1.2, 1.3)])
         found, dropped = moving_spans(t, speed, above=10.0, min_s=0.25, join_s=0.15)
-        assert spans(found) == [(1.0, 1.3)] and dropped == 0
+        assert spans(found) == [(1.0, 1.3)] and dropped.empty
+
+    def test_the_short_stretches_of_both_hands_are_kept_beside_the_kept_ones(self):
+        t, left = speeds(180, [(1.0, 1.5), (3.0, 3.0 + 2 / FPS)])
+        _, right = speeds(180, [(3.0, 3.0 + 2 / FPS)])
+        _, kept, short, dropped = hands_moving(t, {"left": left, "right": right}, above=10.0, min_s=0.15, join_s=0.15)
+        assert kept["label"].tolist() == ["left"] and short["label"].tolist() == ["both"] and dropped == 2
+        assert short["t_start"].iloc[0] == pytest.approx(3.0)
 
     def test_nothing_faster_gives_no_stretch(self):
         t, speed = speeds(60, [])
         found, dropped = moving_spans(t, speed, above=10.0, min_s=0.15, join_s=0.15)
-        assert found.empty and list(found.columns) == ["t_start", "t_end"] and dropped == 0
+        assert found.empty and list(found.columns) == ["t_start", "t_end"] and dropped.empty
 
     def test_a_frame_without_a_speed_is_not_moving(self):
         t, speed = speeds(90, [(1.0, 2.0)])
@@ -113,11 +120,12 @@ class TestExtractor:
 
     def test_the_report_says_how_many_stretches_there_are_and_how_many_were_left_out(self, run):
         notes = [warning.message for warning in run().warnings if warning.severity == "info"]
-        assert notes == ["2 stretch(es) of hand movement on the moving tier to pick gestures from; 0 shorter than 0.15 s left out"]
+        assert notes == ["2 stretch(es) of hand movement on the moving tier to pick gestures from; 0 shorter than 0.15 s left out, on the moving_short tier"]
 
-    def test_a_stretch_shorter_than_the_least_length_is_counted_as_left_out(self, run):
+    def test_a_stretch_shorter_than_the_least_length_is_left_out_on_a_tier_of_its_own(self, run):
         result = run(min_s=5.0)
-        assert result.annotations.empty
+        assert set(result.annotations["tier"]) == {"moving_short"} and len(result.annotations) == 2
+        assert result.rows.loc[result.rows.feature == "left_hand_moving", "value"].max() == 0
         assert "0 stretch(es)" in result.warnings[0].message and "2 shorter than 5 s left out" in result.warnings[0].message
 
     def test_the_step_runs_only_with_a_speed(self):

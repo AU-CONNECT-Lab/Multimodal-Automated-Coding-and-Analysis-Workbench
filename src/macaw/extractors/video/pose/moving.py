@@ -32,16 +32,18 @@ from macaw.store.schema import Scale
 
 SIDES = ("left", "right")
 TIER, TIER_3D = "moving", "moving_3d"
+# the stretches left out as shorter than min_s, kept for a person to see what the setting removed
+SHORT = "_short"
 _SPAN_COLUMNS = ["t_start", "t_end"]
 
 
-def moving_spans(times, speed, *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, int]:
-    """(stretches with speed over above, joined when under join_s apart; how many were dropped as shorter than min_s)."""
+def moving_spans(times, speed, *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(stretches with speed over above, joined when under join_s apart; those dropped as shorter than min_s)."""
     times, speed = np.asarray(times, dtype=float), np.asarray(speed, dtype=float)
     with np.errstate(invalid="ignore"):
         fast = speed > above
     if not fast.any():
-        return pd.DataFrame(columns=_SPAN_COLUMNS, dtype=float), 0
+        return pd.DataFrame(columns=_SPAN_COLUMNS, dtype=float), pd.DataFrame(columns=_SPAN_COLUMNS, dtype=float)
     period = float(np.median(np.diff(times))) if len(times) > 1 else 0.0
     # frames the person was not seen in are absent, so a jump in time ends a stretch too
     broken = np.r_[True, (np.diff(times) > 1.5 * period) | (fast[1:] != fast[:-1])]
@@ -54,7 +56,8 @@ def moving_spans(times, speed, *, above: float, min_s: float, join_s: float) -> 
         else:
             joined.append([start, end])
     kept = [span for span in joined if span[1] - span[0] >= min_s]
-    return pd.DataFrame(kept, columns=_SPAN_COLUMNS, dtype=float), len(joined) - len(kept)
+    short = [span for span in joined if span[1] - span[0] < min_s]
+    return pd.DataFrame(kept, columns=_SPAN_COLUMNS, dtype=float), pd.DataFrame(short, columns=_SPAN_COLUMNS, dtype=float)
 
 
 def moving_frames(times, speed, spans: pd.DataFrame) -> np.ndarray:
@@ -80,20 +83,20 @@ def either_hand(by_side: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame({"t_start": [m[0] for m in merged], "t_end": [m[1] for m in merged], "label": labels})
 
 
-def hands_moving(times, speeds: dict[str, np.ndarray], *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, pd.DataFrame, int]:
-    """(each hand's 0/1 per frame, the stretches of either hand with the hand as label, how many were too short)."""
-    values, by_side, dropped = pd.DataFrame({"t_start": np.asarray(times, dtype=float)}), {}, 0
+def hands_moving(times, speeds: dict[str, np.ndarray], *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
+    """(each hand's 0/1 per frame, the stretches of either hand with the hand as label, the same of the stretches left out
+    as too short, how many of each hand's were)."""
+    values, by_side, short = pd.DataFrame({"t_start": np.asarray(times, dtype=float)}), {}, {}
     for side in SIDES:
-        by_side[side], short = moving_spans(values["t_start"], speeds[side], above=above, min_s=min_s, join_s=join_s)
+        by_side[side], short[side] = moving_spans(values["t_start"], speeds[side], above=above, min_s=min_s, join_s=join_s)
         values[f"{side}_hand_moving"] = moving_frames(values["t_start"], speeds[side], by_side[side])
-        dropped += short
-    return values, either_hand(by_side), dropped
+    return values, either_hand(by_side), either_hand(short), sum(len(spans) for spans in short.values())
 
 
 @register_extractor
 class MovingExtractor(Extractor):
     name = "pose.moving"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -130,16 +133,19 @@ class MovingExtractor(Extractor):
                 side: velocity(kp, f"{side}_wrist", smoothing_s=self.config.kinematics.smoothing_s).reindex(times.index).to_numpy()
                 for side in SIDES
             }
-            values, stretches, dropped = hands_moving(times, speeds, above=cfg.speed, min_s=cfg.min_s, join_s=cfg.join_s)
+            values, stretches, short, dropped = hands_moving(times, speeds, above=cfg.speed, min_s=cfg.min_s, join_s=cfg.join_s)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=subject_id, **common))
-            coded.append(build_annotations(
-                recording_id=recording.recording_id, tier=TIER, layer="pose", annotator=self.name, entities=common["entities"],
-                intervals=stretches, subject_id=subject_id,
-            ))
+            coded += [
+                build_annotations(
+                    recording_id=recording.recording_id, tier=tier, layer="pose", annotator=self.name, entities=common["entities"],
+                    intervals=intervals, subject_id=subject_id,
+                )
+                for tier, intervals in ((TIER, stretches), (TIER + SHORT, short))
+            ]
             warnings.append(self._warning(
                 recording, subject_id, "info",
                 f"{len(stretches)} stretch(es) of hand movement on the {TIER} tier to pick gestures from; "
-                f"{dropped} shorter than {cfg.min_s:g} s left out",
+                f"{dropped} shorter than {cfg.min_s:g} s left out, on the {TIER + SHORT} tier",
             ))
         rows = concat_long_tables(frames)
         return ExtractorResult(
@@ -186,7 +192,7 @@ class MovingExtractor(Extractor):
 @register_extractor
 class Moving3DExtractor(Extractor):
     name = "pose.moving3d"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -228,19 +234,22 @@ class Moving3DExtractor(Extractor):
         frames, coded = [], []
         for subject_id, placed in people.items():
             times, sides, _ = room_tracks(placed, self.config.kinematics.smoothing_s, frame_stride(self.config))
-            values, stretches, dropped = hands_moving(
+            values, stretches, short, dropped = hands_moving(
                 times, {side: sides[side][0] for side in SIDES}, above=above, min_s=cfg.min_s, join_s=cfg.join_s,
             )
             values.columns = [column if column == "t_start" else f"{column}_3d" for column in values.columns]
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=subject_id, **common))
-            coded.append(build_annotations(
-                recording_id=recording.recording_id, tier=TIER_3D, layer="pose", annotator=self.name, entities=common["entities"],
-                intervals=stretches, subject_id=subject_id,
-            ))
+            coded += [
+                build_annotations(
+                    recording_id=recording.recording_id, tier=tier, layer="pose", annotator=self.name, entities=common["entities"],
+                    intervals=intervals, subject_id=subject_id,
+                )
+                for tier, intervals in ((TIER_3D, stretches), (TIER_3D + SHORT, short))
+            ]
             warnings.append(_warning(
                 self.name, recording, subject_id, "info",
                 f"{len(stretches)} stretch(es) of hand movement in 3D on the {TIER_3D} tier to pick gestures from; "
-                f"{dropped} shorter than {cfg.min_s:g} s left out",
+                f"{dropped} shorter than {cfg.min_s:g} s left out, on the {TIER_3D + SHORT} tier",
             ))
         rows = concat_long_tables(frames)
         return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"])), annotations=joined_annotations(coded), warnings=warnings)
