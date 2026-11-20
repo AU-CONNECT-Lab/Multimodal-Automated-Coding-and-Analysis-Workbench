@@ -325,9 +325,9 @@ _RECORDING_SPECS = {
     "median_hold_s": ("Median pause when a speaker restarted instead of handing over.", "s", "mean"),
 }
 
-_NO_TURN = "Empty for a person who took no turn in the span."
+_NO_TURN = "Empty for a person who did not speak in the span."
 _NO_TAKE = f"{_NO_TURN[:-1]}, or never took the floor from somebody else in it."
-_TAKEN = f"{_NO_TURN} 0 means they spoke but never took the floor from somebody else."
+_TAKEN = f"{_NO_TURN} 0 means they spoke but never took the floor from somebody else, as when they spoke only inside another's turn."
 _EVERY_SPAN = "Empty only outside the rows of the recording as a whole: every span gets a value."
 _NO_SWITCH = "Empty when the floor never changed hands in the span."
 _NEVER_INTERRUPTED = "0 means they never took the floor with an overlap longer than turns.interruption_overlap_s."

@@ -305,14 +305,17 @@ _SUBJECT_SPECS = {
         "turns.transitions counts it as a backchannel or an attempt to take the floor.", "count",
     ),
     "talk_time_s": ("Seconds this speaker held the floor, pauses inside turns included.", "s"),
-    "talk_ratio": ("Share of all floor time held by this speaker; 0.5 is an even split.", None),
+    "talk_ratio": (
+        "Share of all floor time held by this speaker, other voices included where they take turns; 0.5 is an even "
+        "split between two people.", None,
+    ),
     "mean_turn_s": ("Mean turn length.", "s"),
     "median_turn_s": ("Median turn length, which a single long turn cannot move.", "s"),
     "turns_per_minute": ("Turns per minute of the analysed part, or the segment.", "1/min"),
 }
 
 _RECORDING_SPECS = {
-    "n_turns_total": ("Turns taken by everyone.", "count"),
+    "n_turns_total": ("Turns taken by everyone, other voices included where they take turns.", "count"),
     "n_joint_silences": ("Stretches of at least silence_min_s where nobody talked.", "count"),
     "joint_silence_total_s": (
         "Total length of those stretches; the time before the first word and after the last is not counted.", "s",

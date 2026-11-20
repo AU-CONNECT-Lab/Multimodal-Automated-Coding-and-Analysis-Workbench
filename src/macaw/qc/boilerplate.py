@@ -671,12 +671,12 @@ def _turns(config, spec, names) -> str:
         )
         return timed + (
             "Consecutive stretches of one speaker were merged into a turn when no one else spoke in between and the pause "
-            f"was at most {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
+            f"was shorter than {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
             "nobody spoke were counted as joint silences."
         )
     return (
         "Consecutive utterances of one speaker were merged into a turn when no one else spoke in between and the pause "
-        f"was at most {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
+        f"was shorter than {_seconds(turns.max_gap_s)}. Stretches of at least {_seconds(turns.silence_min_s)} in which "
         "nobody spoke were counted as joint silences."
     )
 

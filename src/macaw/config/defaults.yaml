@@ -188,13 +188,13 @@ motion:
   smoothing_s: 0.0                   # s; moving-average window. 0 = raw
 
 turns:
-  max_gap_s: 2.0                     # s; longer silence ends a turn instead of continuing it
+  max_gap_s: 2.0                     # s; a silence this long or longer ends a turn
   interruption_overlap_s: 0.5        # s; taking the floor with more overlap than this is an interruption
-  smooth_transfer_gap_s: 0.2         # s; |gap| under this counts as a fluent transfer
-  silence_min_s: 1.0                 # s; joint silence longer than this is logged as a pause
+  smooth_transfer_gap_s: 0.2         # s; |gap| up to this counts as a fluent transfer
+  silence_min_s: 1.0                 # s; joint silence at least this long is logged as a pause
   window_s: null                     # s; entropy over sliding windows as well; null = whole recording only
   window_hop_s: null                 # s; null = half of window_s
-  permutation_entropy_order: 3       # embedding order; 3 needs far shorter series than 5
+  permutation_entropy_order: 3       # embedding order, 2 or more; 3 needs far shorter series than 5
   min_voice_s: 0.2                   # s; shared microphone: a shorter voice with no word recognised is noise
   backchannel_max_s: 1.0             # s; talk inside another's turn up to this is a backchannel, longer an attempt
 

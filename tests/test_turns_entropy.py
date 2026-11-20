@@ -163,3 +163,13 @@ class TestConditionalEntropy:
 
     def test_empty(self):
         assert np.isnan(conditional_entropy([], []))
+
+
+@pytest.mark.parametrize("setting", [{"permutation_entropy_order": 1}, {"permutation_entropy_order": -1}, {"window_s": 0}, {"window_hop_s": -5}])
+def test_entropy_settings_that_cannot_work_are_refused(setting):
+    from pydantic import ValidationError
+
+    from macaw.config.schema import TurnsSection
+
+    with pytest.raises(ValidationError):
+        TurnsSection(**setting)

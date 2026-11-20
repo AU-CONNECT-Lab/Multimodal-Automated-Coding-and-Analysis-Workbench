@@ -536,9 +536,9 @@ class TurnsSection(_Section):
     interruption_overlap_s: float = 0.5
     smooth_transfer_gap_s: float = 0.2
     silence_min_s: float = 1.0
-    window_s: float | None = None
-    window_hop_s: float | None = None
-    permutation_entropy_order: int = 3
+    window_s: float | None = Field(default=None, gt=0)
+    window_hop_s: float | None = Field(default=None, gt=0)
+    permutation_entropy_order: int = Field(default=3, ge=2)
     # on a shared microphone, a voice stretch this short with no word in it is taken for noise
     min_voice_s: float = added(default=0.2, ge=0)
     # talk inside another person's turn up to this long is a backchannel, longer an attempt to take the floor
