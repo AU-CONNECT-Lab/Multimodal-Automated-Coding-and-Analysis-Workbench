@@ -16,8 +16,9 @@ from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.project.segments import clip_intervals, clip_points
+from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
-from macaw.store.schema import Scale
+from macaw.store.schema import ANNOTATION_SCHEMA, Scale, coerce_frame, empty_frame
 
 # indices in the 68-point layout every face backend writes
 INNER_LIPS = ((61, 67), (62, 66), (63, 65))
@@ -28,6 +29,9 @@ NOSE_BASE = 33
 CLOSED_SHARE = 0.7
 OPEN_SHARE = 0.85
 BASELINE_S = 3.0
+# every run of closed eye, with what it was taken for
+CLOSED_TIER = "eyes_closed"
+BLINK, TOO_LONG, NOT_SEEN_OPEN = "blink", "too long", "not seen open"
 MAX_BLINK_S = 0.5
 # frames either side of a closure that must show the eye open
 REOPEN_FRAMES = 3
@@ -77,7 +81,7 @@ _MISSING = {
 @register_extractor
 class FaceMovementExtractor(Extractor):
     name = "face.movement"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = ("face.blink_min_eye_px", "segment")
@@ -104,7 +108,7 @@ class FaceMovementExtractor(Extractor):
         angles = head_angles(angles_path, recording.recording_id)
         prep = apply_prep_timing(self.config, recording)
         min_eye_px = self.config.face.blink_min_eye_px
-        frames, warnings = [], []
+        frames, warnings, closed = [], [], []
         for subject_id, faces in landmarks.groupby("subject_id", sort=True):
             subject_id = str(subject_id)
             faces = faces.sort_values("frame").merge(angles.get(subject_id, _NO_ANGLES), on="t", how="left")
@@ -123,7 +127,12 @@ class FaceMovementExtractor(Extractor):
             common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities(), subject_id=subject_id)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, **common))
 
-            blinks = find_blinks(eyes, faces["frame"], faces["t"])
+            runs = closed_runs(eyes, faces["frame"], faces["t"])
+            closed.append(build_annotations(
+                recording_id=recording.recording_id, tier=CLOSED_TIER, layer="face", annotator=self.name,
+                intervals=runs.rename(columns={"kind": "label"}), entities=recording.entities(), subject_id=subject_id,
+            ))
+            blinks = runs[runs["kind"] == BLINK]
             if not blinks.empty:
                 frames.append(
                     build_long_rows(
@@ -148,7 +157,11 @@ class FaceMovementExtractor(Extractor):
             frames.append(self._summary(recording, subject_id, len(blinks), measurable_s, (prep.t_origin_s, prep.t_origin_s + prep.duration_s)))
             warnings += self._eye_warnings(recording, subject_id, eye_width, readable, min_eye_px)
         rows = concat_long_tables(frames)
-        return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"]) if len(rows) else set()), warnings=warnings)
+        closed = [frame for frame in closed if not frame.empty]
+        annotations = coerce_frame(pd.concat(closed, ignore_index=True), ANNOTATION_SCHEMA, "annotations") if closed else empty_frame(ANNOTATION_SCHEMA)
+        return ExtractorResult(
+            rows=rows, specs=self._specs(set(rows["feature"]) if len(rows) else set()), annotations=annotations, warnings=warnings,
+        )
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
@@ -289,13 +302,20 @@ def _frame_period(t: pd.Series) -> float:
 def find_blinks(eyes: pd.Series, frame: pd.Series, t: pd.Series) -> pd.DataFrame:
     """Runs of closed eye no longer than MAX_BLINK_S, with the eye seen open on both sides; a slow
     lowering of the lids (looking down) never reopens in time and is not a blink."""
+    runs = closed_runs(eyes, frame, t)
+    return runs.loc[runs["kind"] == BLINK, ["t_start", "t_end"]].reset_index(drop=True)
+
+
+def closed_runs(eyes: pd.Series, frame: pd.Series, t: pd.Series) -> pd.DataFrame:
+    """Every run of closed eye, as kind a blink, one closed for longer than MAX_BLINK_S, or one the eye was not seen open
+    on both sides of."""
     eyes = pd.Series(eyes.to_numpy(dtype=float), index=frame.to_numpy())
     times = pd.Series(t.to_numpy(dtype=float), index=frame.to_numpy())
     full = pd.RangeIndex(int(frame.min()), int(frame.max()) + 1) if len(frame) else pd.RangeIndex(0)
     eyes = eyes.reindex(full)
     period = _frame_period(t)
     if period <= 0 or eyes.notna().sum() == 0:
-        return pd.DataFrame({"t_start": pd.Series(dtype=float), "t_end": pd.Series(dtype=float)})
+        return pd.DataFrame({"t_start": pd.Series(dtype=float), "t_end": pd.Series(dtype=float), "kind": pd.Series(dtype=object)})
     window = max(int(round(BASELINE_S / period)), 3)
     baseline = eyes.rolling(window, center=True, min_periods=window // 3).median()
     closed = (eyes < CLOSED_SHARE * baseline).to_numpy()
@@ -309,12 +329,14 @@ def find_blinks(eyes: pd.Series, frame: pd.Series, t: pd.Series) -> pd.DataFrame
             continue
         stop, start_at = i, start
         start = None
-        if (stop - start_at) * period > MAX_BLINK_S:
-            continue
-        if not (open_[max(start_at - REOPEN_FRAMES, 0):start_at].any() and open_[stop:stop + REOPEN_FRAMES].any()):
-            continue
         first, last = full[start_at], full[stop - 1]
+        # a run that starts or ends on a frame without a face has no time to give
         if first not in times.index or last not in times.index:
             continue
-        blinks.append((times[first], times[last] + period))
-    return pd.DataFrame(blinks, columns=["t_start", "t_end"]).astype(float)
+        kind = (
+            TOO_LONG if (stop - start_at) * period > MAX_BLINK_S
+            else BLINK if open_[max(start_at - REOPEN_FRAMES, 0):start_at].any() and open_[stop:stop + REOPEN_FRAMES].any()
+            else NOT_SEEN_OPEN
+        )
+        blinks.append((times[first], times[last] + period, kind))
+    return pd.DataFrame(blinks, columns=["t_start", "t_end", "kind"]).astype({"t_start": float, "t_end": float})

@@ -11,6 +11,7 @@ from macaw.extractors.video.face import movement
 from macaw.extractors.video.face.movement import (
     FaceMovementExtractor,
     eye_opening,
+    closed_runs,
     find_blinks,
     mouth_opening,
     per_second_change,
@@ -77,13 +78,21 @@ class TestBlinks:
         assert (found["t_end"] - found["t_start"]).tolist() == pytest.approx([3 / FPS] * 3)
 
     def test_a_closure_longer_than_a_blink_is_not_one(self):
-        assert blinks_of(face(500, eye_gap=with_blinks(500, [200], closed_frames=20))).empty
+        table = face(500, eye_gap=with_blinks(500, [200], closed_frames=20))
+        assert blinks_of(table).empty
+        assert closed_runs(eye_opening(table)[0], table["frame"], table["t"])["kind"].tolist() == ["too long"]
 
     def test_lids_that_lower_slowly_and_stay_down_are_not_a_blink(self):
         gap = np.full(500, 4.0)
         gap[200:215] = np.linspace(4.0, 0.5, 15)
         gap[215:] = 0.5
         assert blinks_of(face(500, eye_gap=gap)).empty
+        gap = np.full(500, 4.0)
+        gap[200:205] = np.linspace(3.0, 0.5, 5)
+        gap[205:208] = 0.5
+        gap[208:220] = 3.2
+        table = face(500, eye_gap=gap)
+        assert closed_runs(eye_opening(table)[0], table["frame"], table["t"])["kind"].tolist() == ["not seen open"]
 
     def test_a_closure_at_a_missing_face_is_not_counted(self):
         table = face(500, eye_gap=with_blinks(500, [200]))
@@ -139,6 +148,9 @@ class TestExtractor:
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert {spec.name for spec in result.specs} == set(result.rows.feature)
         assert len(feature(result, "blink_duration_s")) == 3
+        closed = result.annotations
+        assert set(closed["tier"]) == {"eyes_closed"} and closed["label"].tolist() == ["blink"] * 3
+        assert closed["t_start"].tolist() == pytest.approx(feature(result, "blink_duration_s")["t_start"].tolist())
         assert feature(result, "blinks_per_min")["value"].item() == pytest.approx(3 / 20.0 * 60.0)
         assert feature(result, "eyes_measurable_s")["value"].item() == pytest.approx(20.0)
         assert not result.warnings
