@@ -108,6 +108,9 @@ def test_the_extractor_writes_one_row_per_turn_and_measure(tmp_path, monkeypatch
     slope = result.rows[result.rows.feature == "turn_f0_slope_st_per_s"].sort_values("t_start")
     assert slope.t_start.tolist() == [10.0, 11.2, 12.0]
     assert slope.value.iloc[0] > 0 and np.isnan(slope.value.iloc[1]) and slope.value.iloc[2] < 0
+    solo = result.rows[result.rows.feature == "turn_solo_share"]
+    # on a microphone of one's own the whole turn is measured
+    assert solo.value.tolist() == [1.0, 1.0, 1.0]
     assert [w.message.startswith("1 of 3") for w in result.warnings] == [True]
 
 

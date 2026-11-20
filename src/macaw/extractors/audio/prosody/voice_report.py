@@ -74,6 +74,13 @@ _SPECS = {
     "cpps_db": ("Smoothed cepstral peak prominence; lower means a breathier or less periodic voice.", "dB", False),
 }
 
+SOLO_SHARE = "turn_solo_share"
+_SOLO_SPEC = (
+    "Share of the turn its measures rest on: on a shared microphone only the stretches in which this person's voice is the only "
+    "one are measured, joined end to end; 1 on a microphone of their own, where the whole turn is. A turn measured on a small "
+    "share of itself can be left out or weighed down."
+)
+
 _UNMEASURED = (
     f"Empty for every turn of {UNHEARD}, and for a turn too short for Praat's pitch analysis or, on a shared microphone, "
     "with no stretch where their voice is the only one."
@@ -93,6 +100,7 @@ _MISSING = {
     "periods": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or with too few voice periods for Praat to compute it.",
     "turn_hnr_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat found every frame of it silent.",
     "cpps_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat could not build its cepstrogram.",
+    SOLO_SHARE: f"Empty for every turn of {UNHEARD}. 0 means a turn on a shared microphone with no stretch where their voice is the only one.",
 }
 
 _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[audio]"'
@@ -114,7 +122,7 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
@@ -162,6 +170,7 @@ class VoiceReportExtractor(Extractor):
                     )
                 )
             values = pd.DataFrame(reports, columns=list(_SPECS)).astype(float)
+            values[SOLO_SHARE] = np.asarray(kept, dtype=float)
             values.insert(0, "t_start", spoken["t_start"].to_numpy(dtype=float))
             values.insert(1, "t_end", spoken["t_end"].to_numpy(dtype=float))
             frames.append(
@@ -204,7 +213,7 @@ class VoiceReportExtractor(Extractor):
                 comparable_across_backends=False,
                 validation="synthetic",
             )
-            for name, (description, unit, comparable) in _SPECS.items()
+            for name, (description, unit, comparable) in {**_SPECS, SOLO_SHARE: (_SOLO_SPEC, None, True)}.items()
         ]
 
 
