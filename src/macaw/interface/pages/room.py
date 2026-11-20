@@ -174,6 +174,7 @@ def model_of(config, name: str) -> dict:
                 entry.update(width=size[0], depth=size[1])
             if kind == "cameras":
                 entry["calibration"] = placed.get("calibration")
+                entry["measured"] = placed.get("measured")
                 entry["depth"] = bool(((data.get(kind) or {}).get(item) or {}).get("depth"))
                 # marked on the Review page; carried here so that saving the setup keeps them, under a new name too
                 entry["ignore"] = [list(area) for area in (data.get("ignore") or {}).get(item) or []]
@@ -202,6 +203,8 @@ def room_of(model: dict) -> dict:
                 spot["size"] = [float(entry["width"]), float(entry["depth"])]
             if kind == "cameras" and entry.get("calibration"):
                 spot["calibration"] = entry["calibration"]
+            if kind == "cameras" and entry.get("measured"):
+                spot["measured"] = entry["measured"]
             placed[name] = spot
         room[kind] = placed
     return room
@@ -321,11 +324,17 @@ def moved(model: dict, kind: str, name: str, fields: dict) -> dict:
     return model
 
 
-def filled(model: dict, placing, calibration: str) -> dict:
-    """The model with each camera's numbers from the calibration: its lens angle always, the rest once the room is tied."""
+def filled(model: dict, placing, calibration: str, room=None) -> dict:
+    """The model with each camera's numbers from the calibration: its lens angle always, the rest once the room is tied,
+    keeping the numbers a person gave as measured."""
+    from macaw.project.placing import measured_of
+
     model = _copy(model)
     for name, values in placing.values.items():
         entry = model["cameras"][name]
+        if placing.tied and room is not None and name in room.cameras:
+            kept = measured_of(room.cameras[name])
+            entry["measured"] = kept.model_dump(mode="json", exclude_none=True) if kept is not None else None
         entry.update({field: values[field] for field in FIELDS["cameras"] if field in values})
         if placing.tied:
             entry["calibration"] = calibration
@@ -336,7 +345,7 @@ def from_calibration(config_path: Path, model: dict):
     """(model, message) after taking the cameras' places from the project's calibration."""
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
-    from macaw.project.placing import check_rows, floor_of, place_cameras, remarks, summary
+    from macaw.project.placing import as_measured, check_rows, floor_of, place_cameras, placing_path, remarks, summary, write_placing
 
     config = resolve_config(config_path)
     calibration = config.pose3d.calibration
@@ -350,13 +359,15 @@ def from_calibration(config_path: Path, model: dict):
         return no_update, ui.note("A number in the room does not read; fix it first.", "bad")
     cameras = read_setup(source, config.pose3d.units)
     floor, problem = floor_of(config, calibration, cameras)
-    placing = place_cameras(cameras, loose[1], model["units"], floor)
+    placing = place_cameras(cameras, as_measured(loose[1]), model["units"], floor)
     said = [ui.note(summary(placing, calibration), "ok" if placing.tied else "warn")]
     said += [ui.note(text, "warn") for text in ([problem] if problem else []) + remarks(placing)]
     rows = check_rows(placing, model["units"])
     if rows:
         said.append(ui.table(["Camera", "What", "Given", "Placed", "Off by", "Agrees"], rows, numeric={"Given", "Placed", "Off by"}))
-    return (filled(model, placing, calibration) if placing.values else no_update), html.Div(said)
+    if placing.checks and model.get("setup"):
+        write_placing(placing_path(Path(config.project.setups_dir) / f"{model['setup']}.yaml"), placing, model["units"], calibration)
+    return (filled(model, placing, calibration, loose[1]) if placing.values else no_update), html.Div(said)
 
 
 def used(model: dict, kind: str, name: str, use: str, role: str, on: bool) -> dict:

@@ -4,15 +4,17 @@ everything measured in the room ties them to it, with what is missing named and 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
+import pandas as pd
 import yaml
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from macaw.config.schema import RoomSection
+from macaw.config.schema import MeasuredCamera, RoomSection
 from macaw.exceptions import MacawError
 from macaw.extractors.video.pose.cameras import UNITS_TO_METRES, Camera, CameraSetup
 from macaw.project.room import CM_PER_UNIT, DECIMALS
@@ -388,6 +390,47 @@ def floor_of(config, calibration: str, setup: CameraSetup) -> tuple[Floor | None
         return None, f"no camera finds the board at {said['at_s']:g} s of the board clips, where it was said to lie flat"
     floor.place, floor.toward = said["corner"], said["toward"]
     return floor, None
+
+
+MEASURED_FIELDS = ("at", "height", "facing", "tilt")
+
+
+def as_measured(room: RoomSection) -> RoomSection:
+    """The room with each camera a calibration placed back at the numbers a person gave, so a placing never checks itself."""
+    cameras = {
+        name: placed.model_copy(update={field: getattr(placed.measured, field) for field in MEASURED_FIELDS})
+        if placed.calibration and placed.measured is not None else placed
+        for name, placed in room.cameras.items()
+    }
+    return room.model_copy(update={"cameras": cameras})
+
+
+def measured_of(placed) -> MeasuredCamera | None:
+    """What a camera keeps as measured once a calibration places it: the numbers it had, unless those came from a calibration."""
+    if placed.calibration:
+        return placed.measured
+    given = {field: getattr(placed, field) for field in MEASURED_FIELDS}
+    return MeasuredCamera(**given) if any(value is not None for value in given.values()) else None
+
+
+def placing_path(setup_path: Path) -> Path:
+    return Path(setup_path).with_name(f"{Path(setup_path).stem}_placing.csv")
+
+
+def write_placing(path: Path, placing: Placing, units: str, calibration: str) -> Path:
+    """Each number given against where the placing puts it, and each camera's roll, beside the setup."""
+    rows = [
+        {"camera": check["who"], "what": check["what"], "given": check["given"], "placed": round(float(check["fitted"]), 3),
+         "off": round(float(check["off"]), 3), "unit": "degrees" if check["angle"] else units, "agrees": bool(check["agrees"])}
+        for check in placing.checks
+    ]
+    rows += [{"camera": name, "what": "roll", "given": None, "placed": roll, "off": None, "unit": "degrees", "agrees": None}
+             for name, roll in placing.rolled.items()]
+    table = pd.DataFrame(rows, columns=["camera", "what", "given", "placed", "off", "unit", "agrees"])
+    table.insert(0, "calibration", calibration)
+    table["placed_at"] = datetime.now().isoformat(timespec="seconds")
+    table.to_csv(path, index=False, encoding="utf-8")
+    return path
 
 
 def summary(placing: Placing, calibration: str) -> str:

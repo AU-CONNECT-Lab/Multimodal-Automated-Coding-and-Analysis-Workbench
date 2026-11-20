@@ -122,6 +122,13 @@ class PlacedPerson(_Section):
     facing: float | None = None
 
 
+class MeasuredCamera(_Section):
+    at: Place | None = added(default=None)
+    height: float | None = added(default=None, ge=0)
+    facing: float | None = added(default=None)
+    tilt: float | None = added(default=None, ge=-90, le=90)
+
+
 class PlacedCamera(_Section):
     at: Place | None = None
     height: float | None = Field(default=None, ge=0)
@@ -131,6 +138,8 @@ class PlacedCamera(_Section):
     lens: float | None = Field(default=None, gt=0, lt=180)
     # the calibration its place and angles were taken from, until they are changed by hand
     calibration: str | None = None
+    # the numbers a person gave before a calibration placed it, which the next placing checks against again
+    measured: MeasuredCamera | None = added(default=None)
 
 
 class PlacedMicrophone(_Section):

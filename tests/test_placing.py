@@ -131,6 +131,30 @@ def test_a_wrong_height_is_among_those_that_do_not_agree():
         assert any("may be any of those" in note for note in placing.notes)
 
 
+def test_placing_again_checks_against_the_numbers_a_person_gave_not_the_last_placing(tmp_path):
+    import pandas as pd
+
+    from macaw.project.placing import as_measured, measured_of, write_placing
+
+    room = room_with({name: ("at", "height") for name in TRUTH})
+    room.cameras["side"].height = 190.0
+    first = place_cameras(calibrated(), as_measured(room), "cm")
+    for name, values in first.values.items():
+        placed = room.cameras[name]
+        placed.measured = measured_of(placed)
+        placed.at, placed.height, placed.facing, placed.tilt = [values["x"], values["y"]], values["height"], values["facing"], values["tilt"]
+        placed.calibration = "lab"
+    assert room.cameras["side"].measured.height == 190.0 and room.cameras["side"].measured.facing is None
+    # placed once, the camera keeps what was measured, not what it was placed at
+    assert measured_of(room.cameras["side"]).height == 190.0
+    again = place_cameras(calibrated(), as_measured(room), "cm")
+    assert ("side", "height") in {(check["who"], check["what"]) for check in again.checks if not check["agrees"]}
+    assert all(check["agrees"] for check in place_cameras(calibrated(), room, "cm").checks if check["what"] in ("across", "along", "height"))
+    table = pd.read_csv(write_placing(tmp_path / "main_placing.csv", again, "cm", "lab"))
+    side = table[(table["camera"] == "side") & (table["what"] == "height")].iloc[0]
+    assert side["given"] == 190.0 and not side["agrees"] and side["unit"] == "cm" and set(table["calibration"]) == {"lab"}
+
+
 def test_with_the_board_flat_a_wrong_height_stands_alone():
     room = room_with({name: ("at", "height") for name in ("front", "side", "corner")})
     room.cameras["side"].height = 190.0
@@ -298,6 +322,7 @@ def test_the_commands_take_the_floor_and_place_the_cameras(calibrated_project):
     assert room["left"]["height"] == pytest.approx(120, abs=1) and room["right"]["height"] == pytest.approx(130, abs=1)
     assert room["left"]["facing"] == pytest.approx(LEFT_FACING, abs=0.5) and room["left"]["tilt"] == pytest.approx(LEFT_TILT, abs=0.5)
     assert room["left"]["lens"] == pytest.approx(np.degrees(2 * np.arctan(320 / 600)), abs=0.1) and room["left"]["calibration"] == "lab"
+    assert (calibrated_project.parent / "setups" / "main_placing.csv").is_file()
 
 
 def test_where_the_board_lay_is_enough_to_place_the_cameras(calibrated_project):

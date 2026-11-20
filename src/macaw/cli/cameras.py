@@ -162,7 +162,9 @@ def place_cameras_command(
     from macaw.config.schema import MacawConfig
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
-    from macaw.project.placing import check_rows, floor_of, place_cameras, remarks, summary
+    from macaw.project.placing import (
+        as_measured, check_rows, floor_of, measured_of, place_cameras, placing_path, remarks, summary, write_placing,
+    )
     from macaw.project.setup import write_setup as write_devices
 
     resolved = resolve_config(config)
@@ -182,15 +184,18 @@ def place_cameras_command(
     floor, problem = floor_of(resolved, calibration, cameras)
     if problem:
         typer.echo(f"note: {problem}")
-    placing = place_cameras(cameras, laid.room, resolved.project.units, floor)
+    placing = place_cameras(cameras, as_measured(laid.room), resolved.project.units, floor)
     for camera, values in placing.values.items():
         placed = laid.room.cameras[camera]
         placed.lens = values["lens"]
         if placing.tied:
+            placed.measured = measured_of(placed)
             placed.at = [values["x"], values["y"]]
             placed.height, placed.facing, placed.tilt, placed.calibration = values["height"], values["facing"], values["tilt"], calibration
     if placing.values:
         write_devices(path, laid)
+    if placing.checks:
+        typer.echo(str(write_placing(placing_path(path), placing, resolved.project.units, calibration)))
     typer.echo(summary(placing, calibration))
     for camera, what, given, fitted, off, agrees in check_rows(placing, resolved.project.units):
         typer.echo(f"{camera} {what}: given {given}, placed at {fitted}, off by {off}" + ("" if agrees == "yes" else ", does not agree"))
