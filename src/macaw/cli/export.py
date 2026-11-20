@@ -19,6 +19,7 @@ from macaw.project.manifest import recording_specs
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.project.recording import build_recording
 from macaw.project.segments import summaries
+from macaw.project.tables import BUILDERS, TABLES, write_table
 from macaw.store.annotations import read_annotations
 from macaw.store.longtable import concat_long_tables, read_long_table
 from macaw.store.schema import Scale
@@ -34,7 +35,7 @@ from macaw.store.wide import to_wide, with_segment
 app = typer.Typer()
 logger = get_logger("export")
 
-FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton", "video")
+FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton", "video", "transcript", "turns", "voices", "judge", "warnings")
 SEQUENCES = ("speech", "floor", "annotations")
 
 
@@ -42,7 +43,12 @@ SEQUENCES = ("speech", "floor", "annotations")
 def export(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    format_: str = typer.Option("csv", "--format", "-f", help="csv | parquet | eaf | sequence | skeleton | video"),
+    format_: str = typer.Option(
+        "csv", "--format", "-f",
+        help="csv | parquet | eaf | sequence | skeleton | video, or a folder of tables: transcript (utterances, words and what was "
+        "left out), turns (turns, transitions and stretches of talk), voices (the voices heard on a shared microphone), judge "
+        "(the language model's answers per unit) or warnings (the quality checks' warnings and moments to look at).",
+    ),
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),
     wide: bool = typer.Option(True, "--wide/--long", help="One column per measure, or one row per measure and value."),
     step: float = typer.Option(1.0, "--step", help="Sequence format only: sampling step in seconds."),
@@ -59,7 +65,7 @@ def export(
     sound: bool = typer.Option(False, "--sound/--no-sound", help="Video format only: keep the video's own sound. A voice identifies a person."),
     out: Path = typer.Option(None, "--out", help="Where to write. Default: a file or folder under exports in the output directory."),
 ) -> None:
-    """Export the measures for analysis, the codes as ELAN files, a state sequence, each person's body points, or a copy of the videos with the people hidden."""
+    """Export the measures for analysis, the codes as ELAN files, a state sequence, each person's body points, a copy of the videos with the people hidden, or the tables the steps keep."""
     if format_ not in FORMATS:
         raise MacawError(f"Unknown format '{format_}'. Choose one of: {', '.join(FORMATS)}")
     if scale is not None and scale not in {member.value for member in Scale}:
@@ -72,6 +78,9 @@ def export(
 
     if format_ == "eaf":
         _export_eaf(resolved, layout, recording_ids, out)
+        return
+    if format_ in TABLES:
+        _export_tables(resolved, layout, recording_ids, format_, out)
         return
     if format_ == "skeleton":
         if not wide:
@@ -300,6 +309,22 @@ def _export_video(resolved, layout, recording_ids: list[str], hide: str, sound: 
             "Heads are blurred only where a body was found. Watch each copy before sharing it; the _not_hidden.csv beside it "
             "lists when a named person had no blur, in or out of the picture. Bodies, clothes and the room stay visible."
         )
+
+
+def _export_tables(resolved, layout, recording_ids: list[str], kind: str, out: Path | None) -> None:
+    """Each table across the recordings as one csv, with its data dictionary, in a folder of its own."""
+    folder = out or (layout.output_dir / "exports" / kind)
+    written = []
+    for name, (table, said, step) in BUILDERS[kind](resolved, recording_ids).items():
+        if table.empty:
+            logger.info("%s: no %s in these recordings", kind, name)
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        written += write_table(folder, name, table, said, step)
+    if not written:
+        raise MacawError(f"Nothing to export as {kind} under {layout.recordings_dir}: the steps that keep these tables have not run.")
+    for path in written:
+        typer.echo(str(path))
 
 
 def _tiers(found: list[tuple[str, pd.DataFrame]]) -> set[str]:
