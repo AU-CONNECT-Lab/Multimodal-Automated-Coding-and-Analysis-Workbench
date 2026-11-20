@@ -26,7 +26,7 @@ ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
     "pose.kinematics", "pose.moving", "pose.gestures", "pose.kinematics3d", "pose.moving3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
-    "face.movement", "face.speaking", "face.shares", "gaze.target", "objects.touch",
+    "face.movement", "face.speaking", "face.shares", "gaze.target", "objects.touch", "objects.position",
 )
 SECTIONS = {
     "prep": "Media", "prosody": "Voice", "text": "Speech", "turns": "Turn-taking", "coding": "Turn-taking",
@@ -140,6 +140,7 @@ def describe(
         by_extractor.setdefault(spec.extractor, []).append(spec)
     names = [name for name in ORDER if name in by_extractor] + sorted(set(by_extractor) - set(ORDER))
     sections: dict[str, list[str]] = {}
+    things_described = False
     for name in names:
         specs = by_extractor[name]
         rating = name.startswith("coding.rate.")
@@ -147,9 +148,11 @@ def describe(
         text = writer(config, specs[0], {spec.name for spec in specs})
         if not text:
             continue
-        if name == "objects.touch" and _gaze_on_things(config, by_extractor.get("gaze.target")):
-            # the objects are described once, in the gaze paragraph before this one
-            text = text.replace(_followed_things(config) + " ", "", 1)
+        if config.objects.names and _followed_things(config) in text:
+            # the objects are described once, in the first paragraph that uses them
+            if things_described:
+                text = text.replace(_followed_things(config) + " ", "", 1)
+            things_described = True
         if name == "text.asr" and corrected and corrected[0]:
             text += " " + _corrected(*corrected)
         if name == "prep.media" and drifted and drifted[0] and config.align.method == "gcc_phat":
@@ -1254,16 +1257,19 @@ def _gaze(config, spec, names) -> str:
     return text
 
 
-def _gaze_on_things(config, specs) -> bool:
-    return bool(specs) and bool(config.objects.names) and specs[0].backend != "angles"
-
-
 def _touch(config, spec, names) -> str:
     return (
         f"{_followed_things(config)} For each participant, the distance from each wrist to each object's outline was measured "
         f"in the picture of the camera their body was measured on, 0 inside it, and a hand counted as on an object while its "
         f"wrist lay within {config.objects.touch_px:g} px of the outline. Read from the picture, this marks a hand over the "
         "object as the camera saw it, in front of or behind it as well as on it, not contact."
+    )
+
+
+def _position(config, spec, names) -> str:
+    return (
+        f"{_followed_things(config)} Frame by frame, whether each object was in view, the middle of its outline (the centroid) "
+        "and the area the outline covered were recorded in the pixels of each camera's picture."
     )
 
 
@@ -1376,4 +1382,5 @@ _WRITERS = {
     "face.speaking": _speaking,
     "gaze.target": _gaze,
     "objects.touch": _touch,
+    "objects.position": _position,
 }

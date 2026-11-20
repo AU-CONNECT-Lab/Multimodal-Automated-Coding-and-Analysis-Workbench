@@ -389,3 +389,13 @@ def test_the_objects_are_described_once_where_gaze_and_hands_both_read_them():
     assert "A person checked the starting points in doubt" in text and "ravi2024" in used
     alone, _ = render(describe(manifest(touch), settings), load_references())
     assert alone.count("Objects named ball were located by name") == 1
+
+
+def test_the_objects_are_described_once_in_the_first_paragraph_that_uses_them():
+    from macaw.qc.boilerplate import _followed_things
+
+    cfg = config(objects={"names": ["ball"], "touch_px": 12})
+    sections = describe(manifest(spec("objects.position", "ball_front_x"), spec("objects.touch", "left_hand_on_ball")), cfg)
+    text = " ".join(" ".join(paragraphs) for paragraphs in sections.values())
+    assert text.count(_followed_things(cfg)) == 1
+    assert text.index(_followed_things(cfg)) < text.index("within 12 px") < text.index("centroid")

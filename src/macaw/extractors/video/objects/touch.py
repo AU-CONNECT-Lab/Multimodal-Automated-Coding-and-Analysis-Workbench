@@ -133,7 +133,7 @@ class ObjectTouchExtractor(Extractor):
             "It is read from the picture: a hand in front of or behind the thing counts as on it, so it marks a hand over the "
             "thing as the camera sees it, not contact."
         )
-        missing = "Empty in frames where this wrist was not found, or the thing was out of view or not yet followed."
+        missing = "Empty in frames where this wrist was not found, or the thing was out of view."
         specs = []
         for name in cfg.names:
             for side in SIDES:

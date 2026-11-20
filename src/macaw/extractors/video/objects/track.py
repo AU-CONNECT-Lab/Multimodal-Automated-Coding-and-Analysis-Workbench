@@ -26,7 +26,7 @@ FINDERS, TRACKERS = "object_finders", "object_trackers"
 OBJECTS_NAME = "objects.parquet"
 STARTS_NAME = "starts.json"
 # one row per frame a thing is in view: its outline and box in the video's pixels, and how sure the tracker is it is there
-OBJECT_COLUMNS = ("video", "frame", "label", "score", "x0", "y0", "x1", "y1", "area", "outline")
+OBJECT_COLUMNS = ("video", "frame", "label", "score", "x0", "y0", "x1", "y1", "cx", "cy", "area", "outline")
 # a thing is looked for by name this often, a stretch at a time, until it is found
 FIND_EVERY_S = 0.2
 FIND_STRETCH_S = 10.0
@@ -406,7 +406,7 @@ def outline_rows(video: str, frame: int, seen: dict[str, tuple[np.ndarray, float
         rows.append({
             "video": video, "frame": int(frame), "label": name, "score": round(float(present), 4),
             "x0": float(xs.min()), "y0": float(ys.min()), "x1": float(xs.max() + 1), "y1": float(ys.max() + 1),
-            "area": float(mask.sum()), "outline": outline,
+            "cx": round(float(xs.mean()) + 0.5, 2), "cy": round(float(ys.mean()) + 0.5, 2), "area": float(mask.sum()), "outline": outline,
         })
     return rows
 

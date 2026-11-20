@@ -61,6 +61,10 @@ After the start, the review frames of the quality-control report show the outlin
 
 When an object is not found by its name, another word for it often works; *finder_score* (0.35 by default) can also be lowered so that weaker matches count, at the cost of more wrong ones. The tracker is SAM 2.1 by default; `objects.tracker: sam3` uses the tracker of SAM 3 instead, whose model is given on request on Hugging Face (accept its terms there and log in with `hf auth login` first).
 
+### Where objects are
+
+Once the starts are confirmed, the results give, for each object on each camera it was followed on, whether it is in view in each frame, where the middle of its outline lies in the picture (in pixels from the left and top edges) and how much of the picture the outline covers (in square pixels): for a ball followed on the camera `front`, `ball_front_in_view`, `ball_front_x`, `ball_front_y` and `ball_front_area`. They belong to the recording, not to a participant, and are empty in frames where the object is out of view; averaged over a stretch, `in_view` gives the share of it in which the object was in view. The place is the middle of the outline, so it is right only as long as the outline stays on the object, which the review frames show.
+
 ### Hands on objects
 
 With objects followed, MACAW can also give, for each participant, how far each hand is from each object, frame by frame, and when a hand is on one:
