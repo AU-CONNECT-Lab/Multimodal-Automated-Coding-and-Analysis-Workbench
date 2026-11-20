@@ -39,6 +39,8 @@ class ProjectSection(_Section):
     heights: Path = Path("heights.csv")
     # people's scores on the rating scales, for macaw ratings; no file, no people's ratings
     ratings: Path = Path("ratings.csv")
+    # other signals recorded alongside, such as fNIRS, one file per row; no file, no signals
+    signals: Path = added(default=Path("signals.csv"))
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["parent", "child"])

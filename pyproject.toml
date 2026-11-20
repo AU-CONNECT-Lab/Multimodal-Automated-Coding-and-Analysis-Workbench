@@ -70,9 +70,14 @@ report = [
   "matplotlib>=3.8",
 ]
 
+# other signals recorded alongside the video, such as fNIRS in SNIRF files
+signals = [
+  "h5py>=3.9",
+]
+
 # roughly 6 GB of wheels, and it resolves torch itself; prefer the groups above
 all = [
-  "pymacaw[audio,asr,text,vision,gui,report]",
+  "pymacaw[audio,asr,text,vision,gui,report,signals]",
 ]
 
 docs = [

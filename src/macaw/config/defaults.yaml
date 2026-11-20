@@ -13,6 +13,7 @@ project:
   segments: segments.csv             # table of named parts of recordings (recording, segment, start_s, end_s) to summarise separately
   heights: heights.csv               # table of people's standing heights (recording, person, height) for 3D from one camera
   ratings: ratings.csv               # table of people's scores on the rating scales (recording, segment, scale, coder, score)
+  signals: signals.csv               # table of other signals recorded alongside, such as fNIRS (recording, person, stage, file); needs pymacaw[signals]
   n_subjects: 2                      # people per recording; tested with 2
   roles: [parent, child]             # role labels; length must equal n_subjects
   units: cm                          # cm | m | in, for every length entered or shown
