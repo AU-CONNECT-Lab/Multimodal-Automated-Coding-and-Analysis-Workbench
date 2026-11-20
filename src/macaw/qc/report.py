@@ -905,7 +905,7 @@ def changed_since_page(layout, recording_id: str) -> tuple[list[str], list[str]]
     if not page.is_file():
         return None
     written = page.stat().st_mtime
-    by_hand = [*layout.human_made(recording_id), layout.review_notes_path(recording_id)]
+    by_hand = layout.human_made(recording_id)
     steps = sorted(path.stem for path in _stamps(layout, recording_id) if path.stat().st_mtime > written)
     decided = sorted(path.name for path in by_hand if path.is_file() and path.stat().st_mtime > written)
     return steps, decided

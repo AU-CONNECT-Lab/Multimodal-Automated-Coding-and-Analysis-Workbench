@@ -185,6 +185,7 @@ class Layout:
             self.imported_codes_path(recording_id),
             self.reviewed_codes_path(recording_id),
             self.look_checks_path(recording_id),
+            self.review_notes_path(recording_id),
         ]
 
     def artifacts_dir(self, recording_id: str, extractor: str) -> Path:
