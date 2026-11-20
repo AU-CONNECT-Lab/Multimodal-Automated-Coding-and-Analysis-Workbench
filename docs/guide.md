@@ -30,7 +30,7 @@ MACAW is installed once per computer, usually by whoever maintains it.
    pip install "pymacaw[audio,asr,text,vision,gui,report] @ git+https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench.git"
    ```
 
-Three tools are not bundled because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (standard acoustic feature sets). They need to be installed only if they are selected in the settings. Separating voices on a shared microphone uses a model hosted on Hugging Face: accept its terms once on the Hugging Face website and log in to Hugging Face on the computer.
+Three tools are not bundled because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (standard acoustic feature sets). They need to be installed only if they are selected in the settings. Separating voices on a shared microphone uses a model hosted on Hugging Face: accept its terms once on the Hugging Face website and log in to Hugging Face on the computer. Following objects in the video uses SAM 3 in the same way; where it cannot be had, objects are followed with open models instead and the run says so ({ref}`objects`).
 
 Once MACAW is installed, the *This computer* panel on its settings page reports whether ffmpeg and the optional programs are found.
 

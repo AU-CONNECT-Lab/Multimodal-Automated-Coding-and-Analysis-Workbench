@@ -291,7 +291,7 @@ def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
 def test_gaze_names_the_model_its_tuning_and_the_things_looked_for_or_the_seats():
     point = spec("gaze.target", "looks_at", "gazelle", "1.0.0", model="gazelle_dinov2_vitl14_inout_childplay", in_frame_cut=0.5)
     text, used = render(describe(manifest(point), config(objects={"names": ["bottle", "book"]})), load_references())
-    assert {"ryan2025", "tafasca2023", "liu2024", "ravi2024"} <= set(used) and "outline" in text
+    assert {"ryan2025", "tafasca2023", "carion2025"} <= set(used) and "outline" in text
     assert "## Gaze" in text and "bottle, book" in text and "at least 0.5" in text and "less than 0.2 s" in text
     every_frame, _ = render(describe(manifest(point), config(gaze={"min_look_s": 0})), load_references())
     assert "less than" not in every_frame and "Each run of frames with the same target" in every_frame
@@ -386,7 +386,7 @@ def test_the_objects_are_described_once_where_gaze_and_hands_both_read_them():
     settings = config(objects={"names": ["ball"], "touch_px": 12, "review": "flagged"})
     text, used = render(describe(manifest(point, touch), settings), load_references())
     assert text.count("Objects named ball were located by name") == 1 and "## Objects" in text and "within 12 px" in text
-    assert "A person checked the starting points in doubt" in text and "ravi2024" in used
+    assert "A person checked the starting points in doubt" in text and "carion2025" in used and "liu2024" not in used
     alone, _ = render(describe(manifest(touch), settings), load_references())
     assert alone.count("Objects named ball were located by name") == 1
 
@@ -399,6 +399,17 @@ def test_the_objects_are_described_once_in_the_first_paragraph_that_uses_them():
     text = " ".join(" ".join(paragraphs) for paragraphs in sections.values())
     assert text.count(_followed_things(cfg)) == 1
     assert text.index(_followed_things(cfg)) < text.index("within 12 px") < text.index("centroid")
+
+
+def test_the_objects_are_told_with_the_open_models_where_sam3_gave_way():
+    cfg = config(objects={"names": ["ball"], "finder_model": "facebook/sam3"})
+    gave_way = spec("objects.position", "ball_front_x", names=["ball"], finder="grounding_dino", tracker="sam2")
+    text = " ".join(" ".join(paragraphs) for paragraphs in describe(manifest(gave_way), cfg).values())
+    assert "Grounding DINO [liu2024] (IDEA-Research/grounding-dino-tiny)" in text and "SAM 2.1 [ravi2024] (facebook/sam2.1-hiera-base-plus)" in text
+    assert "carion2025" not in text
+    kept = spec("objects.position", "ball_front_x", names=["ball"], finder="sam3", tracker="sam3")
+    text = " ".join(" ".join(paragraphs) for paragraphs in describe(manifest(kept), cfg).values())
+    assert "SAM 3 [carion2025] (facebook/sam3)" in text and "ravi2024" not in text
 
 
 @pytest.mark.parametrize(

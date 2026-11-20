@@ -44,7 +44,7 @@ def feature(thing: str, camera: str, measure: str) -> str:
 @register_extractor
 class ObjectPositionExtractor(Extractor):
     name = "objects.position"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "objects"
     phase = Phase.DERIVE
@@ -91,7 +91,7 @@ class ObjectPositionExtractor(Extractor):
             check=self.name, recording_id=recording.recording_id, subject_id=None, severity="info",
             message="no thing was followed on any camera, so there are no places to give",
         )]
-        return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(named), warnings=warnings)
+        return ExtractorResult(rows=concat_long_tables(frames), specs=self._specs(named, starts), warnings=warnings)
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
@@ -105,8 +105,11 @@ class ObjectPositionExtractor(Extractor):
         wide = saved.pivot_table(index="t_start", columns="feature", values="value", observed=True).sort_index()
         return _coverage(pd.Series(wide.index.to_numpy(dtype=float)), {str(key): wide[key].to_numpy() for key in wide.columns}, common, (start_s, end_s))
 
-    def _specs(self, named: list[tuple[str, str]]) -> list[FeatureSpec]:
-        params = {"names": list(self.config.objects.names), "tracker": self.config.objects.tracker}
+    def _specs(self, named: list[tuple[str, str]], starts: dict) -> list[FeatureSpec]:
+        cfg = self.config.objects
+        # the models the outlines came from, which are the open ones where SAM 3 gave way
+        used = next((entry for entries in starts.values() for entry in entries.values() if "tracker" in entry), {})
+        params = {"names": list(cfg.names), "finder": used.get("finder", cfg.finder), "tracker": used.get("tracker", cfg.tracker)}
         spans = [
             FeatureSpec(
                 name=feature(thing, camera, measure),

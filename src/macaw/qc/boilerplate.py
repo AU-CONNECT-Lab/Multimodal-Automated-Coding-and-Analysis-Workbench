@@ -141,6 +141,7 @@ def describe(
     names = [name for name in ORDER if name in by_extractor] + sorted(set(by_extractor) - set(ORDER))
     sections: dict[str, list[str]] = {}
     things_described = False
+    config = _with_object_models(by_extractor, config)
     for name in names:
         specs = by_extractor[name]
         rating = name.startswith("coding.rate.")
@@ -1278,6 +1279,22 @@ def _position(config, spec, names) -> str:
         f"{_followed_things(config)} Frame by frame, whether each object was in view, the middle of its outline (the centroid) "
         "and the area the outline covered were recorded in the pixels of each camera's picture."
     )
+
+
+def _with_object_models(by_extractor: dict[str, list[FeatureSpec]], config):
+    """The settings with the finder and tracker the outlines came from, where SAM 3 gave way to the open ones."""
+    used = (by_extractor.get("objects.position") or [None])[0]
+    if used is None or "tracker" not in used.params:
+        return config
+    cfg = config.objects
+    finder, tracker = used.params.get("finder", cfg.finder), used.params["tracker"]
+    if (finder, tracker) == (cfg.finder, cfg.tracker):
+        return config
+    objects = cfg.model_copy(update={
+        "finder": finder, "tracker": tracker,
+        "finder_model": cfg.finder_model if finder == cfg.finder else None, "tracker_model": cfg.tracker_model if tracker == cfg.tracker else None,
+    })
+    return config.model_copy(update={"objects": objects})
 
 
 def _followed_things(config) -> str:

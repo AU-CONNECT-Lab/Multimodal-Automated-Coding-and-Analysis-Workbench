@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 from collections.abc import Iterator
@@ -420,6 +421,59 @@ class Sam3Tracker(_SamTracker):
     model_class, processor_class = "Sam3TrackerVideoModel", "Sam3TrackerVideoProcessor"
 
 
+# the open models SAM 3 gives way to where this machine cannot have it
+OPEN_FINDER, OPEN_TRACKER = "grounding_dino", "sam2"
+
+
+@dataclass(frozen=True)
+class ObjectModels:
+    finder: str
+    finder_model: str | None
+    tracker: str
+    tracker_model: str | None
+    why: str = ""
+
+    def note(self) -> str:
+        """What a person is told when SAM 3 gave way."""
+        return (
+            f"SAM 3 cannot be used here, so things are found with {self.finder} and followed with {self.tracker} instead. "
+            f"{self.why} Once it can, the next run follows them again with SAM 3; to keep these instead, set "
+            f"objects.finder: {self.finder} and objects.tracker: {self.tracker}."
+        )
+
+
+_CHOSEN: dict[tuple, ObjectModels] = {}
+
+
+def object_models(objects) -> ObjectModels:
+    """The finder and tracker set, SAM 3 swapped for the open ones where this machine cannot have it; looked up once a process."""
+    key = (objects.finder, objects.finder_model, objects.tracker, objects.tracker_model)
+    if key not in _CHOSEN:
+        finder, finder_model, tracker, tracker_model, why = *key, []
+        if finder == "sam3" and (missing := _sam3_missing(finder_model or Sam3Finder.default_model)):
+            finder, finder_model = OPEN_FINDER, None
+            why.append(missing)
+        if tracker == "sam3" and (missing := _sam3_missing(tracker_model or Sam3Tracker.default_model)):
+            tracker, tracker_model = OPEN_TRACKER, None
+            why.append(missing)
+        _CHOSEN[key] = ObjectModels(finder, finder_model, tracker, tracker_model, " ".join(dict.fromkeys(why)))
+    return _CHOSEN[key]
+
+
+def _sam3_missing(model: str) -> str:
+    """Why SAM 3 cannot be had here, or nothing; without transformers at all, the step's own check says what to install."""
+    found = importlib.util.find_spec("transformers")
+    if found is None or not found.origin:
+        return ""
+    if not all((Path(found.origin).parent / "models" / part).is_dir() for part in ("sam3", "sam3_tracker_video")):
+        return "The transformers installed here has no SAM 3: pip install -U transformers."
+    try:
+        check_hub_model(model, "SAM 3")
+    except BackendNotAvailableError as error:
+        return str(error)
+    return ""
+
+
 def resolve_finder(name: str) -> ObjectFinder:
     from macaw.extractors import get_backend
 
@@ -521,25 +575,29 @@ class ObjectTrackExtractor(Extractor):
     def wanted_by_default(cls, config) -> bool:
         return bool(config.objects.names)
 
+    def models(self) -> ObjectModels:
+        return object_models(self.config.objects)
+
     def finder(self) -> ObjectFinder:
-        return resolve_finder(self.config.objects.finder)
+        return resolve_finder(self.models().finder)
 
     def tracker(self) -> ObjectTracker:
-        return resolve_tracker(self.config.objects.tracker)
+        return resolve_tracker(self.models().tracker)
 
     def backend_info(self) -> tuple[str | None, str | None]:
         tracker = self.tracker()
         return (tracker.name, tracker.version)
 
     def check_available(self) -> None:
-        cfg = self.config.objects
-        for backend, model, setting in ((self.finder(), cfg.finder_model, "objects.finder_model"), (self.tracker(), cfg.tracker_model, "objects.tracker_model")):
+        models = self.models()
+        for backend, model, setting in ((self.finder(), models.finder_model, "objects.finder_model"), (self.tracker(), models.tracker_model, "objects.tracker_model")):
             if model or backend.default_model:
                 check_hub_model(model or backend.default_model, setting)
 
     def prefetch(self) -> None:
-        self.finder().prefetch(model=self.config.objects.finder_model)
-        self.tracker().prefetch(model=self.config.objects.tracker_model)
+        models = self.models()
+        self.finder().prefetch(model=models.finder_model)
+        self.tracker().prefetch(model=models.tracker_model)
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         paths = sorted(item.path for item in object_cameras(recording))
@@ -547,15 +605,21 @@ class ObjectTrackExtractor(Extractor):
         return paths + ([offsets] if offsets.is_file() else [])
 
     def extra_key(self, recording: Recording) -> str:
-        return tracking_key(read_decisions(layout_for(self.config, create=False).objects_path(recording.recording_id)))
+        models = self.models()
+        said = tracking_key(read_decisions(layout_for(self.config, create=False).objects_path(recording.recording_id)))
+        # where SAM 3 gave way, the run once it can be had is a different one
+        return said + (f"|{models.finder},{models.tracker}" if models.why else "")
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.objects
         prep = apply_prep_timing(self.config, recording)
         start_s, end_s = prep.t_origin_s, prep.t_origin_s + prep.duration_s
         said = read_decisions(layout_for(self.config, create=False).objects_path(recording.recording_id))
+        models = self.models()
         finder, tracker = self.finder(), self.tracker()
         rows, summary, warnings = [], {}, []
+        if models.why:
+            warnings.append(self._warning(recording, "warn", models.note()))
         for item in object_cameras(recording):
             first, stop = frame_span(item, start_s, end_s)
             if stop <= first:
@@ -564,7 +628,7 @@ class ObjectTrackExtractor(Extractor):
             given, absent = said[STARTS].get(item.name, {}), said[ABSENT].get(item.name, {})
             wanted = [name for name in cfg.names if name not in given and name not in absent]
             step = max(round(FIND_EVERY_S * fps), 1)
-            found = self._find(finder, item, (first, stop), step, wanted) if wanted else {}
+            found = self._find(finder, models.finder_model, item, (first, stop), step, wanted) if wanted else {}
             entries, starts = {}, []
             for name in cfg.names:
                 if name in absent:
@@ -579,7 +643,7 @@ class ObjectTrackExtractor(Extractor):
                 else:
                     entries[name] = {"from": NOT_FOUND}
             mine: list[dict] = []
-            for frame, seen in tracker.track(item.frames_path, frames=(first, stop), starts=starts, device=cfg.device, model=cfg.tracker_model):
+            for frame, seen in tracker.track(item.frames_path, frames=(first, stop), starts=starts, device=cfg.device, model=models.tracker_model):
                 mine += outline_rows(item.name, frame, seen)
             shown = pd.DataFrame(mine, columns=list(OBJECT_COLUMNS))
             frames_by_name = shown[shown["in_view"].astype(bool)].groupby("label")["frame"]
@@ -591,6 +655,7 @@ class ObjectTrackExtractor(Extractor):
                     after = followed(seen_at[seen_at >= entry["frame"]], entry["frame"], stop, fps)
                     entry["share_after_start"] = round(after["found"] / after["frames"], 3)
                 entry["doubts"] = doubts(entry)
+                entry.update(finder=models.finder, tracker=models.tracker)
                 if entry["from"] == NOT_FOUND:
                     warnings.append(self._warning(
                         recording, "warn",
@@ -608,7 +673,7 @@ class ObjectTrackExtractor(Extractor):
             rows=pd.DataFrame(), artifacts={OBJECTS_NAME: directory / OBJECTS_NAME, STARTS_NAME: directory / STARTS_NAME}, warnings=warnings,
         )
 
-    def _find(self, finder: ObjectFinder, item: MediaFile, span: tuple[int, int], step: int, names: list[str]) -> dict[str, dict]:
+    def _find(self, finder: ObjectFinder, model: str | None, item: MediaFile, span: tuple[int, int], step: int, names: list[str]) -> dict[str, dict]:
         """Looks a stretch at a time from the start, until each name is found or the video ends."""
         cfg, chosen = self.config.objects, {}
         stretch = max(round(FIND_STRETCH_S / FIND_EVERY_S), 1)
@@ -616,7 +681,7 @@ class ObjectTrackExtractor(Extractor):
         while first < stop and len(chosen) < len(names):
             end = min(first + step * stretch, stop)
             looking = [name for name in names if name not in chosen]
-            found = finder.infer(item.frames_path, frames=(first, end), step=step, names=looking, device=cfg.device, model=cfg.finder_model, min_score=cfg.finder_score)
+            found = finder.infer(item.frames_path, frames=(first, end), step=step, names=looking, device=cfg.device, model=model, min_score=cfg.finder_score)
             chosen.update(proposals(found, looking))
             first = end
         return chosen

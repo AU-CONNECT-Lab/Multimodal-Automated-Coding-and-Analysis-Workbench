@@ -124,8 +124,13 @@ class FakeFinder:
         self.boxes = boxes
         self.calls = []
 
-    def infer(self, video_path, *, frames, step, names, **kwargs):
+    def named(self, name):
+        self.used = name
+        return self
+
+    def infer(self, video_path, *, frames, step, names, model, **kwargs):
         self.calls.append((frames, tuple(names)))
+        self.model = model
         rows = [{"frame": frame, "label": name, "x0": x0, "y0": y0, "x1": x1, "y1": y1, "score": score}
                 for frame, name, (x0, y0, x1, y1), score in self.boxes if frames[0] <= frame < frames[1] and name in names and (frame - frames[0]) % step == 0]
         return pd.DataFrame(rows, columns=["frame", "label", "x0", "y0", "x1", "y1", "score"])
@@ -139,8 +144,12 @@ class FakeTracker:
     def __init__(self):
         self.starts = None
 
+    def named(self, name):
+        self.used = name
+        return self
+
     def track(self, video_path, *, frames, starts, device, model):
-        self.starts = starts
+        self.starts, self.model = starts, model
         if not starts:
             return
         def at(start):
@@ -157,13 +166,15 @@ class FakeTracker:
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    def build(names, boxes, said=None, cameras=("front.mp4",)):
+    def build(names, boxes, said=None, cameras=("front.mp4",), sam3_missing=""):
         finder, tracker = FakeFinder(boxes), FakeTracker()
+        monkeypatch.setattr(track_module, "_CHOSEN", {})
+        monkeypatch.setattr(track_module, "_sam3_missing", lambda model: sam3_missing)
         decisions = tmp_path / "objects.json"
         if said is not None:
             write_decisions(decisions, said)
-        monkeypatch.setattr(track_module, "resolve_finder", lambda name: finder)
-        monkeypatch.setattr(track_module, "resolve_tracker", lambda name: tracker)
+        monkeypatch.setattr(track_module, "resolve_finder", lambda name: finder.named(name))
+        monkeypatch.setattr(track_module, "resolve_tracker", lambda name: tracker.named(name))
         monkeypatch.setattr(track_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=4.0))
         monkeypatch.setattr(track_module, "layout_for", lambda config, create=False: SimpleNamespace(objects_path=lambda rid: decisions))
         files = [video_file(name, fps=FPS, offset_s=0.0) for name in cameras]
@@ -193,7 +204,7 @@ class TestExtractor:
         assert starts["ball"]["frames"] == 41 and starts["ball"]["found"] == 36 and starts["ball"]["longest_gap_s"] == 0.5
         assert starts["ball"]["share_after_start"] == round(30 / 35, 3)
         assert starts["ball"]["doubts"] == ["2 things in the start frame could be it"]
-        assert starts["cup"] == {"from": NOT_FOUND, "doubts": ["not found by name on this camera"]}
+        assert starts["cup"] == {"from": NOT_FOUND, "doubts": ["not found by name on this camera"], "finder": "sam3", "tracker": "sam3"}
         assert any("cup was not found by name on front.mp4" in warning.message for warning in result.warnings)
         # looked for a stretch at a time until the end, as the cup never turned up
         assert [frames for frames, _ in finder.calls] == [(0, 41)]
@@ -208,9 +219,38 @@ class TestExtractor:
         assert [(start.name, start.frame, start.point) for start in tracker.starts] == [("ball", 10, (5.0, 5.0)), ("ball", 30, (40.0, 40.0))]
         starts = json.loads(result.artifacts["starts.json"].read_text(encoding="utf-8"))["front.mp4"]
         assert starts["ball"]["from"] == PERSON and starts["ball"]["t"] == 1.0 and starts["ball"]["doubts"] == []
-        assert starts["cup"] == {"from": NOT_HERE, "doubts": []}
+        assert starts["cup"] == {"from": NOT_HERE, "doubts": [], "finder": "sam3", "tracker": "sam3"}
         rows = pd.read_parquet(result.artifacts["objects.parquet"])
         assert rows.loc[rows["frame"] == 31, "x0"].tolist() == [40.0]
+
+    def test_where_sam3_cannot_be_had_the_open_models_follow_and_a_person_is_told(self, run):
+        boxes = [(6, "ball", (30, 30, 40, 40), 0.9)]
+        finder, tracker, result = run(["ball"], boxes, sam3_missing="No access to facebook/sam3.")
+        assert (finder.used, tracker.used, finder.model, tracker.model) == ("grounding_dino", "sam2", None, None)
+        told = [warning.message for warning in result.warnings if "SAM 3 cannot be used here" in warning.message]
+        assert len(told) == 1 and "grounding_dino" in told[0] and "No access to facebook/sam3." in told[0]
+        starts = json.loads(result.artifacts["starts.json"].read_text(encoding="utf-8"))["front.mp4"]
+        assert (starts["ball"]["finder"], starts["ball"]["tracker"]) == ("grounding_dino", "sam2")
+        finder, tracker, result = run(["ball"], boxes)
+        assert (finder.used, tracker.used) == ("sam3", "sam3") and not any("SAM 3" in warning.message for warning in result.warnings)
+
+    def test_sam3_is_looked_for_once_and_a_run_once_it_can_be_had_is_another(self, monkeypatch):
+        looked = []
+        monkeypatch.setattr(track_module, "_CHOSEN", {})
+        monkeypatch.setattr(track_module, "_sam3_missing", lambda model: looked.append(model) or "no access")
+        objects = ObjectsSection(names=["ball"], tracker_model="facebook/sam3")
+        first = track_module.object_models(objects)
+        assert first == track_module.object_models(objects) and looked == ["facebook/sam3", "facebook/sam3"]
+        assert (first.finder, first.tracker, first.why) == ("grounding_dino", "sam2", "no access")
+        mine = track_module.object_models(ObjectsSection(names=["ball"], finder="grounding_dino", tracker="sam2"))
+        assert mine.why == "" and len(looked) == 2
+        monkeypatch.setattr(track_module, "read_decisions", lambda path: {STARTS: {}, ABSENT: {}, KEPT: {}})
+        monkeypatch.setattr(track_module, "layout_for", lambda config, create=False: SimpleNamespace(objects_path=lambda rid: None))
+        recording = SimpleNamespace(recording_id="r1")
+        gave_way = ObjectTrackExtractor(SimpleNamespace(objects=objects)).extra_key(recording)
+        monkeypatch.setattr(track_module, "_CHOSEN", {})
+        monkeypatch.setattr(track_module, "_sam3_missing", lambda model: "")
+        assert ObjectTrackExtractor(SimpleNamespace(objects=objects)).extra_key(recording) != gave_way
 
     def test_a_thing_out_of_view_keeps_its_score_and_any_outline(self):
         seen = {"ball": (square(1, 1, 5, 5), 0.3), "cup": (np.zeros(SIZE, dtype=bool), 0.9), "book": (square(1, 1, 5, 5), 0.8)}
@@ -604,13 +644,13 @@ def test_the_methods_text_tells_the_objects_once_and_says_the_touch_is_read_from
 
     config = SimpleNamespace(objects=ObjectsSection(names=["ball"], touch_px=12))
     text = _touch(config, None, set())
-    assert text.startswith(_followed_things(config)) and "within 12 px" in text and "not contact" in text and "[ravi2024]" in text
+    assert text.startswith(_followed_things(config)) and "within 12 px" in text and "not contact" in text and "[carion2025]" in text
 
 
 def test_the_methods_text_names_the_finder_used():
     from macaw.qc.boilerplate import _followed_things
 
-    dino = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"])))
-    sam3 = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"], finder="sam3")))
+    dino = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"], finder="grounding_dino", tracker="sam2")))
+    sam3 = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"])))
     assert "Grounding DINO [liu2024] (IDEA-Research/grounding-dino-tiny)" in dino and "SAM 3" not in dino
     assert "located by name with SAM 3 [carion2025] (facebook/sam3)" in sam3 and "Grounding DINO" not in sam3

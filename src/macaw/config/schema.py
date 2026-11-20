@@ -501,10 +501,10 @@ class GazeSection(_Section):
 
 class ObjectsSection(_Section):
     names: list[str] = added(default_factory=list)
-    finder: str = added(default="grounding_dino")
+    finder: str = added(default="sam3")
     finder_model: str | None = added(default=None)
     finder_score: float = added(default=0.35, gt=0, lt=1)
-    tracker: str = added(default="sam2")
+    tracker: str = added(default="sam3")
     tracker_model: str | None = added(default=None)
     device: str = added(default="auto")
     review: Literal["always", "flagged", "skip"] = added(default="always")

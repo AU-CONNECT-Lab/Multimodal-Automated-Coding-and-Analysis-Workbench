@@ -174,6 +174,11 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         from macaw.extractors.video.pose.listening import body_size_notice
 
         notices.append(body_size_notice(config))
+    if "objects.track" in dag.nodes:
+        from macaw.extractors.video.objects.track import object_models
+
+        models_used = object_models(config.objects)
+        notices.append(f"objects.track: {models_used.note()}" if models_used.why else None)
     look = config.qc.look
     if "pose.keypoints" in dag.nodes and config.pose.suggest_names and look.model and look.people:
         from macaw.qc.look import notice
