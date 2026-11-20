@@ -432,8 +432,7 @@ def lexical_overlap(turns: pd.DataFrame, exclude: frozenset[str]) -> pd.DataFram
     columns = ["taker", "giver", "t_start", "t_end", "overlap"]
     # only turns that held the floor and said something follow one another in words
     spoken = turns["text"].fillna("").astype(str).str.strip() != ""
-    if "within" in turns.columns:
-        spoken &= ~turns["within"].astype(bool)
+    spoken &= ~turns["within"].astype(bool)
     turns = turns[spoken].sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
     words = [set(tokenize(str(text))) - exclude for text in turns["text"].fillna("")]
     speakers = turns["subject_id"].astype(str).tolist()

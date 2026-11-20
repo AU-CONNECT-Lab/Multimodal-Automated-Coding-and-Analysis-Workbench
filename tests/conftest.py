@@ -109,8 +109,10 @@ def make_transcript():
 
 @pytest.fixture
 def make_turns():
+    from macaw.turns.segmentation import mark_within
+
     def build(rows):
-        return pd.DataFrame(
+        return mark_within(pd.DataFrame(
             [
                 {
                     "subject_id": speaker,
@@ -122,8 +124,9 @@ def make_turns():
                     "text": "",
                 }
                 for index, (speaker, start, end) in enumerate(rows)
-            ]
-        )
+            ],
+            columns=["subject_id", "turn_index", "t_start", "t_end", "n_utterances", "n_words", "text"],
+        ))
 
     return build
 

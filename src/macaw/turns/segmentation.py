@@ -166,7 +166,7 @@ def mark_within(turns: pd.DataFrame) -> pd.DataFrame:
 
 def floor_turns(turns: pd.DataFrame) -> pd.DataFrame:
     """The turns that held the floor, without talk inside somebody else's turn."""
-    if "within" not in turns.columns or turns.empty:
+    if turns.empty:
         return turns
     return turns[~turns["within"].astype(bool).to_numpy()]
 

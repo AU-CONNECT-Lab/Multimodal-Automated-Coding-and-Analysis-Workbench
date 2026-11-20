@@ -8,7 +8,6 @@ from macaw.turns.transitions import (
     classify_overlaps,
     detect_transitions,
     floor_transfer_efficiency,
-    response_latency,
     transition_matrix,
 )
 
@@ -20,46 +19,46 @@ def cfg():
 
 def classified(turns, cfg):
     return classify_overlaps(
-        detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s
+        detect_transitions(turns), interruption_s=cfg.interruption_overlap_s
     )
 
 
 class TestDetect:
     def test_gap_is_positive(self, make_turns, cfg):
-        found = detect_transitions(make_turns([("A", 0, 1), ("B", 1.5, 2)]), cfg)
+        found = detect_transitions(make_turns([("A", 0, 1), ("B", 1.5, 2)]))
         assert len(found) == 1
         assert found.fto_s[0] == pytest.approx(0.5)
         assert bool(found.is_switch[0]) is True
         assert found.transition_type[0] == "gap"
 
     def test_overlap_is_negative(self, make_turns, cfg):
-        found = detect_transitions(make_turns([("A", 0, 2), ("B", 1.5, 3)]), cfg)
+        found = detect_transitions(make_turns([("A", 0, 2), ("B", 1.5, 3)]))
         assert found.fto_s[0] == pytest.approx(-0.5)
         assert found.transition_type[0] == "overlap"
 
     def test_same_speaker_twice_is_a_hold(self, make_turns, cfg):
         """A long enough pause with nobody cutting in ends the turn without moving the floor."""
-        found = detect_transitions(make_turns([("A", 0, 1), ("A", 4, 5)]), cfg)
+        found = detect_transitions(make_turns([("A", 0, 1), ("A", 4, 5)]))
         assert bool(found.is_switch[0]) is False
         assert found.transition_type[0] == "hold"
         assert found.fto_s[0] == pytest.approx(3.0)
 
     def test_one_row_per_adjacent_pair(self, make_turns, cfg):
         turns = make_turns([("A", 0, 1), ("B", 2, 3), ("A", 4, 5), ("B", 6, 7)])
-        assert len(detect_transitions(turns, cfg)) == len(turns) - 1
+        assert len(detect_transitions(turns)) == len(turns) - 1
 
     def test_turn_indices_link_back(self, make_turns, cfg):
-        found = detect_transitions(make_turns([("A", 0, 1), ("B", 2, 3)]), cfg)
+        found = detect_transitions(make_turns([("A", 0, 1), ("B", 2, 3)]))
         assert (found.from_turn_index[0], found.to_turn_index[0]) == (0, 1)
 
     def test_pairs_follow_start_time_not_input_order(self, make_turns, cfg):
         turns = make_turns([("A", 5, 6), ("B", 0, 1)]).sort_index(ascending=False)
-        found = detect_transitions(turns, cfg)
+        found = detect_transitions(turns)
         assert (found.from_subject[0], found.to_subject[0]) == ("B", "A")
 
     @pytest.mark.parametrize("rows", [[], [("A", 0, 1)]])
     def test_needs_two_turns(self, make_turns, cfg, rows):
-        found = detect_transitions(make_turns(rows), cfg)
+        found = detect_transitions(make_turns(rows))
         assert len(found) == 0
         assert "fto_s" in found.columns
 
@@ -149,28 +148,6 @@ class TestFloorTransferEfficiency:
     def test_all_overlaps_leave_gap_cv_undefined(self, make_turns, cfg):
         turns = make_turns([("A", 0, 2), ("B", 1.0, 4), ("A", 3.0, 6)])
         assert np.isnan(floor_transfer_efficiency(classified(turns, cfg), cfg)["gap_cv"])
-
-
-class TestResponseLatency:
-    def test_per_direction_medians(self, make_turns, cfg):
-        turns = make_turns([("A", 0, 1), ("B", 2, 3), ("A", 3.5, 4), ("B", 6, 7)])
-        found = response_latency(classified(turns, cfg))
-        rows = {(row.from_subject, row.to_subject): row for row in found.itertuples()}
-        assert rows[("A", "B")].n == 2
-        assert rows[("A", "B")].median_latency_s == pytest.approx(1.5)
-        assert rows[("B", "A")].median_latency_s == pytest.approx(0.5)
-
-    def test_overlaps_are_excluded(self, make_turns, cfg):
-        """Somebody who started before the other finished was not waiting."""
-        turns = make_turns([("A", 0, 2), ("B", 1.0, 4)])
-        assert len(response_latency(classified(turns, cfg))) == 0
-
-    def test_holds_are_excluded(self, make_turns, cfg):
-        turns = make_turns([("A", 0, 1), ("A", 4, 5)])
-        assert len(response_latency(classified(turns, cfg))) == 0
-
-    def test_empty_input(self, make_turns, cfg):
-        assert len(response_latency(classified(make_turns([]), cfg))) == 0
 
 
 class TestTransitionMatrix:

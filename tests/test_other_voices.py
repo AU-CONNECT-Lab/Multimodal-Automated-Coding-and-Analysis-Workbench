@@ -121,7 +121,7 @@ def test_other_is_a_state_of_its_own_in_transitions_and_entropy(make_turns, make
     cfg = TurnsSection()
     config = SimpleNamespace(turns=cfg, text=TextSection(diarization="pyannote", extra_voices=1))
     turns = make_turns([(who, start, end) for who, start, end, _ in TRANSCRIPT])
-    transitions = classify_overlaps(detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s)
+    transitions = classify_overlaps(detect_transitions(turns), interruption_s=cfg.interruption_overlap_s)
     transitions["recording_id"] = "sub-003_ses-12mo"
     recording = make_recording(["parent", "child"])
     prep = make_prep(t_origin_s=10.0, duration_s=60.0)

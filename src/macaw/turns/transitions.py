@@ -20,7 +20,7 @@ from macaw.store import _io
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale, empty_frame
 from macaw.turns.segmentation import (
-    TURNS_NAME, TurnStructureExtractor, floor_turns, load_turns, mark_within, turns_between, turns_saved,
+    TURNS_NAME, TurnStructureExtractor, floor_turns, load_turns, turns_between, turns_saved,
 )
 
 TRANSITIONS_NAME = "transitions.parquet"
@@ -47,7 +47,7 @@ _MIN_SWITCHES = 10
 _OVERLAP_WARN = 0.5
 
 
-def detect_transitions(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
+def detect_transitions(turns: pd.DataFrame) -> pd.DataFrame:
     """Gap is positive, overlap negative. Stored per speaker pair, never as A/B.
 
     The floor passes between the turns that hold it, in order of their start. Consecutive ones are not always by
@@ -59,8 +59,6 @@ def detect_transitions(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
         return empty_frame(TRANSITION_SCHEMA).loc[:, _TRANSITION_COLUMNS]
 
     frame = turns.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
-    if "within" not in frame.columns:
-        frame = mark_within(frame)
     inside = frame["within"].astype(bool).to_numpy()
     floor = frame[~inside].reset_index(drop=True)
     parts = [_floor_rows(floor)] if len(floor) > 1 else []
@@ -160,13 +158,13 @@ def classify_overlaps(transitions: pd.DataFrame, *, interruption_s: float, backc
 
 def transitions_from(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
     return classify_overlaps(
-        detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s, backchannel_s=cfg.backchannel_max_s
+        detect_transitions(turns), interruption_s=cfg.interruption_overlap_s, backchannel_s=cfg.backchannel_max_s
     )
 
 
 def floor_rows(transitions: pd.DataFrame) -> pd.DataFrame:
     """The transfers and holds of the floor, without talk inside another's turn."""
-    if transitions.empty or "within" not in transitions.columns:
+    if transitions.empty:
         return transitions
     return transitions[~transitions["within"].astype(bool).to_numpy()]
 
@@ -208,30 +206,8 @@ def floor_transfer_efficiency(transitions: pd.DataFrame, cfg: TurnsSection) -> d
     }
 
 
-def response_latency(transitions: pd.DataFrame) -> pd.DataFrame:
-    """Per direction, how long the responder waited. Overlaps drop out: somebody who started
-    before the other finished was not waiting at all."""
-    columns = ["from_subject", "to_subject", "n", "median_latency_s", "mean_latency_s"]
-    if transitions.empty:
-        return pd.DataFrame({column: [] for column in columns})
-
-    is_gap = transitions["fto_s"].to_numpy(dtype=float) >= 0.0
-    gaps = transitions[_switch_mask(transitions) & is_gap]
-    if gaps.empty:
-        return pd.DataFrame({column: [] for column in columns})
-
-    out = (
-        gaps.groupby(["from_subject", "to_subject"], observed=True)["fto_s"]
-        .agg(["size", "median", "mean"])
-        .reset_index()
-    )
-    out.columns = columns
-    return out
-
-
 def transition_matrix(turns: pd.DataFrame, subject_ids: list[str]) -> pd.DataFrame:
-    """N x N, not the hard-coded AA/AB/BA/BB four-state version: who held the floor after whom, so talk inside
-    somebody else's turn is left out."""
+    """N x N: who held the floor after whom, so talk inside somebody else's turn is left out."""
     matrix = pd.DataFrame(
         np.zeros((len(subject_ids), len(subject_ids)), dtype=np.int64),
         index=pd.Index(list(subject_ids), name="from_subject"),

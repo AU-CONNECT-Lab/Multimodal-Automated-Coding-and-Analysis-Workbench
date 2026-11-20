@@ -52,7 +52,7 @@ def scene(make_transcript, make_turns, make_recording, turns_cfg):
         transcript=transcript,
         turns=turns,
         transitions=classify_overlaps(
-            detect_transitions(turns, turns_cfg),
+            detect_transitions(turns),
             interruption_s=turns_cfg.interruption_overlap_s,
         ),
         recording=make_recording(["parent", "child"]),

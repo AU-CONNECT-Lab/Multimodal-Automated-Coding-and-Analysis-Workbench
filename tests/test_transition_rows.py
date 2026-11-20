@@ -34,7 +34,7 @@ def extractor(cfg):
 def build_scene(make_turns, make_recording, make_prep, cfg, rows):
     turns = make_turns(rows)
     transitions = classify_overlaps(
-        detect_transitions(turns, cfg), interruption_s=cfg.interruption_overlap_s
+        detect_transitions(turns), interruption_s=cfg.interruption_overlap_s
     )
     transitions["recording_id"] = "sub-003_ses-12mo"
     return SimpleNamespace(

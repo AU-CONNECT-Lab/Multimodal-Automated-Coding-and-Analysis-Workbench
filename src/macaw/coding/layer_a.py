@@ -84,7 +84,7 @@ def code_pause_types(
 
 
 def _between_turn_pauses(turns: pd.DataFrame, cfg: TurnsSection) -> pd.DataFrame:
-    transitions = detect_transitions(turns, cfg)
+    transitions = detect_transitions(turns)
     if transitions.empty:
         return _empty_intervals()
 

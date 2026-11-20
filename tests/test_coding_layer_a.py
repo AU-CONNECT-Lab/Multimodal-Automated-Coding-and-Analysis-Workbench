@@ -164,7 +164,7 @@ class TestPauseTypes:
 class TestInterruptions:
     def classified(self, turns, turns_cfg):
         return classify_overlaps(
-            detect_transitions(turns, turns_cfg), interruption_s=turns_cfg.interruption_overlap_s
+            detect_transitions(turns), interruption_s=turns_cfg.interruption_overlap_s
         )
 
     def test_span_is_the_overlap_and_owner_is_the_interrupter(self, make_turns, turns_cfg, cfg):

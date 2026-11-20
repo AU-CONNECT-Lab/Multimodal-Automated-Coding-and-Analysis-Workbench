@@ -75,7 +75,7 @@ def run(monkeypatch, tmp_path, rows, **text):
     from macaw.turns import segmentation
 
     monkeypatch.setattr(module, "load_transcript", lambda config, rid, others=False: transcript(rows))
-    monkeypatch.setattr(segmentation, "load_turns", lambda config, rid, others=False: transcript(rows))
+    monkeypatch.setattr(segmentation, "load_turns", lambda config, rid, others=False: segmentation.mark_within(transcript(rows)))
     monkeypatch.setattr(module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=0.0, duration_s=60.0))
     recording = SimpleNamespace(recording_id="r1", entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None})
     extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(**text)))
@@ -136,7 +136,9 @@ def test_embeddings_are_one_row_per_utterance(monkeypatch, tmp_path):
 
 class TestLexicalOverlap:
     def turns(self, rows):
-        return transcript(rows)
+        from macaw.turns.segmentation import mark_within
+
+        return mark_within(transcript(rows))
 
     def test_the_share_of_the_new_turn_s_distinct_words_the_last_speaker_used(self):
         found = lexical_overlap(self.turns([("a", 0.0, "the red box"), ("b", 2.0, "a red red ball"), ("b", 4.0, "box")]), frozenset({"the", "a"}))

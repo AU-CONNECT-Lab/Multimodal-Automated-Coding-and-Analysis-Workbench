@@ -12,9 +12,10 @@ from macaw.extractors.audio.prosody.turn_pairs import TurnPairsExtractor
 from macaw.store.longtable import build_long_rows, concat_long_tables, write_long_table
 from macaw.store.schema import LONG_TABLE_SCHEMA, validate_frame
 from macaw.turns import transitions as transitions_module
+from macaw.turns.segmentation import mark_within
 from macaw.turns.transitions import detect_transitions
 
-TURNS = pd.DataFrame(
+TURNS = mark_within(pd.DataFrame(
     {
         "recording_id": "r1",
         "subject_id": ["parent", "child", "parent", "parent", "child", "other"],
@@ -25,7 +26,7 @@ TURNS = pd.DataFrame(
         "n_words": [4, 2, 6, 3, 1, 2],
         "text": "",
     }
-)
+))
 
 
 def voice_rows(turns):
@@ -45,7 +46,7 @@ def result(tmp_path, monkeypatch):
     write_long_table(voice_rows(TURNS), path)
     monkeypatch.setattr(module, "_voice_rows_file", lambda config, rid: path)
     monkeypatch.setattr(module, "load_turns", lambda config, rid: TURNS[TURNS.subject_id != "other"].reset_index(drop=True))
-    monkeypatch.setattr(transitions_module, "load_transitions", lambda config, rid: detect_transitions(TURNS, TurnsSection()))
+    monkeypatch.setattr(transitions_module, "load_transitions", lambda config, rid: detect_transitions(TURNS))
     recording = SimpleNamespace(
         recording_id="r1",
         subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")],

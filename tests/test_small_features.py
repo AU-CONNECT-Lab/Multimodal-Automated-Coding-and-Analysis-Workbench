@@ -47,7 +47,7 @@ def run_text(monkeypatch, tmp_path, rows, **text):
     frame["t_end"] = frame["t_start"] + 1.0
     frame["utterance_index"] = frame.groupby("subject_id").cumcount()
     monkeypatch.setattr(text_module, "load_transcript", lambda config, rid, others=False: frame)
-    monkeypatch.setattr(segmentation, "load_turns", lambda config, rid, others=False: frame)
+    monkeypatch.setattr(segmentation, "load_turns", lambda config, rid, others=False: segmentation.mark_within(frame))
     monkeypatch.setattr(text_module, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=0.0, duration_s=120.0))
     recording = SimpleNamespace(recording_id="r1", entities=lambda: ENTITIES)
     extractor = TextFeatureExtractor(SimpleNamespace(text=TextSection(**text)))
