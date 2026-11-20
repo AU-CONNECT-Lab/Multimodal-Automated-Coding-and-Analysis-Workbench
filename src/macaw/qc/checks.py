@@ -712,18 +712,27 @@ def check_gaze_labels(recording: Recording, config: MacawConfig, results) -> Che
     """Frames a person labelled with macaw label-gaze against what gaze.target found in them: how often the two
     agree for each person, and the frames where they do not. No labels, nothing to check."""
     from macaw.extractors.video.gaze.target import POINTS_NAME, finds_points
-    from macaw.project.gaze_labels import labels_frame, read_labels
+    from macaw.project.gaze_labels import labeller_pairs, labels_frame, read_labels
 
     rid = recording.recording_id
-    labels = labels_frame(read_labels(results.layout.gaze_labels_path(rid)))
+    given = read_labels(results.layout.gaze_labels_path(rid))
+    labels = labels_frame(given)
     if labels.empty:
         return CheckResult()
+    between = []
+    for subject, pairs in labeller_pairs(given, _GAZE_LABEL_S).groupby("subject", sort=True):
+        same = int((pairs["target"] == pairs["other_target"]).sum())
+        between.append(QCWarning(
+            check="gaze_labels", recording_id=rid, subject_id=str(subject), severity="info",
+            message=f"two people labelled {len(pairs)} of the same frames and named the same target in {same}",
+            details={"labelled_twice": len(pairs), "same_target": same},
+        ))
     path = results.artifact("gaze.target", POINTS_NAME)
     if path is None:
-        return CheckResult(skipped="no gaze.target output to compare the labelled frames with")
+        return CheckResult(warnings=between, skipped="no gaze.target output to compare the labelled frames with")
     points = pd.read_parquet(path)
     learned = "" if finds_points(config) else f"; backend {config.gaze.backend} learns from these same frames, so this flatters it"
-    warnings, pieces = [], []
+    warnings, pieces = list(between), []
     for subject, mine in labels.groupby("subject", sort=True):
         found = points.loc[points["subject_id"] == subject, ["t", "target"]].rename(columns={"target": "found"}).sort_values("t")
         if found.empty:

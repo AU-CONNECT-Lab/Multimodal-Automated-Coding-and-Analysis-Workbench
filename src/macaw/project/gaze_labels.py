@@ -37,9 +37,26 @@ def write_labels(labels: list[GazeLabel], path: Path) -> Path:
 
 
 def add_label(labels: list[GazeLabel], label: GazeLabel, period_s: float) -> list[GazeLabel]:
-    """A new label replaces one for the same person within half a frame."""
-    kept = [old for old in labels if not (old.subject == label.subject and abs(old.t - label.t) < period_s / 2)]
+    """A new label replaces the same labeller's for the same person within half a frame; another labeller's stays."""
+    kept = [
+        old for old in labels
+        if not (old.subject == label.subject and old.by == label.by and abs(old.t - label.t) < period_s / 2)
+    ]
     return [*kept, label]
+
+
+def labeller_pairs(labels: list[GazeLabel], within_s: float) -> pd.DataFrame:
+    """subject, t, the two labellers and their targets, for each frame two people labelled for the same person."""
+    rows = []
+    sure = sorted((label for label in labels if label.target != UNSURE), key=lambda label: (label.subject, label.t))
+    for index, first in enumerate(sure):
+        for second in sure[index + 1:]:
+            if second.subject != first.subject or second.t - first.t >= within_s:
+                break
+            if second.by != first.by:
+                rows.append({"subject": first.subject, "t": first.t, "by": first.by, "target": first.target,
+                             "other_by": second.by, "other_target": second.target})
+    return pd.DataFrame(rows, columns=["subject", "t", "by", "target", "other_by", "other_target"])
 
 
 def labels_frame(labels: list[GazeLabel]) -> pd.DataFrame:

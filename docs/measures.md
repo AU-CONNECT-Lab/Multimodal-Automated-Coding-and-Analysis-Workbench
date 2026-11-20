@@ -19,7 +19,7 @@ When objects are named, or placed in the room (see *Positions in the room instea
 
 ### Checking the estimate on the study's own video
 
-On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; the dice button in the card's corner moves the player to a moment at random. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not.
+On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; the dice button in the card's corner moves the player to a moment at random. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not. Saving again for the same frame replaces one's own label; a label another person saved for that frame is kept, and where two people labelled the same frames the report also gives how often they named the same target.
 
 ### Positions in the room instead of the picture
 

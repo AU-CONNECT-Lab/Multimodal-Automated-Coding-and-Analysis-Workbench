@@ -59,3 +59,14 @@ def test_add_label_replaces_within_half_a_frame_only():
     labels = [GazeLabel(1.00, "child", "parent")]
     assert len(add_label(labels, GazeLabel(1.01, "child", "bottle"), period_s=0.04)) == 1
     assert len(add_label(labels, GazeLabel(1.05, "child", "bottle"), period_s=0.04)) == 2
+
+
+def test_another_labellers_label_of_the_same_frame_is_kept_and_the_two_are_paired():
+    from macaw.project.gaze_labels import labeller_pairs
+
+    labels = add_label([GazeLabel(1.00, "child", "parent", by="ann")], GazeLabel(1.01, "child", "bottle", by="bo"), period_s=0.04)
+    labels = add_label(labels, GazeLabel(1.00, "child", "parent", by="ann"), period_s=0.04)
+    labels = add_label(labels, GazeLabel(3.00, "child", "parent", by="bo"), period_s=0.04)
+    assert sorted((label.by, label.target) for label in labels) == [("ann", "parent"), ("bo", "bottle"), ("bo", "parent")]
+    pairs = labeller_pairs(labels, 0.05)
+    assert pairs[["subject", "by", "target", "other_by", "other_target"]].values.tolist() == [["child", "ann", "parent", "bo", "bottle"]]

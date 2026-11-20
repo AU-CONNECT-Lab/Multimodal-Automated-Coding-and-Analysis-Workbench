@@ -611,6 +611,15 @@ class TestGazeLabels:
         assert [w.message for w in result.warnings] == ["gaze.target agrees with 2 of 3 labelled frames (67%)"]
         assert reasons(result) == ["labelled parent, found elsewhere"] and result.candidates["t"].tolist() == [0.7]
 
+    def test_frames_two_people_labelled_say_how_often_they_named_the_same_target(self, tmp_path):
+        from macaw.config.schema import GazeSection
+        from macaw.qc.checks import check_gaze_labels
+
+        points = pd.DataFrame({"subject_id": "child", "t": np.arange(10) / 10, "target": ["parent"] * 10})
+        labels = [(0.1, "child", "parent", "ann"), (0.1, "child", "parent", "bo"), (0.5, "child", "parent", "ann"), (0.5, "child", "elsewhere", "bo")]
+        result = check_gaze_labels(RECORDING, SimpleNamespace(gaze=GazeSection()), self.results(tmp_path, labels, points))
+        assert "two people labelled 2 of the same frames and named the same target in 1" in [w.message for w in result.warnings]
+
     def test_no_labels_nothing_to_check(self, tmp_path):
         from macaw.config.schema import GazeSection
         from macaw.qc.checks import check_gaze_labels
