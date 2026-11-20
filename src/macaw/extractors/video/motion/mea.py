@@ -26,6 +26,27 @@ _DESCRIPTION = (
     "Share of the region's pixels whose grey level changed by more than motion.threshold since "
     "the previous frame (motion energy analysis, frame differencing)."
 )
+_RAW_DESCRIPTION = (
+    "motion_energy before motion.smoothing_s averages it: the share of the region's pixels whose grey level changed by more "
+    "than motion.threshold since the previous frame, frame by frame, for filtering of one's own."
+)
+_PICTURE_CHANGE = (
+    "Share of the whole picture of the camera this person's body is read from whose grey level changed by more than "
+    "motion.threshold since the previous frame. Above 0.5 is a light switched or a camera bumped, not movement; frames "
+    "with a high value can be left out of motion_energy."
+)
+_PICTURE_FROZEN = (
+    "1 where the picture of the camera this person's body is read from is the same as the one before (a stalled "
+    "recording), so motion_energy there is 0 whatever the person did; 0 elsewhere."
+)
+_MISSING_RAW = (
+    "Empty in frames of cameras other than the one the setup reads this person's body from, and on that camera's first frame "
+    "when the analysed part starts before it, as there is no frame before it to differ from."
+)
+_MISSING_PICTURE = (
+    "Empty on the first frame of the camera this person's body is read from, as there is no frame before it to differ from. "
+    "The same values for everyone read from that camera."
+)
 _MISSING = (
     "Empty in frames of cameras other than the one the setup reads this person's body from, and on that camera's first frame "
     "when the analysed part starts before it, as there is no frame before it to differ from (motion.smoothing_s of three "
@@ -37,7 +58,7 @@ _MISSING = (
 @register_extractor
 class MEAExtractor(Extractor):
     name = "motion.mea"
-    version = "0.2.1"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "motion"
     config_sections = ("motion", "segment", "video", "setup.cameras")
@@ -108,6 +129,16 @@ class MEAExtractor(Extractor):
                         "(lighting or a moved camera); motion energy there is not movement",
                     )
                 )
+            n_frozen = int(energy["identical"].sum())
+            if n_frozen:
+                warnings.append(
+                    self._warning(
+                        recording, None, "warn",
+                        f"{item.name}: {n_frozen} frame(s) are the same picture as the one before (a stalled recording); "
+                        "motion energy there is 0 whatever the person did",
+                    )
+                )
+            first_frame = energy["whole_picture"].isna()
             for subject_id in rois:
                 series = smooth(energy[subject_id], round(cfg.smoothing_s * fps))
                 if not (series > 0).any():
@@ -116,7 +147,15 @@ class MEAExtractor(Extractor):
                     )
                 frames.append(
                     build_long_rows(
-                        values=pd.DataFrame({"t_start": energy["t"].to_numpy(), "motion_energy": series.to_numpy()}),
+                        values=pd.DataFrame(
+                            {
+                                "t_start": energy["t"].to_numpy(),
+                                "motion_energy": series.to_numpy(),
+                                "motion_energy_raw": energy[subject_id].to_numpy(dtype=float),
+                                "picture_change": energy["whole_picture"].to_numpy(dtype=float),
+                                "picture_frozen": energy["identical"].astype(float).mask(first_frame).to_numpy(),
+                            }
+                        ),
                         scale=Scale.FRAME,
                         recording_id=recording.recording_id,
                         source=self.name,
@@ -136,24 +175,31 @@ class MEAExtractor(Extractor):
             rows=concat_long_tables(frames),
             artifacts={PICTURE_NAME: directory / PICTURE_NAME},
             specs=[
-                FeatureSpec(
-                    name="motion_energy",
-                    description=_DESCRIPTION,
-                    unit=None,
-                    scale=Scale.FRAME,
-                    group=self.group,
-                    extractor=self.name,
-                    extractor_version=self.version,
-                    params={"threshold": cfg.threshold, "smoothing_s": cfg.smoothing_s},
-                    interpolation="none",
-                    aggregation="mean",
-                    missing=_MISSING,
-                    # the share depends on how much of the region the person fills
-                    comparable_across_subjects=False,
-                    validation="synthetic",
-                )
+                self._spec("motion_energy", _DESCRIPTION, _MISSING, "mean"),
+                self._spec("motion_energy_raw", _RAW_DESCRIPTION, _MISSING_RAW, "mean"),
+                self._spec("picture_change", _PICTURE_CHANGE, _MISSING_PICTURE, "mean", comparable=True),
+                self._spec("picture_frozen", _PICTURE_FROZEN, _MISSING_PICTURE, "mean", comparable=True),
             ],
             warnings=warnings,
+        )
+
+    def _spec(self, name: str, description: str, missing: str, aggregation: str, comparable: bool = False) -> FeatureSpec:
+        cfg = self.config.motion
+        return FeatureSpec(
+            name=name,
+            description=description,
+            unit=None,
+            scale=Scale.FRAME,
+            group=self.group,
+            extractor=self.name,
+            extractor_version=self.version,
+            params={"threshold": cfg.threshold, "smoothing_s": cfg.smoothing_s},
+            interpolation="none",
+            aggregation=aggregation,
+            missing=missing,
+            # a region's share depends on how much of it the person fills; the whole picture is the same for everyone on it
+            comparable_across_subjects=comparable,
+            validation="synthetic",
         )
 
     def _clip_warnings(self, recording, camera: str, rois: dict, size: tuple[int, int]) -> list[QCWarning]:

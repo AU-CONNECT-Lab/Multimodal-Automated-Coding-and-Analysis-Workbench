@@ -124,8 +124,11 @@ class TestExtractor:
         video = write_video(tmp_path / "room.avi", blinking_left)
         result = run([media(video)], {"parent": (0, 0, 160, 240), "child": (160, 0, 160, 240)})
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
-        assert {spec.name for spec in result.specs} == set(result.rows.feature) == {"motion_energy"}
-        moved = result.rows.groupby("subject_id")["value"].max()
+        assert {spec.name for spec in result.specs} == set(result.rows.feature) == {
+            "motion_energy", "motion_energy_raw", "picture_change", "picture_frozen"
+        }
+        energy = result.rows[result.rows.feature == "motion_energy"]
+        moved = energy.groupby("subject_id")["value"].max()
         assert moved["parent"] > 0 and moved["child"] == 0
         assert any(w.subject_id == "child" and "nothing moved" in w.message for w in result.warnings)
 
@@ -134,7 +137,8 @@ class TestExtractor:
         own = write_video(tmp_path / "parent.avi", blinking_left)
         files = [media(room), media(own, "parent")]
         result = run(files, {"parent": (0, 0, 160, 240), "child": (0, 0, 160, 240)})
-        moved = result.rows.groupby("subject_id")["value"].max()
+        energy = result.rows[result.rows.feature == "motion_energy"]
+        moved = energy.groupby("subject_id")["value"].max()
         assert moved["parent"] > 0 and moved["child"] == 0
 
     def test_time_is_on_the_recording_clock_and_cut_to_the_window(self, run, tmp_path):
@@ -175,5 +179,24 @@ class TestExtractor:
         rois = {"parent": (0, 0, 160, 240), "child": (160, 0, 160, 240)}
         raw = run([media(video)], rois).rows
         smoothed = run([media(video)], rois, smoothing_s=0.5).rows
-        count = lambda rows: int((rows[rows.subject_id == "parent"].value > 0).sum())
+        count = lambda rows, feature="motion_energy": int(
+            (rows[(rows.subject_id == "parent") & (rows.feature == feature)].value > 0).sum()
+        )
         assert count(raw) == 1 and count(smoothed) == 5
+        assert count(smoothed, "motion_energy_raw") == 1
+
+    def test_whole_picture_changes_and_frozen_frames_are_rows(self, run, tmp_path):
+        def flash_then_freeze(frame, image):
+            if frame < 15:
+                blinking_left(frame, image)
+            if frame == 5:
+                image[:] = 255
+
+        video = write_video(tmp_path / "room.avi", flash_then_freeze)
+        result = run([media(video)], {"parent": (0, 0, 160, 240), "child": (160, 0, 160, 240)}, duration=1.9)
+        rows = result.rows[result.rows.subject_id == "parent"]
+        change = rows[rows.feature == "picture_change"]
+        assert (change.value > 0.5).sum() == 2
+        frozen = rows[rows.feature == "picture_frozen"].sort_values("t_start")
+        assert frozen.value.iloc[-1] == 1.0 and frozen.value.iloc[1:10].eq(0).all()
+        assert any("same picture" in w.message for w in result.warnings)
