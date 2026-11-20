@@ -678,7 +678,7 @@ def object_frame(config_path: Path, rid: str, camera: str, at_s: float):
     if not item.fps or not path.is_file():
         return figure, ui.note("Nothing followed yet. Click on a thing, pick its name and press Start it here.")
     frame = round((at_s - item.offset_s) * item.fps)
-    shown = pd.read_parquet(path, filters=[("video", "==", camera), ("frame", "==", frame)])
+    shown = pd.read_parquet(path, filters=[("video", "==", camera), ("frame", "==", frame), ("in_view", "==", True)])
     names = list(config.objects.names)
     for row in shown.itertuples():
         colour = _THING_COLOURS[names.index(row.label) % len(_THING_COLOURS)] if row.label in names else _MARK

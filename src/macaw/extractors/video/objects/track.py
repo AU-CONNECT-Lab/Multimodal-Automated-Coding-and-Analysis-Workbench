@@ -26,7 +26,7 @@ FINDERS, TRACKERS = "object_finders", "object_trackers"
 OBJECTS_NAME = "objects.parquet"
 STARTS_NAME = "starts.json"
 # one row per frame a thing is in view: its outline and box in the video's pixels, and how sure the tracker is it is there
-OBJECT_COLUMNS = ("video", "frame", "label", "score", "x0", "y0", "x1", "y1", "cx", "cy", "area", "outline")
+OBJECT_COLUMNS = ("video", "frame", "label", "score", "in_view", "x0", "y0", "x1", "y1", "cx", "cy", "area", "outline")
 # a thing is looked for by name this often, a stretch at a time, until it is found
 FIND_EVERY_S = 0.2
 FIND_STRETCH_S = 10.0
@@ -395,19 +395,20 @@ def proposals(found: pd.DataFrame, names: list[str]) -> dict[str, dict]:
 
 
 def outline_rows(video: str, frame: int, seen: dict[str, tuple[np.ndarray, float]]) -> list[dict]:
+    """A row for each thing the tracker gave in the frame, its score always; in view where the score reaches IN_VIEW and the
+    mask has an outline, which is kept below the cut as well, so that a person can lower it."""
     rows = []
     for name, (mask, present) in seen.items():
-        if present < IN_VIEW or not mask.any():
-            continue
-        outline = mask_outline(mask)
-        if not outline:
-            continue
-        ys, xs = np.nonzero(mask)
-        rows.append({
-            "video": video, "frame": int(frame), "label": name, "score": round(float(present), 4),
-            "x0": float(xs.min()), "y0": float(ys.min()), "x1": float(xs.max() + 1), "y1": float(ys.max() + 1),
-            "cx": round(float(xs.mean()) + 0.5, 2), "cy": round(float(ys.mean()) + 0.5, 2), "area": float(mask.sum()), "outline": outline,
-        })
+        row = {"video": video, "frame": int(frame), "label": name, "score": round(float(present), 4), "in_view": False, "outline": []}
+        outline = mask_outline(mask) if mask.any() else []
+        if outline:
+            ys, xs = np.nonzero(mask)
+            row.update(
+                x0=float(xs.min()), y0=float(ys.min()), x1=float(xs.max() + 1), y1=float(ys.max() + 1),
+                cx=round(float(xs.mean()) + 0.5, 2), cy=round(float(ys.mean()) + 0.5, 2), area=float(mask.sum()), outline=outline,
+                in_view=bool(present >= IN_VIEW),
+            )
+        rows.append(row)
     return rows
 
 
@@ -435,7 +436,7 @@ def doubts(entry: dict) -> list[str]:
 @register_extractor
 class ObjectTrackExtractor(Extractor):
     name = "objects.track"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "objects"
     config_sections = (
@@ -509,7 +510,8 @@ class ObjectTrackExtractor(Extractor):
             mine: list[dict] = []
             for frame, seen in tracker.track(item.frames_path, frames=(first, stop), starts=starts, device=cfg.device, model=cfg.tracker_model):
                 mine += outline_rows(item.name, frame, seen)
-            frames_by_name = pd.DataFrame(mine, columns=list(OBJECT_COLUMNS)).groupby("label")["frame"]
+            shown = pd.DataFrame(mine, columns=list(OBJECT_COLUMNS))
+            frames_by_name = shown[shown["in_view"].astype(bool)].groupby("label")["frame"]
             for name, entry in entries.items():
                 if "frame" in entry:
                     entry["t"] = round(entry["frame"] / fps + item.offset_s, 3)
@@ -560,9 +562,11 @@ def starts_file(config, recording_id: str) -> Path:
     return layout_for(config, create=False).artifacts_dir(recording_id, ObjectTrackExtractor.name) / STARTS_NAME
 
 
-def load_objects(config, recording_id: str) -> pd.DataFrame:
+def load_objects(config, recording_id: str, *, everything: bool = False) -> pd.DataFrame:
+    """The outlines of the things in view; with everything, also the frames the tracker scored below IN_VIEW."""
     path = objects_file(config, recording_id)
-    return pd.read_parquet(path) if path.is_file() else pd.DataFrame(columns=list(OBJECT_COLUMNS))
+    table = pd.read_parquet(path) if path.is_file() else pd.DataFrame(columns=list(OBJECT_COLUMNS))
+    return table if everything else table[table["in_view"].astype(bool)].reset_index(drop=True)
 
 
 def load_starts(config, recording_id: str) -> dict:

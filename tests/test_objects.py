@@ -181,7 +181,10 @@ class TestExtractor:
         rows = pd.read_parquet(result.artifacts["objects.parquet"])
         # followed back from its start in frame 6 to the beginning, and on to the end
         assert set(rows["label"]) == {"ball"} and rows["frame"].min() == 0 and rows["frame"].max() == 40
-        assert 27 not in set(rows["frame"]) and len(rows) == 41 - 5 and rows["frame"].is_monotonic_increasing
+        shown = rows[rows["in_view"]]
+        assert 27 not in set(shown["frame"]) and len(shown) == 41 - 5 and rows["frame"].is_monotonic_increasing
+        # a frame scored below the cut keeps its row and its score
+        assert len(rows) == 41 and rows.loc[rows["frame"] == 27, "score"].notna().all()
         first = rows.iloc[0]
         assert (first["x0"], first["y0"], first["x1"], first["y1"]) == (30.0, 30.0, 40.0, 40.0) and first["area"] == 100.0
         assert inside(first["outline"], 35, 35)
@@ -209,9 +212,11 @@ class TestExtractor:
         rows = pd.read_parquet(result.artifacts["objects.parquet"])
         assert rows.loc[rows["frame"] == 31, "x0"].tolist() == [40.0]
 
-    def test_a_thing_out_of_view_leaves_no_row(self):
+    def test_a_thing_out_of_view_keeps_its_score_and_any_outline(self):
         seen = {"ball": (square(1, 1, 5, 5), 0.3), "cup": (np.zeros(SIZE, dtype=bool), 0.9), "book": (square(1, 1, 5, 5), 0.8)}
-        assert [row["label"] for row in outline_rows("front.mp4", 3, seen)] == ["book"]
+        rows = {row["label"]: row for row in outline_rows("front.mp4", 3, seen)}
+        assert [label for label, row in rows.items() if row["in_view"]] == ["book"]
+        assert rows["ball"]["score"] == 0.3 and rows["ball"]["outline"] and rows["cup"]["outline"] == [] and "area" not in rows["cup"]
 
 
 class TestSettings:
@@ -515,10 +520,12 @@ class TestPosition:
 
         def build(starts):
             things = pd.DataFrame(
-                [{"video": "front.mp4", "frame": f, "label": "ball", "cx": 10.0 + f, "cy": 20.0, "area": 100.0} for f in range(5, 30) if not 12 <= f < 15]
-                + [{"video": "side.mp4", "frame": f, "label": "toy car", "cx": 1.0, "cy": 2.0, "area": 9.0} for f in range(40)]
+                [{"video": "front.mp4", "frame": f, "label": "ball", "cx": 10.0 + f, "cy": 20.0, "area": 100.0, "score": 0.9, "in_view": True}
+                 for f in range(5, 30) if not 12 <= f < 15]
+                + [{"video": "front.mp4", "frame": f, "label": "ball", "score": 0.2, "in_view": False} for f in range(12, 15)]
+                + [{"video": "side.mp4", "frame": f, "label": "toy car", "cx": 1.0, "cy": 2.0, "area": 9.0, "score": 0.8, "in_view": True} for f in range(40)]
             )
-            monkeypatch.setattr(position_module, "load_objects", lambda config, rid: things)
+            monkeypatch.setattr(position_module, "load_objects", lambda config, rid, everything=False: things)
             monkeypatch.setattr(position_module, "load_starts", lambda config, rid: starts)
             monkeypatch.setattr(position_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=3.0))
             files = [video_file("front.mp4", ["parent"], fps=FPS, offset_s=0.5), video_file("side.mp4", ["child"], fps=FPS, offset_s=0.0)]
@@ -534,7 +541,8 @@ class TestPosition:
         result = run({"front.mp4": {"ball": followed, "toy car": {"from": NOT_HERE}}, "side.mp4": {"toy car": followed, "ball": {"from": NOT_FOUND}}})
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert {spec.name for spec in result.specs} == set(result.rows.feature) == {
-            f"{thing}_{camera}_{measure}" for thing, camera in (("ball", "front_mp4"), ("toy_car", "side_mp4")) for measure in ("in_view", "x", "y", "area")
+            f"{thing}_{camera}_{measure}" for thing, camera in (("ball", "front_mp4"), ("toy_car", "side_mp4"))
+            for measure in ("in_view", "x", "y", "area", "score", "in_view_share", "longest_gap_s")
         }
         assert result.rows.subject_id.isna().all()
         ball = lambda measure: result.rows[result.rows.feature == f"ball_front_mp4_{measure}"].sort_values("t_start")
@@ -546,6 +554,25 @@ class TestPosition:
         assert x[5] == 15.0 and np.isnan(x[:5]).all() and np.isnan(x[12:15]).all()
         specs = {spec.name: spec for spec in result.specs}
         assert specs["ball_front_mp4_area"].unit == "px^2" and "camera front.mp4" in specs["ball_front_mp4_x"].description
+        score = ball("score").value.to_numpy()
+        assert np.isnan(score[:5]).all() and score[12:15].tolist() == [0.2] * 3 and score[5] == 0.9
+        assert ball("in_view_share").value.item() == pytest.approx(18 / 26)
+        assert ball("longest_gap_s").value.item() == pytest.approx(5 / FPS)
+
+    def test_a_segment_has_its_own_share_in_view(self, run, tmp_path, monkeypatch):
+        from macaw.extractors.video.objects import position as position_module
+        from macaw.extractors.video.objects.position import ObjectPositionExtractor
+        from macaw.store.longtable import write_long_table
+
+        followed = {"from": PERSON, "frame": 5}
+        result = run({"front.mp4": {"ball": followed}, "side.mp4": {"toy car": followed}})
+        write_long_table(result.rows, tmp_path / "features")
+        monkeypatch.setattr(position_module, "layout_for", lambda config, create=False: SimpleNamespace(long_table_path=lambda rid: tmp_path / "features"))
+        recording = SimpleNamespace(recording_id="r1", entities=lambda: {})
+        part = ObjectPositionExtractor(SimpleNamespace(objects=ObjectsSection(names=["ball", "toy car"]))).summarise(recording, 0.9, 1.5)
+        share = part[part.feature == "ball_front_mp4_in_view_share"]
+        # the front camera's frames from 0.9 s to 1.5 s are 4 to 9, and the ball is in view from frame 5
+        assert share.value.item() == pytest.approx(5 / 6) and share.t_start.item() == 0.9 and share.t_end.item() == 1.5
 
     def test_nothing_followed_gives_no_rows_and_says_so(self, run):
         result = run({"front.mp4": {"ball": {"from": NOT_FOUND}}})
