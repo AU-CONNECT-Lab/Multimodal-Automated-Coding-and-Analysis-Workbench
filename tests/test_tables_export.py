@@ -71,6 +71,29 @@ def test_the_transcript_comes_out_with_its_words_what_was_left_out_and_the_bleed
     assert set(said.columns) == set(dictionary.index) and dictionary.loc["louder_by_db", "unit"] == "dB"
     assert dictionary.loc["text", "step"] == "text.asr"
     assert "Description" in json.loads((out / "dropped_dictionary.json").read_text(encoding="utf-8"))["reason"]
+    assert not (out / "embeddings.csv").exists()
+
+
+def test_sentence_embeddings_come_out_with_the_transcript(project):
+    from macaw.extractors.audio.content.features import EMBEDDINGS_NAME, TextFeatureExtractor
+
+    folder = project.layout.artifacts_dir("003", ASRExtractor.name)
+    folder.mkdir(parents=True)
+    write_transcript(pd.DataFrame({
+        "recording_id": "003", "subject_id": ["parent"], "utterance_index": [0], "t_start": [1.0], "t_end": [2.0], "text": ["look"],
+        "n_words": [1], "confidence": [0.9], "avg_logprob": float("nan"), "no_speech_prob": float("nan"), "language": "en",
+    }), folder / TRANSCRIPT_NAME)
+    features = project.layout.artifacts_dir("003", TextFeatureExtractor.name)
+    features.mkdir(parents=True)
+    pd.DataFrame({"subject_id": ["parent"], "utterance_index": [0], "t_start": [1.0], "t_end": [2.0], "e0": [0.25], "e1": [-0.5]}).to_parquet(
+        features / EMBEDDINGS_NAME, index=False
+    )
+    out = export(project, "transcript")
+    vectors = pd.read_csv(out / "embeddings.csv")
+    assert vectors[["utterance_index", "e0", "e1"]].values.tolist() == [[0, 0.25, -0.5]]
+    dictionary = pd.read_csv(out / "embeddings_dictionary.csv").set_index("column")
+    assert set(vectors.columns) == set(dictionary.index) and dictionary.loc["e1", "step"] == "text.features"
+    assert "Dimension 1" in dictionary.loc["e1", "meaning"]
 
 
 def test_turns_transitions_and_talk_come_out_together(project):

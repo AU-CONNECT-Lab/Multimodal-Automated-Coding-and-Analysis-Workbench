@@ -45,8 +45,8 @@ def export(
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     format_: str = typer.Option(
         "csv", "--format", "-f",
-        help="csv | parquet | eaf | sequence | skeleton | video, or a folder of tables: transcript (utterances, words and what was "
-        "left out), turns (turns, transitions and stretches of talk), voices (the voices heard on a shared microphone), judge "
+        help="csv | parquet | eaf | sequence | skeleton | video, or a folder of tables: transcript (utterances, words, what was "
+        "left out and sentence embeddings), turns (turns, transitions and stretches of talk), voices (the voices heard on a shared microphone), judge "
         "(the language model's answers per unit) or warnings (the quality checks' warnings and moments to look at).",
     ),
     scale: str = typer.Option(None, "--scale", help="frame | event | window | recording"),

@@ -210,7 +210,30 @@ def transcript_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.Da
         "utterances": (_gathered(config, recording_ids, utterances), _TRANSCRIPT, step),
         "words": (_gathered(config, recording_ids, read(WORDS_NAME, WORD_SCHEMA, "words")), _WORDS, step),
         "dropped": (_gathered(config, recording_ids, read(DROPPED_NAME, DROPPED_SCHEMA, "dropped utterances")), _DROPPED, step),
+        **embedding_table(config, recording_ids),
     }
+
+
+def embedding_table(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFrame, dict, str]]:
+    """Each utterance's sentence embedding, one column per dimension, where text.features made them."""
+    from macaw.extractors.audio.content.features import EMBEDDINGS_NAME, TextFeatureExtractor
+
+    def one(recording_id):
+        path = layout_for(config, create=False).artifacts_dir(recording_id, TextFeatureExtractor.name) / EMBEDDINGS_NAME
+        return pd.read_parquet(path).sort_values(["t_start", "subject_id"], kind="stable") if path.is_file() else None
+
+    found = _gathered(config, recording_ids, one)
+    model = config.text.embedding_model or "text.embedding_model"
+    said = {
+        "subject_id": _TRANSCRIPT["subject_id"],
+        "utterance_index": ("The utterance, as numbered in utterances.csv for the same person.", None, "Never empty."),
+        **{
+            column: (f"Dimension {column[1:]} of the utterance's sentence embedding from {model}; only distances between "
+                     "vectors of the same model mean anything.", None, "Never empty.")
+            for column in found.columns if column.startswith("e") and column[1:].isdigit()
+        },
+    }
+    return {"embeddings": (found, said, TextFeatureExtractor.name)}
 
 
 def turn_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFrame, dict, str]]:
