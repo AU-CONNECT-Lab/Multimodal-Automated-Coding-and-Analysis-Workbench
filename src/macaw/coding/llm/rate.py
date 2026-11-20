@@ -56,7 +56,7 @@ _DIGIT, _WORD, _SYMBOL = re.compile(r"\d"), re.compile(r"[A-Za-zÀ-ɏ]+"), re.co
 
 RATING_COLUMNS = [
     "recording_id", "segment", "t_start", "t_end", "scale", "person", "rater", "score", "score_sd", "score_min", "score_max",
-    "n_answers", "n_asked",
+    "n_answers", "n_asked", "not_rated",
 ]
 ANSWER_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
@@ -204,12 +204,16 @@ class RatingExtractor(Extractor):
         def note(check: str, severity: str, message: str) -> None:
             warnings.append(QCWarning(check=check, recording_id=rid, subject_id=None, severity=severity, message=message))
 
+        # (segment, start, end, scales, why) for what was not asked, so each shows as a row without a score
+        skipped: list[tuple] = []
+        every = [scale.scale for scale in scales.scales]
         if backend.reporting:
             note("rating_cloud", "info", rating_notice(self.name, backend))
         files = transcript_files(self.config, rid, own.transcript)
-        parts = [] if files is None else self._parts(recording, note)
+        parts = [] if files is None else self._parts(recording, note, skipped, every)
         if files is None:
             note("rating_skipped", "info", "no person corrected this transcript, so the recogniser's is the one in use, which the other ratings read")
+            skipped.append((WHOLE, np.nan, np.nan, every, "no person corrected the transcript"))
         elif not files[0].is_file():
             raise InputNotFoundError(
                 f"{rid}: the recogniser's transcript was not kept when the correction came in. Run macaw transcript reset -r {rid}, "
@@ -231,6 +235,7 @@ class RatingExtractor(Extractor):
                 shown = part_lines(lines, words, start, end, talk)
                 if shown.empty:
                     note("rating_skipped", "info", f"nothing was said in {segment or 'the analysed window'}, so it was not rated")
+                    skipped.append((segment, start, end, every, "nothing was said"))
                     continue
                 unmarked = []
                 for scale in scales.scales:
@@ -244,6 +249,7 @@ class RatingExtractor(Extractor):
                     )
                     prompts.append(Prompt(segment, start, end, scale, system, user, asked))
                 if unmarked:
+                    skipped.append((segment, start, end, unmarked, "the excerpts table marks no stretch with a line in it"))
                     note(
                         "rating_skipped", "info",
                         f"the excerpts table marks no stretch with a line in it for {', '.join(unmarked)} in this recording, so "
@@ -253,7 +259,7 @@ class RatingExtractor(Extractor):
         answers = ask(prompts, backend, cfg, kept, room=_EVIDENCE_ROOM if own.evidence else 0)
         answers.insert(0, "recording_id", rid)
         answers.insert(3, "rater", self.rating)
-        ratings = rating_table(answers, prompts, self.rating, recording)
+        ratings = rating_table(answers, prompts, self.rating, recording, skipped, scales)
         warnings += answer_warnings(answers, ratings, cfg, backend, rid)
 
         paths = {name: workspace / name for name in (RATINGS_NAME, ANSWERS_NAME, PROMPTS_NAME)}
@@ -271,7 +277,7 @@ class RatingExtractor(Extractor):
             rows=self._rows(recording, answers, parts), specs=self._specs(scales, recording), artifacts=paths, warnings=warnings,
         )
 
-    def _parts(self, recording: Recording, note) -> list[tuple[str, float, float]]:
+    def _parts(self, recording: Recording, note, skipped: list, every: list[str]) -> list[tuple[str, float, float]]:
         """(segment, start, end) to rate: the analysed window, or each named segment inside it."""
         own, _ = self.settings(self.config)
         prep = load_prep(self.config, recording.recording_id)
@@ -284,7 +290,9 @@ class RatingExtractor(Extractor):
             segment = named.get(name)
             if segment is None:
                 note("rating_skipped", "info", f"this recording has no segment {name}, so it was not rated there")
+                skipped.append((name, np.nan, np.nan, every, "the recording has no such segment"))
             elif segment.start_s < low - _EDGE_S or segment.end_s > high + _EDGE_S:
+                skipped.append((name, segment.start_s, segment.end_s, every, "the segment reaches outside the analysed part"))
                 note(
                     "rating_skipped", "warn",
                     f"segment {name} ({segment.start_s:g} to {segment.end_s:g} s) reaches outside the analysed part of the recording "
@@ -509,8 +517,11 @@ def prompt_table(prompts: list, rater: str, recording_id: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=PROMPT_COLUMNS)
 
 
-def rating_table(answers: pd.DataFrame, prompts: list, rater: str, recording: Recording) -> pd.DataFrame:
-    """One row per segment and scale: the median of the answers that gave a score, their spread and how many there were."""
+def rating_table(
+    answers: pd.DataFrame, prompts: list, rater: str, recording: Recording, skipped: list = (), scales=None,
+) -> pd.DataFrame:
+    """One row per segment and scale: the median of the answers that gave a score, their spread and how many there were;
+    and for each segment and scale left out, a row without a score saying why."""
     rows = []
     for segment, start, end, scale, *_ in (prompt[:4] for prompt in prompts):
         mine = answers[(answers["segment"] == segment) & (answers["scale"] == scale.scale)]
@@ -522,8 +533,15 @@ def rating_table(answers: pd.DataFrame, prompts: list, rater: str, recording: Re
             "score_sd": float(np.std(scores, ddof=1)) if scores.size > 1 else np.nan,
             "score_min": float(scores.min()) if scores.size else np.nan,
             "score_max": float(scores.max()) if scores.size else np.nan,
-            "n_answers": int(scores.size), "n_asked": int(len(mine)),
+            "n_answers": int(scores.size), "n_asked": int(len(mine)), "not_rated": "",
         })
+    person = {scale.scale: scale.person for scale in scales.scales} if scales is not None else {}
+    rows += [
+        {"recording_id": recording.recording_id, "segment": segment, "t_start": start, "t_end": end, "scale": name,
+         "person": person.get(name), "rater": rater, "score": np.nan, "score_sd": np.nan, "score_min": np.nan, "score_max": np.nan,
+         "n_answers": 0, "n_asked": 0, "not_rated": why}
+        for segment, start, end, names, why in skipped for name in names
+    ]
     table = pd.DataFrame(rows, columns=RATING_COLUMNS)
     for entity, value in recording.entities().items():
         table[entity] = value

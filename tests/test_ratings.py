@@ -375,8 +375,13 @@ class TestRun:
         ))
         result = rate(monkeypatch, config, "parts")
         ratings = pd.read_parquet(result.artifacts["ratings.parquet"])
-        assert sorted(set(ratings["segment"])) == ["late", "opening"] and len(ratings) == 6
-        assert ratings.groupby("segment")["t_start"].first().to_dict() == {"late": 15.0, "opening": 0.0}
+        asked = ratings[ratings["not_rated"] == ""]
+        assert sorted(set(asked["segment"])) == ["late", "opening"] and len(asked) == 6
+        assert asked.groupby("segment")["t_start"].first().to_dict() == {"late": 15.0, "opening": 0.0}
+        # the segment the recording lacks is a row per scale without a score, saying why
+        absent = ratings[ratings["segment"] == "absent"]
+        assert len(absent) == 3 and absent["score"].isna().all() and (absent["n_asked"] == 0).all()
+        assert set(absent["not_rated"]) == {"the recording has no such segment"}
         late = next(body["messages"][-1]["content"] for body in server.requests if "We had a test." in body["messages"][-1]["content"])
         assert "school" not in late and "child | at 5.0 s, lasts 2.0 s, opens the conversation: We had a test." in late
         assert any("no segment absent" in warning.message for warning in result.warnings)
@@ -1075,7 +1080,9 @@ class TestExcerpts:
         assert "parent | at 1.0 s, lasts 2.0 s, opens an excerpt: How was school today?\n...\nchild | at 20.0 s" in user
         assert "It was fine." not in user and "Excerpts of the transcript of a 1.0-minute conversation" in user
         ratings = pd.read_parquet(result.artifacts["ratings.parquet"])
-        assert ratings["scale"].tolist() == ["warmth"] and ratings["segment"].tolist() == [""]
+        assert ratings["scale"].tolist() == ["warmth", "on_task", "flow"] and ratings["segment"].tolist() == ["", "", ""]
+        assert ratings["not_rated"].tolist()[0] == "" and ratings["score"].iloc[1:].isna().all()
+        assert set(ratings["not_rated"].iloc[1:]) == {"the excerpts table marks no stretch with a line in it"}
         [skipped] = [warning for warning in result.warnings if warning.check == "rating_skipped"]
         assert "on_task, flow" in skipped.message and "those scales were not rated" in skipped.message
         assert result.specs[0].params["excerpts"] == "excerpts.csv"

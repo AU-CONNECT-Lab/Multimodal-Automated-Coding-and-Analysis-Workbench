@@ -19,7 +19,7 @@ PEOPLE_COLUMNS = ("recording", "segment", "scale", "coder", "score")
 MODEL, PERSON = "model", "person"
 TABLE_COLUMNS = [
     "recording_id", *ENTITY_NAMES, "segment", "scale", "person", "rater", "rater_kind", "score", "score_sd", "score_min",
-    "score_max", "n_answers", "n_asked",
+    "score_max", "n_answers", "n_asked", "not_rated",
 ]
 # answers.csv carries the recording's entities after its id, as scores.csv does
 ANSWER_TABLE_COLUMNS = ["recording_id", *ENTITY_NAMES, *ANSWER_COLUMNS[1:]]
@@ -311,7 +311,16 @@ SCORE_COLUMNS: dict[str, tuple[str, str | None, str]] = {
         "How many of the model's answers gave a whole score in the scale's range; 1 for a person's score.", "count",
         "Never empty. 0 means no answer gave a score, so the score is empty.",
     ),
-    "n_asked": ("How many times the model was asked this scale (coding.llm.n_samples); 1 for a person's score.", "count", "Never empty."),
+    "n_asked": (
+        "How many times the model was asked this scale (coding.llm.n_samples); 1 for a person's score. 0 where it was not asked "
+        "(not_rated says why).", "count", "Never empty.",
+    ),
+    "not_rated": (
+        "Why the model was not asked this scale in this segment: no person corrected the transcript, nothing was said, the "
+        "recording has no such segment, the segment reaches outside the analysed part, or the excerpts table marks no stretch "
+        "with a line in it.", None,
+        "Empty where the scale was asked, and for a person's score.",
+    ),
 }
 _NO_COUNT = "Empty where the server gave no count, and for answers rated before these counts were kept."
 ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
