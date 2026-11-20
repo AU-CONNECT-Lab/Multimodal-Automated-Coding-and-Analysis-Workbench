@@ -8,16 +8,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from macaw.exceptions import InputNotFoundError, MacawError, UnreadableMediaError
-from macaw.extractors import register_extractor
+from macaw.exceptions import ConfigError, InputNotFoundError, MacawError, UnreadableMediaError
+from macaw.extractors import get_backend, register_extractor
 from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
-from macaw.extractors.video.pose.backends import BACKEND_KEYPOINT_SCHEMA, resolve_backend
+from macaw.extractors.video.pose.backends import BACKEND_GROUP, BACKEND_KEYPOINT_SCHEMA, resolve_backend
 from macaw.extractors.video.pose.look_names import answer_key, named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
     PeopleChoice,
     detect_swaps,
+    in_areas,
     most_in_view,
     named_by_clicks,
     repair_tracks,
@@ -25,7 +26,6 @@ from macaw.extractors.video.pose.track_repair import (
     subject_column,
     suggested_people,
     track_quality,
-    tracks_in_areas,
 )
 from macaw.extractors.video.pose.voice_motion import bin_edges, head_motion, speech_activity
 from macaw.project.layout import layout_for
@@ -179,6 +179,8 @@ def load_detections(config, recording_id: str, framed: bool = False) -> tuple[pd
 
 
 FRAMED = ["framed_x", "framed_y"]
+# fewer unsure points than this say nothing about whether the backend clears them
+CLEARED_MIN_POINTS = 100
 
 
 def seen_points(detections: pd.DataFrame, min_confidence: float, frame_sizes: dict, framed: bool = False) -> pd.DataFrame:
@@ -194,6 +196,15 @@ def seen_points(detections: pd.DataFrame, min_confidence: float, frame_sizes: di
     unsure = ~(out["confidence"] >= min_confidence).fillna(False).to_numpy(dtype=bool)
     out.loc[unsure, ["x", "y"]] = float("nan")
     return out
+
+
+def cleared_below_half(detections: pd.DataFrame, cut: float) -> bool:
+    """Whether every point from the cut up to 0.5 came without a place, so that the backend, not the cut, decided."""
+    if cut >= 0.5:
+        return False
+    place = detections[FRAMED[0]] if FRAMED[0] in detections else detections["x"]
+    band = place[(detections["confidence"] >= cut) & (detections["confidence"] < 0.5)]
+    return len(band) >= CLEARED_MIN_POINTS and bool(band.isna().all())
 
 
 def own_cuts(keypoints: pd.DataFrame, recording: Recording, by_role: dict[str, float]) -> pd.DataFrame:
@@ -268,7 +279,8 @@ class PoseDetectExtractor(Extractor):
             if stop <= first:
                 continue
             n_processed += _frames_between(item, start, end)
-            expected = max(len(camera_people(item)), 1)
+            # one more than the setup expects, so that someone else coming into view is seen
+            expected = max(len(camera_people(item)), 1) + 1
             frames = backend.infer(
                 item.frames_path,
                 device=cfg.device,
@@ -353,7 +365,7 @@ class PoseExtractor(Extractor):
     needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.10.0"
+    version = "0.11.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "setup.cameras", "setup.ignore")
@@ -376,12 +388,23 @@ class PoseExtractor(Extractor):
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         by_role = self.config.pose.min_confidence_by_role
         detections, backend = load_detections(self.config, recording.recording_id, framed=bool(by_role))
+        tracks = get_backend(BACKEND_GROUP, backend["name"]).tracks
+        if not tracks and not self.config.pose.track_repair:
+            raise ConfigError(
+                f"pose.backend {backend['name']} numbers the people afresh in every frame, so who is who needs pose.track_repair: true"
+            )
         self._start_looking(recording)
         prep = apply_prep_timing(self.config, recording)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
         videos = load_video_prep(self.config, recording.recording_id)
         names = read_names(layout_for(self.config, create=False).names_path(recording.recording_id))
         warnings: list[QCWarning] = []
+        cut = min([self.config.pose.min_confidence, *by_role.values()])
+        if cleared_below_half(detections, cut):
+            warnings.append(self._warning(recording, None, "warn", (
+                f"pose.backend {backend['name']} gave no place to any point it was less than 0.5 sure of, so a cut below 0.5 "
+                f"(here from {cut:g}) keeps no more points than 0.5 would; older Ultralytics versions clear such points themselves"
+            )))
         owners: dict[str, dict] = {}
         pieces: list[pd.DataFrame] = []
         swaps_by_file: dict[str, list] = {}
@@ -405,7 +428,7 @@ class PoseExtractor(Extractor):
                     f"{item.name}: the clicks at {', '.join(sorted({f'{click.at:g}' for click in outside}, key=float))} s fall "
                     f"outside the analysed part ({part[0]:.1f} to {part[1]:.1f} s of its file) and were left out"
                 )))
-            away = piece["track_id"].isin(tracks_in_areas(piece, ignored_areas(self.config, item.name, video))).to_numpy()
+            away = in_areas(piece, ignored_areas(self.config, item.name, video), whole_tracks=tracks)
             if away.any():
                 # they stay in the file under no name, and out of who is who
                 left_out, piece = piece[away].assign(subject_id=None), piece[~away]
@@ -487,7 +510,7 @@ class PoseExtractor(Extractor):
         identified = piece
         left_out, part = outside
         within = f" within its analysed part, {part[0]:.1f} to {part[1]:.1f} s of its file" if left_out else ""
-        if alone is None and self.config.pose.track_repair:
+        if self.config.pose.track_repair and (alone is None or several_people(piece)):
             swaps = detect_swaps(piece, max_gap_s=self.config.pose.track_repair_max_gap_s)
             identified = repair_tracks(piece, swaps)
         if clicks:

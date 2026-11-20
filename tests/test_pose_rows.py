@@ -63,6 +63,7 @@ class FakeBackend:
     name = "fake"
     version = "9.9"
     joint_set = "coco17"
+    tracks = True
 
     def __init__(self, frames=None):
         self.frames = frames if frames is not None else backend_frame([100.0, 500.0], swap_at=SWAP_AT)
@@ -175,6 +176,7 @@ def extractor(monkeypatch, offsets):
     def build(backend=None, look=None, ignore=None, **pose):
         backend = backend or FakeBackend()
         monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
+        monkeypatch.setattr(pose_module, "get_backend", lambda group, name: type(backend))
         monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
         monkeypatch.setattr(
             pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=N_FRAMES / FPS)
@@ -203,8 +205,9 @@ class TestSharedCamera:
         extractor, result = shared
         assert {spec.name for spec in result.specs} == set(result.rows.feature)
 
-    def test_the_backend_is_asked_for_as_many_people_as_there_are_subjects(self, shared):
-        assert shared[0].fake.calls[0]["max_people"] == 2
+    def test_the_backend_is_asked_for_one_more_than_there_are_subjects(self, shared):
+        """So that someone else coming into view is seen by a backend that stops at the number asked for."""
+        assert shared[0].fake.calls[0]["max_people"] == 3
 
     def test_both_people_are_named(self, shared):
         assert set(shared[1].keypoints.subject_id.dropna()) == {"parent", "child"}
@@ -319,8 +322,8 @@ class TestPerSubjectCameras:
         files = [media("a.mp4", subject_id="parent"), media("b.mp4", subject_id="child")]
         return instance, instance.run(recording(files), tmp_path)
 
-    def test_one_person_is_asked_for_per_file(self, result):
-        assert [call["max_people"] for call in result[0].fake.calls] == [1, 1]
+    def test_one_more_than_its_person_is_asked_for_per_file(self, result):
+        assert [call["max_people"] for call in result[0].fake.calls] == [2, 2]
 
     def test_the_subject_comes_from_the_setup_not_from_a_guess(self, result):
         assert set(result[1].keypoints.subject_id.dropna()) == {"parent", "child"}
@@ -331,6 +334,38 @@ class TestPerSubjectCameras:
         assert float(rows[rows.feature == "n_track_swaps"].value.iloc[0]) == 0.0
         assert "swaps.json" not in result[1].artifacts
 
+
+class FrameSlots(FakeBackend):
+    tracks = False
+
+
+class TestBackendsThatOnlyNumberAFrame:
+    def test_without_track_repair_they_are_refused(self, extractor, recording, tmp_path):
+        instance = extractor(FrameSlots(backend_frame([100.0, 500.0])), track_repair=False)
+        with pytest.raises(Exception, match="numbers the people afresh in every frame, so who is who needs pose.track_repair"):
+            instance.run(recording([media()]), tmp_path)
+
+    def test_two_people_on_a_camera_for_one_are_put_back_in_order_before_anyone_is_named(self, extractor, recording, tmp_path):
+        """The slots trade places halfway; the person clicked on stays the same person throughout."""
+        instance = extractor(FrameSlots(backend_frame([100.0, 500.0], swap_at=SWAP_AT)))
+        clicks(tmp_path, "a.mp4", 0.5, parent=(100.0, 200.0))
+        result = instance.run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        named = result.keypoints[result.keypoints.subject_id == "parent"]
+        assert set(named["x"].round()) == {100.0}
+
+
+class TestUnsurePointsTheBackendClears:
+    def test_a_cut_below_half_is_said_to_change_nothing_when_the_backend_gave_no_place_below_it(self, extractor, recording, tmp_path):
+        frame = backend_frame([100.0], confidence=0.4)
+        frame.loc[frame.index % 2 == 0, "confidence"] = 0.9
+        frame.loc[frame["confidence"] < 0.5, ["x", "y"]] = float("nan")
+        result = extractor(FrameSlots(frame)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        assert any("gave no place to any point it was less than 0.5 sure of" in warning.message for warning in result.warnings)
+
+    def test_nothing_is_said_when_it_placed_them(self, extractor, recording, tmp_path):
+        frame = backend_frame([100.0], confidence=0.4)
+        result = extractor(FrameSlots(frame)).run(recording([media("a.mp4", subject_id="parent")]), tmp_path)
+        assert not any("less than 0.5 sure" in warning.message for warning in result.warnings)
 
 
 class TestWhichCamerasAreRead:

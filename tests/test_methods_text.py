@@ -420,3 +420,10 @@ def test_a_cut_of_a_roles_own_is_described(by_role, expected):
     specs = manifest(spec("pose.detect", "n_videos_read", "yolo", "8.3"))
     text, _ = render(describe(specs, config(pose={"backend": "yolo", "min_confidence_by_role": by_role})), load_references())
     assert expected in text
+
+
+@pytest.mark.parametrize(("backend", "sized"), [("yolo", True), ("mediapipe", False)])
+def test_the_input_size_is_named_only_for_a_backend_that_takes_it(backend, sized):
+    specs = manifest(spec("pose.detect", "n_videos_read", backend, "1.0"))
+    text, _ = render(describe(specs, config(pose={"backend": backend})), load_references())
+    assert ("at an input size of 1280 px" in text) is sized

@@ -904,11 +904,15 @@ _POSE = {
 
 
 def _detect(config, spec, names) -> str:
+    from macaw.extractors import get_backend
+    from macaw.extractors.video.pose.backends import BACKEND_GROUP
+
     pose = config.pose
     model = f" ({Path(pose.model).name})" if pose.model else ""
+    sized = f" at an input size of {pose.input_size} px" if spec.backend and get_backend(BACKEND_GROUP, spec.backend).takes_input_size else ""
     return (
-        f"Body keypoints were detected in every video frame of the task window with {_backend(_POSE, spec, model=model)} "
-        f"at an input size of {pose.input_size} px and mapped to the 17 COCO joints; joints below a confidence of "
+        f"Body keypoints were detected in every video frame of the task window with {_backend(_POSE, spec, model=model)}"
+        f"{sized} and mapped to the 17 COCO joints; joints below a confidence of "
         f"{pose.min_confidence:g} and coordinates outside the frame were set to missing{_own_cuts(pose)}."
     )
 

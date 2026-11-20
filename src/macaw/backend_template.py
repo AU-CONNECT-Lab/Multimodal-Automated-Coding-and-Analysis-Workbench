@@ -121,6 +121,7 @@ def read_keypoints(path: Path, *, frames: tuple[int, int] | None) -> pd.DataFram
 class $cls(PoseBackend):
     name = NAME
     version = "0.1.0"
+    tracks = True  # False when track_id only numbers the people within each frame
 
     def check_available(self) -> None:
         # raise BackendNotAvailableError here when a model or a package is missing

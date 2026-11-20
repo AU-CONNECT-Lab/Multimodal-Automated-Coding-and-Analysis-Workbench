@@ -72,7 +72,7 @@ def nodding(activity, x, size, track):
 
 
 class PerFileBackend:
-    name, version, joint_set = "fake", "9.9", "coco17"
+    name, version, joint_set, tracks = "fake", "9.9", "coco17", True
 
     def __init__(self, by_file):
         self.by_file = by_file
@@ -95,6 +95,7 @@ def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
         "room.mp4": frame(nodding(activity["child"], 100.0, 60.0, 1) + nodding(activity["parent"], 500.0, 60.0, 2)),
     })
     monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
+    monkeypatch.setattr(pose_module, "get_backend", lambda group, name: type(backend))
     monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
 
@@ -144,6 +145,7 @@ def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
         "room_b.mp4": frame(nodding(activity["parent"], 100.0, 60.0, 1) + nodding(activity["child"], 500.0, 60.0, 2)),
     })
     monkeypatch.setattr(pose_module, "resolve_backend", lambda name: backend)
+    monkeypatch.setattr(pose_module, "get_backend", lambda group, name: type(backend))
     monkeypatch.setattr(pose_module, "apply_prep_timing", fake_prep_timing)
     monkeypatch.setattr(pose_module, "load_prep", lambda config, rid: SimpleNamespace(tracks={}, t_origin_s=0.0, duration_s=SECONDS))
     config = SimpleNamespace(pose=PoseSection(suggest_names=True), setup=SimpleNamespace(ignore={}))

@@ -15,6 +15,8 @@ from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.extractors.video.pose.look_names import named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
+    detect_swaps,
+    in_areas,
     join_fragments,
     most_in_view,
     named_by_clicks,
@@ -205,6 +207,15 @@ class TestNamingByClicks:
         twice = named_by_clicks(far, [click("child", 1.0, 100), click("parent", 1.0, 400), click("child", 7.0, 700)], 1 / FPS)
         assert twice.people == {"child": [1, 5], "parent": [2]} and twice.doubt is None
 
+    def test_the_one_left_unnamed_longest_is_the_doubt_however_small(self):
+        """Ordered by size, a large passer-by stood in front of a child's lost half and nobody was asked."""
+        keypoints = table(
+            person(1, range(0, 100), cx=100, size=60), person(2, range(0, 100), cx=500, size=200),
+            person(5, range(0, 80), cx=800, size=60), person(7, range(0, 20), cx=300, size=400),
+        )
+        choice = named_by_clicks(keypoints, [click("child", 1.0, 100), click("parent", 1.0, 500)], 1 / FPS)
+        assert "tracks [5]" in choice.doubt and choice.spans == [(0.0, 7.9)]
+
     def test_each_frame_and_joint_belongs_to_one_person(self):
         keypoints = room(person(4, range(0, 100), cx=110, size=110))
         choice = named_by_clicks(keypoints, [click("child", 1.0, 100), click("parent", 1.0, 500)], 1 / FPS)
@@ -384,3 +395,21 @@ class TestReportPage:
         text = page.read_text(encoding="utf-8")
         assert "room" in text and "1, 3" in text and "which nobody was clicked on" in text
         assert "pose.review" in summary["waiting"]
+
+
+class TestCloseAndIgnored:
+    def test_two_people_close_together_jittering_are_not_swapped(self):
+        rng = __import__("numpy").random.default_rng(0)
+        keypoints = table(person(1, range(300), cx=400, size=150), person(2, range(300), cx=401, size=150))
+        keypoints["x"] += rng.normal(0, 4, len(keypoints))
+        keypoints["y"] += rng.normal(0, 4, len(keypoints))
+        assert detect_swaps(keypoints, max_gap_s=1.0) == []
+
+    def test_an_ignored_area_takes_whole_tracks_or_single_frames_where_ids_only_number_a_frame(self):
+        # slot 1 is the person in the corner for 60 frames and a participant for 40
+        keypoints = table(person(1, range(0, 60), cx=900), person(1, range(60, 100), cx=200), person(0, range(0, 100), cx=500))
+        area = [(800.0, 0.0, 1000.0, 400.0)]
+        whole = in_areas(keypoints, area, whole_tracks=True)
+        assert set(keypoints.loc[whole, "frame"]) == set(range(100)) and set(keypoints.loc[whole, "track_id"]) == {1}
+        single = in_areas(keypoints, area, whole_tracks=False)
+        assert set(keypoints.loc[single, "frame"]) == set(range(60)) and set(keypoints.loc[single, "track_id"]) == {1}

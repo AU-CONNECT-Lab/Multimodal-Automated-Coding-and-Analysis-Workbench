@@ -13,6 +13,8 @@ from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 # total, relative rather than absolute so it does not depend on frame size or on how fast the
 # people happen to be moving.
 SWAP_MARGIN = 0.2
+# two people closer than this share of the smaller one's size cannot be told apart from how their middles move
+CLOSE_SHARE = 0.1
 
 
 @dataclass
@@ -31,7 +33,10 @@ def _centroids(keypoints: pd.DataFrame) -> pd.DataFrame:
     standard = keypoints[keypoints["joint"].isin(STANDARD_JOINTS)]
     standard = standard[standard["track_id"].notna()]
     grouped = standard.groupby(["frame", "track_id"], dropna=True, observed=True)
-    out = grouped.agg(t=("t", "first"), x=("x", "mean"), y=("y", "mean")).reset_index()
+    out = grouped.agg(
+        t=("t", "first"), x=("x", "mean"), y=("y", "mean"), x0=("x", "min"), x1=("x", "max"), y0=("y", "min"), y1=("y", "max")
+    ).reset_index()
+    out["size"] = np.hypot(out["x1"] - out["x0"], out["y1"] - out["y0"])
     return out.dropna(subset=["x", "y"]).sort_values(["frame", "track_id"])
 
 
@@ -41,12 +46,12 @@ def detect_swaps(keypoints: pd.DataFrame, *, max_gap_s: float) -> list[SwapEvent
     if centroids.empty:
         return []
 
-    last: dict[int, tuple[float, float, float]] = {}
+    last: dict[int, tuple[float, float, float, float]] = {}
     events: list[SwapEvent] = []
 
     for frame_number, group in centroids.groupby("frame", sort=True):
         present = {
-            int(row.track_id): (float(row.t), float(row.x), float(row.y))
+            int(row.track_id): (float(row.t), float(row.x), float(row.y), float(row.size))
             for row in group.itertuples(index=False)
         }
         candidates: list[SwapEvent] = []
@@ -55,17 +60,17 @@ def detect_swaps(keypoints: pd.DataFrame, *, max_gap_s: float) -> list[SwapEvent
             for track_b in tracks[index + 1:]:
                 if track_a not in last or track_b not in last:
                     continue
-                t_a, xa0, ya0 = last[track_a]
-                t_b, xb0, yb0 = last[track_b]
-                t_now, xa1, ya1 = present[track_a]
-                _, xb1, yb1 = present[track_b]
+                t_a, xa0, ya0, size_a = last[track_a]
+                t_b, xb0, yb0, size_b = last[track_b]
+                t_now, xa1, ya1, _ = present[track_a]
+                _, xb1, yb1, _ = present[track_b]
                 # a track that was gone for longer than the gap is a new track, not the same
                 # person reappearing, so there is nothing to have swapped with
                 if (t_now - t_a) > max_gap_s or (t_now - t_b) > max_gap_s:
                     continue
-                # two people standing in the same place cannot be told apart by position, and
-                # calling that a swap would relabel noise
-                if np.hypot(xa0 - xb0, ya0 - yb0) <= 0:
+                # two people about in the same place cannot be told apart by position, and
+                # calling that a swap would relabel the joints' jitter
+                if np.hypot(xa0 - xb0, ya0 - yb0) <= CLOSE_SHARE * np.nanmin([size_a, size_b]):
                     continue
 
                 stay = np.hypot(xa1 - xa0, ya1 - ya0) + np.hypot(xb1 - xb0, yb1 - yb0)
@@ -250,16 +255,20 @@ def _track_boxes(keypoints: pd.DataFrame) -> pd.DataFrame:
     return boxes
 
 
-def tracks_in_areas(keypoints: pd.DataFrame, areas: list[tuple[float, float, float, float]]) -> list[int]:
-    """Tracks whose middle lies in one of the areas (left, top, right, bottom, in pixels) in most of their frames."""
+def in_areas(keypoints: pd.DataFrame, areas: list[tuple[float, float, float, float]], *, whole_tracks: bool) -> np.ndarray:
+    """Rows of the people whose middle lies in one of the areas (left, top, right, bottom, in pixels): a whole track when
+    it does so in most of its frames, or each frame on its own where track ids only number the people within a frame."""
     if not areas:
-        return []
+        return np.zeros(len(keypoints), dtype=bool)
     boxes = _track_boxes(keypoints)
     inside = np.zeros(len(boxes), dtype=bool)
     for left, top, right, bottom in areas:
         inside |= (boxes["cx"].between(left, right) & boxes["cy"].between(top, bottom)).to_numpy()
-    share = pd.Series(inside).groupby(boxes["track_id"].to_numpy()).mean()
-    return sorted(int(track) for track in share.index[share > IGNORED_SHARE])
+    if whole_tracks:
+        share = pd.Series(inside).groupby(boxes["track_id"].to_numpy()).mean()
+        return keypoints["track_id"].isin(share.index[share > IGNORED_SHARE]).to_numpy()
+    hit = pd.MultiIndex.from_frame(boxes.loc[inside, ["track_id", "frame"]])
+    return pd.MultiIndex.from_frame(keypoints[["track_id", "frame"]]).isin(hit)
 
 
 def _spans(times) -> list[tuple[float, float]]:
@@ -379,9 +388,10 @@ def named_by_clicks(keypoints: pd.DataFrame, clicks: list[Click], frame_period_s
     spans: list[tuple[float, float]] = []
     named = [chains[index] for index in owner]
     left_out = [chain for index, chain in enumerate(chains) if index not in owner]
-    if named and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in named):
-        doubts.append(f"tracks {left_out[0].tracks[:5]}, which nobody was clicked on, are in view nearly as much as the people named")
-        spans = _spans(left_out[0].t)
+    rival = max(left_out, key=lambda chain: chain.present, default=None)
+    if named and rival is not None and rival.present >= RIVAL_SHARE * min(chain.present for chain in named):
+        doubts.append(f"tracks {rival.tracks[:5]}, which nobody was clicked on, are in view nearly as much as the people named")
+        spans = _spans(rival.t)
     return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
 
 

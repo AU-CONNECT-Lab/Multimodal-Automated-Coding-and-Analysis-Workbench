@@ -105,6 +105,10 @@ class PoseBackend(Backend):
     provides: frozenset[str] = PROVIDES_2D_ONLY
     # what the backend sends out while it runs that no setting here can stop; shown before a run
     reporting: str | None = None
+    # False when track_id only numbers the people within each frame, so who is who needs pose.track_repair
+    tracks: bool = True
+    # whether pose.input_size reaches the model
+    takes_input_size: bool = False
 
     def check_model(self, model: str | Path | None) -> None:
         """Stops before a run when the weights it would read are not there."""
@@ -229,6 +233,7 @@ class MediaPipeBackend(PoseBackend):
     """
 
     name = "mediapipe"
+    tracks = False
     reporting = (
         "pose.backend mediapipe: MediaPipe sends usage and performance metrics to Google while it "
         "runs (not the video itself), and has no switch to turn this off. "
@@ -446,6 +451,7 @@ class YOLOPoseBackend(PoseBackend):
     writes. The package never imports it, so its AGPL licence stays with the user's own install."""
 
     name = "yolo"
+    takes_input_size = True
 
     @property
     def version(self) -> str:
