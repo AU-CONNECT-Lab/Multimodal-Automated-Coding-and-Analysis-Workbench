@@ -872,10 +872,10 @@ def voice_inputs(config, recording: Recording, prep) -> list[Path]:
 
 def turn_pieces(
     audio: np.ndarray, rate: float, t_origin_s: float, starts: np.ndarray, ends: np.ndarray, spans: pd.DataFrame | None
-) -> tuple[list[np.ndarray], list[float]]:
+) -> tuple[list[np.ndarray], list[float], list[list[tuple[float, float]]]]:
     """Each turn's samples, recording-clock times; with spans, only its solo stretches joined end to end.
-    Also the share of each turn that was kept."""
-    pieces, kept = [], []
+    Also the share of each turn that was kept, and where each stretch begins in its piece and on the recording clock."""
+    pieces, kept, joins = [], [], []
     for start, end in zip(starts, ends):
         if spans is None:
             parts = [(start, end)]
@@ -885,4 +885,6 @@ def turn_pieces(
         cut = [audio[max(int((a - t_origin_s) * rate), 0) : max(int((b - t_origin_s) * rate), 0)] for a, b in parts]
         pieces.append(np.concatenate(cut) if cut else audio[:0])
         kept.append(sum(b - a for a, b in parts) / (end - start) if end > start else 0.0)
-    return pieces, kept
+        offsets = np.cumsum([0, *(part.size for part in cut)])[:-1] / rate
+        joins.append([(float(offset), float(a)) for offset, (a, _) in zip(offsets, parts)])
+    return pieces, kept, joins

@@ -95,7 +95,7 @@ class StandardSetExtractor(Extractor):
                 continue
             path, spans = sources[subject_id]
             audio, rate = load_audio(path)
-            pieces, _ = turn_pieces(
+            pieces, _, _ = turn_pieces(
                 audio, rate, prep.t_origin_s, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float), spans
             )
             for feature_set in self.config.prosody.standard_sets:

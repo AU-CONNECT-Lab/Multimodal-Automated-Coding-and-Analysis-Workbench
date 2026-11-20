@@ -51,6 +51,16 @@ class TestPitch:
         audio[8000:8040] = 0.95
         assert report(audio, loud_level=0.01)["turn_voiced_fraction"] > 0.8
 
+    def test_solo_stretches_joined_end_to_end_keep_their_real_times_for_the_slope(self):
+        """A turn falling a semitone a second, of which only its first and last second were the speaker's alone."""
+        t = np.arange(4 * RATE) / RATE
+        phase = 2 * np.pi * np.cumsum(200.0 * 2 ** (-t / 12)) / RATE
+        audio = sum(0.3 / k * np.sin(k * phase) for k in range(1, 12))
+        joined = np.concatenate([audio[:RATE], audio[3 * RATE:]])
+        loud = float(np.max(np.abs(joined)))
+        values = voice_report(joined, RATE, f0_min=75.0, f0_max=500.0, step_s=0.01, loud_level=loud, joins=[(0.0, 10.0), (1.0, 13.0)])
+        assert values["turn_f0_slope_st_per_s"] == pytest.approx(-1.0, rel=0.1)
+
     def test_a_fall_has_a_negative_slope(self):
         assert report(glide(1.0, 220.0, 160.0))["turn_f0_slope_st_per_s"] < 0
 

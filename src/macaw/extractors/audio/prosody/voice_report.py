@@ -158,13 +158,14 @@ class VoiceReportExtractor(Extractor):
             path, spans = sources[subject.subject_id]
             audio, rate = load_audio(path)
             f0_min, f0_max = f0_range(cfg, subject)
-            pieces, kept = turn_pieces(
+            pieces, kept, joins = turn_pieces(
                 audio, rate, prep.t_origin_s, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float), spans
             )
             # Praat's silence gates against the whole track's loud level, as prosody.frame has them, not each turn's loudest click
             loud = loud_share(audio, rate) * float(np.max(np.abs(audio))) if audio.size else 0.0
             reports = [
-                voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s, loud_level=loud) for piece in pieces
+                voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s, loud_level=loud, joins=joined)
+                for piece, joined in zip(pieces, joins)
             ]
             if spans is not None and (partial := sum(share < _SOLO_NOTE for share in kept)):
                 warnings.append(
@@ -222,10 +223,12 @@ class VoiceReportExtractor(Extractor):
 
 
 def voice_report(
-    audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float, step_s: float, loud_level: float
+    audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float, step_s: float, loud_level: float,
+    joins: list[tuple[float, float]] | None = None,
 ) -> dict[str, float]:
     """Every measure of one stretch of audio; NaN where Praat cannot measure it, e.g. too few periods. Silence is judged
-    against loud_level, an amplitude, where Praat would take the stretch's loudest sample."""
+    against loud_level, an amplitude, where Praat would take the stretch's loudest sample. joins, where the stretch is
+    several joined end to end, gives where each begins in it and in time, so the pitch slope runs on the real clock."""
     import parselmouth
     from parselmouth.praat import call
 
@@ -242,6 +245,8 @@ def voice_report(
     f0 = np.asarray(pitch.selected_array["frequency"], dtype=float)
     times = np.asarray(pitch.xs())
     report.update(pitch_statistics(f0, times))
+    if joins and len(joins) > 1:
+        report["turn_f0_slope_st_per_s"] = f0_slope(*_on_real_clock(f0, times, joins, 1.5 / f0_min))
     try:
         intensity = call(sound.to_intensity(minimum_pitch=f0_min, time_step=step_s), "Get mean", 0, 0, "energy")
         # Praat floors digital silence at -300 dB
@@ -291,6 +296,15 @@ def pitch_statistics(f0: np.ndarray, times: np.ndarray) -> dict[str, float]:
         turn_f0_slope_st_per_s=f0_slope(f0, times),
     )
     return stats
+
+
+def _on_real_clock(f0: np.ndarray, times: np.ndarray, joins: list[tuple[float, float]], reach_s: float):
+    """Pitch frames moved back to when they were said, without those whose window spans a join (reach_s either side)."""
+    starts = np.array([offset for offset, _ in joins])
+    real = np.array([at for _, at in joins])
+    part = np.clip(np.searchsorted(starts, times, side="right") - 1, 0, None)
+    seam = np.min(np.abs(times[:, None] - starts[None, 1:]), axis=1) < reach_s
+    return np.where(seam, np.nan, f0), times - starts[part] + real[part]
 
 
 def f0_slope(f0: np.ndarray, times: np.ndarray) -> float:
