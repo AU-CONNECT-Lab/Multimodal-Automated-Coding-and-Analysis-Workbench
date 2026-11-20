@@ -11,12 +11,12 @@ from scipy.signal import find_peaks
 
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
+from macaw.extractors.video.pose.gesture_space import BODY, SIDES, frontal_plane, gesture_sectors, gesture_spaces, height_levels
 from macaw.extractors.video.pose.keypoints import PoseReviewGate
 from macaw.extractors.video.pose.kinematics import (
     _frame_times,
     _keypoints_file,
     _length_unit,
-    _midpoint,
     _points,
     _smoothed_derivative,
     _xy,
@@ -35,10 +35,8 @@ from macaw.store.annotations import build_annotations, read_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 
-SIDES = ("left", "right")
 # where each gesture's submovement peaks and holds lie, so the thresholds can be checked against the video
 SUBMOVEMENT_TIER, HOLD_TIER = "gesture_submovement", "gesture_hold"
-_BODY = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "nose", "left_eye", "right_eye")
 
 # the grid is drawn in the picture, which shows the body's own width only when it faces the camera or turns away
 _FACING = "Needs hips in view, and follows the body only while the person faces the camera or has their back to it."
@@ -192,7 +190,7 @@ class GestureExtractor(Extractor):
                 velocity(kp, f"{side}_elbow", smoothing_s=smoothing_s).reindex(times.index).to_numpy(),
                 _xy(wrist, f"{side}_wrist"),
             )
-        return times.to_numpy(dtype=float), sides, _points(kp, _BODY).reindex(times.index)
+        return times.to_numpy(dtype=float), sides, _points(kp, BODY).reindex(times.index)
 
 
 @register_extractor
@@ -365,25 +363,6 @@ def room_tracks(points: pd.DataFrame, smoothing_s: float, stride: int = 1) -> tu
     return times.to_numpy(dtype=float), sides, body
 
 
-def frontal_plane(found: dict[str, np.ndarray], frames: np.ndarray) -> pd.DataFrame:
-    """Each landmark and wrist in the person's own frontal plane, laid out like a picture taken from in front of them:
-    x toward their left, y down their trunk, from the hip midpoint. NaN without both hips and both shoulders."""
-    missing = np.full((len(frames), 3), np.nan)
-    hips = (found.get("left_hip", missing) + found.get("right_hip", missing)) / 2.0
-    up = (found.get("left_shoulder", missing) + found.get("right_shoulder", missing)) / 2.0 - hips
-    across = found.get("left_hip", missing) - found.get("right_hip", missing)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        up /= np.linalg.norm(up, axis=1, keepdims=True)
-        across -= np.sum(across * up, axis=1, keepdims=True) * up
-        across /= np.linalg.norm(across, axis=1, keepdims=True)
-    joints = [*_BODY, *(f"{side}_wrist" for side in SIDES)]
-    columns = {}
-    for joint in joints:
-        offset = found.get(joint, missing) - hips
-        columns[("x", joint)] = np.sum(offset * across, axis=1)
-        columns[("y", joint)] = -np.sum(offset * up, axis=1)
-    plane = pd.DataFrame(columns, index=pd.Index(frames, name="frame"))
-    return plane.reindex(columns=pd.MultiIndex.from_product([["x", "y"], joints]))
 
 
 def gesture_specs(both_hands: bool) -> list[tuple[str, str, str | None, str, bool]]:
@@ -500,61 +479,12 @@ def holds(t: np.ndarray, speeds: list[np.ndarray], still_speed: float, peaks: np
     return [(float(t[run][0]), float(t[run][-1] + step)) for run in _runs(still)]
 
 
-def height_levels(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
-    """Per frame, the vertical level the wrist is at, 0 to 5; image y grows downward."""
-    up = -wrist[:, 1]
-    shoulders = -_midpoint(body, "left_shoulder", "right_shoulder")[:, 1]
-    hips = -_midpoint(body, "left_hip", "right_hip")[:, 1]
-    nose = -body[("y", "nose")].to_numpy()
-    eyes = -_midpoint(body, "left_eye", "right_eye")[:, 1]
-    midline = (shoulders + hips) / 2.0
-    chest = (midline + shoulders) / 2.0
-    top = eyes + 2.0 * (eyes - nose)
-    bounds = np.column_stack([midline, chest, shoulders, nose, top])
-    known = np.isfinite(up) & np.isfinite(bounds).all(axis=1)
-    with np.errstate(invalid="ignore"):
-        levels = (up[:, None] > bounds).sum(axis=1).astype(float)
-    return np.where(known, levels, np.nan)
 
 
-def gesture_spaces(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
-    """Per frame, the gesture space the wrist is in, centre-centre 1 to extreme periphery 4."""
-    x, up = wrist[:, 0], -wrist[:, 1]
-    low, high, centre_up = _hips_box(body)
-    eyes = -_midpoint(body, "left_eye", "right_eye")[:, 1]
-    nose = -body[("y", "nose")].to_numpy()
-    face = 2.0 * np.abs(body[("x", "left_eye")].to_numpy() - body[("x", "right_eye")].to_numpy())
-    width = high - low
-    top = eyes + (eyes - nose)
-    with np.errstate(invalid="ignore"):
-        centre_centre = (x > low) & (x < high) & (np.abs(up - centre_up) < width / 2.0)
-        centre = (x > low - width / 2.0) & (x < high + width / 2.0) & (np.abs(up - centre_up) < width)
-        periphery = (x > low - width / 2.0 - face) & (x < high + width / 2.0 + face) & (np.abs(up - centre_up) < top - centre_up)
-    spaces = np.select([centre_centre, centre, periphery], [1.0, 2.0, 3.0], 4.0)
-    known = np.isfinite(np.column_stack([x, up, low, high, centre_up, top, face])).all(axis=1)
-    return np.where(known, spaces, np.nan)
 
 
-def gesture_sectors(wrist: np.ndarray, body: pd.DataFrame) -> np.ndarray:
-    """Per frame, which of the eight cells around the centre space the wrist is in, 1 to 8, or 0 within it."""
-    x, up = wrist[:, 0], -wrist[:, 1]
-    low, high, centre_up = _hips_box(body)
-    width = high - low
-    with np.errstate(invalid="ignore"):
-        column = np.where(x <= low - width / 2.0, 0, np.where(x >= high + width / 2.0, 2, 1))
-        row = np.where(up >= centre_up + width, 0, np.where(up <= centre_up - width, 2, 1))
-    # the edges of the centre space extended outward cut the periphery into a 3 x 3 grid less its middle
-    cell = 3 * row + column
-    sectors = np.where(cell < 4, cell + 1, cell).astype(float)
-    spaces = gesture_spaces(wrist, body)
-    return np.where(np.isfinite(spaces), np.where(spaces >= 3, sectors, 0.0), np.nan)
 
 
-def _hips_box(body: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Per frame, the hips' outer x on each side and the height halfway between shoulders and hips, up positive."""
-    hips_x = np.column_stack([body[("x", "left_hip")].to_numpy(), body[("x", "right_hip")].to_numpy()])
-    centre_up = -(_midpoint(body, "left_shoulder", "right_shoulder")[:, 1] + _midpoint(body, "left_hip", "right_hip")[:, 1]) / 2.0
-    return hips_x.min(axis=1), hips_x.max(axis=1), centre_up
 
 
 def _runs(mask: np.ndarray) -> list[np.ndarray]:

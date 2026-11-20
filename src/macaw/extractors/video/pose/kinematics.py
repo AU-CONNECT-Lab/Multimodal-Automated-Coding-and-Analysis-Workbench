@@ -13,6 +13,7 @@ from scipy.signal import savgol_filter
 from macaw.exceptions import ConfigError, SchemaViolationError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
+from macaw.extractors.video.pose.gesture_space import BODY, SIDES, wrist_places
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate, measured_views
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
@@ -96,6 +97,34 @@ _SUBJECT_SPECS: dict[str, tuple[str, str | None, bool]] = {
     ),
 }
 
+# the codes of the gesture spaces, shared with pose.gestures; {seen} says from where left and right are seen
+WRIST_PLACE_TEXT = {
+    "height_level": (
+        "Level the {side} wrist is at: 0 below the body midline, 1 below mid-chest, 2 below the shoulders, 3 below the nose, "
+        "4 below the top of the head, 5 above it."
+    ),
+    "gesture_space": (
+        "Gesture space the {side} wrist is in: 1 centre-centre, 2 centre, 3 periphery, 4 extreme periphery, on a grid drawn "
+        "from the hips, eyes and nose."
+    ),
+    "gesture_sector": (
+        "Which of the eight cells around the centre space the {side} wrist is in, {seen}: 1 up and to the left, 2 up, 3 up and "
+        "to the right, 4 left, 5 right, 6 down and to the left, 7 down, 8 down and to the right; 0 within the centre space."
+    ),
+}
+_FACING_CAMERA = "Follows the body only while the person faces the camera or has their back to it."
+# levels and spaces are ordered codes, sectors are only names
+WRIST_PLACE_AGGREGATION = {"height_level": "median", "gesture_space": "median", "gesture_sector": "none"}
+_SUBJECT_SPECS.update(
+    {
+        f"{side}_wrist_{name}": (
+            f"{text.format(side=side, seen='as the picture shows it')} {_FACING_CAMERA}", None, True,
+        )
+        for side in SIDES
+        for name, text in WRIST_PLACE_TEXT.items()
+    }
+)
+
 _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
     "interpersonal_distance": (
         "Distance between the two shoulder midpoints in the image. It changes when people turn "
@@ -135,6 +164,13 @@ _MISSING = {
         f"Empty in frames where any shoulder, elbow or wrist was {_ON_OWN}, and in every frame when both shoulders are never "
         f"found in the same frame. {_NOT_FOUND}"
     ),
+    **{
+        f"{side}_wrist_{name}": (
+            f"Empty in frames where the {side} wrist, either shoulder, either hip, either eye or the nose was {_ON_OWN}. {_NOT_FOUND}"
+        )
+        for side in SIDES
+        for name in WRIST_PLACE_TEXT
+    },
     "interpersonal_distance": f"{_PAIR_FRAMES} where a shoulder of either was not found on it. {_NOT_FOUND}",
     "envelope_overlap": (
         f"{_PAIR_FRAMES} where too few points of either were found on it to span a box. {_NOT_FOUND} 0 means the two boxes "
@@ -146,7 +182,7 @@ _MISSING = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.8.0"
+    version = "0.9.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -266,7 +302,7 @@ class KinematicsExtractor(Extractor):
                     extractor_version=self.version,
                     params=spec_params,
                     interpolation="none",
-                    aggregation="mean",
+                    aggregation=place_aggregation(name),
                     missing=missing[name],
                     comparable_across_subjects=comparable,
                     comparable_across_backends=False,
@@ -399,6 +435,8 @@ def _subject_values(kp: pd.DataFrame, smoothing_s: float) -> pd.DataFrame:
     values["head_yaw_index"] = head["yaw_index"]
     values["head_roll_deg"] = head["roll_deg"]
     values["postural_openness"] = postural_openness(kp)
+    places = wrist_places(_points(kp, [*BODY, *_WRISTS]))
+    values[places.columns] = places.reindex(values.index)
     return values.reset_index(drop=True)
 
 
@@ -723,6 +761,10 @@ def below_specs(feature: str, threshold: str, params: dict, emitted: set[str], s
         for name, (description, unit) in described.items()
         if name in emitted
     ]
+
+
+def place_aggregation(name: str) -> str:
+    return next((how for place, how in WRIST_PLACE_AGGREGATION.items() if name.removesuffix("_3d").endswith(f"_wrist_{place}")), "mean")
 
 
 def joined_annotations(coded: list[pd.DataFrame]) -> pd.DataFrame:

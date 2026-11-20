@@ -615,6 +615,17 @@ def triangulated(project, tmp_path):
 
 
 class TestGestures3D:
+    def test_pose_kinematics3d_places_each_wrist_in_every_frame(self, gesturing, tmp_path):
+        config = triangulated(gesturing.project, tmp_path)
+        result = Kinematics3DExtractor(config).run(build_recording("003", config), tmp_path)
+        rows = result.rows[result.rows.subject_id == "parent"]
+        value = lambda feature: rows[rows.feature == feature]["value"]
+        # the same level the coded gesture reaches at its highest
+        assert value("left_wrist_height_level_3d").max() == 3.0 and value("left_wrist_gesture_space_3d").notna().all()
+        specs = {spec.name: spec for spec in result.specs}
+        assert "whichever way they face" in specs["left_wrist_gesture_sector_3d"].description
+        assert specs["left_wrist_gesture_sector_3d"].aggregation == "none"
+
     def test_each_gesture_is_measured_in_the_room(self, gesturing, tmp_path):
         from macaw.extractors.video.pose.gestures import Gesture3DExtractor
 

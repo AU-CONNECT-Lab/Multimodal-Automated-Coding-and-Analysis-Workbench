@@ -335,6 +335,16 @@ class TestExtractor:
         assert size.t_start.min() == 0.0 and size.t_end.max() == pytest.approx(19 / FPS)
         assert {spec.name: spec.scale for spec in shared.specs}["body_size"] == "recording"
 
+    def test_each_wrist_has_its_level_space_and_sector_in_every_frame(self, shared):
+        rows = shared.rows[shared.rows.subject_id == "parent"]
+        value = lambda feature: set(rows[rows.feature == feature].value)
+        # the wrists hang below the midline, just outside the centre space; the left one on the picture's right
+        assert value("left_wrist_height_level") == {0.0} and value("left_wrist_gesture_space") == {3.0}
+        assert value("left_wrist_gesture_sector") == {5.0} and value("right_wrist_gesture_sector") == {4.0}
+        specs = {spec.name: spec for spec in shared.specs}
+        assert specs["left_wrist_gesture_sector"].aggregation == "none" and specs["left_wrist_gesture_space"].aggregation == "median"
+        assert specs["left_wrist_speed"].aggregation == "mean"
+
     def test_frame_rows_sit_on_the_recording_clock(self, shared):
         rows = shared.rows[shared.rows.scale == "frame"]
         assert rows.t_start.max() == pytest.approx(19 / FPS)

@@ -21,6 +21,7 @@ from macaw.extractors.video.pose.kinematics import (
     MEASURE_SPEEDS,
     POLYORDER,
     SELF,
+    WRIST_PLACE_TEXT,
     _keypoints_file,
     _smoothed_derivative,
     below_outputs,
@@ -30,8 +31,10 @@ from macaw.extractors.video.pose.kinematics import (
     check_measures,
     joined_annotations,
     measure_ends,
+    place_aggregation,
     speed_toward,
 )
+from macaw.extractors.video.pose.gesture_space import SIDES, frontal_plane, wrist_places
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -300,6 +303,15 @@ _SUBJECT_SPECS: dict[str, tuple[str, str]] = {
         for wrist in _WRISTS
         for name, order in _DERIVATIVES
     },
+    **{
+        f"{side}_wrist_{name}_3d": (
+            f"{text.format(side=side, seen='seen from in front of the person (their right is to the left)')} Taken in the "
+            "person's own frontal plane, so it holds whichever way they face.",
+            None,
+        )
+        for side in SIDES
+        for name, text in WRIST_PLACE_TEXT.items()
+    },
 }
 _PAIR_SPECS: dict[str, tuple[str, str]] = {
     "interpersonal_distance_3d": ("Distance between the two shoulder midpoints in the room.", "m"),
@@ -337,6 +349,13 @@ _MISSING = {
         for wrist in _WRISTS
         for name, _ in _DERIVATIVES
     },
+    **{
+        f"{side}_wrist_{name}_3d": (
+            f"Empty in frames where the {side} wrist, either shoulder, either hip, either eye or the nose was not placed in the room."
+        )
+        for side in SIDES
+        for name in WRIST_PLACE_TEXT
+    },
     "interpersonal_distance_3d": (
         f"{_ONCE}, for two people placed in 3D from different cameras, and in frames where a shoulder of either was not "
         "placed in the room."
@@ -364,7 +383,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -488,7 +507,7 @@ class Kinematics3DExtractor(Extractor):
         return below + placing + [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
-                extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
+                extractor_version=self.version, params=spec_params, interpolation="none", aggregation=place_aggregation(name),
                 missing=f"{missing[name]} A point is not placed where {unplaced}.",
                 comparable_across_subjects=comparable, comparable_across_backends=False,
                 validation="against_reference" if name in _AGAINST_REFERENCE else "synthetic",
@@ -535,6 +554,9 @@ def subject_values_3d(points: pd.DataFrame, smoothing_s: float, stride: int = 1)
         for name, order in _DERIVATIVES:
             fitted = _smoothed_derivative(found[wrist], frames, step, smoothing_s, order, stride)
             values[f"{wrist}_{name}_3d"] = np.linalg.norm(fitted, axis=1)
+    places = wrist_places(frontal_plane(found, frames))
+    for column in places.columns:
+        values[f"{column}_3d"] = places[column].to_numpy()
     return values
 
 
