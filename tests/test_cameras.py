@@ -633,6 +633,8 @@ class TestGestures3D:
         # from the side the picture shows no frontal plane; in the room the hand reaches above the shoulders
         assert value("gesture_left_max_height_3d") == 3.0 and value("gesture_left_space_max_3d") == 2.0
         assert value("gesture_right_submovements_3d") == 0.0
+        tiers = result.annotations[result.annotations.subject_id == "parent"].groupby("tier").size().to_dict()
+        assert tiers == {"gesture_submovement_3d": 2, "gesture_hold_3d": 1}
         specs = {spec.name: spec for spec in result.specs}
         assert specs["gesture_left_peak_speed_3d"].unit == "m/s" and specs["gesture_left_extent_3d"].unit == "m^2"
         assert "peak_prominence_3d" in specs["gesture_left_submovements_3d"].description

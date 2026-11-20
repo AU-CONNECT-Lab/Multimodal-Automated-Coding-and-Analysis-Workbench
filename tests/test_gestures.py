@@ -204,6 +204,20 @@ class TestExtractor:
         # the left wrist stays in the centre; the right rests just outside it, to one side
         assert value(result, "gesture_left_space_sectors") == 0.0 and value(result, "gesture_right_space_sectors") == 1.0
 
+    def test_peaks_and_holds_are_tiers_matching_the_counts(self, run):
+        result = run([("parent", 0.0, 3.4, "ann")])
+        validate_frame(result.annotations, ANNOTATION_SCHEMA, "annotations")
+        peaks = result.annotations[result.annotations.tier == "gesture_submovement"]
+        held = result.annotations[result.annotations.tier == "gesture_hold"]
+        assert list(peaks.label) == ["left", "left"] and set(peaks.subject_id) == {"parent"}
+        assert (peaks.t_end - peaks.t_start).round(4).eq(round(1 / FPS, 4)).all()
+        assert list(held.label) == ["left"]
+        assert held.t_end.iloc[0] - held.t_start.iloc[0] == pytest.approx(value(result, "gesture_left_hold_s"))
+
+    def test_holds_of_both_hands_are_labelled_both(self, run):
+        held = run([("parent", 0.0, 3.4, "ann")], holds="both_hands").annotations
+        assert list(held[held.tier == "gesture_hold"].label) == ["both"]
+
     def test_with_both_hands_the_holds_are_one_pair_per_gesture(self, run):
         result = run([("parent", 0.0, 3.4, "ann")], holds="both_hands")
         assert {spec.name for spec in result.specs} == set(result.rows.feature)

@@ -20,6 +20,7 @@ from macaw.extractors.video.pose.kinematics import (
     _points,
     _smoothed_derivative,
     _xy,
+    joined_annotations,
     keypoints_by_subject,
     velocity,
 )
@@ -30,11 +31,13 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.project.room import CM_PER_UNIT
 from macaw.store import keypoints as keypoints_store
-from macaw.store.annotations import read_annotations
+from macaw.store.annotations import build_annotations, read_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import LONG_TABLE_SCHEMA, Scale, empty_frame
 
 SIDES = ("left", "right")
+# where each gesture's submovement peaks and holds lie, so the thresholds can be checked against the video
+SUBMOVEMENT_TIER, HOLD_TIER = "gesture_submovement", "gesture_hold"
 _BODY = ("left_shoulder", "right_shoulder", "left_hip", "right_hip", "nose", "left_eye", "right_eye")
 
 # the grid is drawn in the picture, which shows the body's own width only when it faces the camera or turns away
@@ -134,7 +137,7 @@ _BOTH_HANDS_MISSING = {
 @register_extractor
 class GestureExtractor(Extractor):
     name = "pose.gestures"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -156,7 +159,7 @@ class GestureExtractor(Extractor):
         segments, warnings = coded_gestures(self.config, recording, self.name)
         keypoints, by_subject = keypoints_by_subject(self.config, recording)
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
-        frames = []
+        frames, coded = [], []
         for subject_id, own in segments.groupby("subject_id", observed=True):
             kp = by_subject.get(str(subject_id))
             if kp is None:
@@ -166,11 +169,16 @@ class GestureExtractor(Extractor):
             values = measure_gestures(times, sides, placed, own, still_speed=cfg.still_speed, peak_prominence=cfg.peak_prominence, both_hands=cfg.holds == "both_hands")
             warnings += _unseen(self.name, recording, str(subject_id), values, "was tracked")
             frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))
+            moments = gesture_moments(times, sides, own, still_speed=cfg.still_speed, peak_prominence=cfg.peak_prominence, both_hands=cfg.holds == "both_hands")
+            coded += _moment_annotations(self.name, recording, str(subject_id), moments, suffix="")
         rows = concat_long_tables(frames)
         params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump(exclude={"still_speed_3d", "peak_prominence_3d"})}
         named = [(name, description, unit.format(length=_length_unit(keypoints)) if unit else None, aggregation, comparable)
                  for name, description, unit, aggregation, comparable in gesture_specs(cfg.holds == "both_hands")]
-        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=False)), warnings=warnings)
+        return ExtractorResult(
+            rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=False)), annotations=joined_annotations(coded),
+            warnings=warnings,
+        )
 
     def _tracks(self, kp: pd.DataFrame) -> tuple[np.ndarray, dict, pd.DataFrame]:
         """Frame times, each hand's (wrist speed, elbow speed, wrist position) and the body's landmarks, per frame."""
@@ -190,7 +198,7 @@ class GestureExtractor(Extractor):
 @register_extractor
 class Gesture3DExtractor(Extractor):
     name = "pose.gestures3d"
-    version = "0.2.1"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -225,7 +233,7 @@ class Gesture3DExtractor(Extractor):
         points = keypoints_store.read_keypoints(points_file(self.config, recording.recording_id), recording_id=recording.recording_id)
         people = {str(subject_id): own for subject_id, own in points.groupby("subject_id", observed=True)}
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
-        frames = []
+        frames, coded = [], []
         for subject_id, own in segments.groupby("subject_id", observed=True):
             placed = people.get(str(subject_id))
             if placed is None:
@@ -239,12 +247,20 @@ class Gesture3DExtractor(Extractor):
             warnings += _unseen(self.name, recording, str(subject_id), values, "was placed in 3D")
             values.columns = [column if column in ("t_start", "t_end") else f"{column}_3d" for column in values.columns]
             frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))
+            moments = gesture_moments(
+                times, sides, own, still_speed=cfg.still_speed_3d * to_metres, peak_prominence=cfg.peak_prominence_3d * to_metres,
+                both_hands=cfg.holds == "both_hands",
+            )
+            coded += _moment_annotations(self.name, recording, str(subject_id), moments, suffix="_3d")
         rows = concat_long_tables(frames)
         params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, **cfg.model_dump(exclude={"still_speed", "peak_prominence"})}
         # in metres and against each person's own body, so every measure compares across people
         named = [(f"{name}_3d", _in_the_room(name, description), unit.format(length="m") if unit else None, aggregation, True)
                  for name, description, unit, aggregation, _ in gesture_specs(cfg.holds == "both_hands")]
-        return ExtractorResult(rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=True)), warnings=warnings)
+        return ExtractorResult(
+            rows=rows, specs=_feature_specs(self, named, params, gesture_missing(in_room=True)), annotations=joined_annotations(coded),
+            warnings=warnings,
+        )
 
 
 def _coded_file(config, recording: Recording) -> list[Path]:
@@ -301,6 +317,38 @@ def measure_gestures(
             row.update({f"gesture_{name}": value for name, value in measured.items()})
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def gesture_moments(
+    t: np.ndarray, sides: dict, segments: pd.DataFrame, *, still_speed: float, peak_prominence: float, both_hands: bool
+) -> dict[str, pd.DataFrame]:
+    """Within each segment, each submovement peak as one frame and each hold, labelled with the hand (both for both_hands holds)."""
+    step = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
+    peaks, held = [], []
+    for segment in segments.sort_values("t_start").itertuples():
+        inside = (t >= segment.t_start) & (t <= segment.t_end)
+        found = {}
+        for side in SIDES:
+            wrist_speed, elbow_speed = sides[side][0][inside], sides[side][1][inside]
+            found[side] = submovement_peaks(t[inside], wrist_speed, peak_prominence)
+            peaks += [(moment, moment + step, side) for moment in found[side]]
+            if not both_hands:
+                held += [(start, end, side) for start, end in holds(t[inside], [wrist_speed, elbow_speed], still_speed, found[side])]
+        if both_hands and all(np.isfinite(sides[side][0][inside]).any() for side in SIDES):
+            speeds = [sides[side][index][inside] for index in (0, 1) for side in SIDES]
+            held += [(start, end, "both") for start, end in holds(t[inside], speeds, still_speed, np.sort(np.concatenate(list(found.values()))))]
+    columns = ["t_start", "t_end", "label"]
+    return {SUBMOVEMENT_TIER: pd.DataFrame(peaks, columns=columns), HOLD_TIER: pd.DataFrame(held, columns=columns)}
+
+
+def _moment_annotations(annotator: str, recording: Recording, subject_id: str, moments: dict[str, pd.DataFrame], suffix: str) -> list[pd.DataFrame]:
+    return [
+        build_annotations(
+            recording_id=recording.recording_id, tier=tier + suffix, layer="pose", annotator=annotator,
+            entities=recording.entities(), intervals=intervals, subject_id=subject_id,
+        )
+        for tier, intervals in moments.items()
+    ]
 
 
 def room_tracks(points: pd.DataFrame, smoothing_s: float, stride: int = 1) -> tuple[np.ndarray, dict, pd.DataFrame]:
