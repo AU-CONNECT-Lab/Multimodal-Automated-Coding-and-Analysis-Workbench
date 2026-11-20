@@ -70,3 +70,15 @@ def test_how_many_requests_go_at_once_leaves_the_coding_alone(project):
     before = resolve_config(project)
     after = resolve_config(project, cli_overrides=["coding.llm.concurrency=8"])
     assert hash_extractor_config(before, "coding.judge") == hash_extractor_config(after, "coding.judge")
+
+
+@pytest.mark.parametrize("setting", [
+    {"frame_step_s": 0}, {"f0_min_hz": 0}, {"f0_min_hz": 600}, {"f0_range_by_role": {"child": (400, 200)}}, {"min_voiced_fraction": 2},
+])
+def test_prosody_settings_that_cannot_work_are_refused(setting):
+    from pydantic import ValidationError
+
+    from macaw.config.schema import ProsodySection
+
+    with pytest.raises(ValidationError):
+        ProsodySection(**setting)

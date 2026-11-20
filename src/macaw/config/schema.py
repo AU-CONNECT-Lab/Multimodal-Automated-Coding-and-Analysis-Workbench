@@ -283,14 +283,23 @@ class SegmentSection(_Section):
 class ProsodySection(_Section):
     backend: str = "parselmouth"
     fallback_chain: list[str] = Field(default_factory=lambda: ["parselmouth", "librosa", "builtin"])
-    frame_step_s: float = 0.01
-    f0_min_hz: float = 75.0
-    f0_max_hz: float = 500.0
+    frame_step_s: float = Field(default=0.01, gt=0)
+    f0_min_hz: float = Field(default=75.0, gt=0)
+    f0_max_hz: float = Field(default=500.0, gt=0)
     f0_range_by_role: dict[str, tuple[float, float]] = Field(default_factory=dict)
     standard_sets: list[Literal["eGeMAPSv02", "ComParE_2016"]] = Field(
         default_factory=lambda: ["eGeMAPSv02"]
     )
-    min_voiced_fraction: float = 0.1
+    min_voiced_fraction: float = Field(default=0.1, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _pitch_ranges(self):
+        ranges = {"prosody.f0_min_hz and f0_max_hz": (self.f0_min_hz, self.f0_max_hz)}
+        ranges.update({f"prosody.f0_range_by_role {role}": pair for role, pair in self.f0_range_by_role.items()})
+        bad = [name for name, (low, high) in ranges.items() if not 0 < low < high]
+        if bad:
+            raise ValueError(f"{', '.join(bad)} must give a lowest pitch above 0 and below the highest")
+        return self
 
 
 class TextSection(_Section):

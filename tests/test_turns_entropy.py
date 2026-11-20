@@ -173,3 +173,4 @@ def test_entropy_settings_that_cannot_work_are_refused(setting):
 
     with pytest.raises(ValidationError):
         TurnsSection(**setting)
+
