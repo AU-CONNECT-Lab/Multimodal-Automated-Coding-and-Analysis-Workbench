@@ -88,8 +88,9 @@ _MISSING = {
         "where their voice is the only one count."
     ),
     "voiced_fraction": (
-        f"Empty for {UNHEARD}, and on a shared microphone for a span with no frame where their voice is the only one, as only "
-        "those count there. 0 means no frame of theirs in the span carried pitch."
+        f"Empty for {UNHEARD}. 0 means no frame of theirs in the span carried pitch; on a shared microphone only frames where "
+        "their voice is the only one can, while every frame of the span counts below, so 0 there also means they never "
+        "spoke alone in it."
     ),
 }
 

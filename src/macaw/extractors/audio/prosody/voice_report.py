@@ -10,7 +10,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
-from macaw.extractors.audio.prosody.backends import load_audio
+from macaw.extractors.audio.prosody.backends import HNR_SILENCE, PITCH_SILENCE, load_audio, loud_share
 from macaw.extractors.audio.prosody.frame import SEMITONE_REF_HZ, UNHEARD, f0_range, to_semitones
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
@@ -122,7 +122,7 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
@@ -161,7 +161,11 @@ class VoiceReportExtractor(Extractor):
             pieces, kept = turn_pieces(
                 audio, rate, prep.t_origin_s, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float), spans
             )
-            reports = [voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s) for piece in pieces]
+            # Praat's silence gates against the whole track's loud level, as prosody.frame has them, not each turn's loudest click
+            loud = loud_share(audio, rate) * float(np.max(np.abs(audio))) if audio.size else 0.0
+            reports = [
+                voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s, loud_level=loud) for piece in pieces
+            ]
             if spans is not None and (partial := sum(share < _SOLO_NOTE for share in kept)):
                 warnings.append(
                     QCWarning(
@@ -217,15 +221,22 @@ class VoiceReportExtractor(Extractor):
         ]
 
 
-def voice_report(audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float, step_s: float) -> dict[str, float]:
-    """Every measure of one stretch of audio; NaN where Praat cannot measure it, e.g. too few periods."""
+def voice_report(
+    audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float, step_s: float, loud_level: float
+) -> dict[str, float]:
+    """Every measure of one stretch of audio; NaN where Praat cannot measure it, e.g. too few periods. Silence is judged
+    against loud_level, an amplitude, where Praat would take the stretch's loudest sample."""
     import parselmouth
     from parselmouth.praat import call
 
     report = dict.fromkeys(_SPECS, np.nan)
     try:
         sound = parselmouth.Sound(np.asarray(audio, dtype=float), sampling_frequency=rate)
-        pitch = sound.to_pitch_ac(time_step=step_s, pitch_floor=f0_min, pitch_ceiling=f0_max)
+        peak = float(np.max(np.abs(audio))) if np.size(audio) else 0.0
+        share = loud_level / peak if peak > 0 else 1.0
+        pitch = sound.to_pitch_ac(
+            time_step=step_s, pitch_floor=f0_min, pitch_ceiling=f0_max, silence_threshold=min(PITCH_SILENCE * share, 1.0),
+        )
     except parselmouth.PraatError:
         return report                  # shorter than one pitch analysis window
     f0 = np.asarray(pitch.selected_array["frequency"], dtype=float)
@@ -245,7 +256,7 @@ def voice_report(audio: np.ndarray, rate: float, *, f0_min: float, f0_max: float
         report[name] = call(points, f"Get jitter ({kind})", 0, 0, *_PERIOD_ARGS)
     for name, kind in SHIMMER.items():
         report[name] = call([sound, points], f"Get shimmer ({kind})", 0, 0, *_PERIOD_ARGS, _AMPLITUDE_FACTOR)
-    harmonicity = sound.to_harmonicity_cc(time_step=step_s, minimum_pitch=f0_min, silence_threshold=0.1, periods_per_window=1.0)
+    harmonicity = sound.to_harmonicity_cc(time_step=step_s, minimum_pitch=f0_min, silence_threshold=min(HNR_SILENCE * share, 1.0), periods_per_window=1.0)
     report["turn_hnr_db"] = call(harmonicity, "Get mean", 0, 0)
     try:
         cepstrogram = call(sound, "To PowerCepstrogram", f0_min, 0.002, 5000, 50)

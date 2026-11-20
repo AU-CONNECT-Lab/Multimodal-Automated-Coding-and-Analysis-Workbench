@@ -33,8 +33,9 @@ def glide(seconds, start_hz, end_hz, *, jitter=0.0, seed=0):
     return sum(0.3 / k * np.sin(k * phase) for k in range(1, 12))
 
 
-def report(audio):
-    return voice_report(audio, RATE, f0_min=75.0, f0_max=500.0, step_s=0.01)
+def report(audio, loud_level=None):
+    loud = float(np.max(np.abs(audio))) if loud_level is None else loud_level
+    return voice_report(audio, RATE, f0_min=75.0, f0_max=500.0, step_s=0.01, loud_level=loud)
 
 
 class TestPitch:
@@ -43,6 +44,12 @@ class TestPitch:
         assert values["turn_f0_slope_st_per_s"] == pytest.approx(12 * np.log2(200 / 150), rel=0.15)
         assert values["turn_f0_median_hz"] == pytest.approx(175.0, rel=0.05)
         assert values["turn_f0_range_st"] == pytest.approx(12 * np.log2(200 / 150), rel=0.15)
+
+    def test_a_click_louder_than_the_voice_does_not_silence_the_turn(self):
+        """A quiet turn with a knock on the mic: silence is judged against how loud the track usually gets."""
+        audio = glide(1.0, 220.0, 220.0) * 0.01 / 0.4
+        audio[8000:8040] = 0.95
+        assert report(audio, loud_level=0.01)["turn_voiced_fraction"] > 0.8
 
     def test_a_fall_has_a_negative_slope(self):
         assert report(glide(1.0, 220.0, 160.0))["turn_f0_slope_st_per_s"] < 0
