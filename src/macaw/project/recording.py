@@ -153,14 +153,6 @@ class Recording:
         """Ordered subject pairs; pairwise features are stored per pair, dyad is just N=2."""
         return list(combinations([subject.subject_id for subject in self.subjects], 2))
 
-    def duration_s(self) -> float:
-        known = [item.duration_s for item in self.media if item.duration_s is not None]
-        if not known:
-            raise UnreadableMediaError(
-                f"{self.recording_id}: media have not been probed yet, no duration known"
-            )
-        return max(known)
-
 
 def _entity_regex(pattern: str) -> re.Pattern[str]:
     parts: list[str] = []
