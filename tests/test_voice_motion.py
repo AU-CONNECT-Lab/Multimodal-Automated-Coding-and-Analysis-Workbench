@@ -112,6 +112,9 @@ class TestSuggestedPeople:
         choice = suggested_people(keypoints, ["a", "b", "c"], voices=voices, edges=bin_edges(0.0, 120.0))
         assert choice.people == {"a": [2], "b": [3], "c": [1]}
         assert choice.doubt is None
+        # a suggestion nobody needs to check still keeps what it rested on
+        pairing = choice.basis["pairings"]["a"]
+        assert choice.basis["by"] == "their own microphone" and pairing["tracks"] == [2] and pairing["clear"] and pairing["z"] > pairing["runner_up_z"]
 
     def test_too_little_time_to_judge_places_no_one_and_says_so(self):
         voices = {"a": talking(), "b": talking(), "c": talking()}

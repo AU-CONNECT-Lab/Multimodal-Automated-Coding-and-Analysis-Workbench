@@ -76,6 +76,7 @@ class TestMostInView:
         )
         choice = most_in_view(keypoints, "child")
         assert choice.people == {"child": [1, 2]} and choice.doubt is None
+        assert choice.basis["frames_in_view"] == 100 and choice.basis["rival_frames_in_view"] == 10
 
     def test_someone_else_in_view_at_least_half_as_long_is_a_doubt_with_where_to_look(self):
         keypoints = table(person(1, range(0, 100)), person(2, range(50, 100), cx=60, size=20))

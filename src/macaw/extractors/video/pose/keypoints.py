@@ -483,6 +483,7 @@ class PoseExtractor(Extractor):
             "chosen_by": {subject: by.get(subject, f"suggested {how}") for subject in choice.people},
             "doubt": choice.doubt,
             "spans": choice.spans or [],
+            **({"basis": choice.basis} if choice.basis else {}),
         }
         return piece, swaps, owner
 

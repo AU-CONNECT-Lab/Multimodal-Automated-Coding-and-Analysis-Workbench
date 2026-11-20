@@ -227,6 +227,8 @@ class PeopleChoice:
     people: dict[str, list[int]]
     doubt: str | None = None
     spans: list[tuple[float, float]] | None = None
+    # the numbers a suggestion rested on, kept with the names it gave
+    basis: dict | None = None
 
 
 def several_people(keypoints: pd.DataFrame) -> bool:
@@ -432,7 +434,17 @@ def suggested_people(
     if placed and left_out and left_out[0].present >= RIVAL_SHARE * min(chain.present for chain in placed):
         doubts.append(f"tracks {left_out[0].tracks[:5]} (no subject) are in view nearly as much as the people suggested")
         spans = _spans(left_out[0].t)
-    return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans)
+    basis = {
+        "by": by,
+        "pairings": {
+            subject: {"tracks": [int(track) for track in pool[index].tracks[:20]], "x": round(float(pool[index].x), 1),
+                      "z": round(float(match.z[subject]), 3), "runner_up_z": round(float(match.runner_up[subject]), 3),
+                      "clear": subject in match.clear, "placed": subject in sure}
+            for subject, index in match.people.items()
+        },
+        "people_on_camera": len(pool),
+    }
+    return PeopleChoice(people=people, doubt="; ".join(doubts) or None, spans=spans, basis=basis)
 
 
 def most_in_view(keypoints: pd.DataFrame, person: str) -> PeopleChoice:
@@ -445,14 +457,18 @@ def most_in_view(keypoints: pd.DataFrame, person: str) -> PeopleChoice:
     people = {person: owner.tracks}
     chosen = f"tracks {owner.tracks[:5]} suggested as {person} for being most in view and largest"
     rival = max(others, key=lambda chain: chain.present, default=None)
-    if rival is not None and rival.present >= RIVAL_SHARE * owner.present:
-        return PeopleChoice(people, doubt=f"{chosen}, but tracks {rival.tracks[:5]} are in view nearly as long", spans=_spans(rival.t))
     seen = np.unique(np.concatenate([chain.frames for chain in chains]))
     coverage = owner.present / seen.size
+    basis = {
+        "by": "most in view and largest", "frames_in_view": int(owner.present), "frames_with_anyone": int(seen.size),
+        "rival_frames_in_view": int(rival.present) if rival is not None else 0,
+    }
+    if rival is not None and rival.present >= RIVAL_SHARE * owner.present:
+        return PeopleChoice(people, doubt=f"{chosen}, but tracks {rival.tracks[:5]} are in view nearly as long", spans=_spans(rival.t), basis=basis)
     if coverage < MIN_OWNER_COVERAGE:
         elsewhere = np.concatenate([chain.t[~np.isin(chain.frames, owner.frames)] for chain in others])
-        return PeopleChoice(people, doubt=f"{chosen}, but in only {coverage:.0%} of the frames with anyone in them", spans=_spans(elsewhere))
-    return PeopleChoice(people)
+        return PeopleChoice(people, doubt=f"{chosen}, but in only {coverage:.0%} of the frames with anyone in them", spans=_spans(elsewhere), basis=basis)
+    return PeopleChoice(people, basis=basis)
 
 
 def _clicked_track(keypoints: pd.DataFrame, frame, candidates: list[int], click: Click) -> int | None:
