@@ -467,6 +467,12 @@ class TestMixed:
         split, _, unplaced = split_by_voice(utterances, words, self.TURNS, self.NAMES, elsewhere=frozenset({"parent"}))
         assert split["subject_id"].tolist() == ["child"] and unplaced.empty
 
+    def test_nothing_left_for_anyone_gives_empty_tables(self):
+        utterances = pd.DataFrame({"utterance_index": [0], "t_start": [0.0], "t_end": [9.0], "text": [""], "confidence": [np.nan], "language": ["en"]})
+        words = pd.DataFrame({"utterance_index": [0], "t_start": [1.0], "t_end": [1.5], "word": ["hi"], "score": [0.9]})
+        split, placed, unplaced = split_by_voice(utterances, words, self.TURNS, self.NAMES, elsewhere=frozenset({"parent"}))
+        assert split.empty and placed.empty and unplaced.empty and {"subject_id", "utterance_index", "text"} <= set(split.columns)
+
     def test_an_own_mic_utterance_in_the_voice_of_someone_without_one_is_dropped(self, project, monkeypatch):
         from macaw.extractors.audio.content import asr as asr_module
         from macaw.extractors.audio.content.asr import ASRExtractor

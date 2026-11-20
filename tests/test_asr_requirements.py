@@ -64,3 +64,29 @@ def test_the_word_timing_model_is_loaded_once_per_language(monkeypatch, tmp_path
         _, words = backend.transcribe(track, language=language, word_timestamps=True)
         assert words["word"].tolist() == ["hi"]
     assert loaded == ["en", "de"]
+
+
+def test_a_word_the_aligner_gives_no_time_is_kept_where_the_word_before_it_ends(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    import numpy as np
+    import soundfile
+
+    from macaw.extractors.audio.content.asr import WhisperXBackend
+
+    said = [{"word": "I", "start": 0.1, "end": 0.2, "score": 0.9}, {"word": "have", "start": 0.3, "end": 0.5, "score": 0.9},
+            {"word": "3"}, {"word": "apples", "start": 0.7, "end": 1.0, "score": 0.8}]
+    segment = {"start": 0.0, "end": 1.0, "text": "I have 3 apples", "words": said}
+    fake = SimpleNamespace(
+        load_model=lambda *args, **kwargs: SimpleNamespace(transcribe=lambda audio, batch_size, language: {"language": language, "segments": [dict(segment)]}),
+        load_align_model=lambda language_code, device: ("aligner", {}),
+        align=lambda segments, model, metadata, audio, device, return_char_alignments: {"segments": [dict(segment)]},
+    )
+    monkeypatch.setitem(sys.modules, "whisperx", fake)
+    track = tmp_path / "track.wav"
+    soundfile.write(track, np.zeros(16000, dtype=np.float32), 16000)
+    _, words = WhisperXBackend("large-v3", device="cpu").transcribe(track, language="en", word_timestamps=True)
+    assert " ".join(words["word"]) == "I have 3 apples"
+    three = words[words["word"] == "3"].iloc[0]
+    assert three["t_start"] == three["t_end"] == 0.5 and np.isnan(three["score"])

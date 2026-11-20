@@ -264,15 +264,18 @@ class WhisperXBackend(ASRBackend):
                     "language": detected,
                 }
             )
+            last = float(segment["start"])
             for word in segment.get("words") or []:
-                # a numeral or a symbol comes back from the aligner without a time span
-                if word.get("start") is None or word.get("end") is None:
-                    continue
+                # a numeral or a symbol comes back from the aligner without a time span; it is kept at the moment the
+                # word before it ends, so it goes where that word goes
+                start = float(word["start"]) if word.get("start") is not None else last
+                end = float(word["end"]) if word.get("end") is not None else start
+                last = end
                 words.append(
                     {
                         "utterance_index": index,
-                        "t_start": float(word["start"]),
-                        "t_end": float(word["end"]),
+                        "t_start": start,
+                        "t_end": end,
                         "word": str(word.get("word", "")).strip(),
                         "score": float(word["score"]) if word.get("score") is not None else np.nan,
                     }
@@ -408,7 +411,7 @@ _MISSING = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.10.0"
+    version = "0.11.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -929,7 +932,7 @@ class SharedASRExtractor(Extractor):
     """Speech on a shared microphone recognised before anyone names the voices, so naming can read what each voice says."""
 
     name = SHARED_ASR
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
@@ -1174,7 +1177,8 @@ def split_by_voice(
             "confidence": float(part["score"].mean()) if part["score"].notna().any() else np.nan,
             **{column: source[column] for column in columns},
         })
-    split = pd.DataFrame(rows)
+    # no word may be left for anyone to keep, as when every named voice has a microphone of its own
+    split = pd.DataFrame(rows, columns=["subject_id", "run", "t_start", "t_end", "text", "confidence", *columns])
     split["utterance_index"] = split.groupby("subject_id").cumcount()
     index = split.set_index("run")["utterance_index"]
     placed["utterance_index"] = placed["run"].map(index)
