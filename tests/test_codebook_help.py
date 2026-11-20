@@ -22,7 +22,7 @@ from macaw.extractors.audio.content import asr
 from macaw.project.layout import layout_for
 from macaw.store.annotations import write_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame
-from test_llm_coding import RECORDING, project_with, transcript_of
+from test_llm_coding import PER_TRACK, RECORDING, project_with, transcript_of
 
 CODEBOOK = Codebook(
     name="acts",
@@ -205,7 +205,7 @@ def described(system, user):
 class TestDraft:
     def test_units_are_described_then_gathered_into_codes_with_their_own_words_as_examples(self, monkeypatch):
         monkeypatch.setattr(judge, "load_transcript", transcript_of(TALK))
-        lines = {"r1": judge.coding_units(None, RECORDING, "utterance")}
+        lines = {"r1": judge.coding_units(PER_TRACK, RECORDING, "utterance")}
         units = sample_units(lines, 10, np.random.default_rng(0))
         assert units["id"].tolist() == ["d1", "d2", "d3", "d4", "d5"] and units["before"].iloc[1] == "A: where is it?"
         assert len(sample_units(lines, 3, np.random.default_rng(0))) == 3
@@ -227,7 +227,7 @@ class TestDraft:
 
     def test_an_answer_cut_off_is_refused_not_read_as_a_shorter_one(self, project, monkeypatch):
         monkeypatch.setattr(judge, "load_transcript", transcript_of(TALK))
-        units = sample_units({"r1": judge.coding_units(None, RECORDING, "utterance")}, 10, np.random.default_rng(0))
+        units = sample_units({"r1": judge.coding_units(PER_TRACK, RECORDING, "utterance")}, 10, np.random.default_rng(0))
         for request in ("You read units", "Gather them"):
             with pytest.raises(LLMBackendError, match="cut off at coding.llm.max_tokens"):
                 draft_codebook(CutOff(described, request), "what parents ask", units, name="acts", unit="utterance", batch_size=2)
