@@ -82,6 +82,29 @@ def project(tmp_path, monkeypatch):
     return SimpleNamespace(config=config, resolved=lambda: resolve_config(config), layout=layout, prep=prep)
 
 
+
+def test_what_the_recogniser_gave_past_the_shared_track_reaches_the_dropped_utterances(project, monkeypatch, tmp_path):
+    from macaw.extractors.audio.content.asr import SHARED_OUTSIDE_NAME, SharedASRExtractor
+
+    class Recogniser:
+        def transcribe(self, path, *, language, word_timestamps):
+            lines = pd.DataFrame({"utterance_index": [0, 1], "t_start": [1.0, 25.0], "t_end": [2.0, 26.0], "text": ["hi", "late"],
+                                  "confidence": [0.9, 0.7], "language": ["en"] * 2})
+            return lines, pd.DataFrame(columns=["utterance_index", "t_start", "t_end", "word", "score"])
+
+    monkeypatch.setattr(ASRExtractor, "backend", lambda self: Recogniser())
+    monkeypatch.setattr(asr_module, "voice_pitch", lambda config, path, turns: {})
+    config = project.resolved()
+    result = SharedASRExtractor(config).run(build_recording("003", config), tmp_path)
+    assert pd.read_parquet(result.artifacts[SHARED_OUTSIDE_NAME])[["text", "reason"]].values.tolist() == [["late", "outside track"]]
+    heard = project.layout.artifacts_dir("003", SHARED_ASR)
+    (heard / SHARED_OUTSIDE_NAME).write_bytes(result.artifacts[SHARED_OUTSIDE_NAME].read_bytes())
+    name_voices(project)
+    extractor = ASRExtractor(project.resolved())
+    extractor._from_shared_track(build_recording("003", config), project.prep, None, [])
+    assert "late" in pd.concat(extractor._dropped)["text"].tolist()
+    assert heard / SHARED_OUTSIDE_NAME in extractor.inputs_for(build_recording("003", config))
+
 def macaw(project, *args):
     return CliRunner().invoke(app, [*args, "-c", str(project.config), "-r", "003", "--by", "ann"])
 

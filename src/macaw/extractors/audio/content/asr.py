@@ -45,6 +45,8 @@ TRANSCRIPT_NAME = "transcript.parquet"
 CORRECTED_CHECK = "asr_corrected"
 SHARED_UTTERANCES_NAME = "shared_utterances.parquet"
 SHARED_WORDS_NAME = "shared_words.parquet"
+# what the recogniser gave outside the shared track, for text.asr's dropped utterances
+SHARED_OUTSIDE_NAME = "shared_outside.parquet"
 # what each voice on a shared microphone said and how high it is, before anyone names it
 VOICE_LINES_NAME = "voice_lines.parquet"
 VOICE_PITCH_NAME = "voice_pitch.json"
@@ -467,7 +469,7 @@ class ASRExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         corrected = layout.corrected_transcript_path(recording.recording_id)
         heard = layout.artifacts_dir(recording.recording_id, SHARED_ASR)
-        shared = [heard / SHARED_UTTERANCES_NAME, heard / SHARED_WORDS_NAME] if self._shared() else []
+        shared = [heard / SHARED_UTTERANCES_NAME, heard / SHARED_WORDS_NAME, heard / SHARED_OUTSIDE_NAME] if self._shared() else []
         return [
             *voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id)), *shared,
             *([corrected] if corrected.is_file() else []),
@@ -579,6 +581,9 @@ class ASRExtractor(Extractor):
         """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
         rid = recording.recording_id
         utterances, words = read_shared_transcript(self.config, rid)
+        outside = layout_for(self.config, create=False).artifacts_dir(rid, SHARED_ASR) / SHARED_OUTSIDE_NAME
+        if outside.is_file():
+            self._keep_dropped(pd.read_parquet(outside).drop(columns="recording_id"))
         turns = _track_clock_turns(self.config, rid, prep, changed=True)
         utterances, words, unplaced = split_by_voice(
             utterances, words, turns, speaker_names(self.config, rid), elsewhere=frozenset(prep.tracks)
@@ -946,7 +951,7 @@ class SharedASRExtractor(Extractor):
     """Speech on a shared microphone recognised before anyone names the voices, so naming can read what each voice says."""
 
     name = SHARED_ASR
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
@@ -1002,6 +1007,9 @@ class SharedASRExtractor(Extractor):
                 message=f"{len(outside)} utterance(s) the backend returned lie outside the prepared track and were dropped.",
             )
         ]
+        outside = outside.assign(
+            recording_id=rid, subject_id=None, reason="outside track", detail=f"the prepared track ends at {prep.duration_s:.1f} s",
+        )
         utterances = utterances.assign(recording_id=rid, subject_id=None, n_words=_word_counts(utterances))
         words = words.assign(recording_id=rid, subject_id=None)
         turns = _track_clock_turns(self.config, rid, prep)
@@ -1009,6 +1017,9 @@ class SharedASRExtractor(Extractor):
         artifacts = {
             SHARED_UTTERANCES_NAME: write_transcript(_concat([utterances], TRANSCRIPT_SCHEMA), workspace / SHARED_UTTERANCES_NAME),
             SHARED_WORDS_NAME: _io.write_file(_concat([words], WORD_SCHEMA), workspace / SHARED_WORDS_NAME, WORD_SCHEMA, "words"),
+            SHARED_OUTSIDE_NAME: _io.write_file(
+                _concat([outside], DROPPED_SCHEMA), workspace / SHARED_OUTSIDE_NAME, DROPPED_SCHEMA, "dropped utterances"
+            ),
             VOICE_LINES_NAME: write_transcript(voice_lines(utterances, words, turns, rid, prep.t_origin_s), workspace / VOICE_LINES_NAME),
         }
         (workspace / VOICE_PITCH_NAME).write_text(json.dumps(pitch, indent=2), encoding="utf-8")
