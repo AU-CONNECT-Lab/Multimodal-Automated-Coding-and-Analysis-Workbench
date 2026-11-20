@@ -384,6 +384,14 @@ class TestExtractor:
         mine = rows[rows.subject_id_b.isna()].reset_index(drop=True)
         pd.testing.assert_series_equal(mine.value, alone.value.reset_index(drop=True))
 
+    def test_the_pairs_come_from_the_shared_camera_when_someones_own_camera_saw_nobody(self, run):
+        in_room = [person(name, centre=centre, scale=0.2).assign(video="room.mp4")
+                   for name, centre in (("parent", (100.0, 200.0)), ("child", (300.0, 200.0)))]
+        files = [video("parent.mp4", "parent"), video("child.mp4", "child"), video("room.mp4")]
+        rows = run(pd.concat([person("parent"), *in_room]), files).rows
+        assert set(rows.loc[rows.subject_id_b.notna(), "feature"]) == {"interpersonal_distance", "envelope_overlap"}
+        assert "child" not in set(rows.loc[rows.subject_id_b.isna(), "subject_id"])
+
     def test_with_two_room_cameras_everyone_is_measured_on_the_first_the_setup_lists(self, run):
         left = pd.concat([person("parent", n_frames=20), person("child", centre=(450.0, 220.0), n_frames=5)]).assign(video="left.mp4")
         right = pd.concat([person("parent", n_frames=8), person("child", centre=(450.0, 220.0), n_frames=20, scale=2.0)]).assign(video="right.mp4")

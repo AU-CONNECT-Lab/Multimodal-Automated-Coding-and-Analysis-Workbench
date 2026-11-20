@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
-from macaw.extractors.video.pose.track_repair import RIVAL_SHARE, Chain, PeopleChoice, join_fragments, owner_rows
+from macaw.extractors.video.pose.track_repair import RIVAL_SHARE, Chain, PeopleChoice, _spans, join_fragments, owner_rows
 
 # frames asked about for each person in view, spread over the time they are in view
 LOOK_FRAMES = 5
@@ -99,11 +99,17 @@ def named_by_look(
             f"{by} did not clearly tell {', '.join(unplaced)} ({'; '.join(told(index) for index in answers) or 'no answers'}); "
             "click them on a frame"
         )
+    spans: list[tuple[float, float]] = []
+    kept = [index for index in named if twice[named[index]] == 1]
+    rival = max((index for index in answers if index not in kept), key=lambda index: pool[index].present, default=None)
+    if kept and rival is not None and pool[rival].present >= RIVAL_SHARE * min(pool[index].present for index in kept):
+        doubts.append(f"tracks {pool[rival].tracks[:5]}, which {by} did not name, are in view nearly as much as the people named")
+        spans = _spans(pool[rival].t)
     record = [
         {"tracks": pool[index].tracks, "answers": answers[index], "named": named.get(index) if twice.get(named.get(index), 0) == 1 else None}
         for index in answers
     ]
-    return PeopleChoice(people=placed, doubt="; ".join(doubts) or None), record
+    return PeopleChoice(people=placed, doubt="; ".join(doubts) or None, spans=spans), record
 
 
 def answer_key(picture: bytes, model: str, described: dict[str, str]) -> str:

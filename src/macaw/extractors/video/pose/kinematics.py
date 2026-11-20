@@ -234,10 +234,11 @@ class KinematicsExtractor(Extractor):
         frames += [body_size_row(kp, subject_id, common) for subject_id, kp in by_subject.items()]
 
         # people filmed by separate cameras do not share an image plane, so no pixel distance
-        # between them means anything
-        pairs = {pair: _pair_rows(keypoints, recording, *pair) for pair in combinations([s for s in subjects if s in by_subject], 2)}
+        # between them means anything; a pair needs only the camera that reads both
+        named = set(keypoints["subject_id"])
+        pairs = {pair: _pair_rows(keypoints, recording, *pair) for pair in combinations([s for s in subjects if s in named], 2)}
         pairs = {pair: view for pair, view in pairs.items() if view is not None}
-        if not pairs and len(by_subject) > 1:
+        if not pairs and len(named) > 1:
             warnings.append(
                 self._warning(
                     recording, None, "info",
@@ -317,8 +318,10 @@ class KinematicsExtractor(Extractor):
                 name=BODY_SIZE,
                 description=(
                     f"This person's shoulder width in the picture, the {BODY_SIZE_QUANTILE:.0%} quantile over the frames both shoulders "
-                    "were found on the camera their body is measured from. postural_openness and every measure with per_body_size "
-                    "are divided by it, so it is the size to divide other distances and speeds of theirs by."
+                    "were found on the camera their body is measured from. postural_openness and every measure of their own with "
+                    "per_body_size are divided by it, so it is the size to divide other distances and speeds of theirs by. A measure "
+                    "toward another person is divided by their shoulder width on the camera that reads both bodies instead, so that "
+                    "both lengths come from one picture."
                 ),
                 unit=length_unit, scale=Scale.RECORDING, group=self.group, extractor=self.name, extractor_version=self.version,
                 params=params, aggregation="mean",
@@ -331,7 +334,8 @@ class KinematicsExtractor(Extractor):
         function = None
         if measure.method not in BUILTIN_MEASURES:
             function = script_function(self.config.project.scripts_dir, measure.method)
-        seen = [subject for subject in recording.subjects if subject.subject_id in by_subject]
+        found = by_subject if measure.to_person == SELF else set(keypoints["subject_id"])
+        seen = [subject for subject in recording.subjects if subject.subject_id in found]
         rows, stretches, notes = [], [], []
         for a in [subject.subject_id for subject in seen if subject.role == measure.person]:
             others = [a] if measure.to_person == SELF else [

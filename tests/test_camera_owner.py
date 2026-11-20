@@ -135,6 +135,14 @@ class TestNamedByLook:
         assert choice.people == {"parent": [2]}
         assert "did not clearly tell child" in choice.doubt and "unsure 5" in choice.doubt
 
+    def test_someone_in_view_as_long_whom_it_did_not_name_is_a_doubt(self, monkeypatch):
+        def ask(picture):
+            return {"person": True, "who": "child" if picture < 300 else "parent" if picture < 700 else "unsure"}
+
+        choice, _ = self.ask_about(room(person(9, range(0, 100), cx=800)), ask, monkeypatch)
+        assert choice.people == {"child": [1, 3], "parent": [2]}
+        assert "tracks [9], which the model did not name, are in view nearly as much" in choice.doubt and choice.spans == [(0.0, 9.9)]
+
     def test_two_names_for_one_person_name_them_nothing(self, monkeypatch):
         flip = iter(["child", "parent"] * 10)
         choice, _ = self.ask_about(table(person(1, range(0, 100))), lambda picture: {"person": True, "who": next(flip)}, monkeypatch)
