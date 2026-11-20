@@ -12,15 +12,16 @@ from macaw.exceptions import MacawError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import SHARED_ASR, read_shared_transcript, split_by_voice
 from macaw.extractors.audio.content.diarization import (
-    diarization_fingerprint,
     CHANGED,
     LINES_GATE,
     NO_ONE,
     SHARED_MODE,
     SpeakerReviewGate,
+    diarization_fingerprint,
     line_changes,
     read_diarization,
     read_line_speakers,
+    turn_takers,
     voice_names,
     voices_mixed,
     with_changes,
@@ -123,14 +124,15 @@ def evidence(config, recording_id: str) -> tuple[str, dict]:
     return (FACES, scores) if scores else (MOUTH, mouths(config, recording_id))
 
 
-def with_evidence(lines: pd.DataFrame, ranks: dict, kind: str = MOUTH) -> pd.DataFrame:
-    """With face.speaking's scores (kind FACES), whom the faces give each line to; with mouth movement, as below."""
+def with_evidence(lines: pd.DataFrame, ranks: dict, kind: str = MOUTH, *, everyone: list[str]) -> pd.DataFrame:
+    """With face.speaking's scores (kind FACES), whom the faces give each line to; with mouth movement, as below.
+    everyone is all who can hold a line, so a line taken from one person goes to another only when one is left."""
     if kind == FACES:
-        return _by_faces(lines, ranks)
-    return _by_mouths(lines, ranks)
+        return _by_faces(lines, ranks, everyone)
+    return _by_mouths(lines, ranks, everyone)
 
 
-def _by_faces(lines: pd.DataFrame, scores: dict[str, tuple[np.ndarray, np.ndarray]]) -> pd.DataFrame:
+def _by_faces(lines: pd.DataFrame, scores: dict[str, tuple[np.ndarray, np.ndarray]], everyone: list[str]) -> pd.DataFrame:
     """A line goes to the other person when their face speaks and the voice's person's does not; with one face only,
     when the voice's person's face plainly does not speak (or the other's plainly does, shown as doubtful)."""
     out = lines.copy()
@@ -144,7 +146,7 @@ def _by_faces(lines: pd.DataFrame, scores: dict[str, tuple[np.ndarray, np.ndarra
             inside = value[np.searchsorted(t, a, side="left"): np.searchsorted(t, b, side="right")]
             found.append(float(np.mean(inside)) if inside.size >= _MIN_SPEAKING_FRAMES else np.nan)
         means[who] = np.array(found)
-    people = sorted({*out["base"], *scores} - {NO_ONE})
+    people = sorted({*out["base"], *scores, *everyone} - {NO_ONE})
     suggested, sure, doubt = [], [], []
     for index, line in enumerate(out.itertuples(index=False)):
         own = means[line.base][index] if line.base in means else np.nan
@@ -178,7 +180,7 @@ def _per_line(values: dict[str, np.ndarray], n: int, index) -> pd.Series:
     )
 
 
-def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series]) -> pd.DataFrame:
+def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series], everyone: list[str]) -> pd.DataFrame:
     """Adds whom mouth movement gives each line to (suggested, None where it only speaks against the voice's person),
     whether that is sure enough to keep without listening, and why. A mouth counts as moving against the level halfway
     between the lines of that person's voice and the other lines, so no line needs a known speaker."""
@@ -196,7 +198,7 @@ def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series]) -> pd.DataFrame
         sides = [np.median(level[usable & side]) for side in (own, ~own) if (usable & side).any()]
         middle = float(np.mean(sides)) if len(sides) == 2 else 0.5
         moving[who] = np.where(usable, (level - middle) * np.sqrt(12 * n), np.nan)
-    people = sorted({*out["base"], *ranks} - {NO_ONE})
+    people = sorted({*out["base"], *ranks, *everyone} - {NO_ONE})
     suggested, sure, doubt = [], [], []
     for index, line in enumerate(out.itertuples(index=False)):
         own = moving.get(line.base, np.full(len(out), np.nan))[index]
@@ -225,7 +227,7 @@ def _by_mouths(lines: pd.DataFrame, ranks: dict[str, pd.Series]) -> pd.DataFrame
 def suggested_lines(config, recording: Recording) -> pd.DataFrame:
     """The lines with what the faces suggest; attrs["evidence"] says whether that is face.speaking or mouth movement."""
     kind, found = evidence(config, recording.recording_id)
-    lines = with_evidence(spoken_lines(config, recording), found, kind)
+    lines = with_evidence(spoken_lines(config, recording), found, kind, everyone=turn_takers(config, recording))
     lines.attrs["evidence"] = kind
     return lines
 

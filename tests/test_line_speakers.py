@@ -141,6 +141,9 @@ def test_lines_show_whose_voice_they_fell_in_on_the_recording_clock(project):
     assert lines["t_start"].round(2).tolist() == [10.2, 14.2, 18.2]
 
 
+PAIR = ["parent", "child"]
+
+
 class TestEvidence:
     def lines(self):
         """Eight lines of three seconds; the fifth fell in the parent's voice and is the child's."""
@@ -157,7 +160,7 @@ class TestEvidence:
 
     def test_two_mouths_agreeing_against_a_line_of_two_seconds_are_sure(self):
         lines = self.lines()
-        found = with_evidence(lines, {"parent": self.mouth(lines, [0, 1, 2, 3]), "child": self.mouth(lines, [4, 5, 6, 7])})
+        found = with_evidence(lines, {"parent": self.mouth(lines, [0, 1, 2, 3]), "child": self.mouth(lines, [4, 5, 6, 7])}, everyone=PAIR)
         assert found["suggested"].tolist() == [None, None, None, None, "child", None, None, None]
         assert found["sure"].tolist() == [False] * 4 + [True] + [False] * 3
         assert "the mouth of child moves and that of parent is still" in found["doubt"][4]
@@ -166,18 +169,18 @@ class TestEvidence:
         lines = self.lines()
         mouths = {"parent": self.mouth(lines, [0, 1, 2, 3]), "child": self.mouth(lines, [4, 5, 6, 7])}
         lines.loc[4, "t_end"] = lines.loc[4, "t_start"] + 1.2
-        found = with_evidence(lines, mouths)
+        found = with_evidence(lines, mouths, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"][4]
 
     def test_one_mouth_alone_never_makes_a_line_sure(self):
         lines = self.lines()
-        found = with_evidence(lines, {"parent": self.mouth(lines, [0, 1, 2, 3])})
+        found = with_evidence(lines, {"parent": self.mouth(lines, [0, 1, 2, 3])}, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"].any() and found["doubt"][4] == "the mouth of parent is still"
-        found = with_evidence(lines, {"child": self.mouth(lines, [4, 5, 6, 7])})
+        found = with_evidence(lines, {"child": self.mouth(lines, [4, 5, 6, 7])}, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"].any() and found["doubt"][4] == "the mouth of child moves"
 
     def test_no_face_says_nothing(self):
-        found = with_evidence(self.lines(), {})
+        found = with_evidence(self.lines(), {}, everyone=PAIR)
         assert found["suggested"].isna().all() and not found["sure"].any()
 
     def test_only_sure_suggestions_are_taken_without_a_person(self):
@@ -201,34 +204,40 @@ class TestEvidenceOfFaces:
 
     def test_the_other_face_speaking_and_the_voices_not_is_sure(self):
         lines = self.lines()
-        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3]), "child": self.face(lines, [4, 5, 6, 7])}, FACES)
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3]), "child": self.face(lines, [4, 5, 6, 7])}, FACES, everyone=PAIR)
         assert found["suggested"].tolist() == [None, None, None, None, "child", None, None, None]
         assert found["sure"].tolist() == [False] * 4 + [True] + [False] * 3
         assert found["doubt"][4] == "the face of child speaks and that of parent does not"
 
     def test_faces_close_together_are_only_doubted(self):
         lines = self.lines()
-        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3], 0.3), "child": self.face(lines, [4, 5, 6, 7], 0.3)}, FACES)
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3], 0.3), "child": self.face(lines, [4, 5, 6, 7], 0.3)}, FACES, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"].any()
 
     def test_the_voices_own_face_alone_is_sure_on_a_line_of_a_second_or_more(self):
         lines = self.lines()
-        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES)
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES, everyone=PAIR)
         assert found["suggested"][4] == "child" and found["sure"][4] and found["doubt"][4] == "the face of parent does not speak"
         lines.loc[4, "t_end"] = lines.loc[4, "t_start"] + 0.6
-        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES)
+        found = with_evidence(lines, {"parent": self.face(lines, [0, 1, 2, 3])}, FACES, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"][4]
 
     def test_the_other_face_alone_is_only_doubted(self):
         lines = self.lines()
-        found = with_evidence(lines, {"child": self.face(lines, [4, 5, 6, 7])}, FACES)
+        found = with_evidence(lines, {"child": self.face(lines, [4, 5, 6, 7])}, FACES, everyone=PAIR)
         assert found["suggested"][4] == "child" and not found["sure"].any() and found["doubt"][4] == "the face of child speaks"
+
+    def test_one_face_does_not_give_a_line_away_while_more_than_one_other_could_hold_it(self):
+        """A sibling's line fell in the child's voice and only the child's face was read: it is not the parent's by elimination."""
+        lines = self.lines().assign(base=["child"] * 5 + ["parent"] * 3, person=["child"] * 5 + ["parent"] * 3)
+        found = with_evidence(lines, {"child": self.face(lines, [0, 1, 2, 3])}, FACES, everyone=["parent", "child", "sibling"])
+        assert found["suggested"][4] is None and not found["sure"].any() and found["doubt"][4] == "the face of child does not speak"
 
     def test_a_line_the_face_was_not_seen_through_says_nothing(self):
         lines = self.lines()
         t, value = self.face(lines, [0, 1, 2, 3])
         hidden = (t > 15.5) & (t < 20)
-        found = with_evidence(lines, {"parent": (t[~hidden], value[~hidden])}, FACES)
+        found = with_evidence(lines, {"parent": (t[~hidden], value[~hidden])}, FACES, everyone=PAIR)
         assert found["suggested"][4] is None and found["doubt"][4] == ""
 
     def test_the_faces_are_used_where_face_speaking_ran_and_said_so_when_kept(self, project, monkeypatch):

@@ -382,11 +382,12 @@ def _clip(directory: Path, clip: dict):
 
 def _mouth_doubts(config, recording):
     """How many lines the faces speak against, as a hint that a voice may hold two people."""
+    from macaw.extractors.audio.content.diarization import turn_takers
     from macaw.extractors.audio.content.line_speakers import evidence, speak_against, spoken_lines, with_evidence
 
     try:
         kind, found = evidence(config, recording.recording_id)
-        lines = with_evidence(spoken_lines(config, recording), found, kind) if found else None
+        lines = with_evidence(spoken_lines(config, recording), found, kind, everyone=turn_takers(config, recording)) if found else None
     except Exception:   # no shared transcript or no faces yet: no hint
         return None
     if lines is None or lines.empty:
