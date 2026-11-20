@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.evidence import EVIDENCE_COLUMNS, EVIDENCE_NAME, NO_LINE, NO_LIST, NO_QUOTE, NOT_IN_LINE, OTHER_SPEAKER
+from macaw.coding.llm.evidence import EVIDENCE_COLUMNS, EVIDENCE_NAME, NO_LINE, NO_LIST, NO_QUOTE, NOT_IN_LINE, OTHER_SPEAKER, RUNS_ON
 from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, PROMPT_COLUMNS, PROMPTS_NAME, RATE_STEP, RATINGS_NAME, WHOLE
 from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
@@ -353,7 +353,7 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     ),
     "evidence_problem": (
         f"The checks the cited lines failed, each with how many lines failed it: {NO_LINE}, {OTHER_SPEAKER} than the one the scale "
-        f"rates, {NO_QUOTE}, or {NOT_IN_LINE}; or {NO_LIST}. The score is kept either way.", None,
+        f"rates, {NO_QUOTE}, {RUNS_ON}, or {NOT_IN_LINE}; or {NO_LIST}. The score is kept either way.", None,
         "Empty where every cited line passed, and when the version does not ask for evidence.",
     ),
 }
@@ -372,8 +372,9 @@ EVIDENCE_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     "quote": ("The words the answer copied from the line.", None, "Empty where the answer copied none."),
     "said": ("The line as the model was shown it.", None, f"Empty where the line does not exist ({NO_LINE})."),
     "problem": (
-        f"What failed: {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; {NO_QUOTE}; or "
-        f"{NOT_IN_LINE}, the copied words not found in the line once case, punctuation and spacing are set aside. Several are "
+        f"What failed: {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; {NO_QUOTE}; "
+        f"{RUNS_ON}, the copied words found only across the line and the one before or after it, as where the transcript split "
+        f"a sentence; or {NOT_IN_LINE}, the copied words not found in the line once case, punctuation and spacing are set aside. Several are "
         "joined by a semicolon.", None, "Empty where the line passed every check.",
     ),
 }

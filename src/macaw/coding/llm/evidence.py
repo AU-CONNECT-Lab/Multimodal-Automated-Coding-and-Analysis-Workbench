@@ -17,6 +17,7 @@ EVIDENCE_COLUMNS = [
 ]
 NO_LIST = "no list of evidence"
 NO_LINE, OTHER_SPEAKER, NO_QUOTE, NOT_IN_LINE = "no such line", "said by another person", "no words copied", "words not in the line"
+RUNS_ON = "words run on into the next or last line"
 _NOT_WORD = re.compile(r"[^\w\s]", re.UNICODE)
 
 
@@ -60,10 +61,23 @@ def check_cited(items: list, lines: pd.DataFrame, scale: RatingScale, start: flo
                 problems.append(OTHER_SPEAKER)
             if not normalised(quote):
                 problems.append(NO_QUOTE)
-            elif f" {normalised(quote)} " not in f" {normalised(row.text)} ":
-                problems.append(NOT_IN_LINE)
+            elif not _holds(row.text, quote):
+                neighbours = [by_number.get(number + step) for step in (-1, 1)]
+                problems.append(RUNS_ON if _runs_on(row.text, quote, neighbours) else NOT_IN_LINE)
         rows.append({**found, "problem": "; ".join(problems)})
     return rows
+
+
+def _holds(text: str, quote: str) -> bool:
+    return f" {normalised(quote)} " in f" {normalised(text)} "
+
+
+def _runs_on(text: str, quote: str, neighbours: list) -> bool:
+    """The quotation starts in the cited line and ends in the next, or starts in the last line and ends in the cited one."""
+    before, after = (neighbour.text if neighbour is not None else None for neighbour in neighbours)
+    if before is not None and not _holds(before, quote) and _holds(f"{before} {text}", quote):
+        return True
+    return after is not None and not _holds(after, quote) and _holds(f"{text} {after}", quote)
 
 
 def evidence_table(answers: pd.DataFrame, prompts: list) -> tuple[pd.DataFrame, pd.DataFrame]:

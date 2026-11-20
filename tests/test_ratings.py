@@ -901,6 +901,21 @@ class TestEvidence:
         flow = module_scale(SCALES["scales"][2])
         assert check_cited([{"line": 2, "quote": "It's fine"}], lines, flow, 0.0)[0]["problem"] == ""
 
+    def test_words_running_into_a_neighbouring_line_are_told_apart(self):
+        from macaw.coding.llm.evidence import NOT_IN_LINE, RUNS_ON, check_cited
+
+        lines = pd.DataFrame({
+            "line": [1, 2, 3], "speaker": ["parent", "parent", "child"], "t_start": [0.0, 2.0, 4.0], "t_end": [2.0, 4.0, 5.0],
+            "text": ["Shall we put the", "blocks away now?", "No."],
+        })
+        flow = module_scale(SCALES["scales"][2])
+        rows = check_cited(
+            [{"line": 1, "quote": "put the blocks away"}, {"line": 2, "quote": "put the blocks away"}, {"line": 3, "quote": "blocks away"},
+             {"line": 2, "quote": "away now no"}, {"line": 1, "quote": "now no"}],
+            lines, flow, 0.0,
+        )
+        assert [row["problem"] for row in rows] == [RUNS_ON, RUNS_ON, NOT_IN_LINE, RUNS_ON, NOT_IN_LINE]
+
     def test_evidence_is_kept_with_recording_times_failures_counted_and_scores_kept(self, monkeypatch, tmp_path, server):
         def answer(scale, sample):
             if scale == "warmth":

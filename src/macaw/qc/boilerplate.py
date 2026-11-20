@@ -838,8 +838,8 @@ def _rating(config, spec, names) -> str:
             " The lines of the transcript were numbered, and before each score the model was asked to list the lines the score "
             "rested on, each with a few words copied from it, to rate only from the transcript and to cite only the lines given. "
             "Each cited line was checked to exist, to have been said by the person rated where a scale rated one person, and to "
-            "hold the copied words once case and punctuation were set aside; answers that failed a check kept their scores, and "
-            "the failures were counted."
+            "hold the copied words once case and punctuation were set aside, with words running on into the line before or after "
+            "counted apart; answers that failed a check kept their scores, and the failures were counted."
         )
     if params.get("reasons"):
         text += " The model was asked to name in a few words what each score rested on, after the score."
