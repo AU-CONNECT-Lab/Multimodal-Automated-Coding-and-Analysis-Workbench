@@ -286,7 +286,7 @@ _SUBJECT_SPECS = {
 
 _PAIR_SPECS = {
     "transition_count": (
-        "Turns where subject_id handed the floor to subject_id_b. The two are equal on the "
+        "Turns where subject_id took the floor from subject_id_b, the same direction as fto_s. The two are equal on the "
         "diagonal, where the same speaker restarted after a long pause.",
         "count",
         "sum",
@@ -342,10 +342,10 @@ _MISSING = {
     "n_interruption_attempts_made": f"{_NO_TURN} 0 means they never spoke inside somebody else's turn for longer than turns.backchannel_max_s.",
     "transition_count": (
         "Empty only outside pair rows: every ordered pair of those who can hold the floor, a person with themselves included, "
-        "gets a value in every span. 0 means a turn of subject_id was never followed by one of subject_id_b there."
+        "gets a value in every span. 0 means a turn of subject_id_b was never followed by one of subject_id there."
     ),
     "pair_median_fto_s": (
-        "Empty where subject_id never handed the floor to subject_id_b in the span, and always where the two are the same "
+        "Empty where subject_id never took the floor from subject_id_b in the span, and always where the two are the same "
         "speaker, since a restart is not a handover."
     ),
     "n_transitions": f"{_EVERY_SPAN} 0 means fewer than two turns in the span.",
@@ -367,7 +367,7 @@ _MISSING = {
 @register_extractor
 class TransitionExtractor(Extractor):
     name = "turns.transitions"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "turns"
     config_sections = ("turns", "text.diarization", "text.extra_voices")
@@ -515,8 +515,8 @@ class TransitionExtractor(Extractor):
                             }
                         ),
                         scale=Scale.RECORDING,
-                        subject_id=str(giver),
-                        subject_id_b=str(taker),
+                        subject_id=str(taker),
+                        subject_id_b=str(giver),
                         **common,
                     )
                 )

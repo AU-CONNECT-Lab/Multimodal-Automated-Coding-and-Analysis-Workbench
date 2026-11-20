@@ -139,8 +139,11 @@ class TestPairRows:
         assert value(rows, "transition_count", "child", "child") == 0
 
     def test_pair_median_follows_the_same_direction(self, rows):
-        assert value(rows, "pair_median_fto_s", "parent", "child") == pytest.approx(-0.45)
-        assert value(rows, "pair_median_fto_s", "child", "parent") == pytest.approx(0.55)
+        """subject_id took the floor from subject_id_b, as on the rows of each transition."""
+        assert value(rows, "pair_median_fto_s", "child", "parent") == pytest.approx(-0.45)
+        assert value(rows, "pair_median_fto_s", "parent", "child") == pytest.approx(0.55)
+        events = rows[(rows.feature == "fto_s") & (rows.subject_id == "child") & (rows.subject_id_b == "parent")]
+        assert events.value.median() == pytest.approx(-0.45)
 
     def test_counts_sum_to_the_number_of_transitions(self, rows):
         cells = rows[(rows.feature == "transition_count") & rows.subject_id_b.notna()]
