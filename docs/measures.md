@@ -17,6 +17,8 @@ For each pair of participants the results give, at every moment, whether one loo
 
 When objects are named, or placed in the room (see *Positions in the room instead of the picture* below), the results also give joint attention: the moments in which two participants look at the same named object. For each pair they give the proportion of time spent in joint attention, the number of stretches of it, and how many of these stretches each participant led, that is, looked at the object first. For each stretch, `joint_attention_lag_s` gives how long after the first participant the second one joined, so that a study can apply its own window for following another's attention. A look that began before the participant's gaze could first be read counts from that moment. Each stretch is stored as a code on a tier of its own for each pair, labelled with the object. Two participants looking at the same third person is not counted as joint attention; it can be read from whom each looks at. The limitation above applies: two objects close together in the picture are not told apart.
 
+For each named object the results also give, for each participant, whether they look at it in each frame, the proportion of time spent looking at it and the number of looks: for a ball, `looks_at_ball`, `looks_at_ball_share` and `looks_at_ball_n`, with the words of a longer name joined by underscores as for objects ({ref}`objects`). The model's estimate is a map of where a participant may be looking, from which the single most likely point is taken. The results keep more of the map: how sharply it places that point (`gaze_peak`, on the model's own scale), and how much of it lies on each other participant's head (`gaze_share_on_head`, from 0 to 1) and inside each followed object's outline (`gaze_share_on_ball`). These graded values allow a stricter or a more lenient criterion than the single point, which matters most when two heads or objects are close together in the picture.
+
 ### Checking the estimate on the study's own video
 
 On the Review page, *Where people look* shows a frame with each participant's head marked. Indicate whom or what each participant looks at and press **Save what they look at**; the dice button in the card's corner moves the player to a moment at random. Frames should be drawn at random rather than chosen for clarity, otherwise the check overstates accuracy. About 20 frames per participant give a useful estimate. The quality-control report then gives, for each participant, how often MACAW agreed with these labels and lists the frames where it did not. Saving again for the same frame replaces one's own label; a label another person saved for that frame is kept, and where two people labelled the same frames the report also gives how often they named the same target.
@@ -34,6 +36,8 @@ face:
 ```
 
 A look within `tolerance_deg` of the direction to a person or thing counts as a look at it. There is no default, as the appropriate value depends on how far apart the participants sit. Each participant's directions are taken as seen from the camera used for their gaze, so participants filmed by cameras of their own are read as well. The method assumes that participants remain at their positions; a recording with a different arrangement changes the room in its own settings file. Head angles estimated from a single camera carry a bias of their own, so labelling frames as described above is recommended: MACAW then corrects each participant's offset from the labelled frames, and once a participant has three or more labelled frames looking at a target, it takes that target's direction from the frames rather than from the room. Labelled frames alone, without the room, are also sufficient.
+
+With this method, the angle between where a participant looks and where the room puts the other participant is given as `gaze_off_deg`, and for each object placed in the room or named in labelled frames as, for a toy, `gaze_off_deg_toy`, beside `looks_at_toy` and its proportion and count.
 
 (objects)=
 ## Things in the picture
@@ -94,6 +98,8 @@ motion:
 ```
 
 When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
+
+`motion_energy` is averaged over `motion.smoothing_s`; `motion_energy_raw` gives the same share frame by frame before averaging, for analyses that apply their own filter. A change of the whole picture, such as a light switched on or a camera knocked, also changes each region and is not movement. For each participant's camera, `picture_change` gives the share of the whole picture that changed in each frame (above 0.5 such an event rather than movement), and `picture_frozen` marks with 1 each frame identical to the one before, in which a stalled recording shows no movement whatever the participant did. Frames marked by either are best left out before motion energy is analysed.
 
 (counts)=
 ## Counts and shares per person
@@ -319,7 +325,11 @@ kinematics:
 
 `still_speed` and `peak_prominence` have no default, because they are in pixels per second and therefore depend on the camera. A hand slower than `still_speed` counts as still, and a speed peak counts as a submovement when it rises at least `peak_prominence` above its surroundings. The wrist speeds in the results help to choose them. `peak_prominence` should lie well above the jitter of the tracking, otherwise every wobble counts as a submovement; check a few gestures against the video before relying on the counts. When two people coded the tier, `annotator` names whose gestures are measured. `holds: both_hands` counts a hold only while both hands are still, instead of for each hand separately.
 
+The moments behind the counts are kept as codes: each submovement peak on the tier `gesture_submovement`, one frame long and labelled with the hand, and each hold on `gesture_hold`, labelled with the hand, or *both* with `holds: both_hands`. Exported to ELAN, they show where the thresholds placed peaks and holds in each gesture, and they can be related in time to speech.
+
 Height and gesture space require the hips to be visible; when a table hides them, these two measures remain empty.
+
+The height level, gesture space and direction of each wrist are also given in every frame for every participant, whether or not gestures were coded, coded as above: `left_wrist_height_level` (0 to 5), `left_wrist_gesture_space` (1 to 4) and `left_wrist_gesture_sector` (0 within the centre space, otherwise 1 to 8, from up and to the left in the picture, row by row, to down and to the right), and the same for the right wrist. With points in three dimensions they are given in the participant's own frontal plane as well, with `_3d` appended, seen from in front of the participant.
 
 :::{important}
 Gesture space is measured in the picture, so it follows the body only while the participant faces the camera or has their back to it. Seen from the side, the body appears narrow and the hands seem to reach far beyond it. Height is much less affected. With several calibrated cameras, the three-dimensional gesture space described below is free of this limitation.

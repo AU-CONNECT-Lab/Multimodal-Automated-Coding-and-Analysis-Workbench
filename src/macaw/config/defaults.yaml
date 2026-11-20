@@ -88,7 +88,7 @@ pose:
   backend: null                      # mediapipe (reports usage to Google) | yolo (offline; AGPL, not bundled)
   model: null                        # backend-specific checkpoint; null = backend default
   device: auto                       # auto | cpu | cuda
-  min_confidence: 0.3                # 0-1; keypoints below this become NaN
+  min_confidence: 0.3                # 0-1; keypoints below this become NaN; changing it does not run the model again
   input_size: 1280                   # px; side frames are scaled to before detection (yolo); small people need more
   review: flagged                    # always | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording

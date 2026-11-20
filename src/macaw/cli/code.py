@@ -65,7 +65,9 @@ def code(
 def review(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
-    export_to: Path = typer.Option(None, "--export", help="Write the queue to a file (.csv to edit by hand)."),
+    export_to: Path = typer.Option(
+        None, "--export", help="Write the queue to a file (.csv to edit by hand), each unit with the model's votes and the reason it gave for each answer."
+    ),
     apply_from: Path = typer.Option(None, "--apply", help="Merge back reviewed decisions."),
 ) -> None:
     """Write the queue of uncertain codes to a file, or read it back: fill in decision (a code) and reviewer, then give the file to --apply."""
