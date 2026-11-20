@@ -90,3 +90,29 @@ def test_a_word_the_aligner_gives_no_time_is_kept_where_the_word_before_it_ends(
     assert " ".join(words["word"]) == "I have 3 apples"
     three = words[words["word"] == "3"].iloc[0]
     assert three["t_start"] == three["t_end"] == 0.5 and np.isnan(three["score"])
+
+
+def test_a_language_without_a_word_timing_model_says_to_set_the_language(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    import numpy as np
+    import pytest
+    import soundfile
+
+    from macaw.exceptions import BackendNotAvailableError
+    from macaw.extractors.audio.content.asr import WhisperXBackend
+
+    def no_model(language_code, device):
+        raise ValueError(f"No default align-model for language: {language_code}")
+
+    segment = {"start": 0.0, "end": 1.0, "text": "hi"}
+    fake = SimpleNamespace(
+        load_model=lambda *args, **kwargs: SimpleNamespace(transcribe=lambda audio, batch_size, language: {"language": "cy", "segments": [segment]}),
+        load_align_model=no_model,
+    )
+    monkeypatch.setitem(sys.modules, "whisperx", fake)
+    track = tmp_path / "track.wav"
+    soundfile.write(track, np.zeros(16000, dtype=np.float32), 16000)
+    with pytest.raises(BackendNotAvailableError, match="'cy'.*set text.language"):
+        WhisperXBackend("large-v3", device="cpu").transcribe(track, language=None, word_timestamps=True)

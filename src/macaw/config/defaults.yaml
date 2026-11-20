@@ -69,7 +69,7 @@ prosody:
 text:
   asr_backend: whisperx              # whisperx | faster_whisper
   asr_model: large-v3                # smaller models are much faster and much worse on children
-  language: null                     # ISO code; null = autodetect per recording
+  language: null                     # ISO code; null = detected on each track by itself
   device: auto                       # auto | cuda | cpu; auto uses a GPU when one is seen
   compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback
   diarization: per_track             # per_track: a mic per person | pyannote: one shared mic | none

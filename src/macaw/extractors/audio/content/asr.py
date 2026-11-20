@@ -218,7 +218,13 @@ class WhisperXBackend(ASRBackend):
         if language not in self._aligners:
             import whisperx
 
-            self._aligners[language] = whisperx.load_align_model(language_code=language, device=self.device)
+            try:
+                self._aligners[language] = whisperx.load_align_model(language_code=language, device=self.device)
+            except (ValueError, OSError) as error:
+                raise BackendNotAvailableError(
+                    f"no word-timing model could be loaded for the language '{language}' ({error}); where the language "
+                    "was detected, set text.language to the one spoken, and fetch its model with `macaw fetch` before an offline run"
+                ) from error
         return self._aligners[language]
 
     def prefetch(self, *, language: str, align: bool) -> None:
