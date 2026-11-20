@@ -89,6 +89,8 @@ DROPPED_SCHEMA: dict[str, str] = {
     "detail": "string",
     "louder_on": "string",
     "louder_by_db": "float64",
+    "gain_db": "float64",
+    "gain_raised": "bool",
     "room_voice": "string",
     "room_voice_share": "float64",
     "own_voice_share": "float64",
@@ -103,12 +105,14 @@ BLEED_SCHEMA: dict[str, str] = {
     "t_end": "float64",
     "louder_on": "string",
     "louder_by_db": "float64",
+    "gain_db": "float64",
+    "gain_raised": "bool",
     "room_voice": "string",
     "room_voice_share": "float64",
     "own_voice_share": "float64",
     "dropped_as": "string",
 }
-_CROSSTALK_COLUMNS = ["louder_on", "louder_by_db"]
+_CROSSTALK_COLUMNS = ["louder_on", "louder_by_db", "gain_db", "gain_raised"]
 _ROOM_COLUMNS = ["room_voice", "room_voice_share", "own_voice_share"]
 
 # whisperx transcribes in batches; 8 fits comfortably next to a large-v3 model on 24 GB
@@ -404,7 +408,7 @@ _MISSING = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.9.0"
+    version = "0.10.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -705,7 +709,11 @@ class ASRExtractor(Extractor):
                         f"{dropped} of {len(group)} utterances ({fraction:.0%}) were louder on "
                         "another track and dropped as microphone bleed."
                     ),
-                    details={"crosstalk_margin_db": self.config.text.crosstalk_margin_db},
+                    details={
+                        "crosstalk_margin_db": self.config.text.crosstalk_margin_db,
+                        **({"gain_db": round(float(group["gain_db"].iloc[0]), 1), "gain_raised": bool(group["gain_raised"].iloc[0])}
+                           if "gain_db" in group and pd.notna(group["gain_db"].iloc[0]) else {}),
+                    },
                 )
             )
         return warnings

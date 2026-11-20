@@ -111,6 +111,19 @@ def test_a_mic_recorded_quieter_keeps_its_owners_speech(two_tracks, tmp_path, wr
     assert flags["A solo, bleed"]
 
 
+def test_each_utterance_carries_its_tracks_gain_and_whether_it_was_raised(two_tracks, tmp_path, write_wav):
+    from macaw.extractors.audio.prosody.backends import load_audio
+
+    tracks = two_tracks(12.0)
+    out = suppress_crosstalk(SEGMENTS, tracks, margin_db=6.0)
+    assert out["gain_db"].notna().all() and not out["gain_raised"].any()
+    # 40 dB down is a mic nobody talked into, so it is measured against a floor instead
+    tracks["B"] = write_wav(tmp_path / "B_far.wav", load_audio(tracks["B"])[0] * 10 ** (-40 / 20))
+    out = suppress_crosstalk(SEGMENTS, tracks, margin_db=6.0).groupby("subject_id")
+    assert out["gain_raised"].all().to_dict() == {"A": False, "B": True}
+    assert out["gain_db"].first()["A"] - out["gain_db"].first()["B"] == pytest.approx(40.0, abs=1.0)
+
+
 def test_margin_is_configurable(two_tracks):
     assert not any(_flags(two_tracks(12.0), margin_db=20.0).values())
 

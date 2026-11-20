@@ -251,6 +251,8 @@ def suppress_crosstalk(
     out = segments.copy()
     out["louder_on"] = None
     out["louder_by_db"] = np.nan
+    out["gain_db"] = np.nan
+    out["gain_raised"] = None
     if out.empty:
         out["is_crosstalk"] = pd.Series([], dtype=bool)
         return out
@@ -259,9 +261,10 @@ def suppress_crosstalk(
         return out
 
     audio = {subject_id: load_audio(Path(path)) for subject_id, path in tracks.items()}
-    gain = {subject_id: _gain_db(samples, sr) for subject_id, (samples, sr) in audio.items()}
-    loudest = max(gain.values())
-    gain = {subject_id: max(value, loudest - _MAX_GAIN_GAP_DB) for subject_id, value in gain.items()}
+    measured = {subject_id: _gain_db(samples, sr) for subject_id, (samples, sr) in audio.items()}
+    loudest = max(measured.values())
+    # a track this far below the loudest has no owner talking into it, not a low gain
+    gain = {subject_id: max(value, loudest - _MAX_GAIN_GAP_DB) for subject_id, value in measured.items()}
     flags, louder_on, louder_by = [], [], []
     for row in out.itertuples(index=False):
         own = audio.get(row.subject_id)
@@ -283,6 +286,8 @@ def suppress_crosstalk(
     out["is_crosstalk"] = flags
     out["louder_on"] = louder_on
     out["louder_by_db"] = louder_by
+    out["gain_db"] = [measured.get(subject_id, np.nan) for subject_id in out["subject_id"]]
+    out["gain_raised"] = [gain[subject_id] > measured[subject_id] if subject_id in gain else None for subject_id in out["subject_id"]]
     return out
 
 

@@ -33,6 +33,15 @@ _TRANSCRIPT = {
         "above text.crosstalk_margin_db it was dropped as bleed, so negative values are the speaker's own speech.", "dB",
         f"{_OWN_MIC}.",
     ),
+    "gain_db": (
+        "Loud level of the speaker's own microphone over the whole recording (99th percentile of its frame power), which louder_by_db "
+        "measures each microphone against.", "dB", f"{_OWN_MIC}.",
+    ),
+    "gain_raised": (
+        "True where that level lay more than 30 dB below the loudest microphone, so it was taken as a microphone nobody spoke into "
+        "and raised to 30 dB below the loudest; a person whose speech was dropped as bleed throughout often has this.", None,
+        f"{_OWN_MIC}.",
+    ),
     "room_voice": ("The person heard only on the shared microphone whose voice covers most of the utterance.", None,
                    "Empty where no such person's voice overlaps it, and unless people with and without a microphone of their own share the room."),
     "room_voice_share": ("Share of the utterance in the voices of people heard only on the shared microphone; at 0.5 or more, with the "
@@ -56,7 +65,7 @@ _DROPPED = {
         "beyond the prepared track).", None, "Never empty.",
     ),
     "detail": ("The reason in words, with its numbers.", None, "Empty where there is nothing to add."),
-    **{name: _TRANSCRIPT[name] for name in ("louder_on", "louder_by_db", "room_voice", "room_voice_share", "own_voice_share")},
+    **{name: _TRANSCRIPT[name] for name in ("louder_on", "louder_by_db", "gain_db", "gain_raised", "room_voice", "room_voice_share", "own_voice_share")},
 }
 _TURNS = {
     "subject_id": ("The person whose turn it is.", None, "Never empty."),
