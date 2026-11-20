@@ -887,7 +887,23 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
 
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(_environment().get_template("recording.html.j2").render(**context), encoding="utf-8")
+    write_decisions(decisions_path(page), recording_id, context["decisions"], waiting)
     return page, {"counts": counts, "waiting": [gate for gate, _ in waiting]}
+
+
+DECISION_COLUMNS = ["recording_id", "what", "decided", "by"]
+
+
+def decisions_path(page: Path) -> Path:
+    return page.with_name(f"{page.stem}_decisions.csv")
+
+
+def write_decisions(path: Path, recording_id: str, decisions: list[dict], waiting: list[tuple[str, str]]) -> Path:
+    """The page's Decisions table, and each check still waiting for a person, as rows."""
+    rows = [{"recording_id": recording_id, "what": row["what"], "decided": row["decided"], "by": row["by"]} for row in decisions]
+    rows += [{"recording_id": recording_id, "what": gate, "decided": message, "by": "waiting"} for gate, message in waiting]
+    pd.DataFrame(rows, columns=DECISION_COLUMNS).to_csv(path, index=False, encoding="utf-8")
+    return path
 
 
 def standing_page(config: MacawConfig, recording_id: str) -> tuple[Path, dict]:
@@ -942,4 +958,17 @@ def write_project_report(config: MacawConfig, pages: dict[str, tuple[Path, dict]
     context["common_rate"] = _common_rate([float(row["fps"]) for row in rates]) if rates else None
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(_environment().get_template("project.html.j2").render(**context), encoding="utf-8")
+    summary = pd.DataFrame(
+        [
+            {"recording_id": recording_id, **{f"n_{kind}": int(found["counts"].get(kind, 0)) for kind in ("fail", "warn", "info")},
+             "waiting": "; ".join(found["waiting"]), "page": _href(path, page)}
+            for recording_id, (path, found) in sorted(pages.items())
+        ],
+        columns=["recording_id", "n_fail", "n_warn", "n_info", "waiting", "page"],
+    )
+    summary.to_csv(page.with_name("qc_summary.csv"), index=False, encoding="utf-8")
+    tables = [decisions_path(path) for _, (path, _) in sorted(pages.items())]
+    decided = [pd.read_csv(table, dtype=str, keep_default_na=False) for table in tables if table.is_file()]
+    if decided:
+        pd.concat(decided, ignore_index=True)[DECISION_COLUMNS].to_csv(page.with_name("decisions.csv"), index=False, encoding="utf-8")
     return page

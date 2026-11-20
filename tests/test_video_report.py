@@ -67,6 +67,23 @@ def test_the_project_page_lists_frame_rates_when_they_differ(project):
     assert "Frame rates" in text and "video.fps: 30" in text
 
 
+def test_the_decisions_and_the_state_of_each_recording_are_tables_too(project):
+    import pandas as pd
+
+    config, prepared = project
+    for recording in ("001", "002"):
+        prepared(recording, [video(f"{recording}_parent.mp4", 25.0)])
+    pages = {recording: write_recording_report(config, recording) for recording in ("001", "002")}
+    page = write_project_report(config, pages)
+    mine = pd.read_csv(pages["001"][0].with_name("qc_001_decisions.csv"), dtype=str, keep_default_na=False)
+    assert list(mine.columns) == ["recording_id", "what", "decided", "by"] and set(mine["recording_id"].astype(str)) == {"001"}
+    assert "Which file is whose" in set(mine["what"])
+    summary = pd.read_csv(page.with_name("qc_summary.csv"), dtype={"recording_id": str})
+    assert summary["recording_id"].tolist() == ["001", "002"] and {"n_fail", "n_warn", "n_info", "waiting"} <= set(summary.columns)
+    every = pd.read_csv(page.with_name("decisions.csv"), dtype=str)
+    assert set(every["recording_id"]) == {"001", "002"} and len(every) == 2 * len(mine)
+
+
 def test_one_frame_rate_needs_no_table(project):
     config, prepared = project
     for recording in ("001", "002"):
