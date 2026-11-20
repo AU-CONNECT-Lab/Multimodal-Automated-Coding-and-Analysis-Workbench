@@ -723,7 +723,9 @@ class SpeakerReviewGate(Gate):
             return
         path = layout_for(self.config, create=False).voice_owners_path(rid)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"people": {label: who or NO_ONE for label, who in people.items()}, "by": AUTOMATIC}
+        from macaw.extractors.audio.content.speaker_id import suggestion_record
+
+        payload = {"people": {label: who or NO_ONE for label, who in people.items()}, "by": AUTOMATIC, "suggested": suggestion_record(suggestion)}
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def notes(self, recording: Recording) -> list[QCWarning]:

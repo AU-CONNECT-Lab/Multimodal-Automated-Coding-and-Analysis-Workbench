@@ -207,7 +207,26 @@ def match_voices(
         people.update({label: None for label in left})
     if not evidence:
         return None
-    return {"people": people, "evidence": evidence, "unheard": unheard}
+    # every person against every voice, so a close second choice can be seen
+    every = {subject: {label: scores[subject][label][0] for label in labels} for subject in measured}
+    return {"people": people, "evidence": evidence, "unheard": unheard, "scores": every}
+
+
+def suggestion_record(suggestion: dict | None) -> dict | None:
+    """The suggestion and what it rested on, as kept beside the decision taken on it."""
+    if suggestion is None:
+        return None
+
+    def plain(value):
+        if isinstance(value, dict):
+            return {str(key): plain(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [plain(item) for item in value]
+        if isinstance(value, (float, np.floating)):
+            return None if not np.isfinite(value) else round(float(value), 4)
+        return value
+
+    return plain({key: suggestion.get(key) for key in ("people", "evidence", "scores", "unheard")})
 
 
 def describe_suggestion(suggestion: dict) -> str:

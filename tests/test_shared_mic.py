@@ -206,6 +206,8 @@ def test_each_persons_signal_names_the_voice_it_follows():
     assert suggestion["people"] == {"S0": "child", "S1": "parent", "S2": "sibling"}
     assert suggestion["evidence"]["parent"]["rho"] > 0.5 > suggestion["evidence"]["parent"]["rival_rho"]
     assert suggestion["evidence"]["child"]["source"] == "own microphone"
+    # each person against every voice, not only the one they were given
+    assert set(suggestion["scores"]["parent"]) == {"S0", "S1", "S2"}
 
 
 def test_the_one_person_and_voice_left_are_paired_by_elimination():
@@ -305,7 +307,10 @@ class TestReview:
     def test_flagged_keeps_a_complete_suggestion_and_says_so(self, project, monkeypatch):
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch)
         assert gate.pending(recording) is None
-        assert json.loads(path.read_text(encoding="utf-8")) == {"people": {"S0": "child", "S1": "parent"}, "by": "automatic"}
+        kept = json.loads(path.read_text(encoding="utf-8"))
+        assert {key: kept[key] for key in ("people", "by")} == {"people": {"S0": "child", "S1": "parent"}, "by": "automatic"}
+        # what the software named the voices on is kept with the names
+        assert kept["suggested"]["people"] == {"S0": "child", "S1": "parent"}
         assert [(note.check, note.severity) for note in gate.notes(recording)] == [("voices_unreviewed", "info")]
 
     def test_flagged_waits_when_the_evidence_disagrees(self, project, monkeypatch):
