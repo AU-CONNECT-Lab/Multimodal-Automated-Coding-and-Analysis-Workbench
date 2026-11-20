@@ -13,6 +13,8 @@ from macaw.execution.runner import _write_stamp, completed_on_disk, task_states
 from macaw.extractors.base import Phase
 from macaw.project.layout import layout_for
 
+ROLES = [SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")]
+
 
 @pytest.fixture
 def line(tmp_path, monkeypatch):
@@ -36,7 +38,7 @@ def line(tmp_path, monkeypatch):
     monkeypatch.setattr(extractors, "_REGISTRY", registry)
     monkeypatch.setattr(extractors, "_builtins_loaded", True)
     monkeypatch.setattr(
-        runner_module, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id)
+        runner_module, "build_recording", lambda recording_id, config: SimpleNamespace(recording_id=recording_id, subjects=ROLES)
     )
 
     project = tmp_path / "project.yaml"
@@ -48,7 +50,7 @@ def line(tmp_path, monkeypatch):
         output = layout.long_table_path("rec1") / f"{name}.parquet"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"rows")
-        key = runner_module._make_key(config, cls, cls(config), SimpleNamespace(recording_id="rec1"), "c")
+        key = runner_module._make_key(config, cls, cls(config), SimpleNamespace(recording_id="rec1", subjects=ROLES), "c")
         _write_stamp(layout.completion_path("rec1", name), key)
 
     def current():
@@ -141,11 +143,22 @@ def test_a_recording_file_may_not_need_a_step_the_project_plan_lacks(tmp_path):
     check_recording_steps(config, build_dag(config, ["gaze.target"]), ["rec1", "rec2"], ["gaze.target"])
 
 
+def test_who_takes_part_is_part_of_every_key(line):
+    """A third person where there were two changes how many voices to separate and whose rows there are."""
+    cls = line.registry["first"]
+    three = [*ROLES, SimpleNamespace(subject_id="sibling")]
+    keys = {
+        runner_module._make_key(line.config, cls, cls(line.config), SimpleNamespace(recording_id="rec1", subjects=people), "c").as_dirname()
+        for people in (ROLES, three)
+    }
+    assert len(keys) == 2
+
+
 def test_two_recordings_with_the_same_files_do_not_share_a_cache_entry(line):
     """Rows carry their recording's id, and device folders let two recordings hold files of the same name and content."""
     cls = line.registry["first"]
     keys = {
-        runner_module._make_key(line.config, cls, cls(line.config), SimpleNamespace(recording_id=rid), "c").as_dirname()
+        runner_module._make_key(line.config, cls, cls(line.config), SimpleNamespace(recording_id=rid, subjects=ROLES), "c").as_dirname()
         for rid in ("rec1", "rec2")
     }
     assert len(keys) == 2

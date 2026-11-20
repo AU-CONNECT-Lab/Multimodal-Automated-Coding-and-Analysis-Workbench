@@ -70,7 +70,7 @@ def test_an_extractor_in_a_script_registers_and_its_file_is_part_of_the_cache_ke
     cls = extractors.get_extractor("lab.scripted")
     assert script_file_of(cls) == script.resolve()
 
-    recording = SimpleNamespace(recording_id="r1")
+    recording = SimpleNamespace(recording_id="r1", subjects=[])
     before = _make_key(None, cls, cls(None), recording, "config").as_dirname()
     script.write_text(EXTRACTOR + "\n# changed\n", encoding="utf-8")
     assert _make_key(None, cls, cls(None), recording, "config").as_dirname() != before

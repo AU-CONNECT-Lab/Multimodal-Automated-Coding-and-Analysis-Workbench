@@ -308,8 +308,9 @@ def _make_key(config, cls, extractor, recording, config_hash):
         extractor=cls.name,
         extractor_version=cls.version,
         inputs=[*extractor.inputs_for(recording), *([script] if script else [])],
-        # the rows carry the recording's id, so two recordings with the same files must not share an entry
-        config_hash=hash_value([config_hash, recording.recording_id, extra]),
+        # the rows carry the recording's id, so two recordings with the same files must not share an entry;
+        # who takes part decides what many steps look for (how many voices, whose rows) without being a section of theirs
+        config_hash=hash_value([config_hash, recording.recording_id, [subject.subject_id for subject in recording.subjects], extra]),
     )
 
 
