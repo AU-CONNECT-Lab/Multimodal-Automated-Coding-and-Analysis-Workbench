@@ -34,6 +34,8 @@ FIND_STRETCH_S = 10.0
 IN_VIEW = 0.5
 # a thing in view in fewer of the frames after its start than this is in doubt
 _FOUND_SHARE = 0.5
+# decoded frames held at once while following a thing back
+_BACK_BYTES = 512e6
 FINDER, PERSON, NOT_FOUND, NOT_HERE = "found by name", "a person", "not found", "not on this camera"
 
 
@@ -62,8 +64,9 @@ class ObjectTracker(Backend):
 
     def track(self, video_path, *, frames: tuple[int, int], starts: list[TrackStart], device: str,
               model: str | None) -> Iterator[tuple[int, dict[str, tuple[np.ndarray, float]]]]:
-        """(frame, {name: (boolean mask the frame's size, 0-1 that it is in view)}) for every frame from the first start
-        to stop - 1, with each thing from its first start on; a later start of a thing puts it back where it says."""
+        """(frame, {name: (boolean mask the frame's size, 0-1 that it is in view)}) for frames from first to stop - 1, each
+        thing followed back from its first start to first and on from there to stop - 1, in any order of frames and with
+        a frame at most once per thing; a later start of a thing puts it back where it says."""
         raise NotImplementedError
 
     def prefetch(self, *, model: str | None) -> None:
@@ -210,14 +213,29 @@ class _SamTracker(ObjectTracker):
         return loaded[name, device]
 
     def track(self, video_path, *, frames, starts, device, model):
-        import cv2
-        import torch
-
-        from macaw.extractors.video.pose.backends import _seek
-
         if not starts:
             return
         device = _device(device)
+        first, stop = frames
+        earliest: dict[str, TrackStart] = {}
+        for start in sorted(starts, key=lambda start: start.frame):
+            earliest.setdefault(start.name, start)
+        back = [start for start in earliest.values() if start.frame > first]
+        if back:
+            # a thing is followed back only over the frames before its own first start
+            before = {start.name: start.frame for start in back}
+            for index, seen in self._follow(_pictures_back(video_path, max(before.values()), first), back, device, model):
+                mine = {name: found for name, found in seen.items() if index < before[name]}
+                if mine:
+                    yield index, mine
+        on = min(start.frame for start in earliest.values())
+        yield from self._follow(_pictures_on(video_path, on, stop), starts, device, model)
+
+    def _follow(self, pictures, starts: list[TrackStart], device: str, model: str | None):
+        """(frame, {name: (mask, 0-1 in view)}) for each (frame, picture) in the order given, a thing from its start on."""
+        import cv2
+        import torch
+
         processor, net, dtype = self.network(model, device)
         ids = {name: number for number, name in enumerate(sorted({start.name for start in starts}), start=1)}
         names = {number: name for name, number in ids.items()}
@@ -227,41 +245,80 @@ class _SamTracker(ObjectTracker):
         # memories of this many frames back are what the tracker reads: its own memory and the pointers to the thing
         keep = max(int(getattr(net.config, "num_maskmem", 7)), int(getattr(net.config, "max_object_pointers_in_encoder", 16))) + 1
         session = processor.init_video_session(inference_device=device, dtype=dtype)
-        capture = cv2.VideoCapture(str(video_path))
-        if not capture.isOpened():
-            raise ExternalToolError(f"could not open video: {video_path}")
-        try:
-            first, stop = min(by_frame), frames[1]
-            index = _seek(capture, cv2, first, Path(video_path))
-            step = 0
-            while index < stop:
+        step = 0
+        for index, image in pictures:
+            started = by_frame.get(index, [])
+            if step == 0 and not started:
+                continue
+            pixels = processor(images=cv2.cvtColor(image, cv2.COLOR_BGR2RGB), device=device, return_tensors="pt")
+            for start in started:
+                prompt = (
+                    {"input_boxes": [[list(start.box)]]} if start.box is not None
+                    else {"input_points": [[[list(start.point)]]], "input_labels": [[[1]]]}
+                )
+                processor.add_inputs_to_inference_session(
+                    inference_session=session, frame_idx=step, obj_ids=ids[start.name], original_size=pixels.original_sizes[0], **prompt,
+                )
+            if started:
+                # each call names only its own thing as newly started, so several starting on one frame are named again
+                session.obj_with_new_inputs = sorted({ids[start.name] for start in started})
+            with torch.inference_mode():
+                output = net(inference_session=session, frame=pixels.pixel_values[0].to(dtype), frame_idx=step)
+                masks = processor.post_process_masks([output.pred_masks], original_sizes=pixels.original_sizes, binarize=True)[0]
+                present = torch.sigmoid(output.object_score_logits.float().reshape(-1)).tolist()
+            masks = masks[:, 0].cpu().numpy()
+            yield index, {names[number]: (masks[position], present[position]) for position, number in enumerate(output.object_ids)}
+            _forget(session, step, keep)
+            step += 1
+
+
+def _pictures_on(video_path, first: int, stop: int) -> Iterator[tuple[int, np.ndarray]]:
+    import cv2
+
+    from macaw.extractors.video.pose.backends import _seek
+
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise ExternalToolError(f"could not open video: {video_path}")
+    try:
+        index = _seek(capture, cv2, first, Path(video_path))
+        while index < stop:
+            ok, image = capture.read()
+            if not ok:
+                break
+            yield index, image
+            index += 1
+    finally:
+        capture.release()
+
+
+def _pictures_back(video_path, last: int, first: int) -> Iterator[tuple[int, np.ndarray]]:
+    """Frames from last down to first, read forward a stretch at a time and handed out backward."""
+    import cv2
+
+    from macaw.extractors.video.pose.backends import _seek
+
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise ExternalToolError(f"could not open video: {video_path}")
+    try:
+        size = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) * int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) * 3
+        stretch = max(int(_BACK_BYTES // max(size, 1)), 8)
+        end = last + 1
+        while end > first:
+            begin = max(end - stretch, first)
+            index, held = _seek(capture, cv2, begin, Path(video_path)), []
+            while index < end:
                 ok, image = capture.read()
                 if not ok:
                     break
-                pixels = processor(images=cv2.cvtColor(image, cv2.COLOR_BGR2RGB), device=device, return_tensors="pt")
-                started = by_frame.get(index, [])
-                for start in started:
-                    prompt = (
-                        {"input_boxes": [[list(start.box)]]} if start.box is not None
-                        else {"input_points": [[[list(start.point)]]], "input_labels": [[[1]]]}
-                    )
-                    processor.add_inputs_to_inference_session(
-                        inference_session=session, frame_idx=step, obj_ids=ids[start.name], original_size=pixels.original_sizes[0], **prompt,
-                    )
-                if started:
-                    # each call names only its own thing as newly started, so several starting on one frame are named again
-                    session.obj_with_new_inputs = sorted({ids[start.name] for start in started})
-                with torch.inference_mode():
-                    output = net(inference_session=session, frame=pixels.pixel_values[0].to(dtype), frame_idx=step)
-                    masks = processor.post_process_masks([output.pred_masks], original_sizes=pixels.original_sizes, binarize=True)[0]
-                    present = torch.sigmoid(output.object_score_logits.float().reshape(-1)).tolist()
-                masks = masks[:, 0].cpu().numpy()
-                yield index, {names[number]: (masks[position], present[position]) for position, number in enumerate(output.object_ids)}
-                _forget(session, step, keep)
+                if index >= begin:
+                    held.append((index, image))
                 index += 1
-                step += 1
-        finally:
-            capture.release()
+            yield from reversed(held)
+            end = begin
+    finally:
+        capture.release()
 
 
 def _forget(session, step: int, keep: int) -> None:
@@ -355,7 +412,7 @@ def outline_rows(video: str, frame: int, seen: dict[str, tuple[np.ndarray, float
 
 
 def followed(frames_found: np.ndarray, first: int, stop: int, fps: float) -> dict:
-    """How much of the stretch from a thing's start it was in view, and its longest time out of view."""
+    """How much of the stretch from first to stop a thing was in view, and its longest time out of view."""
     span = max(stop - first, 1)
     marks = np.zeros(span, dtype=bool)
     marks[np.clip(np.asarray(frames_found, dtype=int) - first, 0, span - 1)] = True
@@ -370,15 +427,15 @@ def doubts(entry: dict) -> list[str]:
     said = []
     if entry["from"] == FINDER and entry.get("candidates", 1) > 1:
         said.append(f"{entry['candidates']} things in the start frame could be it")
-    if entry.get("frames") and entry["found"] / entry["frames"] < _FOUND_SHARE:
-        said.append(f"in view in {entry['found'] / entry['frames']:.0%} of the frames after its start")
+    if entry.get("frames") and entry["share_after_start"] < _FOUND_SHARE:
+        said.append(f"in view in {entry['share_after_start']:.0%} of the frames after its start")
     return said
 
 
 @register_extractor
 class ObjectTrackExtractor(Extractor):
     name = "objects.track"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "objects"
     config_sections = (
@@ -457,7 +514,9 @@ class ObjectTrackExtractor(Extractor):
                 if "frame" in entry:
                     entry["t"] = round(entry["frame"] / fps + item.offset_s, 3)
                     seen_at = frames_by_name.get_group(name).to_numpy() if name in frames_by_name.groups else np.array([], dtype=int)
-                    entry.update(followed(seen_at, entry["frame"], stop, fps))
+                    entry.update(followed(seen_at, first, stop, fps))
+                    after = followed(seen_at[seen_at >= entry["frame"]], entry["frame"], stop, fps)
+                    entry["share_after_start"] = round(after["found"] / after["frames"], 3)
                 entry["doubts"] = doubts(entry)
                 if entry["from"] == NOT_FOUND:
                     warnings.append(self._warning(
@@ -469,7 +528,7 @@ class ObjectTrackExtractor(Extractor):
             summary[item.name] = entries
         directory = workspace / self.name
         directory.mkdir(parents=True, exist_ok=True)
-        table = pd.DataFrame(rows, columns=list(OBJECT_COLUMNS))
+        table = pd.DataFrame(rows, columns=list(OBJECT_COLUMNS)).sort_values(["video", "frame", "label"], kind="stable", ignore_index=True)
         table.to_parquet(directory / OBJECTS_NAME, index=False)
         (directory / STARTS_NAME).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         return ExtractorResult(

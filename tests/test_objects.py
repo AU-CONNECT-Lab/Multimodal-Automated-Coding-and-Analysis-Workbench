@@ -84,11 +84,13 @@ class TestStarts:
 
     def test_doubts_name_several_candidates_little_time_in_view_and_no_start(self):
         assert doubts({"from": NOT_FOUND}) == ["not found by name on this camera"]
-        sure = {"from": FINDER, "candidates": 1, "frames": 10, "found": 9}
+        sure = {"from": FINDER, "candidates": 1, "frames": 10, "found": 9, "share_after_start": 0.9}
         assert doubts(sure) == []
         assert doubts({**sure, "candidates": 3}) == ["3 things in the start frame could be it"]
-        assert doubts({**sure, "found": 2}) == ["in view in 20% of the frames after its start"]
-        assert doubts({"from": PERSON, "candidates": 3, "frames": 10, "found": 9}) == []
+        # in view before its start says nothing about how well it was followed after it
+        assert doubts({**sure, "found": 9, "share_after_start": 0.2}) == ["in view in 20% of the frames after its start"]
+        assert doubts({**sure, "found": 2}) == []
+        assert doubts({"from": PERSON, "candidates": 3, "frames": 10, "found": 9, "share_after_start": 0.9}) == []
 
 
 class TestDecisions:
@@ -130,7 +132,7 @@ class FakeFinder:
 
 
 class FakeTracker:
-    """Each thing stays where it started; the ball is out of view in frames 25 to 29."""
+    """Each thing stays where it started, and where it first started before that; the ball is out of view in frames 25 to 29."""
 
     name, version, default_model = "fake_tracker", "1", None
 
@@ -141,12 +143,15 @@ class FakeTracker:
         self.starts = starts
         if not starts:
             return
-        where = {}
-        for frame in range(min(start.frame for start in starts), frames[1]):
+        def at(start):
+            x, y = (start.box[0], start.box[1]) if start.box is not None else start.point
+            return square(int(x), int(y), int(x) + 10, int(y) + 10)
+
+        where = {start.name: at(start) for start in sorted(starts, key=lambda start: -start.frame)}
+        for frame in range(frames[0], frames[1]):
             for start in starts:
                 if start.frame == frame:
-                    x, y = (start.box[0], start.box[1]) if start.box is not None else start.point
-                    where[start.name] = square(int(x), int(y), int(x) + 10, int(y) + 10)
+                    where[start.name] = at(start)
             yield frame, {name: (mask, 0.1 if name == "ball" and 25 <= frame < 30 else 0.9) for name, mask in where.items()}
 
 
@@ -174,14 +179,16 @@ class TestExtractor:
         boxes = [(4, "ball", (20, 20, 30, 30), 0.6), (6, "ball", (30, 30, 40, 40), 0.9), (6, "ball", (0, 0, 5, 5), 0.5)]
         finder, tracker, result = run(["ball", "cup"], boxes)
         rows = pd.read_parquet(result.artifacts["objects.parquet"])
-        assert set(rows["label"]) == {"ball"} and rows["frame"].min() == 6 and rows["frame"].max() == 40
-        assert 27 not in set(rows["frame"]) and len(rows) == 35 - 5
+        # followed back from its start in frame 6 to the beginning, and on to the end
+        assert set(rows["label"]) == {"ball"} and rows["frame"].min() == 0 and rows["frame"].max() == 40
+        assert 27 not in set(rows["frame"]) and len(rows) == 41 - 5 and rows["frame"].is_monotonic_increasing
         first = rows.iloc[0]
         assert (first["x0"], first["y0"], first["x1"], first["y1"]) == (30.0, 30.0, 40.0, 40.0) and first["area"] == 100.0
         assert inside(first["outline"], 35, 35)
         starts = json.loads(result.artifacts["starts.json"].read_text(encoding="utf-8"))["front.mp4"]
         assert starts["ball"]["from"] == FINDER and starts["ball"]["candidates"] == 2 and starts["ball"]["t"] == 0.6
-        assert starts["ball"]["found"] == 30 and starts["ball"]["longest_gap_s"] == 0.5
+        assert starts["ball"]["frames"] == 41 and starts["ball"]["found"] == 36 and starts["ball"]["longest_gap_s"] == 0.5
+        assert starts["ball"]["share_after_start"] == round(30 / 35, 3)
         assert starts["ball"]["doubts"] == ["2 things in the start frame could be it"]
         assert starts["cup"] == {"from": NOT_FOUND, "doubts": ["not found by name on this camera"]}
         assert any("cup was not found by name on front.mp4" in warning.message for warning in result.warnings)
@@ -256,7 +263,7 @@ def project(tmp_path):
     return SimpleNamespace(config=config, configure=configure, starts=starts, resolved=lambda: resolve_config(config))
 
 
-BALL = {"from": FINDER, "frame": 6, "t": 0.6, "box": [30.0, 30.0, 40.0, 40.0], "score": 0.9, "candidates": 1, "frames": 35, "found": 30, "longest_gap_s": 0.5}
+BALL = {"from": FINDER, "frame": 6, "t": 0.6, "box": [30.0, 30.0, 40.0, 40.0], "score": 0.9, "candidates": 1, "frames": 35, "found": 30, "longest_gap_s": 0.5, "share_after_start": 0.857}
 
 
 def macaw(project, *args):
@@ -265,6 +272,49 @@ def macaw(project, *args):
     from macaw.cli.main import app
 
     return CliRunner().invoke(app, ["objects", "-c", str(project.config), "-r", "003", *args])
+
+
+class TestFollowingBack:
+    def test_frames_are_handed_out_backward_a_stretch_at_a_time(self, tmp_path, monkeypatch):
+        cv2 = pytest.importorskip("cv2")
+        path = tmp_path / "count.avi"
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), FPS, (32, 32))
+        for index in range(30):
+            writer.write(np.full((32, 32, 3), index * 8, dtype=np.uint8))
+        writer.release()
+        # eight frames a stretch, so 4 to 21 is read in three stretches
+        monkeypatch.setattr(track_module, "_BACK_BYTES", 8 * 32 * 32 * 3)
+        handed = list(track_module._pictures_back(path, 21, 4))
+        assert [index for index, _ in handed] == list(range(21, 3, -1))
+        assert all(abs(int(image.mean()) - index * 8) <= 2 for index, image in handed)
+
+    def test_each_thing_is_followed_back_only_before_its_own_first_start(self, monkeypatch):
+        from macaw.extractors.video.objects.track import Sam2Tracker, TrackStart
+
+        calls = []
+
+        def follow(self, pictures, starts, device, model):
+            pictures = list(pictures)
+            calls.append(([index for index, _ in pictures], sorted((start.name, start.frame) for start in starts)))
+            for index, _ in pictures:
+                yield index, {start.name: index for start in starts}
+
+        monkeypatch.setattr(Sam2Tracker, "_follow", follow)
+        monkeypatch.setattr(track_module, "_pictures_back", lambda path, last, first: ((index, None) for index in range(last, first - 1, -1)))
+        monkeypatch.setattr(track_module, "_pictures_on", lambda path, first, stop: ((index, None) for index in range(first, stop)))
+        monkeypatch.setattr(track_module, "_device", lambda device: "cpu")
+        starts = [TrackStart("ball", 5, point=(1, 1)), TrackStart("cup", 8, point=(2, 2)), TrackStart("ball", 9, point=(3, 3))]
+        out = list(Sam2Tracker().track("v.mp4", frames=(2, 12), starts=starts, device="auto", model=None))
+        back, on = calls
+        assert back == (list(range(8, 1, -1)), [("ball", 5), ("cup", 8)])
+        assert on == (list(range(5, 12)), [("ball", 5), ("ball", 9), ("cup", 8)])
+        followed_back = {index: sorted(seen) for index, seen in out[:len(back[0]) - 1]}
+        assert followed_back == {7: ["cup"], 6: ["cup"], 5: ["cup"], 4: ["ball", "cup"], 3: ["ball", "cup"], 2: ["ball", "cup"]}
+        assert [index for index, _ in out[len(followed_back):]] == list(range(5, 12))
+        # a thing starting on the first frame is not followed back
+        calls.clear()
+        list(Sam2Tracker().track("v.mp4", frames=(2, 12), starts=[TrackStart("ball", 2, point=(1, 1))], device="auto", model=None))
+        assert [call[0][0] for call in calls] == [2]
 
 
 class TestReview:

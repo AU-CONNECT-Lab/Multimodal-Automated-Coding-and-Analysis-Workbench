@@ -24,7 +24,10 @@ def describe_start(entry: dict) -> str:
     if entry["from"] == FINDER:
         said[0] += f" (score {entry['score']:.2f}" + (f", {entry['candidates']} candidates)" if entry.get("candidates", 1) > 1 else ")")
     if entry.get("frames"):
-        said.append(f"in view {entry['found'] / entry['frames']:.0%} of the time after, at most {entry['longest_gap_s']:g} s out of view at once")
+        said.append(
+            f"in view {entry['found'] / entry['frames']:.0%} of the recording ({entry['share_after_start']:.0%} after the start), "
+            f"at most {entry['longest_gap_s']:g} s out of view at once"
+        )
     return "; ".join(said)
 
 

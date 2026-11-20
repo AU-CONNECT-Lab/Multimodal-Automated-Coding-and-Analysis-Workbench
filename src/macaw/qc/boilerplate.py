@@ -1286,7 +1286,8 @@ def _followed_things(config) -> str:
         f"Objects named {', '.join(cfg.names)} were located by name with Grounding DINO [liu2024], taking the highest-scoring "
         f"box (at least {cfg.finder_score:g}) in the first ten seconds in which the object was found, five frames per second "
         "being searched, unless a person clicked on the object at a moment of their choosing. From there each object was "
-        f"followed frame by frame as an outline with {tracker}, and counted as out of view in frames where the tracker gave "
+        f"followed frame by frame as an outline with {tracker}, back to the beginning of the recording and on to its end, and "
+        f"counted as out of view in frames where the tracker gave "
         f"it less than an even chance of being visible. {checked}"
     )
 
