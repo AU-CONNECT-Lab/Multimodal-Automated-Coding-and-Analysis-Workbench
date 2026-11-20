@@ -66,7 +66,7 @@ _INSTALL = "text.syntax needs spaCy and a parser for the language: pip install s
 @register_extractor
 class SyntaxExtractor(Extractor):
     name = "text.syntax"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = ("text.syntax_model", "segment")
@@ -156,7 +156,12 @@ def utterance_syntax(doc) -> dict | None:
     words = [token for token in doc if token.pos_ not in _SKIPPED]
     if not words:
         return None
-    distances = [abs(token.i - token.head.i) for token in words if token.head.i != token.i and token.dep_ != "ROOT"]
+    # positions among the words alone, so punctuation does not lengthen a distance; a head that is no word does not count
+    position = {token.i: index for index, token in enumerate(words)}
+    distances = [
+        abs(position[token.i] - position[token.head.i])
+        for token in words if token.head.i != token.i and token.dep_ != "ROOT" and token.head.i in position
+    ]
     return {
         "n_words": len(words),
         "distance_mean": float(np.mean(distances)) if distances else np.nan,

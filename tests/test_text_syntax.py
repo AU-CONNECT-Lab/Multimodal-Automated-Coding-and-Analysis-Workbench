@@ -53,3 +53,13 @@ def test_the_extractor_writes_one_row_per_speaker_and_measure(tmp_path, monkeypa
     assert values[("A", "n_utterances_parsed")] == 2.0 and values[("B", "n_utterances_parsed")] == 1.0
     assert {spec.name for spec in result.specs} == set(result.rows["feature"])
     assert [warning.severity for warning in result.warnings] == ["info", "warn"]
+
+
+def test_distances_are_counted_in_words_not_in_punctuation_marks(nlp):
+    doc = nlp("Well, I think, we should go now.")
+    words = [token for token in doc if not token.is_punct]
+    place = {token.i: index for index, token in enumerate(words)}
+    expected = [abs(place[token.i] - place[token.head.i]) for token in words if token.head.i != token.i]
+    parsed = utterance_syntax(doc)
+    assert parsed["distance_mean"] == pytest.approx(np.mean(expected))
+    assert parsed["n_adjacent"] == sum(distance == 1 for distance in expected)
