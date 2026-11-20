@@ -35,6 +35,7 @@ from macaw.extractors.video.pose.kinematics import (
 from macaw.extractors.video.pose.skeleton import JOINT_SET, STANDARD_JOINTS
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
+from macaw.project.room import CM_PER_UNIT
 from macaw.project.recording import Recording
 from macaw.project.scale import picture_size
 from macaw.project_scripts import script_function, script_path
@@ -363,7 +364,7 @@ def measures_3d(config) -> list:
 @register_extractor
 class Kinematics3DExtractor(Extractor):
     name = "pose.kinematics3d"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -378,7 +379,7 @@ class Kinematics3DExtractor(Extractor):
         return three_d_step(config) is not None
 
     def check_available(self) -> None:
-        taken = {*_SUBJECT_SPECS, *_PAIR_SPECS} | {measure.name for measure in self.config.kinematics.measures}
+        taken = {*_SUBJECT_SPECS, *_PAIR_SPECS, *_PLACING_SPECS} | {measure.name for measure in self.config.kinematics.measures}
         for measure in measures_3d(self.config):
             if f"{measure.name}_3d" in taken:
                 raise ConfigError(
@@ -393,7 +394,8 @@ class Kinematics3DExtractor(Extractor):
             for measure in measures_3d(self.config)
             if measure.method not in BUILTIN_MEASURES
         ]
-        return [points_file(self.config, recording.recording_id), *scripts]
+        quality = quality_file(self.config, recording.recording_id)
+        return [points_file(self.config, recording.recording_id), *scripts, *([quality] if quality.is_file() else [])]
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         units = self.config.project.units
@@ -413,6 +415,7 @@ class Kinematics3DExtractor(Extractor):
             build_long_rows(values=subject_values_3d(own, smoothing_s, frame_stride(self.config)), scale=Scale.FRAME, subject_id=subject_id, **common)
             for subject_id, own in people.items()
         ]
+        frames += placing_rows(self.config, recording.recording_id, people, common)
         warnings = []
         for a, b in permutations(sorted(people), 2):
             if apart(people, a, b):
@@ -472,7 +475,17 @@ class Kinematics3DExtractor(Extractor):
                 typed = below_3d_unit(measure, self.config.project.units)
                 below += below_specs(f"{measure.name}_3d", f"{measure.below_3d:g}{f' {typed}' if typed else ''}", {**params, **measure.model_dump()}, emitted, self)
         unplaced = _UNPLACED.get(three_d_step(self.config), _UNPLACED[TriangulationExtractor.name])
-        return below + [
+        way = three_d_step(self.config) or TriangulationExtractor.name
+        placing = [
+            FeatureSpec(
+                name=name, description=description(way), unit=unit, scale=Scale.RECORDING, group=self.group, extractor=self.name,
+                extractor_version=self.version, params={"placed_by": way}, aggregation="mean", missing=missing_text,
+                comparable_across_subjects=True, comparable_across_backends=False, validation="synthetic",
+            )
+            for name, (description, unit, missing_text) in _PLACING_SPECS.items()
+            if name in emitted
+        ]
+        return below + placing + [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.FRAME, group=self.group, extractor=self.name,
                 extractor_version=self.version, params=spec_params, interpolation="none", aggregation="mean",
@@ -606,6 +619,77 @@ def _at(found: dict[str, np.ndarray], joint: str, n: int) -> np.ndarray:
     """A joint or a centre the measures may name, NaN throughout when it was never placed."""
     point = _part(found, *_CENTRES.get(joint, (joint,)))
     return np.full((n, 3), np.nan) if point is None else point
+
+
+def quality_file(config, recording_id: str) -> Path:
+    """The table the step placing people in 3D keeps of how well it placed each of them."""
+    from macaw.extractors.video.pose.depth import QUALITY_NAME as DEPTH_QUALITY
+    from macaw.extractors.video.pose.one_camera import QUALITY_NAME as ONE_CAMERA_QUALITY
+
+    step = three_d_step(config) or TriangulationExtractor.name
+    name = {TriangulationExtractor.name: QUALITY_NAME, DEPTH_STEP: DEPTH_QUALITY, ONE_CAMERA_STEP: ONE_CAMERA_QUALITY}[step]
+    return layout_for(config, create=False).artifacts_dir(recording_id, step) / name
+
+
+def placing_rows(config, recording_id: str, people: dict[str, pd.DataFrame], common: dict) -> list[pd.DataFrame]:
+    """Per person how much of them was placed in 3D and how well, from the placing step's table, with their size in the room."""
+    path = quality_file(config, recording_id)
+    quality = pd.read_csv(path) if path.is_file() else pd.DataFrame(columns=["subject_id"])
+    step = three_d_step(config) or TriangulationExtractor.name
+    rows = []
+    for subject_id, own in people.items():
+        mine = quality[quality["subject_id"].astype(str) == subject_id]
+        values = {"body_size_3d": _shoulder_width(_joints(own)[2])}
+        if not mine.empty and step == ONE_CAMERA_STEP:
+            seen, placed = float(mine["frames_seen"].sum()), float(mine["frames_placed"].sum())
+            model = float(np.nanmedian(mine["model_height_m"])) if mine["model_height_m"].notna().any() else np.nan
+            stated = mine["stated_height"].dropna()
+            values["model_height_m"] = model
+            values["height_scale"] = float(stated.iloc[0]) * CM_PER_UNIT[config.project.units] / 100.0 / model if len(stated) else 1.0
+        elif not mine.empty:
+            seen, placed = float(mine["seen"].sum()), float(mine["triangulated" if step == TriangulationExtractor.name else "placed"].sum())
+            if step == TriangulationExtractor.name:
+                values["reprojection_error_px"] = float(np.nanmedian(mine["error_px"])) if mine["error_px"].notna().any() else np.nan
+        if not mine.empty:
+            values["placed_3d_share"] = placed / seen if seen else np.nan
+        times = own["t"].astype(float)
+        frame = pd.DataFrame({"t_start": [float(times.min())], "t_end": [float(times.max())], **{name: [value] for name, value in values.items()}})
+        rows.append(build_long_rows(values=frame, scale=Scale.RECORDING, subject_id=subject_id, **common))
+    return rows
+
+
+_PLACING_SPECS = {
+    "placed_3d_share": (
+        lambda way: {
+            "pose.triangulate": "Share of this person's body points seen by a calibrated camera that were placed in 3D from two cameras or more.",
+            DEPTH_STEP: "Share of this person's body points seen on the depth camera that were placed in 3D, with depth around them.",
+            ONE_CAMERA_STEP: "Share of the frames the body model read in which this person was seen and a fitted body was matched to them.",
+        }[way],
+        None, "Empty for a person the step placing people in 3D kept no count of.",
+    ),
+    "reprojection_error_px": (
+        lambda way: "Median over this person's joints of how far, in pixels, the cameras' views of the joint miss the point placed in 3D.",
+        "px", "Empty unless people are placed in 3D from calibrated cameras, and for a person none of whose joints two cameras saw.",
+    ),
+    "model_height_m": (
+        lambda way: "Height of the body the model fitted to this person, median over the frames, before it was scaled to a stated height.",
+        "m", "Empty unless people are placed in 3D by a body model on one camera.",
+    ),
+    "height_scale": (
+        lambda way: (
+            "Factor the fitted body was scaled by to reach this person's height in the heights table; 1 where no height is stated, "
+            "so that their distances are only as right as the fitted body's size."
+        ),
+        None, "Empty unless people are placed in 3D by a body model on one camera.",
+    ),
+    "body_size_3d": (
+        lambda way: (
+            "This person's shoulder width in the room, the median over the frames both shoulders were placed; every 3D measure with "
+            "per_body_size is divided by it."
+        ),
+        "m", "Empty for a person whose two shoulders were never placed in the same frame, and in the rows of a segment.",
+    ),
+}
 
 
 def _shoulder_width(found: dict[str, np.ndarray]) -> float:

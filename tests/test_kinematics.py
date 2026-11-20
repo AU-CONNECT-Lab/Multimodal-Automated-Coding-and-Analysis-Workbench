@@ -324,13 +324,19 @@ class TestExtractor:
         assert {spec.name for spec in shared.specs} == set(shared.rows.feature)
 
     def test_every_person_gets_frame_rows(self, shared):
-        rows = shared.rows[shared.rows.subject_id_b.isna()]
+        rows = shared.rows[shared.rows.subject_id_b.isna() & (shared.rows.feature != "body_size")]
         assert set(rows.subject_id) == {"parent", "child"}
         assert (rows.scale == "frame").all()
         assert rows.groupby(["subject_id", "feature"]).size().eq(20).all()
 
+    def test_each_persons_body_size_is_a_row_of_the_recording(self, shared):
+        size = shared.rows[shared.rows.feature == "body_size"]
+        assert set(size.subject_id) == {"parent", "child"} and (size.scale == "recording").all() and (size.value > 0).all()
+        assert size.t_start.min() == 0.0 and size.t_end.max() == pytest.approx(19 / FPS)
+        assert {spec.name: spec.scale for spec in shared.specs}["body_size"] == "recording"
+
     def test_frame_rows_sit_on_the_recording_clock(self, shared):
-        rows = shared.rows
+        rows = shared.rows[shared.rows.scale == "frame"]
         assert rows.t_start.max() == pytest.approx(19 / FPS)
         assert (rows.t_start == rows.t_end).all()
 

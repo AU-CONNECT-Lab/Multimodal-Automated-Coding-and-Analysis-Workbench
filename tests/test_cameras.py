@@ -374,8 +374,12 @@ class TestSteps:
             TriangulationExtractor(resolve_config(project)).check_available()
 
     def test_the_3d_measures_are_in_metres_and_degrees(self, seated, tmp_path):
-        placed = TriangulationExtractor(seated.config).run(build_recording("003", seated.config), tmp_path).keypoints
-        write_keypoints(placed, points_file(seated.config, "003").parent)
+        from macaw.extractors.video.pose.triangulate import QUALITY_NAME, quality_file
+
+        triangulated = TriangulationExtractor(seated.config).run(build_recording("003", seated.config), tmp_path)
+        write_keypoints(triangulated.keypoints, points_file(seated.config, "003").parent)
+        quality_file(seated.config, "003").parent.mkdir(parents=True, exist_ok=True)
+        quality_file(seated.config, "003").write_bytes(triangulated.artifacts[QUALITY_NAME].read_bytes())
         result = Kinematics3DExtractor(seated.config).run(build_recording("003", seated.config), tmp_path)
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert {spec.name for spec in result.specs} == set(result.rows.feature)
@@ -392,6 +396,9 @@ class TestSteps:
         assert np.nanmedian(values("left_wrist_speed_3d")) == pytest.approx(0.5, rel=1e-3)
         units = {spec.name: spec.unit for spec in result.specs}
         assert units["left_wrist_speed_3d"] == "m/s" and units["head_toward_deg_3d"] == "deg"
+        assert values("placed_3d_share").tolist() == [1.0] and values("reprojection_error_px")[0] < 1.0
+        assert values("body_size_3d")[0] > 0 and units["body_size_3d"] == "m"
+        assert "two cameras or more" in {spec.name: spec for spec in result.specs}["placed_3d_share"].description
 
 
 OWN_MEASURES = """kinematics:
@@ -682,3 +689,22 @@ class TestGestures3D:
             manifest.add(spec)
         text, _ = render(describe(manifest, config), load_references())
         assert "speeds in cm/s" in text and "at least 5 cm/s" in text and "slower than 2 cm/s" in text and "frontal plane" in text
+
+
+def test_a_body_model_on_one_camera_gives_its_height_and_scale(tmp_path, monkeypatch):
+    from macaw.extractors.video.pose import triangulate as triangulate_module
+
+    table = tmp_path / "one_camera.csv"
+    pd.DataFrame([
+        {"subject_id": "parent", "camera": "a", "frames_seen": 10, "frames_placed": 8, "model_height_m": 1.6, "stated_height": 168.0},
+        {"subject_id": "child", "camera": "a", "frames_seen": 10, "frames_placed": 5, "model_height_m": 1.4, "stated_height": None},
+    ]).to_csv(table, index=False)
+    monkeypatch.setattr(triangulate_module, "quality_file", lambda config, rid: table)
+    monkeypatch.setattr(triangulate_module, "three_d_step", lambda config: triangulate_module.ONE_CAMERA_STEP)
+    config = SimpleNamespace(project=SimpleNamespace(units="cm"))
+    people = {name: pd.DataFrame({"t": [0.0, 1.0], "frame": [0, 1], "joint": ["nose", "nose"], "x": 0.0, "y": 0.0, "z": 0.0}) for name in ("parent", "child")}
+    rows = pd.concat(triangulate_module.placing_rows(config, "r1", people, dict(recording_id="r1", source="pose.kinematics3d", entities={})))
+    value = lambda name, who: rows[(rows.feature == name) & (rows.subject_id == who)]["value"].item()
+    assert value("placed_3d_share", "parent") == 0.8 and value("placed_3d_share", "child") == 0.5
+    assert value("height_scale", "parent") == pytest.approx(1.68 / 1.6) and value("height_scale", "child") == 1.0
+    assert value("model_height_m", "child") == 1.4 and "reprojection_error_px" not in set(rows.feature)

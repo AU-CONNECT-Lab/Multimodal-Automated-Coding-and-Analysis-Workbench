@@ -32,6 +32,8 @@ POLYORDER = 3
 
 # a horizontal length only ever shrinks under rotation, so its upper envelope is the person's size
 BODY_SIZE_QUANTILE = 0.95
+BODY_SIZE = "body_size"
+_WHOLE_ONLY = "Empty in the rows of a segment: the size of the whole recording divides the measures in every part of it."
 # the unit of a length divided by the person's shoulder width
 BODY_UNIT = "shoulder widths"
 
@@ -144,7 +146,7 @@ _MISSING = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -153,7 +155,7 @@ class KinematicsExtractor(Extractor):
 
     def check_available(self) -> None:
         for measure in self.config.kinematics.measures:
-            if measure.name in {**_SUBJECT_SPECS, **_PAIR_SPECS}:
+            if measure.name in {**_SUBJECT_SPECS, **_PAIR_SPECS, BODY_SIZE: None}:
                 raise ConfigError(f"kinematics.measures {measure.name}: pose.kinematics already has a feature of that name; choose another")
         check_measures(self.config)
 
@@ -190,6 +192,7 @@ class KinematicsExtractor(Extractor):
             )
             for subject_id, kp in by_subject.items()
         ]
+        frames += [body_size_row(kp, subject_id, common) for subject_id, kp in by_subject.items()]
 
         # people filmed by separate cameras do not share an image plane, so no pixel distance
         # between them means anything
@@ -270,6 +273,19 @@ class KinematicsExtractor(Extractor):
                     validation="synthetic",
                 )
             )
+        if BODY_SIZE in emitted:
+            specs.append(FeatureSpec(
+                name=BODY_SIZE,
+                description=(
+                    f"This person's shoulder width in the picture, the {BODY_SIZE_QUANTILE:.0%} quantile over the frames both shoulders "
+                    "were found on the camera their body is measured from. postural_openness and every measure with per_body_size "
+                    "are divided by it, so it is the size to divide other distances and speeds of theirs by."
+                ),
+                unit=length_unit, scale=Scale.RECORDING, group=self.group, extractor=self.name, extractor_version=self.version,
+                params=params, aggregation="mean",
+                missing=f"Empty for a person whose two shoulders were never found in the same frame. {_WHOLE_ONLY}",
+                comparable_across_subjects=False, comparable_across_backends=False, validation="synthetic",
+            ))
         return specs
 
     def _measure_rows(self, measure, recording: Recording, by_subject, keypoints, common, length_unit: str):
@@ -527,6 +543,12 @@ def postural_openness(kp: pd.DataFrame) -> pd.Series:
     with np.errstate(invalid="ignore"):
         reach = x.max(axis=1) - x.min(axis=1)
     return pd.Series(reach / size, index=points.index)
+
+
+def body_size_row(kp: pd.DataFrame, subject_id: str, common: dict) -> pd.DataFrame:
+    times = _frame_times(kp)
+    values = pd.DataFrame({"t_start": [float(times.min())], "t_end": [float(times.max())], BODY_SIZE: [_body_size(kp)]})
+    return build_long_rows(values=values, scale=Scale.RECORDING, subject_id=subject_id, **common)
 
 
 def _body_size(kp: pd.DataFrame) -> float:
