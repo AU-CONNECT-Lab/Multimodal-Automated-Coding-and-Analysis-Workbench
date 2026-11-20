@@ -411,7 +411,7 @@ _MISSING = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.11.0"
+    version = "0.12.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -522,7 +522,8 @@ class ASRExtractor(Extractor):
         )
 
     def _from_correction(self, recording: Recording, prep, warnings: list[QCWarning]):
-        """The transcript a person corrected, on the prepared-track clock like a recogniser's; no words, nothing dropped."""
+        """The transcript a person corrected, on the prepared-track clock like a recogniser's and cut to the analysed part;
+        no words."""
         from macaw.interop.transcript_eaf import read_transcript_eaf
 
         layout = layout_for(self.config, create=False)
@@ -536,6 +537,19 @@ class ASRExtractor(Extractor):
             confidence=np.nan,
             language=self.config.text.language,
         )
+        utterances = _concat([utterances], TRANSCRIPT_SCHEMA, drop={"n_words"})
+        utterances["n_words"] = utterances["text"].fillna("").astype(str).str.split().str.len().astype("int64")
+        kept = cut_transcript(utterances, _concat([], WORD_SCHEMA), 0.0, prep.duration_s)
+        key = ["subject_id", "utterance_index"]
+        outside = utterances.merge(kept[key], on=key, how="left", indicator=True).query("_merge == 'left_only'")
+        if len(outside):
+            self._keep_dropped(outside.drop(columns="_merge").assign(
+                reason="outside the analysed part", detail=f"the analysed part is {prep.duration_s:.1f} s long",
+            ))
+            warnings.append(QCWarning(
+                check="asr_outside_track", recording_id=rid, subject_id=None, severity="info",
+                message=f"{len(outside)} utterance(s) of the corrected transcript lie outside the analysed part and were left out",
+            ))
         stamp_path = layout.corrected_transcript_stamp_path(rid)
         stamp = json.loads(stamp_path.read_text(encoding="utf-8")) if stamp_path.is_file() else {}
         warnings.append(
@@ -544,7 +558,7 @@ class ASRExtractor(Extractor):
                 message=f"the transcript is the one {stamp.get('by', 'a person')} corrected; speech was not recognised again",
             )
         )
-        return _concat([utterances], TRANSCRIPT_SCHEMA, drop={"n_words"}), _concat([], WORD_SCHEMA)
+        return kept.drop(columns="n_words"), _concat([], WORD_SCHEMA)
 
     def _keep_dropped(self, frame: pd.DataFrame) -> None:
         self.__dict__.setdefault("_dropped", []).append(frame)

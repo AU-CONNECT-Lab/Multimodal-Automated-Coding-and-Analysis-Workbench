@@ -91,6 +91,24 @@ def test_text_asr_reads_the_correction_instead_of_recognising(project, tmp_path)
     assert outcome.exit_code == 0 and not layout.corrected_transcript_path("003").exists()
 
 
+def test_a_correction_is_cut_to_the_analysed_part_and_what_lies_outside_is_kept_as_dropped(project, tmp_path):
+    """The analysed part was narrowed after the correction came in."""
+    layout = layout_for(project.resolved)
+    lines = pd.concat([TRANSCRIPT, TRANSCRIPT.iloc[[0]].assign(utterance_index=1, t_start=20.0, t_end=21.0, text="bye now")], ignore_index=True)
+    path = export_transcript_eaf(lines, DROPPED.iloc[:0], project.recording, tmp_path / "t.eaf")
+    corrected = layout.corrected_transcript_path("003")
+    corrected.parent.mkdir(parents=True, exist_ok=True)
+    corrected.write_bytes(path.read_bytes())
+    extractor = ASRExtractor(project.resolved)
+    warnings = []
+    # the analysed part runs from 2 s to 5 s of the recording
+    utterances, _ = extractor._from_correction(project.recording, PrepInfo(recording_id="003", t_origin_s=2.0, duration_s=3.0, sample_rate=16000), warnings)
+    assert utterances[["subject_id", "t_start", "t_end", "text"]].values.tolist() == [["parent", 0.0, 0.5, "that"], ["child", 1.0, 2.0, "doggy"]]
+    dropped = pd.concat(extractor._dropped)
+    assert dropped["text"].tolist() == ["bye now"] and dropped["reason"].tolist() == ["outside the analysed part"]
+    assert "1 utterance(s) of the corrected transcript lie outside" in warnings[0].message
+
+
 def test_without_a_correction_the_cache_key_reads_only_files_that_exist(project, monkeypatch):
     from macaw.extractors.audio.content import asr as asr_module
 
