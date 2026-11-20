@@ -45,6 +45,8 @@ _CARRIED = (
 REVIEW_QUEUE_SCHEMA: dict[str, str] = {
     **{column: ANNOTATION_SCHEMA[column] for column in _CARRIED},
     "reason": "string",        # abstained | low_confidence | flagged
+    "votes": "string",         # the model's answers counted per code, as label: count
+    "model_reasons": "string", # each answer's code and the reason the model gave for it
     "decision": "string",      # the reviewer's label; empty until somebody decides
     "reviewer": "string",
 }
@@ -104,6 +106,8 @@ def build_queue(annotations: pd.DataFrame, *, threshold: float) -> pd.DataFrame:
 
     queue = frame.loc[keep, list(_CARRIED)].copy()
     queue["reason"] = reason[keep].to_numpy()
+    queue["votes"] = pd.NA
+    queue["model_reasons"] = pd.NA
     queue["decision"] = pd.NA
     queue["reviewer"] = pd.NA
     queue = queue.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable")
@@ -125,6 +129,8 @@ def random_checks(annotations: pd.DataFrame, queue: pd.DataFrame, *, per_recordi
         return empty_frame(REVIEW_QUEUE_SCHEMA)
     checks = pd.concat(drawn, ignore_index=True)[list(_CARRIED)]
     checks["reason"] = RANDOM_CHECK
+    checks["votes"] = pd.NA
+    checks["model_reasons"] = pd.NA
     checks["decision"] = pd.NA
     checks["reviewer"] = pd.NA
     return coerce_frame(checks, REVIEW_QUEUE_SCHEMA, NAME)
@@ -275,6 +281,55 @@ def _full_queue(config, recording_ids: list[str]) -> pd.DataFrame:
     checks = random_checks(annotations, queue, per_recording=llm.review_random, seed=llm.seed)
     both = pd.concat([queue, checks], ignore_index=True) if not checks.empty else queue
     return coerce_frame(both.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable").reset_index(drop=True), REVIEW_QUEUE_SCHEMA, NAME)
+
+
+def unit_answers(answers: pd.DataFrame) -> pd.DataFrame:
+    """Per unit (subject_id, t_start, t_end, times rounded) of a judge's samples, the votes per code and every answer's reason."""
+    keys = ["subject_id", "t_start", "t_end"]
+    answers = answers.assign(
+        subject_id=answers["subject_id"].astype("string"), t_start=answers["t_start"].astype(float).round(6),
+        t_end=answers["t_end"].astype(float).round(6),
+    )
+    voted = answers[answers["label"].notna()]
+    votes = voted.groupby(keys, dropna=False)["label"].agg(
+        lambda labels: ", ".join(f"{label}: {count}" for label, count in labels.value_counts().items())
+    )
+    said = answers.sort_values("sample", kind="stable") if "sample" in answers else answers
+    reasons = said.groupby(keys, dropna=False).apply(
+        lambda unit: " | ".join(
+            f"{label if pd.notna(label) else '-'}: {reason}" for label, reason in zip(unit["label"], unit["reason"]) if pd.notna(reason) and str(reason).strip()
+        ),
+        include_groups=False,
+    )
+    return pd.concat([votes.rename("votes"), reasons.rename("model_reasons")], axis=1).reset_index()
+
+
+def with_model_answers(config, queue: pd.DataFrame) -> pd.DataFrame:
+    """The queue with each unit's votes and the model's reasons, read from the judge's samples."""
+    from macaw.coding.llm.judge import SAMPLES_NAME, JudgementExtractor
+    from macaw.project.layout import layout_for
+
+    if queue.empty:
+        return queue
+    layout = layout_for(config, create=False)
+    pieces = []
+    for recording_id in queue["recording_id"].astype(str).unique():
+        path = layout.artifacts_dir(recording_id, JudgementExtractor.name) / SAMPLES_NAME
+        if path.is_file():
+            pieces.append(unit_answers(pd.read_parquet(path)).assign(recording_id=recording_id))
+    if not pieces:
+        return queue
+    found = pd.concat(pieces, ignore_index=True).drop_duplicates(["recording_id", "subject_id", "t_start", "t_end"])
+    keyed = queue.drop(columns=["votes", "model_reasons"]).assign(
+        _start=queue["t_start"].astype(float).round(6), _end=queue["t_end"].astype(float).round(6),
+        _who=queue["subject_id"].astype("string"), _rid=queue["recording_id"].astype(str),
+    )
+    merged = keyed.merge(
+        found.rename(columns={"recording_id": "_rid", "subject_id": "_who", "t_start": "_start", "t_end": "_end"}),
+        on=["_rid", "_who", "_start", "_end"], how="left",
+    )
+    merged = merged.drop(columns=["_rid", "_who", "_start", "_end"])
+    return coerce_frame(merged.reindex(columns=list(REVIEW_QUEUE_SCHEMA)), REVIEW_QUEUE_SCHEMA, NAME)
 
 
 def _decisions(config, recording_ids: list[str]) -> pd.DataFrame:

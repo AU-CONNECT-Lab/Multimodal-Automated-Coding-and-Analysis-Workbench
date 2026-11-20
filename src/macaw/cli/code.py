@@ -15,7 +15,9 @@ from macaw.coding.agreement import (
 )
 from macaw.coding.describe import describe_codes, format_description
 from macaw.coding.imports import import_coding
-from macaw.coding.review_queue import apply_review, export_review, queue_summary, random_check_result, read_queue, write_queue
+from macaw.coding.review_queue import (
+    apply_review, export_review, queue_summary, random_check_result, read_queue, with_model_answers, write_queue,
+)
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution import runner
@@ -71,7 +73,7 @@ def review(
         raise MacawError("Give one of --export <file> or --apply <file>.")
     resolved = resolve_config(config)
     if export_to is not None:
-        queue = export_review(resolved, resolve_recordings(resolved, recordings))
+        queue = with_model_answers(resolved, export_review(resolved, resolve_recordings(resolved, recordings)))
         write_queue(queue, export_to)
         summary = queue_summary(queue)
         reasons = ", ".join(f"{count} {reason}" for reason, count in summary["by_reason"].items())

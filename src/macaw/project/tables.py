@@ -275,6 +275,7 @@ def voice_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFra
 
 def judge_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFrame, dict, str]]:
     from macaw.coding.llm.judge import ABSTAIN, SAMPLES_NAME, JudgementExtractor, version_steps
+    from macaw.coding.review_queue import unit_answers
     from macaw.extractors import get_extractor
     from macaw.store import _io
     from macaw.store.schema import ANNOTATION_SCHEMA
@@ -306,15 +307,9 @@ def judge_tables(config, recording_ids: list[str]) -> dict[str, tuple[pd.DataFra
             if not coded.is_file() or not path.is_file():
                 continue
             mine = _io.read_file(coded, ANNOTATION_SCHEMA, "annotations")
-            answers = pd.read_parquet(path)
             keys = ["subject_id", "t_start", "t_end"]
-            votes = (
-                answers[answers["label"].notna()].groupby(keys, observed=True)["label"]
-                .agg(lambda labels: ", ".join(f"{label}: {count}" for label, count in labels.value_counts().items()))
-                .rename("votes").reset_index()
-            )
-            for frame in (mine, votes):
-                frame["t_start"], frame["t_end"] = frame["t_start"].astype(float).round(6), frame["t_end"].astype(float).round(6)
+            votes = unit_answers(pd.read_parquet(path))[[*keys, "votes"]]
+            mine["t_start"], mine["t_end"] = mine["t_start"].astype(float).round(6), mine["t_end"].astype(float).round(6)
             mine = mine.assign(subject_id=mine["subject_id"].astype(str)).merge(votes.assign(subject_id=votes["subject_id"].astype(str)), on=keys, how="left")
             pieces.append(mine.assign(judge=judge_name(step), label=mine["label"].where(mine["label"] != ABSTAIN)))
         if not pieces:

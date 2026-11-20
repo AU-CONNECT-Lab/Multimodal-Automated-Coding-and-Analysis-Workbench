@@ -758,6 +758,22 @@ class TestReview:
         apply_review(project.resolved, queue)
         assert len(pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))) == 1
 
+    def test_the_exported_queue_shows_the_models_votes_and_reasons(self, project, tmp_path):
+        from macaw.coding.llm.judge import SAMPLES_NAME, JudgementExtractor
+
+        folder = layout_for(project.resolved).artifacts_dir("r1", JudgementExtractor.name)
+        folder.mkdir(parents=True)
+        pd.DataFrame({
+            "unit_id": [1, 1, 1], "sample": [0, 1, 2], "label": ["question", "inform", None], "subject_id": "b",
+            "t_start": 2.0, "t_end": 3.0, "reason": ["rising pitch", "states a fact", "cannot tell"],
+        }).to_parquet(folder / SAMPLES_NAME, index=False)
+        result = CliRunner().invoke(app, ["review", "-c", str(project.config), "--export", str(tmp_path / "q.csv")])
+        assert result.exit_code == 0, result.output
+        queue = read_queue(tmp_path / "q.csv").set_index("t_start")
+        assert queue.at[2.0, "votes"] == "question: 1, inform: 1"
+        assert queue.at[2.0, "model_reasons"] == "question: rising pitch | inform: states a fact | -: cannot tell"
+        assert pd.isna(queue.at[4.0, "votes"])
+
     def test_a_random_check_says_how_often_sure_answers_are_wrong(self, project, tmp_path):
         queue = export_review(project.resolved, ["r1"])
         queue.loc[queue["reason"] == "random_check", ["decision", "reviewer"]] = ["question", "ann"]
