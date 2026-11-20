@@ -27,8 +27,8 @@ def label_line(*, x=0.5, y=0.25, confidence=0.9, track_id=None):
 
 
 class TestLabelRows:
-    def read(self, line, min_confidence=0.3):
-        return yolo_label_rows([line], frame_index=7, width=640, height=480, min_confidence=min_confidence)
+    def read(self, line):
+        return yolo_label_rows([line], frame_index=7, width=640, height=480)
 
     def test_a_tracked_person_is_seventeen_named_points_in_pixels(self):
         rows = self.read(label_line(track_id=3))
@@ -39,9 +39,12 @@ class TestLabelRows:
     def test_without_a_tracker_the_track_id_is_empty_not_zero(self):
         assert {row["track_id"] for row in self.read(label_line())} == {None}
 
-    def test_a_doubtful_point_keeps_its_confidence_but_loses_its_place(self):
+    def test_a_doubtful_point_keeps_its_place_and_its_confidence(self):
         row = self.read(label_line(confidence=0.2))[0]
-        assert math.isnan(row["x"]) and row["confidence"] == pytest.approx(0.2)
+        assert row["x"] == 320.0 and row["confidence"] == pytest.approx(0.2)
+
+    def test_the_box_score_is_kept(self):
+        assert [row["box_score"] for row in self.read(label_line(track_id=3))] == pytest.approx([0.8] * 17)
 
     def test_a_point_written_at_the_corner_is_missing(self):
         assert math.isnan(self.read(label_line(x=0.0, y=0.0))[0]["x"])
@@ -110,7 +113,7 @@ def fake_yolo(monkeypatch, tmp_path):
 class TestInfer:
     def test_frames_are_numbered_in_the_file_not_the_clip(self, fake_yolo):
         frames = YOLOPoseBackend().infer(
-            fake_yolo.video, device="cuda", min_confidence=0.3, model=fake_yolo.weights, frames=(100, 102),
+            fake_yolo.video, device="cuda", model=fake_yolo.weights, frames=(100, 102),
             input_size=1280,
         )
         assert sorted(frames.keypoints["frame"].unique()) == [100, 101]
@@ -121,12 +124,12 @@ class TestInfer:
 
     def test_it_runs_offline_unless_the_user_said_otherwise(self, fake_yolo, monkeypatch):
         monkeypatch.delenv("YOLO_OFFLINE", raising=False)
-        YOLOPoseBackend().infer(fake_yolo.video, device="auto", min_confidence=0.3, model=fake_yolo.weights)
+        YOLOPoseBackend().infer(fake_yolo.video, device="auto", model=fake_yolo.weights)
         assert fake_yolo.calls[0][1]["YOLO_OFFLINE"] == "1"
 
     def test_the_whole_file_is_read_without_cutting(self, fake_yolo):
         YOLOPoseBackend().infer(
-            fake_yolo.video, device="auto", min_confidence=0.3, model=fake_yolo.weights, frames=(0, 2500)
+            fake_yolo.video, device="auto", model=fake_yolo.weights, frames=(0, 2500)
         )
         assert fake_yolo.clips == []
         assert not any(part.startswith("device=") for part in fake_yolo.calls[0][0])
@@ -134,7 +137,7 @@ class TestInfer:
     @pytest.mark.parametrize("model", [None, "yolo11x-pose.pt"])
     def test_weights_have_to_be_a_file_since_nothing_is_downloaded(self, fake_yolo, model):
         with pytest.raises(ExternalToolError, match="pose.model"):
-            YOLOPoseBackend().infer(fake_yolo.video, device="auto", min_confidence=0.3, model=model)
+            YOLOPoseBackend().infer(fake_yolo.video, device="auto", model=model)
 
     def test_a_failed_run_shows_what_yolo_said(self, fake_yolo, monkeypatch):
         monkeypatch.setattr(
@@ -142,7 +145,7 @@ class TestInfer:
             lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "", "CUDA error: out of memory"),
         )
         with pytest.raises(ExternalToolError, match="CUDA error: out of memory"):
-            YOLOPoseBackend().infer(fake_yolo.video, device="auto", min_confidence=0.3, model=fake_yolo.weights)
+            YOLOPoseBackend().infer(fake_yolo.video, device="auto", model=fake_yolo.weights)
 
 
 SIDE = 32

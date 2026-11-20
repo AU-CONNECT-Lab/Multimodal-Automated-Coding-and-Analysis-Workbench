@@ -51,6 +51,7 @@ def backend_frame(positions, *, n_frames=N_FRAMES, swap_at=None, confidence=0.9)
                         "track_id": track,
                         "units": "pixel",
                         "metric_scale_valid": None,
+                        "box_score": float("nan"),
                     }
                 )
     if not rows:
@@ -70,7 +71,7 @@ class FakeBackend:
     def check_available(self):
         return None
 
-    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1, frames=None, input_size=None):
+    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None):
         self.calls.append({"path": video_path, "max_people": max_people, "frames": frames})
         return PoseFrames(keypoints=self.frames)
 
@@ -419,6 +420,7 @@ def spread_frame(*people):
                         "track_id": track,
                         "units": "pixel",
                         "metric_scale_valid": None,
+                        "box_score": float("nan"),
                     }
                 )
     return coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")

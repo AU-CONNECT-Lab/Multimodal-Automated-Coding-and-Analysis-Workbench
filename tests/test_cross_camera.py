@@ -88,7 +88,7 @@ class PerFileBackend:
 def room_and_own(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     """Each person on a camera of their own, and both on the room camera, the child on the left."""
     activity = {"parent": talking(n=240), "child": talking(n=240)}
-    frame = lambda rows: coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+    frame = lambda rows: coerce_frame(pd.DataFrame(rows).assign(box_score=float("nan")), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
     backend = PerFileBackend({
         "parent.mp4": frame(nodding(activity["parent"], 200.0, 300.0, 1)),
         "child.mp4": frame(nodding(activity["child"], 200.0, 300.0, 1)),
@@ -138,7 +138,7 @@ class TestNamingTheRoomFromOwnCameras:
 def two_rooms(monkeypatch, offsets, recording, tmp_path):  # noqa: F811
     """Two room cameras facing each other: the child is left on one and right on the other."""
     activity = {"parent": talking(n=240), "child": talking(n=240)}
-    frame = lambda rows: coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+    frame = lambda rows: coerce_frame(pd.DataFrame(rows).assign(box_score=float("nan")), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
     backend = PerFileBackend({
         "room_a.mp4": frame(nodding(activity["child"], 100.0, 60.0, 1) + nodding(activity["parent"], 500.0, 60.0, 2)),
         "room_b.mp4": frame(nodding(activity["parent"], 100.0, 60.0, 1) + nodding(activity["child"], 500.0, 60.0, 2)),

@@ -87,7 +87,7 @@ class TestScaffold:
             [(0, 1, "nose", 10.0, 20.0, 0.9), (1, 2, "chin", 11.0, 21.0, 0.8)],
             columns=["frame", "track_id", "joint", "x", "y", "confidence"],
         ).to_csv(path, index=False)
-        table = load_module().read_keypoints(path, min_confidence=0.3, frames=None)
+        table = load_module().read_keypoints(path, frames=None)
         validate_frame(table, BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
 
 

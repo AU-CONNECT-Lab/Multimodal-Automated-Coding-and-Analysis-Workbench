@@ -168,11 +168,25 @@ _DETECT_MISSING = {
 
 
 def load_detections(config, recording_id: str) -> tuple[pd.DataFrame, dict]:
+    """pose.detect's people with the points below pose.min_confidence or outside the picture made missing."""
     directory = layout_for(config, create=False).artifacts_dir(recording_id, PoseDetectExtractor.name)
     path = directory / DETECTIONS_NAME
     if not path.is_file():
         raise InputNotFoundError(f"{recording_id}: no pose detections at {path}; run pose.detect first")
-    return pd.read_parquet(path), json.loads((directory / BACKEND_NAME).read_text(encoding="utf-8"))
+    backend = json.loads((directory / BACKEND_NAME).read_text(encoding="utf-8"))
+    return seen_points(pd.read_parquet(path), config.pose.min_confidence, backend.get("frame_sizes", {})), backend
+
+
+def seen_points(detections: pd.DataFrame, min_confidence: float, frame_sizes: dict) -> pd.DataFrame:
+    """A point below min_confidence was not seen; nor was one outside its video's picture."""
+    out = detections.drop(columns=["box_score"], errors="ignore").copy()
+    unsure = ~(out["confidence"] >= min_confidence).fillna(False).to_numpy(dtype=bool)
+    out.loc[unsure, ["x", "y"]] = float("nan")
+    pieces = [
+        inside_frame(group, tuple(frame_sizes[str(video)]) if str(video) in frame_sizes else None)
+        for video, group in out.groupby("video", sort=False, observed=True)
+    ] if "video" in out and not out.empty else [out]
+    return pd.concat(pieces).sort_index() if pieces else out
 
 
 @register_extractor
@@ -181,11 +195,11 @@ class PoseDetectExtractor(Extractor):
     not run the model again."""
 
     name = "pose.detect"
-    version = "0.1.1"
+    version = "0.2.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = (
-        "pose.backend", "pose.model", "pose.device", "pose.min_confidence", "pose.input_size", "setup.cameras",
+        "pose.backend", "pose.model", "pose.device", "pose.input_size", "setup.cameras",
         "segment", "video",
     )
     requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
@@ -221,6 +235,7 @@ class PoseDetectExtractor(Extractor):
         sources = recording.cameras()
 
         pieces: list[pd.DataFrame] = []
+        frame_sizes: dict[str, list[int]] = {}
         n_processed = n_with_anyone = 0
         for item in sources:
             fps = item.fps or 0.0
@@ -237,16 +252,16 @@ class PoseDetectExtractor(Extractor):
             frames = backend.infer(
                 item.frames_path,
                 device=cfg.device,
-                min_confidence=cfg.min_confidence,
                 model=cfg.model,
                 max_people=expected,
                 frames=(first, stop),
                 input_size=cfg.input_size,
             )
             piece = frames.keypoints
+            if frames.frame_size is not None:
+                frame_sizes[item.name] = [int(side) for side in frames.frame_size]
             if piece.empty:
                 continue
-            piece = inside_frame(piece, frames.frame_size)
 
             # the backend counts frames from the file's own start; offset_s is what puts it on
             # the recording clock, and it is applied once, here, exactly as prep does for audio
@@ -267,7 +282,7 @@ class PoseDetectExtractor(Extractor):
         directory.mkdir(parents=True, exist_ok=True)
         detections.to_parquet(directory / DETECTIONS_NAME, index=False)
         (directory / BACKEND_NAME).write_text(
-            json.dumps({"name": backend.name, "version": backend.version, "joint_set": backend.joint_set}),
+            json.dumps({"name": backend.name, "version": backend.version, "joint_set": backend.joint_set, "frame_sizes": frame_sizes}),
             encoding="utf-8",
         )
         return ExtractorResult(
@@ -285,10 +300,11 @@ class PoseDetectExtractor(Extractor):
         )
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
-        try:
-            detections, _ = load_detections(self.config, recording.recording_id)
-        except InputNotFoundError:
+        # who was found in which frame does not depend on the cut at pose.min_confidence
+        path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, self.name) / DETECTIONS_NAME
+        if not path.is_file():
             return None
+        detections = pd.read_parquet(path)
         recording = copy.deepcopy(recording)
         apply_prep_timing(self.config, recording)
         sources = recording.cameras()
@@ -317,7 +333,7 @@ class PoseExtractor(Extractor):
     needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.9.1"
+    version = "0.10.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "setup.cameras", "setup.ignore")

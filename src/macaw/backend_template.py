@@ -91,25 +91,27 @@ def keypoint_file(video_path: Path) -> Path:
     return Path(video_path).with_suffix(SUFFIX)
 
 
-def read_keypoints(path: Path, *, min_confidence: float, frames: tuple[int, int] | None) -> pd.DataFrame:
+def read_keypoints(path: Path, *, frames: tuple[int, int] | None) -> pd.DataFrame:
+    """Every point with its confidence; macaw leaves out the unsure ones itself, at pose.min_confidence."""
     table = pd.read_csv(path)
     if frames is not None:
         table = table[(table["frame"] >= frames[0]) & (table["frame"] < frames[1])]
     if table.empty:
         return empty_frame(BACKEND_KEYPOINT_SCHEMA)
-    unsure = table["confidence"] < min_confidence
     out = pd.DataFrame(
         {
             "frame": table["frame"].astype(int),
             # a point outside the 17 standard ones must not be read as one of them
             "joint": [joint if joint in STANDARD_JOINTS else extra_joint(NAME, joint) for joint in table["joint"]],
-            "x": table["x"].where(~unsure, np.nan),
-            "y": table["y"].where(~unsure, np.nan),
+            "x": table["x"],
+            "y": table["y"],
             "z": np.nan,
             "confidence": table["confidence"],
             "track_id": table["track_id"].astype("Int64"),
             "units": UNITS_PIXEL,
             "metric_scale_valid": None,
+            # how sure the detector is that the person is there, if the file says
+            "box_score": table["box_score"] if "box_score" in table else np.nan,
         }
     )
     return coerce_frame(out, BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
@@ -124,14 +126,14 @@ class $cls(PoseBackend):
         # raise BackendNotAvailableError here when a model or a package is missing
         return None
 
-    def infer(self, video_path, *, device, min_confidence, model=None, max_people=1, frames=None, input_size=None):
+    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None):
         path = keypoint_file(video_path)
         if not path.is_file():
             raise BackendNotAvailableError(f"no keypoints file {path.name} next to {Path(video_path).name}")
         stream = next(iter(probe(video_path).video_streams()), None)
         size = (stream.width, stream.height) if stream is not None and stream.width else None
         return PoseFrames(
-            keypoints=read_keypoints(path, min_confidence=min_confidence, frames=frames),
+            keypoints=read_keypoints(path, frames=frames),
             frame_size=size,
         )
 ''')
@@ -148,20 +150,20 @@ def write(tmp_path, rows):
     return path
 
 
-def test_a_point_below_the_threshold_is_missing(tmp_path):
+def test_every_point_keeps_its_place_and_confidence(tmp_path):
     path = write(tmp_path, [(0, 1, "nose", 10.0, 20.0, 0.9), (0, 1, "left_wrist", 30.0, 40.0, 0.1)])
-    table = read_keypoints(path, min_confidence=0.3, frames=None)
-    assert table["x"].isna().tolist() == [False, True]
+    table = read_keypoints(path, frames=None)
+    assert table["x"].tolist() == [10.0, 30.0] and table["confidence"].tolist() == [0.9, 0.1]
 
 
 def test_only_the_frames_asked_for(tmp_path):
     path = write(tmp_path, [(frame, 1, "nose", 10.0, 20.0, 0.9) for frame in range(10)])
-    assert read_keypoints(path, min_confidence=0.3, frames=(2, 5))["frame"].tolist() == [2, 3, 4]
+    assert read_keypoints(path, frames=(2, 5))["frame"].tolist() == [2, 3, 4]
 
 
 def test_a_joint_of_its_own_is_kept_apart_from_the_standard_ones(tmp_path):
     path = write(tmp_path, [(0, 1, "chin", 10.0, 20.0, 0.9)])
-    assert read_keypoints(path, min_confidence=0.3, frames=None)["joint"].tolist() != ["chin"]
+    assert read_keypoints(path, frames=None)["joint"].tolist() != ["chin"]
 ''')
 
 

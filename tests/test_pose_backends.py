@@ -54,7 +54,6 @@ def rows():
         frame_index=7,
         width=WIDTH,
         height=HEIGHT,
-        min_confidence=0.3,
     )
 
 
@@ -93,9 +92,10 @@ class TestChoosingABackend:
 class TestBackendSchemas:
     def test_the_keypoint_subset_is_the_stored_table_minus_what_the_extractor_owns(self):
         """A backend sees one file and its own tracks, so it has no business naming a subject."""
-        assert set(BACKEND_KEYPOINT_SCHEMA) == set(KEYPOINT_SCHEMA) - EXTRACTOR_OWNED
+        # the detector's own score stays with the detections and never reaches the stored table
+        assert set(BACKEND_KEYPOINT_SCHEMA) == set(KEYPOINT_SCHEMA) - EXTRACTOR_OWNED | {"box_score"}
         for column, spec in BACKEND_KEYPOINT_SCHEMA.items():
-            assert spec == KEYPOINT_SCHEMA[column]
+            assert column == "box_score" or spec == KEYPOINT_SCHEMA[column]
 
     def test_the_body_model_subset_adds_a_track_id_the_stored_table_lacks(self):
         """Parameters have to be keyed to a track until assign_subjects names the person."""
@@ -131,13 +131,25 @@ class TestLandmarkRows:
         assert detected.y.iloc[0] == pytest.approx(0.25 * HEIGHT)
         assert set(frame.units) == {UNITS_PIXEL}
 
-    def test_a_point_below_the_threshold_loses_its_coordinates_but_keeps_its_confidence(self, frame):
+    def test_a_point_below_the_threshold_loses_its_coordinates_but_keeps_its_confidence_when_read(self, frame):
         """Dropping the row instead would make "not measured" and "not detected" the same thing,
         and the per-joint missing rate is exactly what tells those apart."""
-        faint = frame[frame.track_id == 1]
-        assert faint.x.isna().all()
-        assert faint.y.isna().all()
-        assert faint.confidence.iloc[0] == pytest.approx(0.1)
+        from macaw.extractors.video.pose.keypoints import seen_points
+
+        assert frame[frame.track_id == 1].x.notna().all()
+        seen = seen_points(frame.assign(video="clip.mp4"), 0.3, {})
+        faint = seen[seen.track_id == 1]
+        assert faint.x.isna().all() and faint.y.isna().all() and faint.confidence.iloc[0] == pytest.approx(0.1)
+        assert seen[seen.track_id == 0].x.notna().all() and "box_score" not in seen
+        # a lower cut keeps them, with no model run again
+        assert seen_points(frame.assign(video="clip.mp4"), 0.05, {}).x.notna().all()
+
+    def test_a_point_outside_its_videos_picture_is_missing_when_read(self, frame):
+        from macaw.extractors.video.pose.keypoints import seen_points
+
+        narrow = {"clip.mp4": [int(0.4 * WIDTH), HEIGHT]}
+        seen = seen_points(frame.assign(video="clip.mp4"), 0.05, narrow)
+        assert seen[seen.track_id == 0].x.isna().all() and seen[seen.track_id == 1].x.notna().all()
 
     def test_z_is_never_filled_in(self, frame):
         """MediaPipe reports a depth in units of torso width, which is neither metres nor
@@ -153,18 +165,16 @@ class TestLandmarkRows:
     def test_the_frame_number_is_carried_through(self, frame):
         assert set(frame.frame) == {7}
 
-    def test_a_missing_visibility_counts_as_below_threshold(self):
+    def test_a_missing_visibility_is_no_confidence(self):
         @dataclass
         class Bare:
             x: float
             y: float
 
-        rows = landmark_rows(
-            [[Bare(0.5, 0.5)]], frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.0
-        )
-        assert pd.isna(rows[0]["x"])
+        rows = landmark_rows([[Bare(0.5, 0.5)]], frame_index=0, width=WIDTH, height=HEIGHT)
+        assert pd.isna(rows[0]["confidence"]) and rows[0]["x"] == pytest.approx(0.5 * WIDTH)
 
-    def test_a_point_extrapolated_out_of_frame_is_not_kept(self):
+    def test_a_point_extrapolated_out_of_frame_takes_its_presence_as_confidence(self):
         """A seated person's elbows under the table come back visible but not present."""
         @dataclass
         class Scored:
@@ -175,9 +185,9 @@ class TestLandmarkRows:
 
         rows = landmark_rows(
             [[Scored(0.5, 1.3, 0.53, 0.02), Scored(0.5, 0.8, 0.95, 0.85)]],
-            frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.3,
+            frame_index=0, width=WIDTH, height=HEIGHT,
         )
-        assert pd.isna(rows[0]["y"])
+        assert rows[0]["y"] == pytest.approx(1.3 * HEIGHT)
         assert rows[0]["confidence"] == pytest.approx(0.02)
         assert rows[1]["y"] == pytest.approx(0.8 * HEIGHT)
         assert rows[1]["confidence"] == pytest.approx(0.85)
@@ -190,7 +200,7 @@ class TestLandmarkRows:
             visibility: float
             presence: None = None
 
-        rows = landmark_rows([[Unscored(0.5, 0.5, 0.9)]], frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.3)
+        rows = landmark_rows([[Unscored(0.5, 0.5, 0.9)]], frame_index=0, width=WIDTH, height=HEIGHT)
         assert rows[0]["confidence"] == pytest.approx(0.9)
 
     def test_a_model_with_more_points_than_we_know_stays_readable(self):
@@ -199,9 +209,8 @@ class TestLandmarkRows:
             frame_index=0,
             width=WIDTH,
             height=HEIGHT,
-            min_confidence=0.3,
         )
         assert len(rows) == len(MEDIAPIPE_LANDMARKS)
 
     def test_no_detections_is_no_rows(self):
-        assert landmark_rows([], frame_index=0, width=WIDTH, height=HEIGHT, min_confidence=0.3) == []
+        assert landmark_rows([], frame_index=0, width=WIDTH, height=HEIGHT) == []

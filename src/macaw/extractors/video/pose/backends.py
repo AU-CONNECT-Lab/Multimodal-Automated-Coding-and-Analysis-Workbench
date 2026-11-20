@@ -49,7 +49,9 @@ BACKEND_KEYPOINT_COLUMNS: tuple[str, ...] = (
     "metric_scale_valid",
 )
 BACKEND_KEYPOINT_SCHEMA: dict[str, str] = {
-    column: KEYPOINT_SCHEMA[column] for column in BACKEND_KEYPOINT_COLUMNS
+    **{column: KEYPOINT_SCHEMA[column] for column in BACKEND_KEYPOINT_COLUMNS},
+    # how sure the detector is that the person is there, NaN for a backend that gives none; kept with the detections only
+    "box_score": "float64",
 }
 
 # Same subset rule for the parameter table, plus track_id, which the stored table has no
@@ -112,7 +114,6 @@ class PoseBackend(Backend):
         video_path: Path,
         *,
         device: str,
-        min_confidence: float,
         model: str | Path | None = None,
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
@@ -120,7 +121,9 @@ class PoseBackend(Backend):
     ) -> PoseFrames:
         """One file in, that file's own tracks out. frames is a half-open range of the file's
         own frame numbers, None for all of it; frame numbers stay file-absolute either way.
-        input_size is the side frames are scaled to for a backend that takes one.
+        input_size is the side frames are scaled to for a backend that takes one. Every point
+        comes back with its confidence and where the model put it, however unsure: the cut at
+        pose.min_confidence and outside the picture is made when the detections are read.
         Four rules hold for every backend:
 
         joint is a name from STANDARD_JOINTS, and any extra point the backend has goes
@@ -174,7 +177,6 @@ def landmark_rows(
     frame_index: int,
     width: int,
     height: int,
-    min_confidence: float,
 ) -> list[dict]:
     """One frame of detections to BACKEND_KEYPOINT_SCHEMA rows. Pure, so it can be tested
     without a model file or a video: it only reads x, y, visibility and presence off each landmark."""
@@ -190,15 +192,14 @@ def landmark_rows(
             presence = _score(landmark, "presence")
             if presence < confidence:
                 confidence = presence
-            below = not (confidence >= min_confidence)
             rows.append(
                 {
                     "frame": frame_index,
                     "joint": native if is_standard(native) else extra_joint("mediapipe", native),
                     # normalised coordinates are meaningless once a video is resized, so they
                     # are stored as pixels and units says so
-                    "x": float("nan") if below else float(landmark.x) * width,
-                    "y": float("nan") if below else float(landmark.y) * height,
+                    "x": float(landmark.x) * width,
+                    "y": float(landmark.y) * height,
                     # world landmarks exist but are metres from that person's own hip, which
                     # cannot answer how far apart two people are; see the z rule above
                     "z": float("nan"),
@@ -206,6 +207,7 @@ def landmark_rows(
                     "track_id": slot,
                     "units": UNITS_PIXEL,
                     "metric_scale_valid": None,
+                    "box_score": float("nan"),
                 }
             )
     return rows
@@ -273,7 +275,6 @@ class MediaPipeBackend(PoseBackend):
         video_path: Path,
         *,
         device: str,
-        min_confidence: float,
         model: str | Path | None = None,
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
@@ -341,7 +342,6 @@ class MediaPipeBackend(PoseBackend):
                             frame_index=frame_index,
                             width=width,
                             height=height,
-                            min_confidence=min_confidence,
                         )
                     )
                     frame_index += 1
@@ -377,15 +377,13 @@ COCO_KEYPOINT_ORDER: tuple[str, ...] = (
     "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist",
     "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle",
 )
-# boxes below this never reach the label files; keypoints are thresholded on their own by min_confidence
+# boxes below this never reach the label files; keypoints are cut at pose.min_confidence when the detections are read
 YOLO_DETECTION_CONFIDENCE = 0.25
 YOLO_TRACKER = "bytetrack.yaml"
 _LABEL_FRAME = re.compile(r"_(\d+)\.txt$")
 
 
-def yolo_label_rows(
-    lines: list[str], *, frame_index: int, width: int, height: int, min_confidence: float
-) -> list[dict]:
+def yolo_label_rows(lines: list[str], *, frame_index: int, width: int, height: int) -> list[dict]:
     """One frame's label lines to BACKEND_KEYPOINT_SCHEMA rows. A line is class, box (4), then x y
     confidence per point, all normalised, then the box confidence and, when tracking, the track id."""
     n_values = 3 * len(COCO_KEYPOINT_ORDER)
@@ -401,11 +399,12 @@ def yolo_label_rows(
                 "keypoint confidences"
             )
         track_id = int(numbers[-1]) if tail == 2 else None
+        box_score = numbers[5 + n_values]
         points = numbers[5 : 5 + n_values]
         for index, joint in enumerate(COCO_KEYPOINT_ORDER):
             x, y, confidence = points[3 * index : 3 * index + 3]
             # some versions write a point they do not trust at the image corner
-            below = not (confidence >= min_confidence) or (x == 0.0 and y == 0.0)
+            below = x == 0.0 and y == 0.0
             rows.append(
                 {
                     "frame": frame_index,
@@ -417,6 +416,7 @@ def yolo_label_rows(
                     "track_id": track_id,
                     "units": UNITS_PIXEL,
                     "metric_scale_valid": None,
+                    "box_score": box_score,
                 }
             )
     return rows
@@ -478,7 +478,6 @@ class YOLOPoseBackend(PoseBackend):
         video_path: Path,
         *,
         device: str,
-        min_confidence: float,
         model: str | Path | None = None,
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
@@ -520,7 +519,6 @@ class YOLOPoseBackend(PoseBackend):
                         frame_index=frame_index,
                         width=stream.width,
                         height=stream.height,
-                        min_confidence=min_confidence,
                     )
                 )
 
