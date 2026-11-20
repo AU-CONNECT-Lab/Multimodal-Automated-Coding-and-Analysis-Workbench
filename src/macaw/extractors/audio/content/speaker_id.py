@@ -229,6 +229,23 @@ def suggestion_record(suggestion: dict | None) -> dict | None:
     return plain({key: suggestion.get(key) for key in ("people", "evidence", "scores", "unheard")})
 
 
+def unsure_voices(suggestion: dict) -> list[str]:
+    """The voices the suggestion asks to be listened to: undecided, disputed, paired as the one left, or on a signal
+    that barely follows the voice or is too short to test."""
+    from macaw.qc.checks import _MOUTH_Z
+
+    unsure = []
+    for label, who in suggestion["people"].items():
+        evidence = suggestion["evidence"].get(who) if who is not None else None
+        if who is None:
+            unsure.append(label)
+        elif evidence is None or evidence.get("source") in (WORDS, PITCH) and not evidence.get("disputed"):
+            continue
+        elif evidence.get("disputed") or evidence.get("source") == ELIMINATION or not evidence["z"] >= _MOUTH_Z:
+            unsure.append(label)
+    return sorted(unsure)
+
+
 def describe_suggestion(suggestion: dict) -> str:
     return "; ".join(f"{label} is {said}" for label, said in sorted(suggested_people(suggestion).items()))
 

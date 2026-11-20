@@ -724,7 +724,7 @@ class SpeakerReviewGate(Gate):
         mode = self.config.text.voice_review
         if mode == "always" or self.config.text.diarization != SHARED_MODE:
             return
-        from macaw.extractors.audio.content.speaker_id import suggest_voices
+        from macaw.extractors.audio.content.speaker_id import suggest_voices, unsure_voices
 
         rid = recording.recording_id
         voices = read_voices(self.config, rid)
@@ -740,8 +740,7 @@ class SpeakerReviewGate(Gate):
         if suggestion is None:
             return
         people = {label: suggestion["people"].get(label) for label in voices}
-        disputed = any(evidence.get("disputed") for evidence in suggestion.get("evidence", {}).values())
-        if mode == "flagged" and (disputed or any(who is None for who in people.values())):
+        if mode == "flagged" and (unsure_voices(suggestion) or any(who is None for who in people.values())):
             return
         path = layout_for(self.config, create=False).voice_owners_path(rid)
         path.parent.mkdir(parents=True, exist_ok=True)

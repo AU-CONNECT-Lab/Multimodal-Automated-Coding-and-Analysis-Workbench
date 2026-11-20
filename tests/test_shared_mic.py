@@ -363,6 +363,23 @@ class TestReview:
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch, evidence)
         assert not path.exists() and gate.pending(recording) is not None
 
+    @pytest.mark.parametrize("evidence", [
+        {"source": "face", "rho": 0.1, "z": 0.4},
+        {"source": "face", "rho": 0.3, "z": float("nan")},
+        {"source": "elimination", "rho": float("nan"), "z": float("nan")},
+    ], ids=["weak", "too short to test", "the one left"])
+    def test_flagged_waits_where_the_suggestion_says_to_listen(self, project, monkeypatch, evidence):
+        sure = {"label": "S0", "source": "face", "rho": 0.6, "z": 4.0}
+        gate, recording, path = self.review(
+            project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch, {"child": sure, "parent": {"label": "S1", **evidence}},
+        )
+        assert not path.exists()
+
+    def test_flagged_keeps_clear_pairings(self, project, monkeypatch):
+        evidence = {"child": {"label": "S0", "source": "face", "rho": 0.6, "z": 4.0}, "parent": {"label": "S1", "source": "words", "n": 2, "lines": ["ok"]}}
+        gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": "parent"}, monkeypatch, evidence)
+        assert path.exists()
+
     def test_flagged_waits_when_a_voice_is_undecided(self, project, monkeypatch):
         gate, recording, path = self.review(project, "flagged", {"S0": "child", "S1": None}, monkeypatch)
         assert not path.exists() and gate.pending(recording) is not None

@@ -589,7 +589,9 @@ _VOICE_NAMING = {
     ),
     "flagged": (
         "Each voice was named from the loudness of the participants' own microphones or {faces} where "
-        "that decided every voice, and otherwise by a researcher who listened to clips of each voice."
+        "that decided every voice clearly (no evidence against a pairing, none paired only as the one left, and each "
+        "signal following its voice at a z of at least 1.5 against shifted copies), and otherwise by a researcher who "
+        "listened to clips of each voice."
     ),
     "skip": (
         "Each voice was named from the loudness of the participants' own microphones or {faces}; "
