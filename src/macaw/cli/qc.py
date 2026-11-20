@@ -13,7 +13,7 @@ import typer
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import recording_configs, resolve_recordings
-from macaw.extractors.audio.content.diarization import NO_ONE, further_voice_id, read_further_voice, read_voices, voices_mixed
+from macaw.extractors.audio.content.diarization import NO_ONE, diarization_fingerprint, further_voice_id, read_further_voice, read_voices, voices_mixed
 from macaw.extractors.audio.content.speaker_id import offered_suggestion, suggestion_record
 from macaw.extractors.video.pose.keypoints import PoseExtractor, read_owner_file, waiting_cameras
 from macaw.logging_setup import get_logger
@@ -458,7 +458,7 @@ def accept_voices(
                     f"{recording_id}: the suggestion leaves {', '.join(undecided)} undecided between "
                     f"{', '.join(suggestion['unheard'])}; listen to the clips and name all voices with --rename"
                 )
-        decided = {"people": people, "by": stamp, **({"mixed": True} if mixed else {})}
+        decided = {"people": people, "by": stamp, "diarization": diarization_fingerprint(resolved, recording_id), **({"mixed": True} if mixed else {})}
         _write_json(layout.voice_owners_path(recording_id), {**decided, "suggested": suggestion_record(suggestion)})
         named = "; ".join(f"{label} is {who}" for label, who in sorted(people.items()))
         then = f"say who speaks each line with `macaw line-speakers -r {recording_id}`" if mixed else f"apply it with `macaw run -r {recording_id}`"

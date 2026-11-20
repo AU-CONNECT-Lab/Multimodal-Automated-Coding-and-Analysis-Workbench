@@ -22,6 +22,7 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.project.segments import clip_intervals
 from macaw.store import _io
+from macaw.store.cache import hash_file
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
 
@@ -580,6 +581,11 @@ def diarization_path(config, recording_id: str) -> Path:
     return layout_for(config, create=False).artifacts_dir(recording_id, DiarizationExtractor.name) / DIARIZATION_NAME
 
 
+def diarization_fingerprint(config, recording_id: str) -> str | None:
+    path = diarization_path(config, recording_id)
+    return hash_file(path) if path.is_file() else None
+
+
 def read_diarization(config, recording_id: str, *, changed: bool = False) -> pd.DataFrame:
     """The voices' turns as the diarizer gave them; with changed, the stretches given to another person moved to that person."""
     path = diarization_path(config, recording_id)
@@ -591,7 +597,7 @@ def read_diarization(config, recording_id: str, *, changed: bool = False) -> pd.
 
 def voices_mixed(config, recording_id: str) -> bool:
     """Whether the person who named the voices said one of them holds two people."""
-    return bool(read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id)).get("mixed"))
+    return bool(voice_owners(config, recording_id).get("mixed"))
 
 
 def read_line_speakers(config, recording_id: str) -> dict:
@@ -635,9 +641,20 @@ def read_voice_owners(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
+def voice_owners(config, recording_id: str) -> dict:
+    """Who the voices were given to, empty when they were named on a diarization that has run again since."""
+    named = read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id))
+    return named if named.get("diarization") == diarization_fingerprint(config, recording_id) else {}
+
+
+def voices_renamed_since(config, recording_id: str) -> bool:
+    named = read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id))
+    return bool(named) and not voice_owners(config, recording_id)
+
+
 def voice_names(config, recording_id: str) -> dict[str, str | None]:
     """Each voice's person as a person named it, None for a voice left out; empty until someone has."""
-    named = read_voice_owners(layout_for(config, create=False).voice_owners_path(recording_id))
+    named = voice_owners(config, recording_id)
     return {label: (None if who == NO_ONE else who) for label, who in named.get("people", {}).items()}
 
 
@@ -697,6 +714,10 @@ class SpeakerReviewGate(Gate):
             return
         if mode == "flagged" and unheard_further_voice(self.config, rid):
             return
+        stale = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(rid))
+        if mode == "flagged" and stale and stale.get("by") != AUTOMATIC:
+            # a person named the voices of an earlier diarization: a person names them again
+            return
         suggestion = suggest_voices(self.config, recording)
         if suggestion is None:
             return
@@ -708,14 +729,17 @@ class SpeakerReviewGate(Gate):
         path.parent.mkdir(parents=True, exist_ok=True)
         from macaw.extractors.audio.content.speaker_id import suggestion_record
 
-        payload = {"people": {label: who or NO_ONE for label, who in people.items()}, "by": AUTOMATIC, "suggested": suggestion_record(suggestion)}
+        payload = {
+            "people": {label: who or NO_ONE for label, who in people.items()}, "by": AUTOMATIC,
+            "diarization": diarization_fingerprint(self.config, rid), "suggested": suggestion_record(suggestion),
+        }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def notes(self, recording: Recording) -> list[QCWarning]:
         if self.config.text.diarization != SHARED_MODE:
             return []
         rid = recording.recording_id
-        named = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(rid))
+        named = voice_owners(self.config, rid)
         notes = []
         further = unheard_further_voice(self.config, rid)
         if further:
@@ -745,7 +769,7 @@ class SpeakerReviewGate(Gate):
     def decided_by(self, recording: Recording) -> str | None:
         if self.config.text.diarization != SHARED_MODE or not read_voices(self.config, recording.recording_id):
             return None
-        by = read_voice_owners(layout_for(self.config, create=False).voice_owners_path(recording.recording_id)).get("by")
+        by = voice_owners(self.config, recording.recording_id).get("by")
         return None if by is None else SOFTWARE if by == AUTOMATIC else PERSON
 
     def pending(self, recording: Recording) -> str | None:
@@ -767,7 +791,8 @@ class SpeakerReviewGate(Gate):
 
         suggestion = offered_suggestion(self.config, recording)
         hint = f"; suggested: {describe_suggestion(suggestion)}, kept with `macaw accept-voices -r {rid}`" if suggestion else ""
-        return (
+        again = "the voices were named on an earlier diarization, which has run again since, so its labels may be other people; " if voices_renamed_since(self.config, rid) else ""
+        return again + (
             f"nobody has said which voice is whom ({', '.join(sorted(voices)) or 'none found'}): listen to the clips "
             f"in {clips}{hint}, or name them with `macaw accept-voices -r {rid} --rename LABEL=PERSON,...` "
             f"({NO_ONE} leaves a voice out)"

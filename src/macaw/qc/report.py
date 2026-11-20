@@ -257,14 +257,14 @@ def _camera_picture(config: MacawConfig, recording, camera: str, directory: Path
 def _voices(config: MacawConfig, layout, recording, page: Path) -> list[dict]:
     """Each voice found on a shared microphone, what it says and its pitch, whom the suggestion and
     the person gave it to, and its clips to listen to."""
-    from macaw.extractors.audio.content.diarization import NO_ONE, OTHER, DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
+    from macaw.extractors.audio.content.diarization import NO_ONE, OTHER, DiarizationExtractor, others_take_turns, read_voices, voice_owners
     from macaw.extractors.audio.content.speaker_id import offered_suggestion, read_voice_material, suggested_people, telling_lines
 
     recording_id = recording.recording_id
     voices = read_voices(config, recording_id)
     if not voices:
         return []
-    named = read_voice_owners(layout.voice_owners_path(recording_id))
+    named = voice_owners(config, recording_id)
     lines, pitch = read_voice_material(config, recording_id)
     try:
         suggestion = offered_suggestion(config, recording)
@@ -377,7 +377,7 @@ def _decisions(
     tracks: dict | None = None,
 ) -> list[dict]:
     """What the software decided by itself for this recording, beside what a person decided, with where to check it."""
-    from macaw.extractors.audio.content.diarization import AUTOMATIC, read_voice_owners
+    from macaw.extractors.audio.content.diarization import AUTOMATIC, voice_owners
 
     rows = []
     rows.append({
@@ -429,7 +429,7 @@ def _decisions(
             "by": "software", "href": "#Frames" if frames else None,
         })
     if voices:
-        by = read_voice_owners(layout.voice_owners_path(recording_id)).get("by")
+        by = voice_owners(config, recording_id).get("by")
         rows.append({
             "what": "Whose voice is which",
             "decided": f"{len(voices)} voice(s) on the shared microphone" + ("" if by else ", not named yet"),

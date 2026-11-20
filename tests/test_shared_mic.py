@@ -28,6 +28,8 @@ from macaw.extractors.audio.content.asr import (
 )
 from macaw.extractors.audio.content.diarization import (
     VOICES_NAME,
+    diarization_path,
+    voice_names,
     inside,
     solo_spans,
     turn_pieces,
@@ -284,6 +286,35 @@ class TestReview:
         self.accept(project, "--rename", "SPEAKER_00=child,SPEAKER_01=parent")
         self.voices(project, "SPEAKER_00", "SPEAKER_01", "SPEAKER_02")
         assert self.pending(project) is not None
+
+    def diarized(self, project, content):
+        path = diarization_path(project.resolved(), "003")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    def test_names_given_on_an_earlier_diarization_lapse_when_it_runs_again(self, project, monkeypatch):
+        """The same labels after a new diarization may be other people."""
+        from macaw.extractors.audio.content import speaker_id
+
+        monkeypatch.setattr(speaker_id, "offered_suggestion", lambda config, recording: None)
+        self.voices(project, "SPEAKER_00", "SPEAKER_01")
+        self.diarized(project, b"first run")
+        assert self.accept(project, "--rename", "SPEAKER_00=child,SPEAKER_01=parent").exit_code == 0
+        assert self.pending(project) is None
+        self.diarized(project, b"second run")
+        assert "has run again since" in self.pending(project)
+        assert voice_names(project.resolved(), "003") == {}
+
+    def test_flagged_does_not_name_over_a_person_after_a_new_diarization(self, project, monkeypatch):
+        self.voices(project, "S0", "S1")
+        self.diarized(project, b"first run")
+        self.accept(project, "--rename", "S0=child,S1=parent")
+        self.diarized(project, b"second run")
+        gate, recording, path = self.review(project, "flagged", {"S0": "parent", "S1": "child"}, monkeypatch)
+        from macaw.extractors.audio.content import speaker_id
+
+        monkeypatch.setattr(speaker_id, "offered_suggestion", lambda config, recording: None)
+        assert json.loads(path.read_text(encoding="utf-8"))["by"].startswith("ann ") and gate.pending(recording) is not None
 
     def test_a_name_that_is_not_a_subject_is_refused(self, project):
         self.voices(project, "SPEAKER_00")

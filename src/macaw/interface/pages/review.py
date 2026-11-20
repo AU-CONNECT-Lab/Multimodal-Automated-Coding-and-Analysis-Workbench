@@ -318,14 +318,14 @@ def _model_look(config, layout, rid):
 
 
 def _voices(config, layout, recording):
-    from macaw.extractors.audio.content.diarization import DiarizationExtractor, others_take_turns, read_voice_owners, read_voices
+    from macaw.extractors.audio.content.diarization import DiarizationExtractor, others_take_turns, read_voices, voice_owners
     from macaw.extractors.audio.content.speaker_id import offered_suggestion, read_voice_material, suggested_people, telling_lines
 
     rid = recording.recording_id
     voices = read_voices(config, rid)
     if not voices:
         return None
-    named = read_voice_owners(layout.voice_owners_path(rid))
+    named = voice_owners(config, rid)
     try:
         suggestion = offered_suggestion(config, recording) or {}
     except Exception:   # a suggestion that cannot be made leaves the choice to the person

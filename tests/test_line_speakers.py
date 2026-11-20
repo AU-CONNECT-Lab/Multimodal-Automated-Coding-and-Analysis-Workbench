@@ -307,7 +307,9 @@ class TestGate:
         path = diarization_module.diarization_path(project.resolved(), "003")
         turns = pd.read_parquet(path)
         _io.write_file(pd.concat([turns, turns.tail(1).assign(t_start=21.5, t_end=22.0)]), path, DIARIZATION_SCHEMA, "diarization")
-        assert "separated again" in gate.pending(recording)
+        # the voices themselves are named again first, since a label may now be someone else
+        assert "has run again since" in SpeakerReviewGate(project.resolved()).pending(recording)
+        assert gate.pending(recording) is None
 
     def test_suggestions_kept_unheard_count_as_the_softwares(self, project, monkeypatch):
         name_voices(project, "--mixed")

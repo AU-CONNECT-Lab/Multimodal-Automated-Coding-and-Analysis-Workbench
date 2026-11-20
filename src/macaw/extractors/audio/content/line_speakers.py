@@ -12,12 +12,12 @@ from macaw.exceptions import MacawError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import SHARED_ASR, read_shared_transcript, split_by_voice
 from macaw.extractors.audio.content.diarization import (
+    diarization_fingerprint,
     CHANGED,
     LINES_GATE,
     NO_ONE,
     SHARED_MODE,
     SpeakerReviewGate,
-    diarization_path,
     line_changes,
     read_diarization,
     read_line_speakers,
@@ -29,7 +29,6 @@ from macaw.extractors.base import PERSON, SOFTWARE, Gate, QCWarning
 from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
 from macaw.project.recording import Recording
-from macaw.store.cache import hash_file
 from macaw.store.schema import Scale
 
 # who made a change that no person looked at
@@ -290,15 +289,11 @@ def changes_of(lines: pd.DataFrame) -> list[dict]:
     ]
 
 
-def fingerprint(config, recording_id: str) -> str:
-    return hash_file(diarization_path(config, recording_id))
-
-
 def write_line_speakers(config, recording_id: str, lines: pd.DataFrame, stamp: str, route: str) -> Path:
     path = layout_for(config, create=False).line_speakers_path(recording_id)
     left = lines["suggested"].notna() & (lines["suggested"] != lines["person"]) if "suggested" in lines else pd.Series(False, index=lines.index)
     payload = {
-        "by": stamp, "route": route, "diarization": fingerprint(config, recording_id), "n_lines": int(len(lines)),
+        "by": stamp, "route": route, "diarization": diarization_fingerprint(config, recording_id), "n_lines": int(len(lines)),
         "n_doubted_left": int(left.sum()), "evidence": evidence(config, recording_id)[0], "changes": changes_of(lines),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,7 +356,7 @@ class LineSpeakersGate(Gate):
             return None
         rid = recording.recording_id
         kept = read_line_speakers(self.config, rid)
-        if kept and kept.get("diarization") == fingerprint(self.config, rid):
+        if kept and kept.get("diarization") == diarization_fingerprint(self.config, rid):
             return None
         again = "the voices were separated again since the lines were checked; " if kept else ""
         return (
