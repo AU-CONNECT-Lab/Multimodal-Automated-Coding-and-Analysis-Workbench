@@ -431,3 +431,17 @@ def test_a_cell_of_the_wide_export_never_averages_two_values():
     with pytest.raises(MacawError, match="n_things from x.step"):
         to_wide(rows)
     assert to_wide(rows.iloc[:1])["n_things"].tolist() == [1.0]
+
+
+def test_a_changed_analysed_part_changes_the_turn_steps_keys(saved, project):
+    """The window is read off prep.json, which may change while the transcript's bytes do not."""
+    config = project.config()
+    recording = build_recording(RID, config)
+    steps = (TurnStructureExtractor.name, TransitionExtractor.name, EntropyExtractor.name)
+    made = layout_for(config).artifacts_dir(RID, TransitionExtractor.name)
+    made.mkdir(parents=True)
+    (made / "transitions.parquet").write_bytes(b"transitions")
+    before = {step: runner.task_key(config, step, recording) for step in steps}
+    path = layout_for(config).artifacts_dir(RID, MediaPrepExtractor.name) / PREP_INFO_NAME
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "duration_s": 12.0}), encoding="utf-8")
+    assert all(runner.task_key(config, step, recording) != before[step] for step in steps)

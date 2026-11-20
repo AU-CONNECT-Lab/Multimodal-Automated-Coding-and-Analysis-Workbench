@@ -11,7 +11,7 @@ from macaw.config.schema import TurnsSection
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.diarization import SHARED_MODE, turn_takers
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.extractors.prep import MediaPrepExtractor, load_prep, prep_info_path
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -404,7 +404,7 @@ class TransitionExtractor(Extractor):
         root = layout_for(self.config, create=False).artifacts_dir(
             recording.recording_id, TurnStructureExtractor.name
         )
-        return [root / TURNS_NAME]
+        return [root / TURNS_NAME, prep_info_path(self.config, recording.recording_id)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         turns = load_turns(self.config, recording.recording_id, others=True)

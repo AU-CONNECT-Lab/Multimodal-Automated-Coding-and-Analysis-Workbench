@@ -11,7 +11,7 @@ import pandas as pd
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.diarization import turn_takers
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.extractors.prep import MediaPrepExtractor, load_prep, prep_info_path
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -244,6 +244,7 @@ class EntropyExtractor(Extractor):
             layout.artifacts_dir(recording.recording_id, TurnStructureExtractor.name) / TURNS_NAME,
             layout.artifacts_dir(recording.recording_id, TransitionExtractor.name)
             / TRANSITIONS_NAME,
+            prep_info_path(self.config, recording.recording_id),
         ]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:

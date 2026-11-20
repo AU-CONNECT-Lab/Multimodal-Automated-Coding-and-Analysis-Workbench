@@ -19,7 +19,7 @@ from macaw.extractors.audio.content.asr import (
 )
 from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, load_prep
+from macaw.extractors.prep import MediaPrepExtractor, load_prep, prep_info_path
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -359,7 +359,10 @@ class TurnStructureExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         rid = recording.recording_id
         root = layout_for(self.config, create=False).artifacts_dir(rid, ASRExtractor.name)
-        return [root / TRANSCRIPT_NAME, *([root / WORDS_NAME] if voices_time_talk(self.config, rid) else []), *talk_inputs(self.config, rid)]
+        return [
+            root / TRANSCRIPT_NAME, prep_info_path(self.config, rid),
+            *([root / WORDS_NAME] if voices_time_talk(self.config, rid) else []), *talk_inputs(self.config, rid),
+        ]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.turns

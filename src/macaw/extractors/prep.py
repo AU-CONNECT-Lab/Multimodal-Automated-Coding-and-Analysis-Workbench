@@ -81,12 +81,15 @@ class PrepInfo:
         }
 
 
+def prep_info_path(config, recording_id: str) -> Path:
+    """Where the analysed part and the tracks are written, for the cache key of a step that reads them."""
+    return layout_for(config, create=False).artifacts_dir(recording_id, MediaPrepExtractor.name) / PREP_INFO_NAME
+
+
 def load_prep(config, recording_id: str) -> PrepInfo:
     """Read what prep.media wrote for this recording. Every audio extractor starts here."""
-    root = layout_for(config, create=False).artifacts_dir(
-        recording_id, MediaPrepExtractor.name
-    )
-    path = root / PREP_INFO_NAME
+    path = prep_info_path(config, recording_id)
+    root = path.parent
     if not path.is_file():
         raise UnreadableMediaError(
             f"{recording_id}: {path} is missing, run the '{MediaPrepExtractor.name}' extractor first"

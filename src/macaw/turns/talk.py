@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.extractors.audio.content.diarization import SHARED_MODE, diarization_path, read_diarization, speaker_names
-from macaw.extractors.prep import load_prep
+from macaw.extractors.prep import load_prep, prep_info_path
 from macaw.project.layout import layout_for
 
 TALK_COLUMNS = ["subject_id", "t_start", "t_end"]
@@ -37,7 +37,11 @@ def talk_inputs(config, recording_id: str, *, by_voices: bool | None = None) -> 
         return []
     layout = layout_for(config, create=False)
     lines = layout.line_speakers_path(recording_id)
-    return [diarization_path(config, recording_id), layout.voice_owners_path(recording_id), *([lines] if lines.is_file() else [])]
+    # prep.json says who has a microphone of their own, and so is timed by their own lines
+    return [
+        diarization_path(config, recording_id), layout.voice_owners_path(recording_id), prep_info_path(config, recording_id),
+        *([lines] if lines.is_file() else []),
+    ]
 
 
 def talk_params(config, recording_id: str) -> dict:

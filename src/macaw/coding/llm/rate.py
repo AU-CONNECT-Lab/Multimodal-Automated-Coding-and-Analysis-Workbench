@@ -180,6 +180,9 @@ class RatingExtractor(Extractor):
         named = {segment.name: segment for segment in segments_of(self.config, recording.recording_id)}
         segments = [[name, named[name].start_s, named[name].end_s] for name in own.segments if name in named]
         key = {"note": self.prompt_note(recording), "segments": segments}
+        if self.timed_by_voices(recording.recording_id):
+            # the pause shown before each line is cut from talk timed by the voices
+            key["min_voice_s"] = self.config.turns.min_voice_s
         marked = self.marked(recording.recording_id)
         # only this recording's stretches, so marking another recording rates only that one again
         if marked is not None:
