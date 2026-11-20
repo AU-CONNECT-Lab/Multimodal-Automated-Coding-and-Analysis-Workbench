@@ -105,6 +105,16 @@ class TestEntryPoints:
         monkeypatch.setattr(registry, "entry_points", lambda group: [SimpleNamespace(name="lab.x", load=broken)])
         assert registry.load_entry_point_backends() == 0
 
+    def test_a_name_an_installed_backend_has_is_refused(self, package):
+        """Taken silently, the lab's backend ran under the built-in's name and the Methods text named the built-in."""
+        with pytest.raises(ValueError, match="pose backend name 'yolo' is already taken"):
+            @registry.register_backend(BACKEND_GROUP)
+            class Mine(PoseBackend):
+                name = "yolo"
+                version = "1.0"
+        assert registry.list_backends(BACKEND_GROUP)
+        assert registry._BACKENDS[BACKEND_GROUP]["yolo"].__module__ == "macaw.extractors.video.pose.backends"
+
 
 class TestCommand:
     def test_writes_the_package_and_prints_where(self, tmp_path):

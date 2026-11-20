@@ -168,6 +168,11 @@ class TestEntryPoints:
             assert registry.load_entry_point_extractors() == 0
         assert "lab.x" in caplog.text
 
+    def test_a_step_name_that_cannot_name_a_file_is_refused(self, fresh_registry):
+        step = type("Step", (registry.Extractor,), {"name": "lab:my step", "version": "0.1.0"})
+        with pytest.raises(ValueError, match="only letters, digits, dots, dashes and underscores"):
+            registry.register_extractor(step)
+
     def test_plugins_load_with_the_builtins(self, monkeypatch):
         """They were discoverable but never loaded before; nothing called the loader."""
         calls = []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from importlib import import_module
 from importlib.metadata import entry_points
 from typing import Callable, Type
@@ -49,10 +50,14 @@ BUILTIN_MODULES = (
 
 _REGISTRY: dict[str, Type[Extractor]] = {}
 _BACKENDS: dict[str, dict[str, Type[Backend]]] = {}
+# a step's name is the name of its files and its job's, so it keeps to what a file name can hold everywhere
+STEP_NAME = re.compile(r"[A-Za-z0-9._-]+")
 _builtins_loaded = False
 
 
 def register_extractor(cls: Type[Extractor]) -> Type[Extractor]:
+    if not STEP_NAME.fullmatch(cls.name):
+        raise ValueError(f"Extractor name '{cls.name}' may hold only letters, digits, dots, dashes and underscores")
     existing = _REGISTRY.get(cls.name)
     if existing is not None and existing is not cls:
         raise ValueError(f"Extractor name '{cls.name}' is already taken by {existing.__module__}")
@@ -62,6 +67,9 @@ def register_extractor(cls: Type[Extractor]) -> Type[Extractor]:
 
 def register_backend(group: str) -> Callable[[Type[Backend]], Type[Backend]]:
     def decorator(cls: Type[Backend]) -> Type[Backend]:
+        existing = _BACKENDS.get(group, {}).get(cls.name)
+        if existing is not None and existing is not cls:
+            raise ValueError(f"{group} backend name '{cls.name}' is already taken by {existing.__module__}")
         _BACKENDS.setdefault(group, {})[cls.name] = cls
         return cls
 
