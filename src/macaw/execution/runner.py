@@ -196,14 +196,10 @@ def recording_configs(config: MacawConfig, recording_ids: list[str]) -> dict[str
     configs = {rid: config for rid in recording_ids}
     if not own:
         return configs
-    output_dir = layout_for(config, create=False).output_dir
-    # beside where a run archives the settings, so a relative path in a recording's file resolves as a task resolves it
-    dumped = _dump_config(config, output_dir / f".{os.getpid()}_{RESOLVED_FILENAME}")
-    try:
+    with tempfile.TemporaryDirectory(prefix="macaw_settings_", dir=config.project.scratch_dir or None) as scratch:
+        dumped = _dump_config(config, Path(scratch) / RESOLVED_FILENAME)
         for rid in own:
             configs[rid] = resolve_config(dumped, recording_id=rid)
-    finally:
-        dumped.unlink(missing_ok=True)
     return configs
 
 

@@ -260,10 +260,12 @@ def resolve_config(
         sources.update({key: KeySource("cli") for key in _dotted_keys(overrides)})
 
     config = _validate(merged, sources)
-    # relative paths follow project.yaml, not the shell's cwd, so a project directory
+    # relative paths follow the project's folder, not the shell's cwd, so a project directory
     # keeps working after being copied to another machine
-    _absolutise(config, project_yaml.resolve().parent)
-    _anchor_names(config, project_yaml.resolve().parent)
+    root = _root(config, project_yaml)
+    _absolutise(config, root)
+    _anchor_names(config, root)
+    config.project.root = root
 
     for field, explicit, env_var in (
         ("output_dir", output_dir, OUTPUT_DIR_ENV_VAR),
@@ -341,6 +343,13 @@ def _candidates_for(dotted_parent: str) -> list[str]:
         if model is None:
             return []
     return list(model.model_fields) if model else []
+
+
+def _root(config: MacawConfig, project_yaml: Path) -> Path:
+    """The project's folder, also when the settings read are the copy a run archived in output_dir."""
+    here = project_yaml.resolve().parent
+    root = config.project.root
+    return here if root is None else (here / root).resolve()
 
 
 def _absolutise(model: BaseModel, base: Path) -> None:

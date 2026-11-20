@@ -117,6 +117,17 @@ class TestSetupFile:
         assert list(resolve_config(archived, recording_id="004").setup.cameras) == ["camcorder"]
         assert list(resolve_config(archived, recording_id="003").setup.cameras) == ["front"]
 
+    def test_a_path_in_a_recordings_file_follows_the_project_however_the_settings_are_read(self, project):
+        from macaw.execution.runner import recording_configs
+
+        (project.parent / "recordings").mkdir()
+        (project.parent / "recordings" / "004.yaml").write_text("coding:\n  codebook: books/own.yaml\n", encoding="utf-8")
+        mine = (project.parent / "books" / "own.yaml").resolve()
+        archived = archive_resolved(resolve_config(project), project.parent / "out")
+        assert resolve_config(project, recording_id="004").coding.codebook == mine
+        assert resolve_config(archived, recording_id="004").coding.codebook == mine
+        assert recording_configs(resolve_config(project), ["004"])["004"].coding.codebook == mine
+
     def test_a_recording_naming_a_setup_without_a_file_is_refused(self, project):
         write_devices(project, cameras={"front": camera()})
         (project.parent / "recordings").mkdir()

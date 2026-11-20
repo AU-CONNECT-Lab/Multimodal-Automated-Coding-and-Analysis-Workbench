@@ -20,6 +20,8 @@ class ProjectSection(_Section):
     name: str
     raw_dir: Path
     output_dir: Path
+    # where relative paths in the project's files start; null = the folder of project.yaml. Settings a run keeps carry it
+    root: Path | None = added(default=None)
     # bookkeeping that can be deleted without losing a result: logs, job records, cache.
     # null means it lives under output_dir; on a cluster point it at scratch
     work_dir: Path | None = None
