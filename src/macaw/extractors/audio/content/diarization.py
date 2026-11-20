@@ -64,6 +64,9 @@ _GAIN_FRAME_S = 0.02
 _GAIN_PERCENTILE = 99.0
 # a mic further below the loudest than this is missing its owner, not turned down
 _MAX_GAIN_GAP_DB = 30.0
+# frames where a mic is this much louder than every other are its owner talking, and this much of them is enough to read
+_OWNER_AHEAD_DB = 6.0
+_MIN_OWNED_S = 0.5
 
 
 class DiarizationBackend(Backend):
@@ -225,13 +228,28 @@ def _level_db(audio: np.ndarray, sr: float, t_start: float, t_end: float) -> flo
     return max(20.0 * np.log10(rms), _SILENCE_FLOOR_DB) if rms > 0 else _SILENCE_FLOOR_DB
 
 
-def _gain_db(audio: np.ndarray, sr: float) -> float:
+def _frame_db(audio: np.ndarray, sr: float) -> np.ndarray:
     hop = max(int(_GAIN_FRAME_S * sr), 1)
     frames = audio[: audio.size // hop * hop].reshape(-1, hop)
-    if frames.size == 0:
-        return 0.0
     power = np.mean(np.square(frames, dtype=float), axis=1)
-    return float(np.percentile(10.0 * np.log10(np.maximum(power, 10 ** (_SILENCE_FLOOR_DB / 10))), _GAIN_PERCENTILE))
+    return 10.0 * np.log10(np.maximum(power, 10 ** (_SILENCE_FLOOR_DB / 10)))
+
+
+def _gains_db(audio: dict[str, tuple[np.ndarray, float]]) -> dict[str, float]:
+    """Each mic's loud level where it is clearly ahead of every other, which is its owner talking however little they
+    did; over the whole track where it never is, as on a mic turned down further than its owner is nearer."""
+    levels = {subject_id: _frame_db(samples, sr) for subject_id, (samples, sr) in audio.items()}
+    length = min((level.size for level in levels.values()), default=0)
+    gains = {}
+    for subject_id, level in levels.items():
+        if level.size == 0:
+            gains[subject_id] = 0.0
+            continue
+        others = [other[:length] for name, other in levels.items() if name != subject_id]
+        owned = level[:length][level[:length] - np.max(others, axis=0) >= _OWNER_AHEAD_DB] if others and length else level[:0]
+        enough = owned.size * _GAIN_FRAME_S >= _MIN_OWNED_S
+        gains[subject_id] = float(np.percentile(owned if enough else level, _GAIN_PERCENTILE))
+    return gains
 
 
 def suppress_crosstalk(
@@ -262,7 +280,7 @@ def suppress_crosstalk(
         return out
 
     audio = {subject_id: load_audio(Path(path)) for subject_id, path in tracks.items()}
-    measured = {subject_id: _gain_db(samples, sr) for subject_id, (samples, sr) in audio.items()}
+    measured = _gains_db(audio)
     loudest = max(measured.values())
     # a track this far below the loudest has no owner talking into it, not a low gain
     gain = {subject_id: max(value, loudest - _MAX_GAIN_GAP_DB) for subject_id, value in measured.items()}

@@ -154,3 +154,21 @@ def test_silent_track(two_tracks, tmp_path, write_wav):
     flags = _flags(tracks, segments=SEGMENTS.iloc[[0, 1]])
     assert flags["A solo, bleed"]
     assert not flags["A solo, own track"]
+
+
+def test_someone_who_barely_speaks_does_not_take_the_others_bleed(tmp_path, write_wav):
+    """The child says 1 s in 2 minutes, under 1% of the frames, while the parent leaks into the child's mic 20 dB down."""
+    rng = np.random.default_rng(0)
+    t = np.arange(120 * SAMPLE_RATE) / SAMPLE_RATE
+    parent_talk, child_talk = (t % 10) < 5, (t >= 56) & (t < 57)
+
+    def noise():
+        return rng.standard_normal(t.size)
+
+    tracks = {
+        "parent": write_wav(tmp_path / "p.wav", 0.3 * noise() * parent_talk + 0.01 * noise() * child_talk + 1e-4 * noise()),
+        "child": write_wav(tmp_path / "c.wav", 0.03 * noise() * parent_talk + 0.1 * noise() * child_talk + 1e-4 * noise()),
+    }
+    segments = pd.DataFrame({"subject_id": ["child", "parent", "child"], "t_start": [10.0, 10.0, 56.0], "t_end": [14.0, 14.0, 57.0]})
+    out = suppress_crosstalk(segments, tracks, margin_db=6.0)
+    assert out["is_crosstalk"].tolist() == [True, False, False]

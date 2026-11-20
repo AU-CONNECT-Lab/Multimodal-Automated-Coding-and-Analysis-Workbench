@@ -611,7 +611,9 @@ def _asr(config, spec, names) -> str:
         )
     return (
         f"Speech on each participant's own track was transcribed{language} with "
-        f"{_backend(_ASR, spec, model=text_cfg.asr_model)}. After each microphone was normalised to its own level, an "
+        f"{_backend(_ASR, spec, model=text_cfg.asr_model)}. After each microphone was normalised to its own level, the "
+        "99th percentile of its 20-ms frame power where it was at least 6 dB louder than every other microphone (over the "
+        "whole track where that held for less than 0.5 s), an "
         f"utterance more than {text_cfg.crosstalk_margin_db:g} dB louder on another participant's microphone was "
         "removed as cross-talk."
     )
