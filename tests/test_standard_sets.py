@@ -45,6 +45,13 @@ class TestFunctionals:
         assert table["egemaps_loudness_sma3_amean"].notna().all()
         assert table["egemaps_alphaRatioUV_sma3nz_amean"].notna().all()
 
+    def test_a_compare_turn_without_voice_has_no_pitch_jitter_or_hnr_rather_than_zero(self):
+        table, _ = functionals(pieces(track(), [0.0, 2.2], [2.0, 3.8]), RATE, "ComParE_2016")
+        assert table["compare_F0final_sma_amean"].iloc[0] == pytest.approx(220.0, abs=5.0)
+        for column in ("compare_F0final_sma_amean", "compare_jitterLocal_sma_amean", "compare_shimmerLocal_sma_amean", "compare_logHNR_sma_amean"):
+            assert np.isnan(table[column].iloc[1])
+        assert table["compare_pcm_RMSenergy_sma_amean"].notna().all()
+
     def test_a_turn_too_short_is_counted_and_left_empty(self):
         table, too_short = functionals(pieces(track(), [0.0, 1.0], [0.03, 2.0]), RATE, "eGeMAPSv02")
         assert too_short == 1

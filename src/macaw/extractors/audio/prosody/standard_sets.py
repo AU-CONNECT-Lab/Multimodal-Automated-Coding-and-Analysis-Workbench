@@ -26,6 +26,14 @@ PREFIXES = {"eGeMAPSv02": "egemaps", "ComParE_2016": "compare"}
 # missing value. The UV measures are over unvoiced frames and stay.
 VOICED_ONLY = "_sma3nz_"
 UNVOICED = "UV"
+# ComParE's descriptors taken over voiced frames alone carry no such mark in their names
+COMPARE_VOICED = frozenset({"F0final", "jitterLocal", "jitterDDP", "shimmerLocal", "logHNR"})
+
+
+def voiced_only(column: str) -> bool:
+    """Whether openSMILE takes this functional over voiced frames alone; the column without its set's prefix."""
+    descriptor = column.split("_")[0]
+    return (VOICED_ONLY in column and UNVOICED not in descriptor) or descriptor in COMPARE_VOICED
 _MISSING = (
     f"Empty for every turn of {UNHEARD}, and for a turn too short for openSMILE to measure or, on a shared microphone, "
     "with no stretch where their voice is the only one."
@@ -55,7 +63,7 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class StandardSetExtractor(Extractor):
     name = "prosody.standard_sets"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody.standard_sets", "turns", "segment", "text.diarization")
@@ -125,7 +133,7 @@ class StandardSetExtractor(Extractor):
                 backend_version=version,
                 params={"feature_set": feature_set},
                 aggregation="mean",
-                missing=_MISSING_VOICED if VOICED_ONLY in name and UNVOICED not in name.split("_")[1] else _MISSING,
+                missing=_MISSING_VOICED if voiced_only(name.split("_", 1)[1]) else _MISSING,
                 comparable_across_backends=False,
                 validation="against_reference",
             )
@@ -155,9 +163,9 @@ def functionals(pieces: list[np.ndarray], rate: float, feature_set: str) -> tupl
     columns = list(smile.feature_names)
     table = pd.DataFrame([row if row is not None else pd.Series(np.nan, index=columns) for row in rows], columns=columns)
     table = table.reset_index(drop=True).astype(float)
-    voiced_only = [column for column in columns if VOICED_ONLY in column and UNVOICED not in column.split("_")[0]]
-    f0 = [column for column in voiced_only if column.startswith("F0")]
+    voiced = [column for column in columns if voiced_only(column)]
+    f0 = [column for column in voiced if column.startswith("F0")]
     unvoiced = table[f0].eq(0).all(axis=1) if f0 else pd.Series(False, index=table.index)
-    table.loc[unvoiced, voiced_only] = np.nan
+    table.loc[unvoiced, voiced] = np.nan
     table.columns = [f"{PREFIXES[feature_set]}_{column}" for column in columns]
     return table, too_short
