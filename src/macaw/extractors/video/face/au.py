@@ -44,6 +44,17 @@ _POSE_SPECS = {
     "gaze_pitch_deg": "Gaze pitch from the face model, both eyes together; up is positive.",
     "gaze_yaw_deg": "Gaze yaw from the face model, both eyes together; toward the person's own right is positive.",
 }
+# how well the face was read, for weighing or leaving out frames
+_QUALITY_SPECS = {
+    "face_score": (
+        "How sure the face detector was that this is a face, 0 to 1, on its own scale: py-feat's detector score, OpenFace's "
+        "tracking confidence.", None,
+    ),
+    "face_size_px": (
+        "Height of the face in the picture: the detector's box for py-feat, the span of the face landmarks for OpenFace and "
+        "MediaPipe.", "px",
+    ),
+}
 _NO_FACE = (
     "Empty in frames where no face was found and given to this person on the camera that reads their face: none was detected, "
     "pose placed neither their nose nor their eyes inside it, or it went to someone else whose head also lay in it. Empty "
@@ -54,6 +65,7 @@ _MISSING = {
         code.lower(): f"{_NO_FACE} Also empty where the face model does not score this unit or face.action_units is off."
         for code in ACTION_UNITS
     },
+    "face_score": f"{_NO_FACE} Always empty with MediaPipe, which keeps a face only above a threshold of its own and gives no score.",
     "gaze_pitch_deg": f"{_NO_FACE} Also empty when face.gaze is off.",
     "gaze_yaw_deg": f"{_NO_FACE} Also empty when face.gaze is off.",
 }
@@ -79,7 +91,7 @@ def _au_scale(backend: str, model: str) -> str:
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
-    version = "0.2.1"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = (
@@ -167,6 +179,8 @@ class FaceExtractor(Extractor):
                     values[column.lower()] = faces[column].to_numpy(dtype=float)
             for name, source in (("face_pitch_deg", "pitch"), ("face_roll_deg", "roll"), ("face_yaw_deg", "yaw")):
                 values[name] = faces[source].to_numpy(dtype=float)
+            values["face_score"] = faces["face_score"].to_numpy(dtype=float)
+            values["face_size_px"] = faces["face_height"].to_numpy(dtype=float)
             if cfg.gaze:
                 for name, source in (("gaze_pitch_deg", "gaze_pitch"), ("gaze_yaw_deg", "gaze_yaw")):
                     values[name] = faces[source].to_numpy(dtype=float)
@@ -206,6 +220,7 @@ class FaceExtractor(Extractor):
                 for code, meaning in ACTION_UNITS.items()
             },
             **{name: (text, "deg") for name, text in _POSE_SPECS.items()},
+            **_QUALITY_SPECS,
         }
         return [
             FeatureSpec(

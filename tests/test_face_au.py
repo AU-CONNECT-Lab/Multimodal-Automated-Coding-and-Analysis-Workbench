@@ -102,7 +102,10 @@ class TestExtractor:
                         faces([(80, 80, 40, 40, 0.9), (380, 80, 40, 40, 0.8)]), [video("room.mp4")])
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         assert {spec.name for spec in result.specs} == set(result.rows.feature)
-        assert {"au01", "au12", "face_yaw_deg"} <= set(result.rows.feature)
+        assert {"au01", "au12", "face_yaw_deg", "face_score", "face_size_px"} <= set(result.rows.feature)
+        score = result.rows[result.rows.feature == "face_score"]
+        assert sorted(score["value"].unique().tolist()) == [0.8, 0.9] and len(score) == len(result.rows[result.rows.feature == "face_yaw_deg"])
+        assert {spec.name: spec.unit for spec in result.specs}["face_size_px"] == "px"
         assert set(result.rows.subject_id) == {"parent", "child"}
         assert result.artifacts["landmarks.parquet"].is_file()
         assert any("adult" in warning.message for warning in result.warnings)
