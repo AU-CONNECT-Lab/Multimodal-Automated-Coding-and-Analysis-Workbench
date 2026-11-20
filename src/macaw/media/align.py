@@ -50,10 +50,15 @@ class AlignResult:
     agreement: float | None = None
     overlap_s: float | None = None   # how long the two files overlap at offset_s
     drift_ppm: float | None = None
+    # of the first fit, on the segments below, which decides whether the drift is real
     drift_r2: float | None = None
     drift_intercept_s: float | None = None  # the drift line's offset at the reference's first sample
+    # how far the sharp segments the line was fitted to lie from it, root mean square
+    drift_residual_ms: float | None = None
     # (midpoint_s, offset_s, confidence) per sounding segment
     segment_offsets: list[tuple[float, float, float]] | None = None
+    # the same measured again on the target played at the first fit's rate, as offsets of the target itself
+    drift_segment_offsets: list[tuple[float, float, float]] | None = None
     method: str = GCC_PHAT
     metadata_offset_s: float | None = None
     note: str | None = None
@@ -191,6 +196,7 @@ def align_signals(
         sharp = [segment for segment in segments if segment[2] >= cfg.min_confidence]
         if len(sharp) >= MIN_SEGMENTS:
             result.drift_ppm, result.drift_r2, result.drift_intercept_s = estimate_drift(sharp)
+            result.drift_residual_ms = residual_ms(sharp, result.drift_ppm, result.drift_intercept_s)
             if drift_flagged(result):
                 _refine_drift(reference, target, cfg, result)
     return result
@@ -213,6 +219,16 @@ def _refine_drift(reference: np.ndarray, target: np.ndarray, cfg: AlignSection, 
     # the two rates compose: own time x scale / (1 - rest) is recording time less intercept / (1 - rest)
     result.drift_ppm = (1.0 - (1.0 - rest_ppm * 1e-6) / scale) * 1e6
     result.drift_intercept_s = intercept / scale
+    # an offset to the target played faster, taken back to the target's own clock
+    result.drift_segment_offsets = [(t, t * (1.0 - 1.0 / scale) + offset / scale, confidence) for t, offset, confidence in segments]
+    result.drift_residual_ms = residual_ms(
+        [point for point in result.drift_segment_offsets if point[2] >= cfg.min_confidence], result.drift_ppm, result.drift_intercept_s,
+    )
+
+
+def residual_ms(points: list[tuple[float, float, float]], drift_ppm: float, intercept_s: float) -> float:
+    t, offsets = np.array([point[0] for point in points]), np.array([point[1] for point in points])
+    return float(np.sqrt(np.mean((offsets - (drift_ppm * 1e-6 * t + intercept_s)) ** 2)) * 1000)
 
 
 def agreement(segments: list[tuple[float, float, float]] | None, offset_s: float) -> float | None:
@@ -378,8 +394,9 @@ def write_offset_table(results: list[AlignResult], path: Path) -> Path:
     payload = []
     for result in results:
         entry = asdict(result)
-        if result.segment_offsets is not None:
-            entry["segment_offsets"] = [list(pair) for pair in result.segment_offsets]
+        for key in ("segment_offsets", "drift_segment_offsets"):
+            if getattr(result, key) is not None:
+                entry[key] = [list(point) for point in getattr(result, key)]
         payload.append(entry)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
@@ -389,10 +406,8 @@ def read_offset_table(path: Path) -> list[AlignResult]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     results = []
     for entry in payload:
-        segments = entry.pop("segment_offsets", None)
-        results.append(
-            AlignResult(**entry, segment_offsets=[tuple(pair) for pair in segments] if segments else None)
-        )
+        points = {key: entry.pop(key, None) for key in ("segment_offsets", "drift_segment_offsets")}
+        results.append(AlignResult(**entry, **{key: [tuple(point) for point in found] if found else None for key, found in points.items()}))
     return results
 
 

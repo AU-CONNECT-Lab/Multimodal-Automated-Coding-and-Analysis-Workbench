@@ -171,6 +171,10 @@ def _segments(axes, result: AlignResult, cfg: AlignSection) -> None:
         else:
             slope, intercept = np.polyfit(t[sharp], offsets[sharp], 1)
         label = "drift fit, corrected along it" if drift_corrected(result) else "drift fit"
+        if result.drift_segment_offsets:
+            again = np.array(result.drift_segment_offsets, dtype=float)
+            kept = again[again[:, 2] >= cfg.min_confidence]
+            axes.plot(kept[:, 0], (kept[:, 1] - result.offset_s) * 1000, "x", ms=5, color="C1", label="measured again at the fitted rate")
         axes.plot(t, (slope * t + intercept - result.offset_s) * 1000, color="C1", lw=1, label=label)
         title += f"; {describe_drift(result)}"
     axes.set(xlabel="recording time (s)", ylabel="segment offset minus offset (ms)", title=title)

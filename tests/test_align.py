@@ -110,12 +110,17 @@ class TestAlignSignals:
         result = align_signals(room[: 300 * SR], target, CFG, names=("a", "b"))
         assert result.offset_s == pytest.approx(-12.5, abs=0.002)
 
-    def test_drift_is_measured(self, room):
+    def test_drift_is_measured(self, room, tmp_path):
         target = started_later(other_mic(room), 20.0, 280, drift_ppm=150.0)
         result = align_signals(room[: 320 * SR], target, CFG, names=("a", "b"))
         assert result.drift_ppm == pytest.approx(150.0, abs=15.0)
         assert result.overlap_s == pytest.approx(280.0, abs=0.1)
         assert drift_flagged(result)
+        # the line applied is the refined one, and the points it was fitted to are kept with how near they lie
+        again = np.array(result.drift_segment_offsets)
+        line = result.drift_ppm * 1e-6 * again[:, 0] + result.drift_intercept_s
+        assert len(again) >= 3 and np.median(np.abs(again[:, 1] - line)) < 0.001 and result.drift_residual_ms < 2.0
+        assert read_offset_table(write_offset_table([result], tmp_path / "o.json"))[0] == result
 
     def test_a_steady_clock_shows_no_real_drift(self, room):
         result = align_signals(room[: 300 * SR], started_later(other_mic(room), 20.0, 280), CFG, names=("a", "b"))
