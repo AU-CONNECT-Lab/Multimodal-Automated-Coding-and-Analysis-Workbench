@@ -173,8 +173,16 @@ def problems(people_seen: int | None, boxes: list[dict], names: list[str], thing
 def look_at_frame(
     backend: LLMBackend, image: np.ndarray, people: pd.DataFrame, subjects: list[str], described: dict[str, str], things: pd.DataFrame | None = None,
 ) -> dict:
-    """described is qc.look.people for this recording's people; only their names are checked. things are the frame's outlines from objects.track."""
-    counted = parsed_answer(backend.complete(COUNT, "Count the people.", seed=0, images=[_jpeg(image, LONG_SIDE)]).text)
+    """described is qc.look.people for this recording's people; only their names are checked. things are the frame's outlines from
+    objects.track. Each answer is kept as it came, beside what was read from it."""
+    texts = []
+
+    def ask(about: str, system: str, user: str, picture) -> dict:
+        text = backend.complete(system, user, seed=0, images=[picture]).text
+        texts.append({"about": about, "text": text})
+        return parsed_answer(text)
+
+    counted = ask("count", COUNT, "Count the people.", _jpeg(image, LONG_SIDE))
     seen = counted.get("people") if counted else None
     unreadable = int(not isinstance(seen, (int, float)) or isinstance(seen, bool))
     people_seen = None if unreadable else int(seen)
@@ -182,7 +190,7 @@ def look_at_frame(
     names = list(described)
     boxes = []
     for person in drawn_people(people):
-        said = parsed_answer(backend.complete(system, "Check this person.", seed=0, images=[person_picture(image, person, subjects)]).text)
+        said = ask(person["name"] or f"track {person['track']}", system, "Check this person.", person_picture(image, person, subjects))
         is_person = said.get("person") if said else None
         unreadable += int(not isinstance(is_person, bool))
         who = str(said.get("who") or UNSURE).strip() if said else UNSURE
@@ -192,12 +200,13 @@ def look_at_frame(
         })
     asked = []
     for thing in (things.to_dict("records") if things is not None else []):
-        said = parsed_answer(backend.complete(THING.format(name=thing["label"]), "Check this thing.", seed=0, images=[thing_picture(image, thing)]).text)
+        said = ask(str(thing["label"]), THING.format(name=thing["label"]), "Check this thing.", thing_picture(image, thing))
         is_it = said.get("is_it") if said else None
         unreadable += int(not isinstance(is_it, bool) and is_it != UNSURE)
         asked.append({"name": str(thing["label"]), "is_it": is_it if isinstance(is_it, bool) else None})
     return {
         "people_seen": people_seen, "boxes": boxes, "things": asked, "problems": problems(people_seen, boxes, names, asked), "unreadable": unreadable,
+        "answers": texts,
     }
 
 
@@ -279,7 +288,8 @@ def verdict(entry: dict, checks: dict[str, dict]) -> str | None:
 
 def set_check(layout, recording_id: str, file: str, decided: str | None, by: str) -> Path:
     """decided is right when the model was right about the frame, wrong when not, None to take a verdict back."""
-    entry = next((item for item in to_check(read_look(layout, recording_id)) if item["file"] == file), None)
+    look = read_look(layout, recording_id)
+    entry = next((item for item in to_check(look) if item["file"] == file), None)
     if entry is None:
         raise MacawError(f"{file} is not among the frames of {recording_id} that wait for a person; see macaw qc --look")
     checks = read_checks(layout, recording_id)
@@ -288,7 +298,12 @@ def set_check(layout, recording_id: str, file: str, decided: str | None, by: str
     elif decided not in (RIGHT, WRONG):
         raise MacawError(f"a verdict is {RIGHT} or {WRONG}, not {decided}")
     else:
-        checks[file] = {"verdict": decided, "key": entry["key"], "by": by, "at": datetime.now().isoformat(timespec="seconds")}
+        # the answer judged goes with the verdict, so that asking the frame again leaves it readable
+        judged = {key: entry.get(key) for key in ("people_seen", "boxes", "things", "problems", "answers")}
+        checks[file] = {
+            "verdict": decided, "key": entry["key"], "by": by, "at": datetime.now().isoformat(timespec="seconds"),
+            "model": look.get("model"), "judged": judged,
+        }
     path = layout.look_checks_path(recording_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"frames": checks}, indent=2, ensure_ascii=False), encoding="utf-8")

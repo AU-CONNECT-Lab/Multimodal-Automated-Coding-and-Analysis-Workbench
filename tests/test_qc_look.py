@@ -135,6 +135,8 @@ class TestLookAtFrame:
         model = Model(people="no idea", persons=["{not json"])
         found = look.look_at_frame(model, np.zeros((240, 320, 3), np.uint8), body("parent"), NAMES, {})
         assert found["unreadable"] == 2 and found["problems"] == []
+        # what the model said is kept, so a person can see what did not read
+        assert [answer["about"] for answer in found["answers"]] == ["count", "parent"] and "{not json" in found["answers"][1]["text"]
 
     def test_who_someone_is_is_asked_only_of_the_people_described(self):
         """A name such as p1 says nothing about a person, so without a description the model would only guess."""
@@ -245,6 +247,9 @@ class TestChecks:
         look.set_check(drawn.layout, RID, flagged[0], RIGHT, "anna")
         look.set_check(drawn.layout, RID, flagged[1], WRONG, "anna")
         look.set_check(drawn.layout, RID, passed[0], WRONG, "anna")
+        judged = look.read_checks(drawn.layout, RID)[flagged[0]]
+        mine = next(entry for entry in found["frames"] if entry["file"] == flagged[0])
+        assert judged["judged"]["problems"] == mine["problems"] and judged["model"] == found["model"] and judged["judged"]["answers"]
         counts = look.summary(drawn.layout, RID)
         assert (counts["flagged"], counts["flagged_checked"], counts["flagged_right"]) == (3, 2, 1)
         assert (counts["drawn"], counts["drawn_checked"], counts["drawn_wrong"]) == (1, 1, 1)
