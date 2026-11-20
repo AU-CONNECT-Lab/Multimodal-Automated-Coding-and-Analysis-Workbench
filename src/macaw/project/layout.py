@@ -80,6 +80,10 @@ class Layout:
     def offset_table_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "offsets.json"
 
+    # offsets of the signals table's files that a person set or kept, beside the ones signals.align finds
+    def signal_offsets_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "signal_offsets.json"
+
     # a yardstick a person measured on a video frame; read only when exporting and reporting
     def scale_path(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "scale.json"
@@ -169,6 +173,7 @@ class Layout:
         """What people did by hand in a recording's folder, which no rerun gives back."""
         return [
             self.offset_table_path(recording_id),  # offsets set or accepted by hand sit beside computed ones
+            self.signal_offsets_path(recording_id),
             self.names_path(recording_id),
             self.camera_owners_accepted_path(recording_id),
             self.voice_owners_path(recording_id),

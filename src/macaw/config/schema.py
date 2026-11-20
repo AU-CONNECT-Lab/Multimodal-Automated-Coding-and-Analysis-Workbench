@@ -776,6 +776,17 @@ class ExecutionSection(_Section):
     job_name_prefix: str = "macaw"
 
 
+class SignalsSection(_Section):
+    # how an IMU's gyroscope channels are named in a file's aux, matched without regard to case
+    gyro: str = added(default="gyro")
+    # s around the offset the files' start times give; None searches everywhere the files overlap
+    search_window_s: float | None = added(default=None, gt=0)
+    min_confidence: float = added(default=0.3, ge=0, le=1)
+    min_agreement: float = added(default=0.5, ge=0, le=1)
+    segment_s: float = added(default=60.0, gt=0)
+    review: Literal["always", "flagged", "skip"] = added(default="always")
+
+
 class PipelineSection(_Section):
     # extractor or group names; empty means every installed extractor
     run: list[str] = Field(default_factory=list)
@@ -805,6 +816,7 @@ class MacawConfig(_Section):
     face: FaceSection = Field(default_factory=FaceSection)
     gaze: GazeSection = Field(default_factory=GazeSection)
     objects: ObjectsSection = added(default_factory=ObjectsSection)
+    signals: SignalsSection = added(default_factory=SignalsSection)
     motion: MotionSection = Field(default_factory=MotionSection)
     turns: TurnsSection = Field(default_factory=TurnsSection)
     coding: CodingSection = Field(default_factory=CodingSection)

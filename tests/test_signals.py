@@ -86,7 +86,7 @@ def test_milliseconds_and_the_start_and_spacing_form_come_out_in_seconds(tmp_pat
         assert found.aux["GYRO_X_1"].times == pytest.approx(seconds.aux["GYRO_X_1"].times), name
 
 
-def test_haemoglobin_is_named_as_mne_names_it_in_either_form_of_the_channel_list(tmp_path):
+def test_haemoglobin_is_named_by_its_label_in_either_form_of_the_channel_list(tmp_path):
     from macaw.signals.snirf import read_snirf
 
     for columnar in (False, True):

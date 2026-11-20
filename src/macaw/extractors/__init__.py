@@ -44,6 +44,7 @@ BUILTIN_MODULES = (
     "macaw.extractors.video.objects.position",
     "macaw.extractors.segments",
     "macaw.signals.read",
+    "macaw.signals.align",
 )
 
 _REGISTRY: dict[str, Type[Extractor]] = {}

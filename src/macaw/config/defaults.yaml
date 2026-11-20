@@ -170,6 +170,17 @@ objects:
   review: always                     # always: a person looks at every start found by name | flagged: only those in doubt | skip
   touch_px: null                     # px; a wrist this near a thing's outline puts the hand on it; no default, as it depends on the picture. null = off
 
+# Other signals listed in project.signals, put on the recording's clock. A person's file whose IMU turns with the head is
+# matched to that person's head turning on the video; every other file of theirs takes the same clock, and a file with
+# no IMU in its person's files waits for a person to set its offset.
+signals:
+  gyro: gyro                         # what an IMU's gyroscope channels are called in a file's aux, ignoring case
+  search_window_s: null              # s; look for the match only this far from the offset the files' start times give. null = everywhere
+  min_confidence: 0.3                # 0-1; a match peak sharpness below this counts as blunt
+  min_agreement: 0.5                 # 0-1; a blunt match is flagged when fewer stretches than this find the same offset
+  segment_s: 60.0                    # s; stretch length for the cross-check and the drift fit
+  review: always                     # always: a person looks at every match | flagged: only those in doubt | skip
+
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea
   threshold: 10                      # 0-255; per-pixel difference counted as motion

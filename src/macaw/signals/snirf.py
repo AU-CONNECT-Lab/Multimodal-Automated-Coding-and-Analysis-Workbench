@@ -30,7 +30,7 @@ class AuxSeries:
 class Snirf:
     times: np.ndarray                  # s on the file's own clock
     data: np.ndarray                   # one column per channel
-    channels: list[str]                # named as MNE names them: "S1_D1 760", "S1_D1 hbo"
+    channels: list[str]                # source, detector, then wavelength or haemoglobin: "S1_D1 760", "S1_D1 hbo"
     kinds: list[str]                   # raw | od | hbo | hbr | hbt, or the file's own label
     markers: pd.DataFrame              # name, onset, duration in s on the file's own clock
     aux: dict[str, AuxSeries] = field(default_factory=dict)
