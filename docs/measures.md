@@ -63,7 +63,7 @@ When an object is not found by its name, another word for it often works; *finde
 
 ### Where objects are
 
-Once the starts are confirmed, the results give, for each object on each camera it was followed on, whether it is in view in each frame, where the middle of its outline lies in the picture (in pixels from the left and top edges) and how much of the picture the outline covers (in square pixels): for a ball followed on the camera `front`, `ball_front_in_view`, `ball_front_x`, `ball_front_y` and `ball_front_area`. They belong to the recording, not to a participant, and are empty in frames where the object is out of view; averaged over a stretch, `in_view` gives the share of it in which the object was in view. The place is the middle of the outline, so it is right only as long as the outline stays on the object, which the review frames show.
+Once the starts are confirmed, the results give, for each object on each camera it was followed on, whether it is in view in each frame, where the middle of its outline lies in the picture (in pixels from the left and top edges) and how much of the picture the outline covers (in square pixels): for a ball followed on the camera `front`, `ball_front_in_view`, `ball_front_x`, `ball_front_y` and `ball_front_area`. They belong to the recording, not to a participant, and are empty in frames where the object is out of view. For the whole recording and each segment, `ball_front_in_view_share` gives the share of the frames in which the object was in view and `ball_front_longest_gap_s` its longest time out of view, which bound how far measures of the object, such as looks at it or hands on it, can be trusted. `ball_front_score` gives the tracker's own score in each frame, from 0 to 1; the object counts as in view from 0.5, and the outlines scored below that are kept in the results as well. The place is the middle of the outline, so it is right only as long as the outline stays on the object, which the review frames show.
 
 ### Hands on objects
 
@@ -116,7 +116,7 @@ This gives `negative_per_minute` for each person. An entry matches whole words r
 
 ### Faces and action units
 
-For each person, `face_found_share` is the share of the frames, on the camera their face is read from, in which a face was found and assigned to them. A low share means that the face was turned away, hidden or out of view; that person's action units and face angles rest on the frames that remain. With thresholds set,
+For each person, `face_found_share` is the share of the frames, on the camera their face is read from, in which a face was found and assigned to them. In each frame with a face, `face_score` gives how sure the face detector was that it is a face, on the scale of the face backend (MediaPipe gives none), and `face_size_px` the height of the face in pixels; action units read from small or doubtful faces are less reliable, so these two serve to leave such frames out or weigh them down. A low share means that the face was turned away, hidden or out of view; that person's action units and face angles rest on the frames that remain. With thresholds set,
 
 ```yaml
 face:
@@ -249,7 +249,7 @@ kinematics:
 : `distance`; `approach_speed`, the rate at which that distance shrinks (positive while approaching); `speed_toward`, how fast the participant's own point moves along the line to the other point (positive while moving toward it), which tells who closes the distance: the `speed_toward` of each participant toward the other add up to about the `approach_speed` between the same points; `offset_toward`, how far a point lies from the participant's own shoulder midpoint in the direction of the other participant, such as a head turned toward them; or a function of one's own (below).
 
 `per_body_size`
-: Divides by the participant's shoulder width, so that the measure is in shoulder widths and does not depend on the distance from the camera. In the picture the width is the 95th percentile of the distance between the shoulders over the recording, which holds where the participant stays at about the same distance and faces the camera for part of the recording; in the room it is the median.
+: Divides by the participant's shoulder width, so that the measure is in shoulder widths and does not depend on the distance from the camera. In the picture the width is the 95th percentile of the distance between the shoulders over the recording, which holds where the participant stays at about the same distance and faces the camera for part of the recording; in the room it is the median. The width itself is in the results as `body_size` (in pixels) and `body_size_3d`, one value per participant for the whole recording, so that other lengths and speeds can be divided by it as well.
 
 Measures between two participants are computed only on a camera that shows both of them.
 
@@ -298,7 +298,7 @@ kinematics:
     join_s: 0.15
 ```
 
-`speed` has no default, because it is in pixels per second and therefore depends on the camera; the wrist speeds in the results help to choose it. Stretches less than `join_s` apart count as one, and stretches shorter than `min_s` are left out. The same decision is exported frame by frame as `left_hand_moving` and `right_hand_moving` (1 while the hand moves). With several calibrated cameras or another source of 3D points ({ref}`three-d`), `speed_3d` sets the same threshold for the wrists placed in 3D, in the project's unit of length per second; those stretches go to a tier of their own, `moving_3d`, and frame by frame to `left_hand_moving_3d` and `right_hand_moving_3d`. A speed in the room does not depend on the camera or on how far from it the participant sits, so one value serves every recording.
+`speed` has no default, because it is in pixels per second and therefore depends on the camera; the wrist speeds in the results help to choose it. Stretches less than `join_s` apart count as one, and stretches shorter than `min_s` are left out; those go to a tier of their own, `moving_short`, so that what the setting removed can be seen. The same decision is exported frame by frame as `left_hand_moving` and `right_hand_moving` (1 while the hand moves). With several calibrated cameras or another source of 3D points ({ref}`three-d`), `speed_3d` sets the same threshold for the wrists placed in 3D, in the project's unit of length per second; those stretches go to a tier of their own, `moving_3d`, and frame by frame to `left_hand_moving_3d` and `right_hand_moving_3d`. A speed in the room does not depend on the camera or on how far from it the participant sits, so one value serves every recording.
 
 :::{important}
 The tier says that a hand moved, not that it gestured: reaching, fidgeting and handling objects are marked as well, and which stretches are gestures remains the coder's decision. A coder who looks only at the marked stretches does not see a gesture slower than `speed`, so the speed is best set low, at the cost of more stretches to skip, and checked against a passage coded without the tier.
