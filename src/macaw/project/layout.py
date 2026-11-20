@@ -197,6 +197,9 @@ class Layout:
             return self.reports_dir / "qc_project.html"
         return self.reports_dir / f"qc_{recording_id}.html"
 
+    def status_path(self) -> Path:
+        return self.reports_dir / "status.csv"
+
     def qc_dir(self, recording_id: str) -> Path:
         return self.recording_dir(recording_id) / "qc"
 

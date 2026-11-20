@@ -9,12 +9,12 @@ from pathlib import Path
 from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 
 from macaw.config.loader import resolve_config
-from macaw.execution.dag import build_dag, resolve_selection
-from macaw.execution.runner import resolve_recordings, task_id_for, task_states
-from macaw.extractors import get_extractor, list_extractors
-from macaw.extractors.base import Gate
+from macaw.execution.dag import resolve_selection
+from macaw.execution.runner import resolve_recordings
+from macaw.extractors import get_extractor
 from macaw.interface import cli_bridge, ui
 from macaw.interface.step_labels import label
+from macaw.project.status import steps, task_grid
 from macaw.project.layout import layout_for
 
 LABEL = "Run"
@@ -23,10 +23,6 @@ PATH = "/run"
 _CURRENT: dict[str, cli_bridge.LaunchedCommand] = {}
 STATE_TEXT = {"failed": "failed last time", "held": "waiting for a person", "stale": "to run again", "new": "not run yet", "current": "up to date"}
 STATE_KIND = {"failed": "bad", "held": "warn", "stale": "warn", "new": "info", "current": "ok"}
-
-
-def steps() -> list[str]:
-    return [name for name in list_extractors() if not issubclass(get_extractor(name), Gate)]
 
 
 def default_steps(config) -> list[str]:
@@ -39,23 +35,6 @@ def run_command(config_path: Path, recordings: list[str], chosen: list[str], eve
     narrowed = recordings if set(recordings) != set(every_recording) else None
     named = chosen if set(chosen) != set(default) else None
     return cli_bridge.build_command(["run"], config_path=config_path, recordings=narrowed, extractors=named)
-
-
-def task_grid(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
-    """Every step in run order, the ones this project runs, the state of each (recording, step), and what each step needs."""
-    config = resolve_config(config_path)
-    everything = build_dag(config, steps())
-    project = set(build_dag(config).topological_order())
-    states = task_states(config, everything, recordings)
-    failed = cli_bridge.failed_last_time(config_path)
-    order = [name for name in everything.topological_order() if not issubclass(get_extractor(name), Gate)]
-    grid = {}
-    for name in order:
-        for rid in recordings:
-            state = states[task_id_for(rid, name)]
-            grid[rid, name] = "failed" if task_id_for(rid, name) in failed and state != "current" else state
-    needs = {name: sorted(everything.dependencies(name)) for name in order}
-    return order, [name for name in order if name in project], grid, needs
 
 
 def step_states(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[str, Counter], dict[str, list[str]]]:

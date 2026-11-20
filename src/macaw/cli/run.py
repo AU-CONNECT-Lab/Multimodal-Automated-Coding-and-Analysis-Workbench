@@ -99,8 +99,19 @@ def run(
             "qc " + "  ".join(f"{severity} {count}" for severity, count in sorted(by_severity.items()))
         )
     _qc_pages(resolved, recording_ids, report)
+    write_status_table(config, resolved)
     if summary.n_failed:
         raise typer.Exit(code=1)
+
+
+def write_status_table(config: Path, resolved) -> None:
+    from macaw.project.status import write_status
+
+    # the run's results stand whether or not the table could be written
+    try:
+        typer.echo(f"status {write_status(config, layout_for(resolved, create=False).status_path())}")
+    except Exception as error:
+        typer.echo(f"note: no status table written ({type(error).__name__}: {error})", err=True)
 
 
 def _qc_pages(resolved, recording_ids: list[str], write: bool) -> None:

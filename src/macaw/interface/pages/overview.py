@@ -16,6 +16,7 @@ from macaw.interface import cli_bridge, ui
 from macaw.interface.pages import results, review, run, setup
 from macaw.interface.step_labels import label, short
 from macaw.project.setup import setup_path
+from macaw.project.status import SPEECH_ACTS, check_states, people_waiting, task_grid
 
 LABEL = "Overview"
 FLOW = "overview-flow"
@@ -27,7 +28,6 @@ LEGEND = ("current", "stale", "new", "held", "failed")
 # a check by a person has a round square of its own beside the steps
 CHECK_TEXT = {"waiting": "waits for a person", "person": "checked by a person", "software": "left to the software", "none": "nothing to check", "new": "not reached yet"}
 CHECK_LEGEND = ("person", "software", "waiting", "none")
-SPEECH_ACTS = "speech acts"
 CHECK_LABELS = {SPEECH_ACTS: "Check: speech acts"}
 CHECK_SHORT = {SPEECH_ACTS: "Acts checked"}
 
@@ -48,34 +48,12 @@ class Standing:
     needs: dict[str, list[str]] = field(default_factory=dict)
 
 
-def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
-    """Each recording's gates waiting for a person, and the coded units waiting for one across the project."""
-    from macaw.coding.review_queue import export_review
-    from macaw.project.recording import build_recording
-    from macaw.qc.report import _waiting
-
-    recordings = resolve_recordings(config, None)
-    gates = {}
-    for rid in recordings:
-        try:
-            found = _waiting(config, build_recording(rid, config))
-        except MacawError:
-            continue
-        if found:
-            gates[rid] = found
-    try:
-        units = len(export_review(config, recordings))
-    except Exception:   # no codebook or nothing coded: no units are waiting
-        units = 0
-    return gates, units
-
-
 def standing(config_path: Path) -> Standing:
     from macaw.extractors.prep import load_prep
 
     config = resolve_config(config_path)
     recordings = resolve_recordings(config, None)
-    _, steps, grid, _ = run.task_grid(config_path, recordings)
+    _, steps, grid, _ = task_grid(config_path, recordings)
     gates, units = people_waiting(config)
     task_s, prepared = 0.0, 0
     for rid in recordings:
@@ -88,55 +66,7 @@ def standing(config_path: Path) -> Standing:
     return Standing(recordings, steps, grid, gates, units, task_s, prepared, setup_path(config).is_file(), columns, checks, needs)
 
 
-def check_states(config_path: Path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
-    """The project's steps with its checks by a person among them, per recording whether each check waits, who
-    decided it, or that it has not been reached, and what each column needs."""
-    from macaw.coding.review_queue import export_review
-    from macaw.execution.dag import build_dag
-    from macaw.extractors import get_extractor
-    from macaw.extractors.base import Gate
-    from macaw.project.layout import layout_for
-    from macaw.project.recording import build_recording
 
-    config = resolve_config(config_path)
-    dag = build_dag(config)
-    columns = list(dag.topological_order())
-    names = [name for name in columns if issubclass(get_extractor(name), Gate)]
-    judged = "coding.judge" in columns
-    if judged:
-        columns.insert(columns.index("coding.judge") + 1, SPEECH_ACTS)
-    states: dict[tuple[str, str], str] = {}
-    try:
-        queue = export_review(config, recordings) if judged else None
-    except Exception:   # no codebook or nothing coded: no units wait
-        queue = None
-    waiting_units = set(queue["recording_id"].astype(str)) if queue is not None and not queue.empty else set()
-    layout = layout_for(config, create=False)
-    for rid in recordings:
-        held = {gate for gate, _ in gates.get(rid, [])}
-        try:
-            own = resolve_config(config_path, recording_id=rid)
-            recording = build_recording(rid, own)
-        except MacawError:
-            recording = None
-        for name in names:
-            reached = all(grid.get((rid, need)) == "current" for need in dag.dependencies(name) if (rid, need) in grid)
-            if name in held:
-                states[rid, name] = "waiting"
-            elif not reached or recording is None:
-                states[rid, name] = "new"
-            else:
-                states[rid, name] = get_extractor(name)(own).decided_by(recording) or "none"
-        if judged:
-            states[rid, SPEECH_ACTS] = (
-                "waiting" if rid in waiting_units else "new" if grid.get((rid, "coding.judge")) != "current"
-                else "person" if layout.reviewed_codes_path(rid).is_file() else "software"
-            )
-    shown = [name for name in columns if name in names or name == SPEECH_ACTS or (recordings and (recordings[0], name) in grid)]
-    needs = {name: sorted(set(dag.dependencies(name)) & set(shown)) for name in shown if name != SPEECH_ACTS}
-    if judged:
-        needs[SPEECH_ACTS] = ["coding.judge"]
-    return shown, states, needs
 
 
 def column_label(name: str) -> str:

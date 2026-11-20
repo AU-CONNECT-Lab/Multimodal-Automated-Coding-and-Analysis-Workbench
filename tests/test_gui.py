@@ -24,6 +24,7 @@ from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.app import build_layout, create_app, page_for
 from macaw.interface.files import file_url, path_from_url
 from macaw.interface.pages import agreement, overview, results, review, run
+from macaw.project import status
 from macaw.project.layout import layout_for
 from macaw.qc.downsample import min_max_downsample
 from macaw.store.longtable import build_long_rows
@@ -360,8 +361,16 @@ def test_the_overview_counts_what_there_is_and_what_waits(project):
     assert found.columns.index("align.review") < found.columns.index("prep.media")
 
 
+def test_the_overview_grid_is_written_as_a_table(project, tmp_path):
+    table = pd.read_csv(status.write_status(project, tmp_path / "status.csv"), dtype=str)
+    found = overview.standing(project)
+    assert table.columns.tolist() == ["recording_id", *found.columns]
+    row = table.set_index("recording_id").loc["003"]
+    assert row["prep.media"] == "held" and row["align.review"] == "waiting"
+
+
 def test_a_failed_step_shows_on_its_own_tile_and_row(project, monkeypatch):
-    monkeypatch.setattr(cli_bridge, "failed_last_time", lambda config_path: {task_id_for("003", "prep.media")})
+    monkeypatch.setattr(status, "failed_last_time", lambda config_path: {task_id_for("003", "prep.media")})
     found = overview.standing(project)
     assert found.grid["003", "prep.media"] == "failed"
     failed = text_of(overview.tiles(resolve_config(project), found)[2])

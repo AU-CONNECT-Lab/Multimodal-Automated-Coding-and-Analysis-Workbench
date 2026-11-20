@@ -75,8 +75,11 @@ def qc(
             break
 
     if pages:
+        from macaw.cli.run import write_status_table
+
         project_page = write_project_page(resolved, pages)
         typer.echo(str(project_page))
+        write_status_table(config, resolved)
         if open_report:
             webbrowser.open(project_page.resolve().as_uri())
     if failed is not None:
