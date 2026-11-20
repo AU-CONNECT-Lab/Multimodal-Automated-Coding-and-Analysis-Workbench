@@ -263,8 +263,7 @@ execution:
   gpu_workers: null                  # of those, steps on a graphics card; null = one per card
   cache: true                        # content-addressed cache for resumable runs
   cache_dir: null                    # null = <output_dir>/.cache
-  check_outputs: true                # validate declared outputs after a task reports success
-  output_rules: null                 # path to results_check.yaml; null = packaged rules
+  output_rules: null                 # path to a file of the files each step leaves; null = its features/<step>.parquet
   job_name_prefix: macaw             # prefix for cluster job names
 
 gui:

@@ -773,7 +773,6 @@ class ExecutionSection(_Section):
     gpu_workers: int | None = Field(default=None, ge=1)
     cache: bool = True
     cache_dir: Path | None = None
-    check_outputs: bool = True
     output_rules: Path | None = None
     job_name_prefix: str = "macaw"
 

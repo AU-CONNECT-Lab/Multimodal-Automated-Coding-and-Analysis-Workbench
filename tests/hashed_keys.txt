@@ -27,7 +27,6 @@ CodingSection.min_turn_internal_pause_s
 CodingSection.ratings
 ExecutionSection.cache
 ExecutionSection.cache_dir
-ExecutionSection.check_outputs
 ExecutionSection.gpu_workers
 ExecutionSection.job_name_prefix
 ExecutionSection.n_workers
