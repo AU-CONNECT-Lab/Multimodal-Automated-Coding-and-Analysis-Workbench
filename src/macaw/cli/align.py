@@ -24,6 +24,7 @@ from macaw.media.align import (
     low_confidence,
     needs_person,
     read_offset_table,
+    replacing,
     write_offset_table,
 )
 from macaw.media.probe import probe
@@ -90,8 +91,9 @@ def set_offset(
     recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     media: str = typer.Option(..., "--device", help="Device to adjust, as its folder is named."),
     offset: float = typer.Option(..., "--offset", help="Seconds."),
+    by: str = typer.Option(None, "--by", help="Who set it. Default: the login name."),
 ) -> None:
-    """Set one offset by hand after inspecting it; a later `macaw align` keeps it."""
+    """Set one offset by hand after inspecting it; a later `macaw align` keeps it, and the entry it replaces is kept in its history."""
     resolved = resolve_config(config)
     layout = layout_for(resolved)
     built = build_recording(recording, resolved)
@@ -113,8 +115,10 @@ def set_offset(
     stamp = datetime.now().isoformat(timespec="seconds")
     entry = AlignResult(
         reference=reference, target=media, offset_s=offset, confidence=None, method=MANUAL,
-        note=f"set by hand {stamp}",
+        note=f"set by hand by {by or getpass.getuser()} {stamp}",
     )
+    old = next((result for result in results if result.target == media), None)
+    replacing(entry, old, "set by hand")
     results = [result for result in results if result.target != media] + [entry]
     write_offset_table(results, path)
     typer.echo(f"{recording}: {media} set to {offset:+.3f} s against {reference}")

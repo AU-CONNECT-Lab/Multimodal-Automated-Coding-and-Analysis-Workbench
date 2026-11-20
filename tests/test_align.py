@@ -300,6 +300,17 @@ class TestOffsetTable:
         merged, stale = keep_manual(fresh, old)
         assert next(r for r in merged if r.target == "parent.wav").offset_s == 4.0
         assert stale == ["parent.wav"]
+        replaced = next(r for r in merged if r.target == "parent.wav").replaced
+        assert [(item["offset_s"], item["method"], item["reference"], item["why"]) for item in replaced] == [
+            (1.0, MANUAL, "camera.avi", "set by hand against another reference")
+        ]
+
+    def test_what_was_replaced_before_stays_through_a_plain_rerun(self, tmp_path):
+        history = [{"offset_s": 1.0, "method": MANUAL, "why": "set by hand against another reference", "when": "then"}]
+        merged, _ = keep_manual([entry("room.wav"), entry("parent.wav", 4.1)], [entry("parent.wav", 4.0, replaced=history)])
+        assert next(r for r in merged if r.target == "parent.wav").replaced == history
+        path = write_offset_table(merged, tmp_path / "o.json")
+        assert read_offset_table(path) == merged
 
 
 class TestPrepWarnings:
@@ -381,6 +392,12 @@ class TestSetOffsetCommand:
         table = {r.target: r for r in read_offset_table(project.table)}
         assert (table["camera"].offset_s, table["camera"].method) == (7.0, MANUAL)
         assert table["parent_mic"].offset_s == 4.0
+
+    def test_a_hand_set_offset_keeps_the_estimate_it_replaced_and_who_set_it(self, project):
+        assert self.invoke(project, "--device", "parent_mic", "--offset", "4.5", "--by", "ann").exit_code == 0
+        mine = next(r for r in read_offset_table(project.table) if r.target == "parent_mic")
+        assert mine.offset_s == 4.5 and mine.note.startswith("set by hand by ann ")
+        assert [(item["offset_s"], item["confidence"], item["why"]) for item in mine.replaced] == [(4.0, 0.9, "set by hand")]
 
     def test_the_reference_cannot_be_moved(self, project):
         assert self.invoke(project, "--device", "room_mic", "--offset", "1.0").exit_code != 0

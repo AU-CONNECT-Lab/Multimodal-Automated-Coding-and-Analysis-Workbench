@@ -63,6 +63,8 @@ class AlignResult:
     metadata_offset_s: float | None = None
     note: str | None = None
     accepted: str | None = None      # who kept a flagged result, and when
+    # earlier entries for this file that a rerun or a person replaced, oldest first, each with why and when
+    replaced: list[dict] | None = None
 
 
 def _correlate(a: np.ndarray, b: np.ndarray, rate: float, max_lag_s: float, *, phat: bool):
@@ -353,18 +355,37 @@ def align_recording(
     return results
 
 
+def replaced_entry(old: AlignResult, why: str) -> dict:
+    """What a replaced entry said, without its segments, and why it went."""
+    said = {key: getattr(old, key) for key in ("reference", "offset_s", "method", "confidence", "agreement", "drift_ppm", "note", "accepted")}
+    return {**said, "why": why, "when": datetime.now().isoformat(timespec="seconds")}
+
+
+def replacing(new: AlignResult, old: AlignResult | None, why: str | None = None) -> AlignResult:
+    """new with old's history, and old itself added to it when why says it was replaced."""
+    if old is not None:
+        new.replaced = [*(old.replaced or ()), *([replaced_entry(old, why)] if why else [])] or None
+    return new
+
+
 def keep_manual(
     fresh: list[AlignResult], previous: list[AlignResult]
 ) -> tuple[list[AlignResult], list[str]]:
     """A re-run never overwrites an offset a person set, unless the reference it was set
-    against is no longer the reference. Returns the merged table and the targets dropped."""
+    against is no longer the reference; then the new result keeps it in its history. Earlier
+    history carries over either way. Returns the merged table and the targets dropped."""
     reference = next((result.reference for result in fresh), None)
-    manual = {result.target: result for result in previous if result.method == MANUAL}
+    before = {result.target: result for result in previous}
+    manual = {target: result for target, result in before.items() if result.method == MANUAL}
     stale = [target for target, result in manual.items() if result.reference != reference]
-    merged = [
-        manual[result.target] if result.target in manual and result.target not in stale else result
-        for result in fresh
-    ]
+    merged = []
+    for result in fresh:
+        if result.target in manual and result.target not in stale:
+            merged.append(manual[result.target])
+        elif result.target in stale:
+            merged.append(replacing(result, manual[result.target], "set by hand against another reference"))
+        else:
+            merged.append(replacing(result, before.get(result.target)))
     return merged, stale
 
 
@@ -384,6 +405,7 @@ def keep_accepted(
         if same:
             result.accepted = old.accepted
         else:
+            replacing(result, old, "accepted, then the result changed on a rerun")
             dropped.append(result.target)
     return fresh, dropped
 

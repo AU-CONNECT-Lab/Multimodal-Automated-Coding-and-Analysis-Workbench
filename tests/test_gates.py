@@ -135,6 +135,8 @@ class TestKeepAccepted:
     def test_a_moved_offset_has_to_be_looked_at_again(self):
         fresh, dropped = keep_accepted([result("child_mic", 0.5)], [result("child_mic", 0.003, accepted="ann")])
         assert fresh[0].accepted is None and dropped == ["child_mic"]
+        # the acceptance a person gave is kept with the result it was given to
+        assert [(item["offset_s"], item["accepted"]) for item in fresh[0].replaced] == [(0.003, "ann")]
 
     def test_a_camera_without_audio_stays_accepted(self):
         old = [result("room", method=UNALIGNED, confidence=None, accepted="ann")]
