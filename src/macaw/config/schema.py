@@ -334,6 +334,8 @@ class PoseSection(_Section):
     review: Literal["always", "flagged", "skip"] = "flagged"
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
+    # someone back in view after longer than this unseen, taken as the same person by place, waits for a person
+    rejoin_review_s: float = added(10.0)
     # on a camera nobody clicked, suggest who is who: most in view for one person; head motion, own mics or qc.look for several
     suggest_names: bool = False
 

@@ -21,6 +21,7 @@ from macaw.extractors.video.pose.track_repair import (
     in_areas,
     most_in_view,
     named_by_clicks,
+    rejoined,
     repair_tracks,
     several_people,
     subject_column,
@@ -365,7 +366,7 @@ class PoseExtractor(Extractor):
     needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.11.0"
+    version = "0.12.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "setup.cameras", "setup.ignore")
@@ -536,6 +537,8 @@ class PoseExtractor(Extractor):
                 if left_out else f"nobody has said who is who on {item.name} yet: click each person on a frame of it"
             ))
 
+        back = {subject: found for subject, tracks in choice.people.items() if (found := rejoined(identified, tracks))}
+        self._doubt_returns(choice, back)
         piece["subject_id"] = subject_column(identified, choice.people).to_numpy()
         by = {click["person"]: f"{click.get('by', '')} (clicked at {float(click['at']):g} s)".strip() for click in written}
         owner = {
@@ -543,9 +546,25 @@ class PoseExtractor(Extractor):
             "chosen_by": {subject: by.get(subject, f"suggested {how}") for subject in choice.people},
             "doubt": choice.doubt,
             "spans": choice.spans or [],
+            "back_in_view": back,
             **({"basis": choice.basis} if choice.basis else {}),
         }
         return piece, swaps, owner
+
+    def _doubt_returns(self, choice: PeopleChoice, back: dict[str, list[dict]]) -> None:
+        """Someone back after a long while unseen was taken as the same person by place alone, for a person to check."""
+        limit = self.config.pose.rejoin_review_s
+        late = {subject: [part for part in parts if part["unseen_s"] > limit] for subject, parts in back.items()}
+        late = {subject: parts for subject, parts in late.items() if parts}
+        if not late:
+            return
+        said = "; ".join(
+            f"{subject} is taken to be back by place after {parts[0]['unseen_s']:.0f} s unseen"
+            + (f" ({len(parts)} times)" if len(parts) > 1 else "")
+            for subject, parts in late.items()
+        )
+        choice.doubt = "; ".join(filter(None, [choice.doubt, f"{said}: check it is still them"]))
+        choice.spans = sorted([*(choice.spans or []), *((part["from_s"], part["to_s"]) for parts in late.values() for part in parts)])
 
     def _suggest(self, identified: pd.DataFrame, item, named: list[pd.DataFrame], recording: Recording) -> tuple[PeopleChoice, str]:
         """Who is who on a camera read for several people, from the first evidence there is: head motion where they are

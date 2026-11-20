@@ -930,7 +930,8 @@ def _keypoints(config, spec, names) -> str:
     pose = config.pose
     text = (
         "Detections were linked into tracks. On each camera a researcher marked each participant on a video frame, and the "
-        "tracks through the marked points were followed for the rest of the recording; a camera filming one participant "
+        "tracks through the marked points were followed for the rest of the recording, a track that began near where a "
+        "participant's had ended, at a similar size, being taken as the same participant; a camera filming one participant "
         "alone needed no mark while no one else was in view"
     )
     if pose.suggest_names:
@@ -952,7 +953,10 @@ def _keypoints(config, spec, names) -> str:
         )
     text += {
         "always": "; every assignment was checked by a person.",
-        "flagged": "; assignments in doubt were checked by a person.",
+        "flagged": (
+            "; assignments in doubt, including any participant taken to have returned to the same place after more than "
+            f"{_seconds(pose.rejoin_review_s)} out of view, were checked by a person."
+        ),
     }.get(pose.review, ".")
     if pose.track_repair:
         text += f" Identity swaps between tracks across gaps of up to {_seconds(pose.track_repair_max_gap_s)} were repaired."

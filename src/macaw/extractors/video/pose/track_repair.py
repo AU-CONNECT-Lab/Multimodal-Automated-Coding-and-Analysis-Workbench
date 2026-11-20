@@ -355,7 +355,7 @@ def join_fragments(keypoints: pd.DataFrame) -> list[Chain]:
 
 def named_by_clicks(keypoints: pd.DataFrame, clicks: list[Click], frame_period_s: float) -> PeopleChoice:
     """Who a person pointed at: each click names the chain whose body it falls on, in the frame nearest it.
-    Nothing is placed by position or presence; what a click cannot settle is said, for a person to click again."""
+    A click names a whole chain joined by place; what a click cannot settle is said, for a person to click again."""
     chains = join_fragments(keypoints)
     chain_of = {track: index for index, chain in enumerate(chains) for track in chain.tracks}
     boxes = _track_boxes(keypoints)
@@ -500,6 +500,26 @@ def owner_rows(keypoints: pd.DataFrame, tracks: list[int]) -> np.ndarray:
     rank = rank.astype("float64").to_numpy()
     best = pd.Series(rank).groupby(keypoints["frame"].to_numpy()).transform("min").to_numpy()
     return ~np.isnan(rank) & (rank == best)
+
+
+def rejoined(keypoints: pd.DataFrame, tracks: list[int]) -> list[dict]:
+    """Where a person is back in view after a while unseen, taken as them by place and size: span, tracks and that while."""
+    boxes = _track_boxes(keypoints)
+    boxes = boxes[boxes["track_id"].isin(tracks)].sort_values("t")
+    if boxes.empty:
+        return []
+    times = boxes["t"].to_numpy(dtype=float)
+    breaks = np.flatnonzero(np.diff(times) > SPAN_GAP_S)
+    ends = np.r_[breaks + 1, times.size]
+    out: list[dict] = []
+    for start, end in zip(breaks + 1, ends[1:]):
+        part = boxes.iloc[start:end]
+        out.append({
+            "from_s": round(float(times[start]), 2), "to_s": round(float(times[end - 1]), 2),
+            "unseen_s": round(float(times[start] - times[start - 1]), 2),
+            "tracks": sorted(int(track) for track in part["track_id"].unique()),
+        })
+    return out
 
 
 def subject_column(keypoints: pd.DataFrame, people: dict[str, list[int]]) -> pd.Series:

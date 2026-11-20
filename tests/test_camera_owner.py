@@ -15,12 +15,14 @@ from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.extractors.video.pose.look_names import named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
+    PeopleChoice,
     detect_swaps,
     in_areas,
     join_fragments,
     most_in_view,
     named_by_clicks,
     owner_rows,
+    rejoined,
     several_people,
     subject_column,
 )
@@ -223,6 +225,25 @@ class TestNamingByClicks:
         )
         choice = named_by_clicks(keypoints, [click("child", 1.0, 100), click("parent", 1.0, 500)], 1 / FPS)
         assert "tracks [5]" in choice.doubt and choice.spans == [(0.0, 7.9)]
+
+    def test_someone_back_in_the_same_place_after_a_long_while_is_a_doubt_with_where_to_look(self):
+        """The child leaves; half a minute later someone else sits where the child sat."""
+        keypoints = table(person(1, range(0, 100), cx=300), person(9, range(400, 600), cx=305), person(2, range(0, 600), cx=700))
+        choice = named_by_clicks(keypoints, [click("child", 1.0, 300), click("parent", 1.0, 700)], 1 / FPS)
+        assert sorted(choice.people["child"]) == [1, 9]
+        back = {subject: found for subject, tracks in choice.people.items() if (found := rejoined(keypoints, tracks))}
+        assert back == {"child": [{"from_s": 40.0, "to_s": 59.9, "unseen_s": 30.1, "tracks": [9]}]}
+        settings = SimpleNamespace(config=SimpleNamespace(pose=SimpleNamespace(rejoin_review_s=10.0)))
+        PoseExtractor._doubt_returns(settings, choice, back)
+        assert "child is taken to be back by place after 30 s unseen" in choice.doubt and choice.spans == [(40.0, 59.9)]
+
+    def test_a_short_while_unseen_is_kept_but_not_doubted(self):
+        keypoints = table(person(1, range(0, 100), cx=300), person(9, range(150, 300), cx=305))
+        back = {"child": rejoined(keypoints, [1, 9])}
+        assert back["child"][0]["unseen_s"] == 5.1 and rejoined(room(), [1, 3]) == []
+        choice = PeopleChoice(people={"child": [1, 9]})
+        PoseExtractor._doubt_returns(SimpleNamespace(config=SimpleNamespace(pose=SimpleNamespace(rejoin_review_s=10.0))), choice, back)
+        assert choice.doubt is None and not choice.spans
 
     def test_each_frame_and_joint_belongs_to_one_person(self):
         keypoints = room(person(4, range(0, 100), cx=110, size=110))

@@ -95,6 +95,7 @@ pose:
   review: flagged                    # always | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording
   track_repair_max_gap_s: 1.0        # s; longer disappearances start a new track instead
+  rejoin_review_s: 10.0              # s; someone back after longer unseen is taken as the same person by place, a doubt for pose.review
   suggest_names: false               # true: suggest who is who where nobody clicked; doubtful ones wait
 
 kinematics:
