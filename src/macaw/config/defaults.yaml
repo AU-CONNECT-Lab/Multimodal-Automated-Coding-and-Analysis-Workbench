@@ -89,6 +89,7 @@ pose:
   model: null                        # backend-specific checkpoint; null = backend default
   device: auto                       # auto | cpu | cuda
   min_confidence: 0.3                # 0-1; keypoints below this become NaN; changing it does not run the model again
+  min_confidence_by_role: {}         # role -> 0-1, its own cut once each person is named, e.g. {child: 0.2}
   input_size: 1280                   # px; side frames are scaled to before detection (yolo); small people need more
   review: flagged                    # always | flagged: only cameras in doubt | skip
   track_repair: true                 # fix body_id swapping mid-recording

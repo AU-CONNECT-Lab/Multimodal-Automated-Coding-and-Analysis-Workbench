@@ -399,3 +399,13 @@ def test_the_objects_are_described_once_in_the_first_paragraph_that_uses_them():
     text = " ".join(" ".join(paragraphs) for paragraphs in sections.values())
     assert text.count(_followed_things(cfg)) == 1
     assert text.index(_followed_things(cfg)) < text.index("within 12 px") < text.index("centroid")
+
+
+@pytest.mark.parametrize(
+    ("by_role", "expected"),
+    [({}, "outside the frame were set to missing."), ({"child": 0.15}, "kept from a confidence of 0.15 for the child instead.")],
+)
+def test_a_cut_of_a_roles_own_is_described(by_role, expected):
+    specs = manifest(spec("pose.detect", "n_videos_read", "yolo", "8.3"))
+    text, _ = render(describe(specs, config(pose={"backend": "yolo", "min_confidence_by_role": by_role})), load_references())
+    assert expected in text

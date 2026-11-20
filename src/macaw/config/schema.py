@@ -324,12 +324,22 @@ class PoseSection(_Section):
     model: str | None = None
     device: str = "auto"
     min_confidence: float = 0.3
+    # role -> its own cut, applied to each person's points once they are named
+    min_confidence_by_role: dict[str, float] = added(default_factory=dict)
     input_size: int = 1280
     review: Literal["always", "flagged", "skip"] = "flagged"
     track_repair: bool = True
     track_repair_max_gap_s: float = 1.0
     # on a camera nobody clicked, suggest who is who: most in view for one person; head motion, own mics or qc.look for several
     suggest_names: bool = False
+
+    @field_validator("min_confidence_by_role")
+    @classmethod
+    def _cuts(cls, value: dict[str, float]) -> dict[str, float]:
+        bad = sorted(role for role, cut in value.items() if not 0.0 <= cut <= 1.0)
+        if bad:
+            raise ValueError(f"pose.min_confidence_by_role gives {', '.join(bad)} a value outside 0 to 1")
+        return value
 
 
 class MeasureSection(_Section):
@@ -816,6 +826,11 @@ class MacawConfig(_Section):
         if unknown:
             raise ValueError(
                 f"identity names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
+            )
+        unknown = sorted(set(self.pose.min_confidence_by_role) - set(self.project.roles))
+        if unknown:
+            raise ValueError(
+                f"pose.min_confidence_by_role names {', '.join(unknown)}, which project.roles does not have ({', '.join(self.project.roles)})"
             )
         unknown = sorted(set(self.scale.per_px_by_role) - set(self.project.roles))
         if unknown:

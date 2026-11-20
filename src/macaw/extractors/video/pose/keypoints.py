@@ -167,26 +167,46 @@ _DETECT_MISSING = {
 }
 
 
-def load_detections(config, recording_id: str) -> tuple[pd.DataFrame, dict]:
-    """pose.detect's people with the points below pose.min_confidence or outside the picture made missing."""
+def load_detections(config, recording_id: str, framed: bool = False) -> tuple[pd.DataFrame, dict]:
+    """pose.detect's people with the points below pose.min_confidence or outside the picture made missing; framed keeps each
+    point inside the picture beside them, uncut, for a person's own cut once named."""
     directory = layout_for(config, create=False).artifacts_dir(recording_id, PoseDetectExtractor.name)
     path = directory / DETECTIONS_NAME
     if not path.is_file():
         raise InputNotFoundError(f"{recording_id}: no pose detections at {path}; run pose.detect first")
     backend = json.loads((directory / BACKEND_NAME).read_text(encoding="utf-8"))
-    return seen_points(pd.read_parquet(path), config.pose.min_confidence, backend.get("frame_sizes", {})), backend
+    return seen_points(pd.read_parquet(path), config.pose.min_confidence, backend.get("frame_sizes", {}), framed=framed), backend
 
 
-def seen_points(detections: pd.DataFrame, min_confidence: float, frame_sizes: dict) -> pd.DataFrame:
+FRAMED = ["framed_x", "framed_y"]
+
+
+def seen_points(detections: pd.DataFrame, min_confidence: float, frame_sizes: dict, framed: bool = False) -> pd.DataFrame:
     """A point below min_confidence was not seen; nor was one outside its video's picture."""
     out = detections.drop(columns=["box_score"], errors="ignore").copy()
-    unsure = ~(out["confidence"] >= min_confidence).fillna(False).to_numpy(dtype=bool)
-    out.loc[unsure, ["x", "y"]] = float("nan")
     pieces = [
         inside_frame(group, tuple(frame_sizes[str(video)]) if str(video) in frame_sizes else None)
         for video, group in out.groupby("video", sort=False, observed=True)
     ] if "video" in out and not out.empty else [out]
-    return pd.concat(pieces).sort_index() if pieces else out
+    out = pd.concat(pieces).sort_index() if pieces else out
+    if framed:
+        out[FRAMED] = out[["x", "y"]].to_numpy()
+    unsure = ~(out["confidence"] >= min_confidence).fillna(False).to_numpy(dtype=bool)
+    out.loc[unsure, ["x", "y"]] = float("nan")
+    return out
+
+
+def own_cuts(keypoints: pd.DataFrame, recording: Recording, by_role: dict[str, float]) -> pd.DataFrame:
+    """Each named person whose role has a cut of its own keeps the points inside the picture from that confidence on."""
+    out = keypoints.copy()
+    for subject in recording.subjects:
+        if subject.role not in by_role:
+            continue
+        mine = (out["subject_id"] == subject.subject_id).fillna(False).to_numpy(dtype=bool)
+        sure = mine & (out["confidence"] >= by_role[subject.role]).fillna(False).to_numpy(dtype=bool)
+        out.loc[mine, ["x", "y"]] = float("nan")
+        out.loc[sure, ["x", "y"]] = out.loc[sure, FRAMED].to_numpy()
+    return out.drop(columns=FRAMED, errors="ignore")
 
 
 @register_extractor
@@ -354,7 +374,8 @@ class PoseExtractor(Extractor):
         return inputs
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
-        detections, backend = load_detections(self.config, recording.recording_id)
+        by_role = self.config.pose.min_confidence_by_role
+        detections, backend = load_detections(self.config, recording.recording_id, framed=bool(by_role))
         self._start_looking(recording)
         prep = apply_prep_timing(self.config, recording)
         window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
@@ -421,7 +442,7 @@ class PoseExtractor(Extractor):
                 warnings=warnings,
             )
 
-        keypoints = pd.concat(pieces, ignore_index=True)
+        keypoints = own_cuts(pd.concat(pieces, ignore_index=True), recording, by_role)
         keypoints["recording_id"] = recording.recording_id
         keypoints["source"] = self.name
         keypoints = coerce_frame(keypoints, KEYPOINT_SCHEMA, "keypoints")
@@ -744,7 +765,10 @@ class PoseExtractor(Extractor):
                 extractor_version=self.version,
                 backend=backend["name"],
                 backend_version=backend["version"],
-                params={"joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence},
+                params={
+                    "joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence,
+                    **({"min_confidence_by_role": self.config.pose.min_confidence_by_role} if self.config.pose.min_confidence_by_role else {}),
+                },
                 aggregation="mean",
                 missing=_MISSING.get(name, _MISSING["person"]),
                 comparable_across_backends=False,

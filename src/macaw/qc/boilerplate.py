@@ -908,8 +908,15 @@ def _detect(config, spec, names) -> str:
     return (
         f"Body keypoints were detected in every video frame of the task window with {_backend(_POSE, spec, model=model)} "
         f"at an input size of {pose.input_size} px and mapped to the 17 COCO joints; joints below a confidence of "
-        f"{pose.min_confidence:g} and coordinates outside the frame were set to missing."
+        f"{pose.min_confidence:g} and coordinates outside the frame were set to missing{_own_cuts(pose)}."
     )
+
+
+def _own_cuts(pose) -> str:
+    if not pose.min_confidence_by_role:
+        return ""
+    cuts = ", ".join(f"{cut:g} for the {role}" for role, cut in pose.min_confidence_by_role.items())
+    return f"; once each participant had been identified, their joints were kept from a confidence of {cuts} instead"
 
 
 def _keypoints(config, spec, names) -> str:

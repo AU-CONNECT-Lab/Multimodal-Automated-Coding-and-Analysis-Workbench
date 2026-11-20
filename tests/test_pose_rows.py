@@ -274,6 +274,44 @@ class TestSharedCamera:
         assert owners["room.mp4"]["people"] == {} and "nobody has said who is who on room.mp4" in owners["room.mp4"]["doubt"]
 
 
+class TestOwnCuts:
+    WRISTS = ("left_wrist", "right_wrist")
+
+    def run(self, extractor, recording, tmp_path, **pose):
+        frame = backend_frame([100.0, 500.0])
+        # the child's wrists are found, but with little confidence
+        frame.loc[(frame.track_id == 1) & frame.joint.isin(self.WRISTS), "confidence"] = 0.2
+        clicks(tmp_path, "room.mp4", 0.5, parent=(100.0, 200.0), child=(500.0, 200.0))
+        return extractor(FakeBackend(frame), **pose).run(recording([media()]), tmp_path)
+
+    def wrists(self, result, who):
+        rows = result.keypoints[(result.keypoints.subject_id == who) & result.keypoints.joint.isin(self.WRISTS)]
+        return rows.x.notna().mean()
+
+    def test_without_a_cut_of_its_own_the_childs_doubtful_wrists_are_missing(self, extractor, recording, tmp_path):
+        result = self.run(extractor, recording, tmp_path)
+        assert self.wrists(result, "child") == 0.0 and self.wrists(result, "parent") == 1.0
+
+    def test_a_lower_cut_for_the_child_keeps_them_and_leaves_the_parent_as_it_was(self, extractor, recording, tmp_path):
+        result = self.run(extractor, recording, tmp_path, min_confidence_by_role={"child": 0.1})
+        assert self.wrists(result, "child") == 1.0 and self.wrists(result, "parent") == 1.0
+        validate_frame(result.keypoints, KEYPOINT_SCHEMA, "keypoints")
+
+    def test_a_higher_cut_takes_points_away_after_naming(self, extractor, recording, tmp_path):
+        result = self.run(extractor, recording, tmp_path, min_confidence_by_role={"parent": 0.95})
+        assert set(result.keypoints.subject_id.dropna()) == {"parent", "child"}
+        assert result.keypoints[result.keypoints.subject_id == "parent"].x.isna().all()
+
+    def test_a_role_the_project_does_not_have_is_refused(self, tmp_path):
+        from macaw.config.loader import resolve_config, scaffold_project_config
+
+        config = tmp_path / "project.yaml"
+        scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out")
+        config.write_text(config.read_text(encoding="utf-8") + "\npose:\n  min_confidence_by_role: {baby: 0.2}\n", encoding="utf-8")
+        with pytest.raises(Exception, match="baby"):
+            resolve_config(config)
+
+
 class TestPerSubjectCameras:
     @pytest.fixture
     def result(self, extractor, recording, tmp_path):

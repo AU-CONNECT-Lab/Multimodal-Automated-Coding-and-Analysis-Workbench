@@ -140,7 +140,10 @@ _PAIR_SPECS: dict[str, tuple[str, str | None, bool]] = {
     ),
 }
 
-_NOT_FOUND = "A point found below pose.min_confidence or outside the picture counts as not found."
+_NOT_FOUND = (
+    "A point found below pose.min_confidence (or its value for the person's role in pose.min_confidence_by_role) or outside "
+    "the picture counts as not found."
+)
 _ON_OWN = "not found on the camera this person's body is measured from"
 _SHORT_RUN = "shorter than the smoothing window (kinematics.smoothing_s, and at least 5 frames)"
 _PAIR_FRAMES = "Empty for a pair no camera is set to read both bodies from, or whom that camera never showed together, and in frames"

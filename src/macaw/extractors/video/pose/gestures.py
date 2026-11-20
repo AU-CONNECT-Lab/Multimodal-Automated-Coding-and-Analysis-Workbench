@@ -91,7 +91,7 @@ _BOTH_HANDS_SPECS: dict[str, tuple[str, str | None, str, bool]] = {
 _WORDS = {
     False: {
         "lost": (
-            "not found, or below pose.min_confidence or outside the picture, in all its frames, or found only in runs shorter "
+            "not found, or below pose.min_confidence (or its role's value in pose.min_confidence_by_role) or outside the picture, in all its frames, or found only in runs shorter "
             "than the smoothing window (kinematics.smoothing_s)"
         ),
         "found": "found", "suffix": "", "plane": "the {side} wrist was",
