@@ -648,6 +648,28 @@ class TestGestures3D:
         frames = np.arange(3)
         assert np.allclose(frontal_plane(turned, frames).to_numpy(), frontal_plane(body, frames).to_numpy())
 
+    def test_hands_moving_in_the_room_go_to_their_own_tier(self, gesturing, tmp_path):
+        from macaw.extractors.video.pose.moving import Moving3DExtractor
+        from macaw.store.schema import ANNOTATION_SCHEMA
+
+        config = triangulated(gesturing.project, tmp_path)
+        assert not Moving3DExtractor.wanted_by_default(config)
+        settings(gesturing.project, "  moving:\n    speed_3d: 5\n")
+        config = triangulated(gesturing.project, tmp_path)
+        assert Moving3DExtractor.wanted_by_default(config)
+        result = Moving3DExtractor(config).run(build_recording("003", config), tmp_path)
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        validate_frame(result.annotations, ANNOTATION_SCHEMA, "annotations")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature) == {"left_hand_moving_3d", "right_hand_moving_3d"}
+        coded = result.annotations[result.annotations.subject_id == "parent"]
+        assert set(result.annotations.tier) == {"moving_3d"} and coded.label.tolist() == ["left", "left"]
+        # the stroke peaks at about 16 cm/s at 1.0 s and 2.6 s
+        assert 0.5 < coded.t_start.iloc[0] < 0.8 and 1.2 < coded.t_end.iloc[0] < 1.5
+        assert 2.1 < coded.t_start.iloc[1] < 2.4 and 2.8 < coded.t_end.iloc[1] < 3.1
+        assert result.annotations[result.annotations.subject_id == "child"].empty
+        specs = {spec.name: spec for spec in result.specs}
+        assert "5 cm/s" in specs["left_hand_moving_3d"].description and "speed" not in specs["left_hand_moving_3d"].params
+
     def test_the_methods_give_the_thresholds_in_the_projects_unit(self, gesturing, tmp_path):
         from macaw.extractors.video.pose.gestures import Gesture3DExtractor
         from macaw.project.manifest import FeatureManifest

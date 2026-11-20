@@ -128,6 +128,15 @@ class TestExtractor:
             MovingExtractor(config).check_available()
 
 
+def test_the_methods_text_for_3d_leans_on_the_2d_sentence_only_when_there_is_one():
+    from macaw.qc.boilerplate import _moving_3d
+
+    alone = SimpleNamespace(kinematics=KinematicsSection(moving=MovingSection(speed_3d=8.0)), project=SimpleNamespace(units="cm"))
+    both = SimpleNamespace(kinematics=KinematicsSection(moving=MovingSection(speed=12.0, speed_3d=8.0)), project=SimpleNamespace(units="cm"))
+    assert "8 cm/s" in _moving_3d(alone, None, []) and "[ripperda2020]" in _moving_3d(alone, None, [])
+    assert "as above" in _moving_3d(both, None, []) and "[ripperda2020]" not in _moving_3d(both, None, [])
+
+
 def test_the_methods_text_names_the_speed_and_the_source():
     from macaw.qc.boilerplate import _moving
 

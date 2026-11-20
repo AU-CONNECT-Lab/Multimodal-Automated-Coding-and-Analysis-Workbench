@@ -19,15 +19,19 @@ from macaw.extractors.video.pose.kinematics import (
     keypoints_by_subject,
     velocity,
 )
+from macaw.extractors.video.pose.gestures import room_tracks
 from macaw.extractors.video.pose.skeleton import JOINT_SET
+from macaw.extractors.video.pose.triangulate import TriangulationExtractor, frame_stride, points_file, three_d_step
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
+from macaw.project.room import CM_PER_UNIT
+from macaw.store import keypoints as keypoints_store
 from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
 
 SIDES = ("left", "right")
-TIER = "moving"
+TIER, TIER_3D = "moving", "moving_3d"
 _SPAN_COLUMNS = ["t_start", "t_end"]
 
 
@@ -76,6 +80,16 @@ def either_hand(by_side: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame({"t_start": [m[0] for m in merged], "t_end": [m[1] for m in merged], "label": labels})
 
 
+def hands_moving(times, speeds: dict[str, np.ndarray], *, above: float, min_s: float, join_s: float) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """(each hand's 0/1 per frame, the stretches of either hand with the hand as label, how many were too short)."""
+    values, by_side, dropped = pd.DataFrame({"t_start": np.asarray(times, dtype=float)}), {}, 0
+    for side in SIDES:
+        by_side[side], short = moving_spans(values["t_start"], speeds[side], above=above, min_s=min_s, join_s=join_s)
+        values[f"{side}_hand_moving"] = moving_frames(values["t_start"], speeds[side], by_side[side])
+        dropped += short
+    return values, either_hand(by_side), dropped
+
+
 @register_extractor
 class MovingExtractor(Extractor):
     name = "pose.moving"
@@ -83,7 +97,7 @@ class MovingExtractor(Extractor):
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.moving", "setup.cameras")
+    config_sections = ("kinematics.smoothing_s", "kinematics.moving.speed", "kinematics.moving.min_s", "kinematics.moving.join_s", "setup.cameras")
     requires = (PoseReviewGate.name,)
 
     @classmethod
@@ -112,13 +126,11 @@ class MovingExtractor(Extractor):
         frames, coded = [], []
         for subject_id, kp in by_subject.items():
             times = _frame_times(kp)
-            values, by_side, dropped = pd.DataFrame({"t_start": times.to_numpy(dtype=float)}), {}, 0
-            for side in SIDES:
-                speed = velocity(kp, f"{side}_wrist", smoothing_s=self.config.kinematics.smoothing_s).reindex(times.index).to_numpy()
-                by_side[side], short = moving_spans(values["t_start"], speed, above=cfg.speed, min_s=cfg.min_s, join_s=cfg.join_s)
-                values[f"{side}_hand_moving"] = moving_frames(values["t_start"], speed, by_side[side])
-                dropped += short
-            stretches = either_hand(by_side)
+            speeds = {
+                side: velocity(kp, f"{side}_wrist", smoothing_s=self.config.kinematics.smoothing_s).reindex(times.index).to_numpy()
+                for side in SIDES
+            }
+            values, stretches, dropped = hands_moving(times, speeds, above=cfg.speed, min_s=cfg.min_s, join_s=cfg.join_s)
             frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=subject_id, **common))
             coded.append(build_annotations(
                 recording_id=recording.recording_id, tier=TIER, layer="pose", annotator=self.name, entities=common["entities"],
@@ -140,7 +152,7 @@ class MovingExtractor(Extractor):
 
     def _specs(self, emitted: set[str], length_unit: str) -> list[FeatureSpec]:
         cfg = self.config.kinematics.moving
-        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, "length_unit": length_unit, **cfg.model_dump()}
+        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, "length_unit": length_unit, **cfg.model_dump(exclude={"speed_3d"})}
         return [
             FeatureSpec(
                 name=f"{side}_hand_moving",
@@ -169,3 +181,101 @@ class MovingExtractor(Extractor):
             for side in SIDES
             if f"{side}_hand_moving" in emitted
         ]
+
+
+@register_extractor
+class Moving3DExtractor(Extractor):
+    name = "pose.moving3d"
+    version = "0.1.0"
+    scale = Scale.FRAME
+    group = "pose"
+    phase = Phase.DERIVE
+    config_sections = (
+        "kinematics.smoothing_s", "kinematics.moving.speed_3d", "kinematics.moving.min_s", "kinematics.moving.join_s", "setup.cameras",
+        "project.units", "pose3d.one_camera_every",
+    )
+
+    @classmethod
+    def dependencies(cls, config) -> tuple[str, ...]:
+        return (three_d_step(config) or TriangulationExtractor.name,)
+
+    @classmethod
+    def wanted_by_default(cls, config) -> bool:
+        return config.kinematics.moving.speed_3d is not None and three_d_step(config) is not None
+
+    def check_available(self) -> None:
+        if self.config.kinematics.moving.speed_3d is None:
+            raise ConfigError(
+                "kinematics.moving.speed_3d is not set: give the wrist speed above which a hand counts as moving, in "
+                f"{self.config.project.units} per second; the wrist speeds pose.kinematics3d writes help to choose it"
+            )
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        return [points_file(self.config, recording.recording_id)]
+
+    def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
+        cfg = self.config.kinematics.moving
+        # the speed is typed in the project's unit, the points are in metres
+        above = cfg.speed_3d * CM_PER_UNIT[self.config.project.units] / 100.0
+        points = keypoints_store.read_keypoints(points_file(self.config, recording.recording_id), recording_id=recording.recording_id)
+        people = {str(subject_id): own for subject_id, own in points.groupby("subject_id", observed=True)}
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
+        warnings = [
+            _warning(self.name, recording, subject.subject_id, "warn", "this person was never placed in 3D")
+            for subject in recording.subjects
+            if str(subject.subject_id) not in people
+        ]
+        frames, coded = [], []
+        for subject_id, placed in people.items():
+            times, sides, _ = room_tracks(placed, self.config.kinematics.smoothing_s, frame_stride(self.config))
+            values, stretches, dropped = hands_moving(
+                times, {side: sides[side][0] for side in SIDES}, above=above, min_s=cfg.min_s, join_s=cfg.join_s,
+            )
+            values.columns = [column if column == "t_start" else f"{column}_3d" for column in values.columns]
+            frames.append(build_long_rows(values=values, scale=Scale.FRAME, subject_id=subject_id, **common))
+            coded.append(build_annotations(
+                recording_id=recording.recording_id, tier=TIER_3D, layer="pose", annotator=self.name, entities=common["entities"],
+                intervals=stretches, subject_id=subject_id,
+            ))
+            warnings.append(_warning(
+                self.name, recording, subject_id, "info",
+                f"{len(stretches)} stretch(es) of hand movement in 3D on the {TIER_3D} tier to pick gestures from; "
+                f"{dropped} shorter than {cfg.min_s:g} s left out",
+            ))
+        rows = concat_long_tables(frames)
+        return ExtractorResult(rows=rows, specs=self._specs(set(rows["feature"])), annotations=joined_annotations(coded), warnings=warnings)
+
+    def _specs(self, emitted: set[str]) -> list[FeatureSpec]:
+        cfg, units = self.config.kinematics.moving, self.config.project.units
+        params = {"joint_set": JOINT_SET, "smoothing_s": self.config.kinematics.smoothing_s, "units": units, **cfg.model_dump(exclude={"speed"})}
+        return [
+            FeatureSpec(
+                name=f"{side}_hand_moving_3d",
+                description=(
+                    f"1 while the {side} wrist, placed in 3D, moves faster than {cfg.speed_3d:g} {units}/s, in stretches at least "
+                    f"{cfg.min_s:g} s long, with stretches less than {cfg.join_s:g} s apart counted as one; 0 otherwise. It says "
+                    "that the hand moves, not that the movement is a gesture."
+                ),
+                unit=None,
+                scale=Scale.FRAME,
+                group=self.group,
+                extractor=self.name,
+                extractor_version=self.version,
+                params=params,
+                interpolation="none",
+                aggregation="mean",
+                missing=(
+                    f"Empty in frames outside a stretch where the {side} wrist has no speed in 3D: it was not placed in 3D, or only "
+                    "in a run of frames shorter than the smoothing window (kinematics.smoothing_s)."
+                ),
+                comparable_across_subjects=True,
+                comparable_across_backends=False,
+                validation="synthetic",
+            )
+            for side in SIDES
+            if f"{side}_hand_moving_3d" in emitted
+        ]
+
+
+def _warning(check: str, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
+    return QCWarning(check=check, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message)

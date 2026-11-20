@@ -25,7 +25,7 @@ BIB_NAME = "references.bib"
 ORDER = (
     "prep.media", "prep.video", "prosody.frame", "prosody.voice_report", "prosody.turn_pairs", "prosody.standard_sets", "text.diarize", "text.asr", "text.features", "text.syntax",
     "turns.structure", "turns.transitions", "turns.entropy", "coding.layer_a", "coding.judge", "pose.detect", "pose.keypoints",
-    "pose.kinematics", "pose.moving", "pose.gestures", "pose.kinematics3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
+    "pose.kinematics", "pose.moving", "pose.gestures", "pose.kinematics3d", "pose.moving3d", "pose.gestures3d", "motion.mea", "pose.listening", "face.au", "face.au_check",
     "face.movement", "face.speaking", "face.shares", "gaze.target", "objects.touch",
 )
 SECTIONS = {
@@ -971,6 +971,19 @@ def _moving(config, spec, names) -> str:
     )
 
 
+def _moving_3d(config, spec, names) -> str:
+    moving = config.kinematics.moving
+    return (
+        f"Stretches of hand movement were also marked from the wrists placed in 3D, wherever a wrist moved faster than "
+        f"{moving.speed_3d:g} {config.project.units}/s, joined and shortened as above."
+        if moving.speed is not None else
+        f"Stretches of hand movement were marked from the wrists placed in 3D wherever a wrist moved faster than "
+        f"{moving.speed_3d:g} {config.project.units}/s, with stretches less than {_seconds(moving.join_s)} apart joined and those "
+        f"shorter than {_seconds(moving.min_s)} left out, after [ripperda2020]. They mark that a hand moved, not that it gestured, "
+        "and were offered to the coders as the places to look for gestures."
+    )
+
+
 def _gestures(config, spec, names) -> str:
     gestures = config.kinematics.gestures
     unit = spec.unit.split("/")[0] if spec.unit and "/" in spec.unit else "px"
@@ -1353,6 +1366,7 @@ _WRITERS = {
     "pose.moving": _moving,
     "pose.gestures": _gestures,
     "pose.kinematics3d": _kinematics_3d,
+    "pose.moving3d": _moving_3d,
     "pose.gestures3d": _gestures_3d,
     "motion.mea": _mea,
     "face.au": _face,

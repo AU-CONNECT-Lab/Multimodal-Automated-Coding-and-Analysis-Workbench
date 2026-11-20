@@ -294,7 +294,7 @@ kinematics:
     join_s: 0.15
 ```
 
-`speed` has no default, because it is in pixels per second and therefore depends on the camera; the wrist speeds in the results help to choose it. Stretches less than `join_s` apart count as one, and stretches shorter than `min_s` are left out. The same decision is exported frame by frame as `left_hand_moving` and `right_hand_moving` (1 while the hand moves).
+`speed` has no default, because it is in pixels per second and therefore depends on the camera; the wrist speeds in the results help to choose it. Stretches less than `join_s` apart count as one, and stretches shorter than `min_s` are left out. The same decision is exported frame by frame as `left_hand_moving` and `right_hand_moving` (1 while the hand moves). With several calibrated cameras or another source of 3D points ({ref}`three-d`), `speed_3d` sets the same threshold for the wrists placed in 3D, in the project's unit of length per second; those stretches go to a tier of their own, `moving_3d`, and frame by frame to `left_hand_moving_3d` and `right_hand_moving_3d`. A speed in the room does not depend on the camera or on how far from it the participant sits, so one value serves every recording.
 
 :::{important}
 The tier says that a hand moved, not that it gestured: reaching, fidgeting and handling objects are marked as well, and which stretches are gestures remains the coder's decision. A coder who looks only at the marked stretches does not see a gesture slower than `speed`, so the speed is best set low, at the cost of more stretches to skip, and checked against a passage coded without the tier.

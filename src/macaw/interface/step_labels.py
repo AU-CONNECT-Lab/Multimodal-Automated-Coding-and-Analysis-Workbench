@@ -14,6 +14,7 @@ LABELS = {
     "pose.kinematics3d": "Body movement, 3D",
     "pose.listening": "Movement while listening",
     "pose.moving": "Hands moving",
+    "pose.moving3d": "Hands moving, 3D",
     "pose.gestures": "Gestures",
     "pose.gestures3d": "Gestures, 3D",
     "pose.triangulate": "Body in 3D",
@@ -54,7 +55,7 @@ PREFIXES = {"coding.judge.": "Speech acts, ", "coding.rate.": "Ratings, "}
 SHORT = {
     "prep.video": "Video", "prep.media": "Sound", "prep.depth": "Depth", "align.review": "Offsets",
     "pose.detect": "Find people", "pose.keypoints": "Points", "pose.review": "Who is who", "pose.kinematics": "Movement",
-    "pose.kinematics3d": "Movement 3D", "pose.listening": "Listening", "pose.moving": "Hands moving", "pose.gestures": "Gestures", "pose.gestures3d": "Gestures 3D",
+    "pose.kinematics3d": "Movement 3D", "pose.listening": "Listening", "pose.moving": "Hands moving", "pose.moving3d": "Moving 3D", "pose.gestures": "Gestures", "pose.gestures3d": "Gestures 3D",
     "pose.triangulate": "3D", "pose.depth": "Depth", "pose.mesh": "Model", "pose.one_camera": "3D, one camera",
     "face.au": "Expressions", "face.au_check": "2nd model", "face.movement": "Movement", "face.shares": "Shares", "face.speaking": "Speaking",
     "gaze.target": "Who looks where", "objects.track": "Things", "objects.review": "Thing starts", "objects.touch": "Hands on",

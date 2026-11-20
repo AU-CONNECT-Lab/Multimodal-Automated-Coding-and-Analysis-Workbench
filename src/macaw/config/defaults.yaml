@@ -110,6 +110,7 @@ kinematics:
     holds: each_hand                # each_hand: a hold is one hand still | both_hands: both hands still at once, counted once per gesture
   moving:
     speed: null                      # px/s (m/s with depth); a wrist faster than this is moving, and the stretches go to a tier to pick gestures from. null = off
+    speed_3d: null                   # project.units/s; the same in 3D, with pose3d, on its own tier moving_3d. null = off
     min_s: 0.15                      # s; shorter stretches of movement are left out
     join_s: 0.15                     # s; stretches closer together than this count as one
 

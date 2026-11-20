@@ -364,6 +364,8 @@ class GestureSection(_Section):
 class MovingSection(_Section):
     # in the keypoints' length unit per second, so each project sets it for its own videos; unset leaves pose.moving out
     speed: float | None = added(default=None, gt=0)
+    # project.units per second, for pose.moving3d
+    speed_3d: float | None = added(default=None, gt=0)
     min_s: float = added(default=0.15, ge=0)
     join_s: float = added(default=0.15, ge=0)
 
