@@ -50,6 +50,16 @@ def test_the_transcript_comes_back_and_dropped_tiers_stay_out(project, tmp_path)
     assert back.values.tolist() == [["parent", 1.0, 2.5, "look at that"], ["child", 3.0, 4.0, "doggy"]]
 
 
+def test_words_no_voice_took_have_a_dropped_tier_of_nobody(project, tmp_path):
+    from macaw.interop.eaf import _elan
+
+    nobody = pd.concat([DROPPED, pd.DataFrame({"subject_id": [None], "t_start": [5.0], "t_end": [5.5], "text": ["hm"], "reason": ["no voice"], "detail": ["in none of the voices"]})])
+    path = export_transcript_eaf(TRANSCRIPT, nobody, project.recording, tmp_path / "t.eaf")
+    eaf = _elan()(str(path))
+    assert [value for _, _, value, *_ in eaf.get_annotation_data_for_tier("dropped")] == ["hm [no voice: in none of the voices]"]
+    assert len(read_transcript_eaf(path, ["parent", "child"])) == 2
+
+
 def test_a_tier_of_someone_who_is_not_a_subject_is_refused(project, tmp_path):
     path = export_transcript_eaf(TRANSCRIPT, DROPPED.iloc[:0], project.recording, tmp_path / "t.eaf")
     with pytest.raises(EafError, match="not a subject"):

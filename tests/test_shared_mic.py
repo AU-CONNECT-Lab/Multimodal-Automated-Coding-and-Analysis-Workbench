@@ -21,6 +21,7 @@ from macaw.extractors.audio.content.asr import (
     VOICE_PITCH_NAME,
     assign_voices,
     split_by_voice,
+    unplaced_runs,
     voice_lines,
     voice_pitch,
     write_transcript,
@@ -182,7 +183,20 @@ class TestWordsToPeople:
             ["parent", "shall we?", 0], ["child", "no thanks", 0]
         ]
         assert split["t_start"].tolist() == [0.1, 2.5] and split["confidence"].tolist() == pytest.approx([0.85, 0.65])
-        assert unplaced == 1 and placed["subject_id"].tolist() == ["parent", "parent", "child", "child"]
+        assert unplaced["word"].tolist() == ["bang"] and placed["subject_id"].tolist() == ["parent", "parent", "child", "child"]
+
+    def test_words_no_named_voice_took_are_kept_as_dropped_runs(self):
+        unplaced = pd.DataFrame(
+            {"utterance_index": [0, 0, 1, 2], "t_start": [5.0, 5.4, 6.1, 9.0], "t_end": [5.3, 5.8, 6.5, 9.2],
+             "word": ["what", "now", "hm", "ah"], "label": [None, None, "S2", None]}
+        )
+        runs = unplaced_runs(unplaced)
+        assert runs[["text", "reason", "detail"]].values.tolist() == [
+            ["what now", "no voice", "in none of the voices"], ["hm", "no voice", "in voice S2, which was given to no one"],
+            ["ah", "no voice", "in none of the voices"],
+        ]
+        assert runs["t_start"].tolist() == [5.0, 6.1, 9.0] and runs["t_end"].tolist() == [5.8, 6.5, 9.2]
+        assert runs["subject_id"].isna().all() and unplaced_runs(unplaced.iloc[:0]).empty
 
 
 def three_voices():
@@ -341,7 +355,7 @@ class TestReview:
         dropped = pd.DataFrame({
             "recording_id": ["003"], "subject_id": ["parent"], "t_start": [12.0], "t_end": [13.0],
             "text": ["no no no"], "reason": ["room bleed"], "detail": ["in the voice of child"],
-        })
+        }).reindex(columns=list(DROPPED_SCHEMA))
         _io.write_file(dropped, directory / DROPPED_NAME, DROPPED_SCHEMA, "dropped utterances")
         text = write_recording_report(config, "003")[0].read_text(encoding="utf-8")
         assert "Whose voice is which" in text and ">software<" in text
@@ -451,7 +465,7 @@ class TestMixed:
         utterances = pd.DataFrame({"utterance_index": [0], "t_start": [0.0], "t_end": [9.0], "text": [""], "confidence": [np.nan], "language": ["en"]})
         words = pd.DataFrame({"utterance_index": [0, 0], "t_start": [1.0, 6.0], "t_end": [1.5, 6.5], "word": ["hi", "yo"], "score": [0.9, 0.9]})
         split, _, unplaced = split_by_voice(utterances, words, self.TURNS, self.NAMES, elsewhere=frozenset({"parent"}))
-        assert split["subject_id"].tolist() == ["child"] and unplaced == 0
+        assert split["subject_id"].tolist() == ["child"] and unplaced.empty
 
     def test_an_own_mic_utterance_in_the_voice_of_someone_without_one_is_dropped(self, project, monkeypatch):
         from macaw.extractors.audio.content import asr as asr_module
@@ -471,6 +485,10 @@ class TestMixed:
         assert warnings[0].check == "asr_room_bleed" and "1 of 3" in warnings[0].message
         dropped = pd.concat(extractor._dropped)
         assert dropped[["t_start", "reason", "detail"]].values.tolist() == [[5.5, "room bleed", "in the voice of child"]]
+        assert dropped[["room_voice", "room_voice_share", "own_voice_share"]].values.tolist() == [["child", pytest.approx(1.0), pytest.approx(0.16)]]
+        measured = pd.concat(extractor._room)
+        assert measured["room"].tolist() == [False, True, False]
+        assert measured["own_voice_share"].tolist() == pytest.approx([1.0, 0.16, 0.8])
 
     def test_each_person_is_measured_on_their_own_mic_or_their_solo_stretches(self, project, monkeypatch, tmp_path):
         prep = PrepInfo(

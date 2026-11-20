@@ -303,7 +303,7 @@ def _dropped(results: RecordingResults) -> list[dict]:
     dropped = _io.read_file(path, DROPPED_SCHEMA, "dropped utterances").sort_values("t_start")
     return [
         {
-            "who": row.subject_id, "when": f"{row.t_start:.1f}", "length": f"{row.t_end - row.t_start:.1f}",
+            "who": row.subject_id if isinstance(row.subject_id, str) else "nobody", "when": f"{row.t_start:.1f}", "length": f"{row.t_end - row.t_start:.1f}",
             "text": row.text if isinstance(row.text, str) else "", "reason": row.reason,
             "detail": row.detail if isinstance(row.detail, str) else "",
         }

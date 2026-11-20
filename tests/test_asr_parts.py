@@ -8,6 +8,7 @@ import pytest
 
 from macaw.extractors.audio.content.asr import (
     ASRExtractor,
+    BLEED_SCHEMA,
     TRANSCRIPT_SCHEMA,
     WORD_SCHEMA,
     _concat,
@@ -77,7 +78,7 @@ class TestWithinTrack:
         utterances = pd.DataFrame({"utterance_index": [0, 1, 2, 3], "t_start": [-2.0, 5.0, 9.0, 12.0], "t_end": [1.0, 6.0, 11.0, 13.0]})
         words = pd.DataFrame({"utterance_index": [0, 1, 2, 2, 3], "t_start": [-1.5, 5.0, 9.0, 10.5, 12.0], "t_end": [0.5, 6.0, 9.5, 11.0, 13.0]})
         kept, kept_words, outside = within_track(utterances, words, 10.0)
-        assert outside == 1
+        assert outside.utterance_index.tolist() == [3]
         assert kept.utterance_index.tolist() == [0, 1, 2]
         assert kept.t_start.tolist() == [0.0, 5.0, 9.0] and kept.t_end.tolist() == [1.0, 6.0, 10.0]
         assert kept_words.t_start.tolist() == [0.0, 5.0, 9.0]
@@ -85,7 +86,7 @@ class TestWithinTrack:
     def test_nothing_outside_changes_nothing(self):
         utterances = pd.DataFrame({"utterance_index": [0], "t_start": [1.0], "t_end": [2.0]})
         kept, words, outside = within_track(utterances, pd.DataFrame(), 10.0)
-        assert outside == 0 and kept.equals(utterances) and words.empty
+        assert outside.empty and kept.equals(utterances) and words.empty
 
 
 class TestEmptyTranscript:
@@ -165,3 +166,49 @@ class TestLowConfidence:
 
     def test_a_backend_without_a_measured_threshold_does_not(self):
         assert self.warnings(None) == []
+
+
+class TestKeptRecords:
+    """What the bleed checks and the track's edges leave out is kept with its numbers."""
+
+    class Recogniser:
+        def transcribe(self, path, *, language, word_timestamps):
+            utterances = pd.DataFrame({
+                "utterance_index": [0, 1, 2], "t_start": [1.0, 4.0, 30.0], "t_end": [2.0, 5.0, 31.0], "text": ["hi", "yes", "late"],
+                "confidence": [0.9, 0.8, 0.7], "language": ["en"] * 3,
+            })
+            return utterances, pd.DataFrame(columns=["utterance_index", "t_start", "t_end", "word", "score"])
+
+    def test_own_tracks_keep_every_check_and_what_lies_outside(self, monkeypatch):
+        from macaw.extractors.audio.content import asr as asr_module
+
+        class Diarizer:
+            def attribute(self, segments, tracks, *, margin_db):
+                return segments.assign(is_crosstalk=segments["utterance_index"] == 1, louder_on="child", louder_by_db=[-9.0, 8.0])
+
+        monkeypatch.setattr(asr_module, "resolve_diarization", lambda recording, mode: Diarizer())
+        text = SimpleNamespace(diarization="per_track", crosstalk_margin_db=6.0, language="en", word_timestamps=False)
+        extractor = ASRExtractor(SimpleNamespace(text=text))
+        recording = SimpleNamespace(recording_id="r", subjects=[SimpleNamespace(subject_id="parent")])
+        prep = SimpleNamespace(duration_s=20.0, tracks={"parent": "p.wav"}, track_path=lambda subject: f"{subject}.wav")
+        warnings = []
+        kept, _ = extractor._from_own_tracks(recording, prep, self.Recogniser(), warnings)
+        assert kept["text"].tolist() == ["hi"]
+        dropped = pd.concat(extractor._dropped, ignore_index=True)
+        assert dropped[["text", "reason"]].values.tolist() == [["late", "outside track"], ["yes", "crosstalk"]]
+        assert dropped.loc[1, "louder_by_db"] == 8.0 and dropped.loc[1, "louder_on"] == "child"
+        checked = extractor._bleed_checks("r")
+        assert list(checked.columns) == list(BLEED_SCHEMA)
+        assert checked[["utterance_index", "louder_by_db"]].values.tolist() == [[0, -9.0], [1, 8.0]]
+        assert checked["dropped_as"].fillna("").tolist() == ["", "crosstalk"]
+        assert {warning.check for warning in warnings} == {"asr_outside_track", "asr_crosstalk"}
+
+    def test_the_room_check_joins_the_crosstalk_check(self):
+        extractor = ASRExtractor(SimpleNamespace(text=SimpleNamespace()))
+        extractor._crosstalk = [pd.DataFrame({"subject_id": ["parent"] * 2, "utterance_index": [0, 1], "t_start": [1.0, 4.0], "t_end": [2.0, 5.0],
+                                              "louder_by_db": [-9.0, -7.0], "dropped_as": [None, None]})]
+        extractor._room = [pd.DataFrame({"subject_id": ["parent"] * 2, "utterance_index": [0, 1], "room_voice": [None, "child"],
+                                         "room_voice_share": [0.0, 0.9], "own_voice_share": [1.0, 0.1], "room": [False, True]})]
+        checked = extractor._bleed_checks("r")
+        assert checked[["room_voice", "dropped_as"]].fillna("").values.tolist() == [["", ""], ["child", "room bleed"]]
+        assert checked["recording_id"].tolist() == ["r", "r"]

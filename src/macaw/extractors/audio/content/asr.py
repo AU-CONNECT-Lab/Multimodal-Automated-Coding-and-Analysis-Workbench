@@ -50,6 +50,7 @@ VOICE_LINES_NAME = "voice_lines.parquet"
 VOICE_PITCH_NAME = "voice_pitch.json"
 WORDS_NAME = "words.parquet"
 DROPPED_NAME = "dropped.parquet"
+BLEED_NAME = "bleed.parquet"
 
 # text cannot live in the long table, whose value column is a float, so the transcript is an
 # artifact and only the countable quantities derived from it become features
@@ -86,7 +87,29 @@ DROPPED_SCHEMA: dict[str, str] = {
     "text": "string",
     "reason": "string",
     "detail": "string",
+    "louder_on": "string",
+    "louder_by_db": "float64",
+    "room_voice": "string",
+    "room_voice_share": "float64",
+    "own_voice_share": "float64",
 }
+
+# every utterance of a person's own microphone the bleed checks measured, kept or dropped, so a margin can be judged
+BLEED_SCHEMA: dict[str, str] = {
+    "recording_id": "string",
+    "subject_id": "string",
+    "utterance_index": "int64",
+    "t_start": "float64",
+    "t_end": "float64",
+    "louder_on": "string",
+    "louder_by_db": "float64",
+    "room_voice": "string",
+    "room_voice_share": "float64",
+    "own_voice_share": "float64",
+    "dropped_as": "string",
+}
+_CROSSTALK_COLUMNS = ["louder_on", "louder_by_db"]
+_ROOM_COLUMNS = ["room_voice", "room_voice_share", "own_voice_share"]
 
 # whisperx transcribes in batches; 8 fits comfortably next to a large-v3 model on 24 GB
 WHISPERX_BATCH_SIZE = 8
@@ -381,7 +404,7 @@ _MISSING = {
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.8.0"
+    version = "0.9.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -448,6 +471,8 @@ class ASRExtractor(Extractor):
         backend = self.backend()
         warnings: list[QCWarning] = []
         self._dropped: list[pd.DataFrame] = []
+        self._crosstalk: list[pd.DataFrame] = []
+        self._room: list[pd.DataFrame] = []
         if layout_for(self.config, create=False).corrected_transcript_path(recording.recording_id).is_file():
             utterances, words = self._from_correction(recording, prep, warnings)
         elif not self._shared():
@@ -468,8 +493,9 @@ class ASRExtractor(Extractor):
         )
         dropped = _concat(self._dropped, DROPPED_SCHEMA)
         dropped["recording_id"] = recording.recording_id
+        bleed = self._bleed_checks(recording.recording_id)
         # ASR times are on the prepared track, whose sample 0 sits at t_origin_s
-        for frame in (utterances, words, dropped):
+        for frame in (utterances, words, dropped, bleed):
             frame["t_start"] = frame["t_start"] + prep.t_origin_s
             frame["t_end"] = frame["t_end"] + prep.t_origin_s
 
@@ -477,6 +503,7 @@ class ASRExtractor(Extractor):
             TRANSCRIPT_NAME: write_transcript(utterances, workspace / TRANSCRIPT_NAME),
             WORDS_NAME: _io.write_file(words, workspace / WORDS_NAME, WORD_SCHEMA, "words"),
             DROPPED_NAME: _io.write_file(dropped, workspace / DROPPED_NAME, DROPPED_SCHEMA, "dropped utterances"),
+            BLEED_NAME: _io.write_file(bleed, workspace / BLEED_NAME, BLEED_SCHEMA, "bleed checks"),
         }
 
         warnings += self._quality_warnings(recording, utterances, prep)
@@ -515,6 +542,18 @@ class ASRExtractor(Extractor):
     def _keep_dropped(self, frame: pd.DataFrame) -> None:
         self.__dict__.setdefault("_dropped", []).append(frame)
 
+    def _bleed_checks(self, recording_id: str) -> pd.DataFrame:
+        """The crosstalk check's numbers for each own-microphone utterance, joined to the room bleed check's where it ran."""
+        key = ["subject_id", "utterance_index"]
+        checked = _concat(self.__dict__.get("_crosstalk", []), BLEED_SCHEMA)
+        room = self.__dict__.get("_room", [])
+        if room:
+            found = pd.concat(room, ignore_index=True)
+            checked = checked.drop(columns=_ROOM_COLUMNS).merge(found[[*key, *_ROOM_COLUMNS, "room"]], on=key, how="left")
+            checked.loc[checked["room"].eq(True).to_numpy(), "dropped_as"] = "room bleed"
+        checked["recording_id"] = recording_id
+        return checked.reindex(columns=list(BLEED_SCHEMA))
+
     def _from_shared_track(self, recording: Recording, prep, backend, warnings: list[QCWarning]):
         """One transcript of the shared microphone, each word given to the person whose voice it falls in."""
         rid = recording.recording_id
@@ -523,11 +562,12 @@ class ASRExtractor(Extractor):
         utterances, words, unplaced = split_by_voice(
             utterances, words, turns, speaker_names(self.config, rid), elsewhere=frozenset(prep.tracks)
         )
-        if unplaced:
+        if len(unplaced):
+            self._keep_dropped(unplaced_runs(unplaced))
             warnings.append(
                 QCWarning(
                     check="asr_unplaced_words", recording_id=rid, subject_id=None, severity="info",
-                    message=f"{unplaced} word(s) fell outside every named voice and were left out.",
+                    message=f"{len(unplaced)} word(s) fell outside every named voice and were left out; the dropped utterances list them.",
                 )
             )
         for frame in (utterances, words):
@@ -542,7 +582,8 @@ class ASRExtractor(Extractor):
         turns = turns.assign(subject_id=turns["label"].map(lambda label: names.get(label)))
         roomers = set(turns["subject_id"].dropna()) - set(prep.tracks)
         flags = np.zeros(len(utterances), dtype=bool)
-        whose = [""] * len(utterances)
+        voice = [None] * len(utterances)
+        room_share, own_share = np.full(len(utterances), np.nan), np.full(len(utterances), np.nan)
         for index, row in enumerate(utterances.itertuples(index=False)):
             length = row.t_end - row.t_start
             if length <= 0:
@@ -552,10 +593,13 @@ class ASRExtractor(Extractor):
             in_room = overlap[turns["subject_id"].isin(roomers)].groupby(turns["subject_id"]).sum()
             other = float(in_room.sum())
             flags[index] = other >= _ROOM_BLEED_SHARE * length and own < _OWNER_ABSENT_SHARE * length
-            whose[index] = f"in the voice of {in_room.idxmax()}" if other > 0 else ""
+            voice[index] = str(in_room.idxmax()) if other > 0 else None
+            room_share[index], own_share[index] = other / length, own / length
+        measured = utterances.assign(room_voice=voice, room_voice_share=room_share, own_voice_share=own_share, room=flags)
+        self.__dict__.setdefault("_room", []).append(measured)
         self._keep_dropped(
-            utterances[flags].assign(
-                reason="room bleed", detail=[whose[index] for index in np.flatnonzero(flags)]
+            measured[flags].drop(columns="room").assign(
+                reason="room bleed", detail=[f"in the voice of {voice[index]}" for index in np.flatnonzero(flags)]
             )
         )
         for subject_id in utterances.loc[flags, "subject_id"].unique():
@@ -601,14 +645,17 @@ class ASRExtractor(Extractor):
                 word_timestamps=cfg.word_timestamps,
             )
             utterances, words, outside = within_track(utterances, words, prep.duration_s)
-            if outside:
+            if len(outside):
+                self._keep_dropped(outside.assign(
+                    subject_id=subject.subject_id, reason="outside track", detail=f"the prepared track ends at {prep.duration_s:.1f} s",
+                ))
                 warnings.append(
                     QCWarning(
                         check="asr_outside_track",
                         recording_id=recording.recording_id,
                         subject_id=subject.subject_id,
                         severity="info",
-                        message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
+                        message=f"{len(outside)} utterance(s) the backend returned lie outside the prepared track and were dropped.",
                     )
                 )
             for frame in (utterances, words):
@@ -625,17 +672,19 @@ class ASRExtractor(Extractor):
         flagged = diarizer.attribute(utterances, tracks, margin_db=cfg.crosstalk_margin_db)
         warnings += self._crosstalk_warnings(recording, flagged)
 
-        bleed = flagged[flagged["is_crosstalk"].astype(bool)]
+        flagged = flagged.assign(**{column: flagged[column] if column in flagged else None for column in _CROSSTALK_COLUMNS})
+        crosstalk = flagged["is_crosstalk"].astype(bool)
+        self.__dict__.setdefault("_crosstalk", []).append(
+            flagged.assign(dropped_as=np.where(crosstalk, "crosstalk", None)).reindex(columns=list(BLEED_SCHEMA))
+        )
+        bleed = flagged[crosstalk]
         self._keep_dropped(
             bleed.assign(
                 reason="crosstalk",
-                detail=[
-                    f"{by:.1f} dB louder on {on}" if isinstance(on, str) else ""
-                    for on, by in zip(bleed.get("louder_on", [None] * len(bleed)), bleed.get("louder_by_db", [np.nan] * len(bleed)))
-                ],
+                detail=[f"{by:.1f} dB louder on {on}" if isinstance(on, str) else "" for on, by in zip(bleed["louder_on"], bleed["louder_by_db"])],
             )
         )
-        extra = [column for column in ("is_crosstalk", "louder_on", "louder_by_db") if column in flagged]
+        extra = ["is_crosstalk", *_CROSSTALK_COLUMNS]
         utterances = flagged[~flagged["is_crosstalk"].astype(bool)].drop(columns=extra)
         return utterances, _keep_utterances(words, utterances)
 
@@ -849,10 +898,11 @@ def _concat(parts: list[pd.DataFrame], schema: dict[str, str], drop: set[str] | 
 
 def within_track(
     utterances: pd.DataFrame, words: pd.DataFrame, duration_s: float
-) -> tuple[pd.DataFrame, pd.DataFrame, int]:
-    """Clips to [0, duration_s]; a backend that reads an existing transcript can return the whole session."""
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Clips to [0, duration_s] and also returns the utterances wholly outside; a backend that reads an existing
+    transcript can return the whole session."""
     keep = (utterances["t_start"] < duration_s) & (utterances["t_end"] > 0)
-    outside = int((~keep).sum())
+    outside = utterances[~keep].copy()
     utterances = utterances[keep].copy()
     utterances["t_start"] = utterances["t_start"].clip(lower=0.0)
     utterances["t_end"] = utterances["t_end"].clip(upper=duration_s)
@@ -921,10 +971,10 @@ class SharedASRExtractor(Extractor):
             path, language=self.config.text.language, word_timestamps=True
         )
         utterances, words, outside = within_track(utterances, words, prep.duration_s)
-        warnings = [] if not outside else [
+        warnings = [] if outside.empty else [
             QCWarning(
                 check="asr_outside_track", recording_id=rid, subject_id=None, severity="info",
-                message=f"{outside} utterance(s) the backend returned lie outside the prepared track and were dropped.",
+                message=f"{len(outside)} utterance(s) the backend returned lie outside the prepared track and were dropped.",
             )
         ]
         utterances = utterances.assign(recording_id=rid, subject_id=None, n_words=_word_counts(utterances))
@@ -1081,20 +1131,23 @@ def split_by_voice(
 ) -> tuple[pd.DataFrame, pd.DataFrame, int]:
     """Each word goes to the voice turn it overlaps most, or the nearest within reach; a run of
     one person's words inside a recogniser segment is one utterance. Words of people in elsewhere
-    are left to their own microphone. Returns the count of words no named voice took."""
+    are left to their own microphone. Also returns the words, or without word times the segments, no named voice took,
+    with the voice each fell in as label."""
     columns = [column for column in utterances.columns if column not in {"utterance_index", "t_start", "t_end", "text", "confidence"}]
     if words.empty:
         # a backend without word times can only be split at its segments
         placed = assign_voices(utterances, turns)
-        placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
-        unplaced = int(placed["subject_id"].isna().sum())
+        placed["subject_id"] = placed["label"].map(lambda label: names.get(label))
+        unplaced = placed[placed["subject_id"].isna()].rename(columns={"text": "word"})
+        placed = placed.drop(columns="label")
         kept = placed[placed["subject_id"].notna() & ~placed["subject_id"].isin(elsewhere)].copy()
         kept["utterance_index"] = kept.sort_values("t_start").groupby("subject_id").cumcount()
         return kept, words.assign(subject_id=pd.Series(dtype="string")), unplaced
 
     placed = assign_voices(words, turns)
-    placed["subject_id"] = placed.pop("label").map(lambda label: names.get(label))
-    unplaced = int(placed["subject_id"].isna().sum())
+    placed["subject_id"] = placed["label"].map(lambda label: names.get(label))
+    unplaced = placed[placed["subject_id"].isna()]
+    placed = placed.drop(columns="label")
     placed = placed[placed["subject_id"].notna() & ~placed["subject_id"].isin(elsewhere)]
     placed = placed.sort_values(["t_start", "t_end"]).reset_index(drop=True)
     # a new utterance starts wherever the speaker or the recogniser segment changes
@@ -1118,6 +1171,25 @@ def split_by_voice(
     index = split.set_index("run")["utterance_index"]
     placed["utterance_index"] = placed["run"].map(index)
     return split.drop(columns=["run"]), placed.drop(columns=["run"]), unplaced
+
+
+def unplaced_runs(unplaced: pd.DataFrame) -> pd.DataFrame:
+    """Words no named voice took as dropped utterances, one per run in one recogniser segment and one voice or none."""
+    if unplaced.empty:
+        return pd.DataFrame(columns=list(DROPPED_SCHEMA))
+    frame = unplaced.sort_values(["t_start", "t_end"], kind="stable").reset_index(drop=True)
+    label = np.array(["" if pd.isna(value) else str(value) for value in frame["label"]], dtype=object)
+    segment = frame["utterance_index"].to_numpy()
+    run = np.cumsum(np.r_[True, (label[1:] != label[:-1]) | (segment[1:] != segment[:-1])])
+    rows = []
+    for _, part in frame.groupby(run, sort=True):
+        voice = label[part.index[0]]
+        rows.append({
+            "subject_id": None, "t_start": float(part["t_start"].min()), "t_end": float(part["t_end"].max()),
+            "text": " ".join(part["word"].fillna("").astype(str)).strip(), "reason": "no voice",
+            "detail": f"in voice {voice}, which was given to no one" if voice else "in none of the voices",
+        })
+    return pd.DataFrame(rows)
 
 
 def assign_voices(spans: pd.DataFrame, turns: pd.DataFrame) -> pd.DataFrame:

@@ -35,8 +35,10 @@ def export_transcript_eaf(
     # a further speaker the transcript holds, such as other, keeps a tier of its own
     subjects += sorted(set(transcript["subject_id"].dropna().astype(str)) - set(subjects))
     for kind, frame, name in ((TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped"), (DOUBT_TYPE, doubts, "doubtful")):
-        for subject_id in subjects:
-            rows = frame[frame["subject_id"].astype(str) == subject_id]
+        # words no voice took belong to nobody yet, on a tier without a participant
+        nobody = [""] if kind == DROPPED_TYPE else []
+        for subject_id in [*subjects, *nobody]:
+            rows = frame[frame["subject_id"].astype("string").fillna("") == subject_id]
             if kind != TRANSCRIPT_TYPE and rows.empty:
                 continue
             tier = tier_for_subject(subject_id, name)
