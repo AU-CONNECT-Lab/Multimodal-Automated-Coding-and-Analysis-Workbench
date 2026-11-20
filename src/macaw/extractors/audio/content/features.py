@@ -10,7 +10,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import (
-    TRANSCRIPT_NAME, ASRExtractor, load_transcript, resolve_device, transcript_between, transcript_saved,
+    TRANSCRIPT_NAME, ASRExtractor, load_transcript, resolve_device, transcript_saved,
 )
 from macaw.extractors.audio.content.diarization import OTHER
 from macaw.extractors.base import Extractor, ExtractorResult
@@ -28,7 +28,11 @@ TURNS_STEP = "turns.structure"
 _WORD = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
 
 _SPECS = {
-    "mlu_words": ("Mean length of utterance in words; an utterance is one recogniser segment.", "word"),
+    "mlu_words": (
+        "Mean length of utterance in words; an utterance is one line of the transcript: a recogniser segment on a microphone of "
+        "one's own, one voice's run of words within a segment on a shared microphone, a line a person wrote in a corrected one.",
+        "word",
+    ),
     "n_tokens": ("Words this speaker produced, after lower-casing and dropping punctuation.", "count"),
     "n_types": ("Distinct words this speaker used.", "count"),
     "type_token_ratio": ("Distinct words over all words; it falls as a speaker talks more, so compare only equal amounts of talk.", None),

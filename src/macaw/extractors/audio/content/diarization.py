@@ -291,28 +291,6 @@ def suppress_crosstalk(
     return out
 
 
-def assign_speakers(segments: pd.DataFrame, diarization: pd.DataFrame) -> pd.DataFrame:
-    """Give each segment the diarized speaker it overlaps most, for the shared-mic path."""
-    out = segments.copy()
-    if out.empty:
-        return out
-    if diarization.empty:
-        out["subject_id"] = None
-        return out
-
-    starts = diarization["t_start"].to_numpy(dtype=float)
-    ends = diarization["t_end"].to_numpy(dtype=float)
-    speakers = diarization["speaker"].to_numpy()
-
-    picked = []
-    for row in out.itertuples(index=False):
-        overlap = np.minimum(ends, row.t_end) - np.maximum(starts, row.t_start)
-        best = int(np.argmax(overlap))
-        picked.append(speakers[best] if overlap[best] > 0 else None)
-    out["subject_id"] = picked
-    return out
-
-
 def resolve_diarization(recording: Recording, mode: str) -> DiarizationBackend:
     from macaw.extractors import get_backend
 
