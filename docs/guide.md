@@ -362,7 +362,7 @@ When a result looks wrong, adjust the relevant setting and run again. Only the s
 Run one of the following commands in the project folder. Each reports where it saved its files.
 
 `macaw export`
-: One table (CSV) containing every measure for every participant over time. Measures in metres, and measures in pixels for recordings with a pixel scale, are also given in the project's unit of length ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`). A data dictionary beside the table describes each of its columns, including what an empty cell means ({ref}`data-dictionary`).
+: One table (CSV) containing every measure for every participant over time. Measures in metres, and measures in pixels for recordings with a pixel scale, are also given in the project's unit of length ({ref}`scale`). Values within named segments carry the segment's name ({ref}`segments`). A data dictionary beside the table describes each of its columns, including what an empty cell means ({ref}`data-dictionary`). With `--long`, one row per measure and value, each row also names the camera its measure was taken on; the default layout, one column per measure, leaves the camera out.
 
 `macaw export -f parquet`
 : The same table, with the same data dictionary, as a Parquet file, which is smaller and faster to read than a CSV when measures are exported frame by frame; R reads it with the arrow package.
