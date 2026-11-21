@@ -222,8 +222,18 @@ def embedding_table(config, recording_ids: list[str]) -> dict[str, tuple[pd.Data
         path = layout_for(config, create=False).artifacts_dir(recording_id, TextFeatureExtractor.name) / EMBEDDINGS_NAME
         return pd.read_parquet(path).sort_values(["t_start", "subject_id"], kind="stable") if path.is_file() else None
 
+    from macaw.execution.runner import recording_configs
+
     found = _gathered(config, recording_ids, one)
-    model = config.text.embedding_model or "text.embedding_model"
+    present = set(found["recording_id"].astype(str)) if "recording_id" in found else set()
+    by_model: dict[str, list[str]] = {}
+    for rid, own in recording_configs(config, [rid for rid in recording_ids if str(rid) in present]).items():
+        by_model.setdefault(own.text.embedding_model or "text.embedding_model", []).append(str(rid))
+    # a recording may set a model of its own, and vectors of two models do not compare
+    model = (
+        "; ".join(f"{name} for {', '.join(rids)}" for name, rids in by_model.items()) if len(by_model) > 1
+        else next(iter(by_model), config.text.embedding_model or "text.embedding_model")
+    )
     said = {
         "subject_id": _TRANSCRIPT["subject_id"],
         "utterance_index": ("The utterance, as numbered in utterances.csv for the same person.", None, "Never empty."),

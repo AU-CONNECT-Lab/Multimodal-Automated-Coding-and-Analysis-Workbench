@@ -94,6 +94,13 @@ def test_sentence_embeddings_come_out_with_the_transcript(project):
     dictionary = pd.read_csv(out / "embeddings_dictionary.csv").set_index("column")
     assert set(vectors.columns) == set(dictionary.index) and dictionary.loc["e1", "step"] == "text.features"
     assert "Dimension 1" in dictionary.loc["e1", "meaning"]
+    from pathlib import Path
+
+    own = Path(project.resolved.project.recording_config_dir) / "003.yaml"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text("text:\n  embedding_model: mini-lm\n", encoding="utf-8")
+    dictionary = pd.read_csv(export(project, "transcript") / "embeddings_dictionary.csv").set_index("column")
+    assert "embedding from mini-lm;" in dictionary.loc["e1", "meaning"]
 
 
 def test_turns_transitions_and_talk_come_out_together(project):
