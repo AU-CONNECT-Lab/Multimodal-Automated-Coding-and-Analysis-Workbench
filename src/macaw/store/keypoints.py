@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 
@@ -44,25 +43,6 @@ def _sampled_within(t_range: tuple[float, float] | None):
         return None
     low, high = t_range
     return (ds.field("t") >= low) & (ds.field("t") < high)
-
-
-def to_array(df: pd.DataFrame, joint_order: list[str]):
-    """Long keypoint rows to a (n_frames, n_joints, 4) array for kinematics code."""
-    frame = coerce_frame(df, KEYPOINT_SCHEMA, NAME)
-    frames = np.sort(frame["frame"].unique())
-    frame_position = {value: index for index, value in enumerate(frames)}
-    joint_position = {name: index for index, name in enumerate(joint_order)}
-
-    out = np.full((len(frames), len(joint_order), 4), np.nan)
-    rows = frame[frame["joint"].isin(joint_position)]
-    if rows.empty:
-        return out
-
-    row_index = rows["frame"].map(frame_position).to_numpy()
-    column_index = rows["joint"].map(joint_position).to_numpy()
-    for depth, column in enumerate(("x", "y", "z", "confidence")):
-        out[row_index, column_index, depth] = rows[column].to_numpy(dtype=float)
-    return out
 
 
 def to_wide(df: pd.DataFrame, joint_order: list[str]) -> pd.DataFrame:
