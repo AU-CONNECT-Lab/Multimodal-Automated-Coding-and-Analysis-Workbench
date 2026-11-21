@@ -30,6 +30,10 @@ SEMITONE_REF_HZ = 100.0
 
 N_FORMANTS = 4
 
+# a person's transcribed words less than this apart are taken as one stretch of their speech
+WORD_GAP_S = 0.5
+ASR_STEP = "text.asr"
+
 
 def to_semitones(f0_hz: np.ndarray, reference_hz: float) -> np.ndarray:
     f0_hz = np.asarray(f0_hz, dtype=float)
@@ -60,16 +64,29 @@ _SUMMARY_SPECS = {
         "Median voiced pitch, the reference f0_semitone_rel is measured against.",
         "Hz",
     ),
-    "voiced_fraction": ("Share of the frames in the analysed part, or the segment, that carried pitch.", None),
+    "voiced_fraction": (
+        "Share of the frames in the analysed part, or the segment, that carried pitch; on a microphone of their own, of the "
+        "frames within their transcribed words.",
+        None,
+    ),
 }
 
 UNHEARD = "a person with neither a device that hears them alone nor a voice named as theirs on a shared microphone (text.diarization)"
-_FRAMES = f"Empty for {UNHEARD}, and on a shared microphone in frames where their voice is not the only one."
+OWN_WORDS = (
+    f"On a microphone of their own only the frames within their transcribed words count (words less than {WORD_GAP_S:g} s "
+    "apart joined; a whole line where the recogniser gave no word times), so a voice leaking in from someone else is not "
+    "taken for theirs."
+)
+_ELSEWHERE = (
+    "on a shared microphone in frames where their voice is not the only one, and on a microphone of their own in frames "
+    "outside their transcribed words"
+)
+_FRAMES = f"Empty for {UNHEARD}, {_ELSEWHERE}. {OWN_WORDS}"
 _QUIET = "With Praat, a frame counts as silent when it stays below {share} of the track's loud level (the 99.5th percentile of its 10 ms peaks)."
 _PITCHLESS = (
     "Empty in frames where no pitch was found: silence, unvoiced sound, or a voice outside prosody.f0_min_hz to f0_max_hz "
-    f"(or the person's prosody.f0_range_by_role). {_QUIET.format(share='3%')} Also empty for {UNHEARD}, and on a shared "
-    "microphone in frames where their voice is not the only one."
+    f"(or the person's prosody.f0_range_by_role). {_QUIET.format(share='3%')} Also empty for {UNHEARD}, {_ELSEWHERE}. "
+    f"{OWN_WORDS}"
 )
 _MISSING = {
     **dict.fromkeys(("f0_hz", "f0_semitone", "f0_semitone_rel"), _PITCHLESS),
@@ -85,12 +102,13 @@ _MISSING = {
     "formant": f"{_FRAMES} Also empty in frames where Praat found no formant of this number.",
     "f0_median_hz": (
         f"Empty for {UNHEARD}, and where no frame of theirs in the span carried pitch. On a shared microphone only frames "
-        "where their voice is the only one count."
+        f"where their voice is the only one count. {OWN_WORDS}"
     ),
     "voiced_fraction": (
         f"Empty for {UNHEARD}. 0 means no frame of theirs in the span carried pitch; on a shared microphone only frames where "
         "their voice is the only one can, while every frame of the span counts below, so 0 there also means they never "
-        "spoke alone in it."
+        "spoke alone in it. On a microphone of their own only the frames within their transcribed words count, above and "
+        "below; it is empty where none of their words was transcribed."
     ),
 }
 
@@ -98,7 +116,7 @@ _MISSING = {
 @register_extractor
 class FrameProsodyExtractor(Extractor):
     name = "prosody.frame"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "prosody"
     config_sections = ("prosody", "segment", "text.diarization")
@@ -107,7 +125,7 @@ class FrameProsodyExtractor(Extractor):
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:
         # on a shared microphone nothing is anyone's until a person has named the voices
-        return cls.requires + ((SpeakerReviewGate.name, LINES_GATE) if config.text.diarization == SHARED_MODE else ())
+        return cls.requires + (ASR_STEP,) + ((SpeakerReviewGate.name, LINES_GATE) if config.text.diarization == SHARED_MODE else ())
 
     def __init__(self, config):
         super().__init__(config)
@@ -135,7 +153,7 @@ class FrameProsodyExtractor(Extractor):
         return [self.backend()]
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id))
+        return prosody_inputs(self.config, recording, load_prep(self.config, recording.recording_id))
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.prosody
@@ -147,7 +165,7 @@ class FrameProsodyExtractor(Extractor):
         entities = recording.entities()
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
 
-        sources = voice_sources(self.config, recording, prep)
+        sources = prosody_sources(self.config, recording, prep)
         measured: dict[tuple, pd.DataFrame] = {}
         for subject in recording.subjects:
             if subject.subject_id not in sources:
@@ -160,9 +178,13 @@ class FrameProsodyExtractor(Extractor):
                 audio, sr = load_audio(path)
                 measured[key] = self._contours(backend, audio, sr, cfg.frame_step_s, f0_min, f0_max)
             contours = measured[key].copy()
+            own = subject.subject_id in prep.tracks
+            counted = len(contours)
             if spans is not None:
                 alone = inside(contours["t_start"].to_numpy(dtype=float) + prep.t_origin_s, spans)
                 contours.loc[~alone, [column for column in contours.columns if column != "t_start"]] = np.nan
+                # on one's own microphone only one's words count, while a shared one counts every frame
+                counted = int(alone.sum()) if own else counted
 
             voiced = contours["f0_hz"].to_numpy(dtype=float)
             median = float(np.nanmedian(voiced)) if np.any(np.isfinite(voiced)) else np.nan
@@ -184,10 +206,9 @@ class FrameProsodyExtractor(Extractor):
                 )
             )
 
-            fraction = float(np.mean(np.isfinite(voiced))) if voiced.size else 0.0
             window = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
-            frames.append(self._summary(recording, subject.subject_id, voiced, voiced.size, window))
-            warnings += self._voiced_warning(recording, subject, fraction, spans is not None, window)
+            frames.append(self._summary(recording, subject.subject_id, voiced, counted, window))
+            warnings += self._voiced_warning(recording, subject, voiced, counted, not own, window)
 
         return ExtractorResult(
             rows=concat_long_tables(frames),
@@ -208,8 +229,7 @@ class FrameProsodyExtractor(Extractor):
         subjects = {subject.subject_id: subject for subject in recording.subjects}
         warnings = []
         for subject_id, (voiced, n_frames, shared) in between.items():
-            fraction = float(np.isfinite(voiced).sum()) / n_frames if n_frames else 0.0
-            warnings += self._voiced_warning(recording, subjects[subject_id], fraction, shared, (segment.start_s, segment.end_s), f" in segment {segment.name}")
+            warnings += self._voiced_warning(recording, subjects[subject_id], voiced, n_frames, shared, (segment.start_s, segment.end_s), f" in segment {segment.name}")
         return warnings
 
     def _between(self, recording: Recording, start_s: float, end_s: float) -> dict | None:
@@ -220,7 +240,7 @@ class FrameProsodyExtractor(Extractor):
         prep = load_prep(self.config, recording.recording_id)
         pitch = read_long_table(path, features=["f0_hz"], scale=Scale.FRAME)
         found = {}
-        for subject_id, (track, spans) in voice_sources(self.config, recording, prep).items():
+        for subject_id, (track, spans) in prosody_sources(self.config, recording, prep).items():
             with wave.open(str(track), "rb") as audio:
                 grid = prep.t_origin_s + frame_times(audio.getnframes(), audio.getframerate(), self.config.prosody.frame_step_s)
             # the grid's last frame sits at the very end of the track, so a segment that reaches the end takes it too
@@ -228,22 +248,38 @@ class FrameProsodyExtractor(Extractor):
             mine = pitch[pitch["subject_id"] == subject_id]
             times = mine["t_start"].to_numpy(dtype=float)
             voiced = mine["value"].to_numpy(dtype=float)[(times >= start_s) & (times < high)]
-            found[subject_id] = (voiced, int(((grid >= start_s) & (grid < high)).sum()), spans is not None)
+            own = subject_id in prep.tracks
+            counted = (grid >= start_s) & (grid < high) & (inside(grid, spans) if own and spans is not None else True)
+            found[subject_id] = (voiced, int(counted.sum()), not own)
         return found
 
-    def _voiced_warning(self, recording: Recording, subject: Subject, fraction: float, shared: bool, window, where: str = "") -> list[QCWarning]:
+    def _voiced_warning(
+        self, recording: Recording, subject: Subject, voiced: np.ndarray, counted: int, shared: bool, window, where: str = ""
+    ) -> list[QCWarning]:
         cfg = self.config.prosody
+        if not shared and counted == 0:
+            return [
+                QCWarning(
+                    check="voiced_fraction", recording_id=recording.recording_id, subject_id=subject.subject_id, severity="warn",
+                    message=f"None of their words was transcribed{where}, so no frame of their microphone was measured as theirs.",
+                    t_start=window[0], t_end=window[1],
+                )
+            ]
+        fraction = float(np.isfinite(voiced).sum()) / counted if counted else 0.0
         if fraction >= cfg.min_voiced_fraction:
             return []
         f0_min, f0_max = f0_range(cfg, subject)
         likely = (
             "They may say little on their own, their voice may be named wrong (macaw accept-voices), or the pitch range may be wrong."
-            if shared else "The track may be silent, mis-attributed, or the pitch range may be wrong."
+            if shared else "Their transcribed words may be someone else's, or the pitch range may be wrong."
         )
         return [
             QCWarning(
                 check="voiced_fraction", recording_id=recording.recording_id, subject_id=subject.subject_id, severity="warn",
-                message=f"Only {fraction:.1%} of frames are voiced{where}, below the expected {cfg.min_voiced_fraction:.1%}. {likely}",
+                message=(
+                    f"Only {fraction:.1%} of {'frames' if shared else 'the frames within their words'} are voiced{where}, "
+                    f"below the expected {cfg.min_voiced_fraction:.1%}. {likely}"
+                ),
                 t_start=window[0], t_end=window[1], details={"f0_min_hz": f0_min, "f0_max_hz": f0_max},
             )
         ]
@@ -366,6 +402,52 @@ def f0_range(cfg, subject: Subject) -> tuple[float, float]:
             low, high = cfg.f0_range_by_role[key]
             return float(low), float(high)
     return float(cfg.f0_min_hz), float(cfg.f0_max_hz)
+
+
+def merge_spans(starts: np.ndarray, ends: np.ndarray, gap_s: float) -> pd.DataFrame:
+    order = np.argsort(starts, kind="stable")
+    merged: list[list[float]] = []
+    for start, end in zip(np.asarray(starts, dtype=float)[order], np.asarray(ends, dtype=float)[order]):
+        if merged and start <= merged[-1][1] + gap_s:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return pd.DataFrame(merged, columns=["t_start", "t_end"], dtype=float)
+
+
+def own_word_spans(config, recording_id: str) -> dict[str, pd.DataFrame]:
+    """Per person, the stretches of their transcribed words on the recording clock, a line without word times taken whole."""
+    from macaw.extractors.audio.content.asr import load_transcript, load_words
+
+    lines = load_transcript(config, recording_id)
+    words = load_words(config, recording_id)
+    words = words[np.isfinite(words["t_start"].to_numpy(dtype=float)) & np.isfinite(words["t_end"].to_numpy(dtype=float))]
+    timed = pd.MultiIndex.from_frame(words[["subject_id", "utterance_index"]].astype({"subject_id": str}))
+    keys = pd.MultiIndex.from_frame(lines[["subject_id", "utterance_index"]].astype({"subject_id": str}))
+    untimed = lines[~keys.isin(timed)]
+    stretches = pd.concat([words[["subject_id", "t_start", "t_end"]], untimed[["subject_id", "t_start", "t_end"]]])
+    return {
+        str(who): merge_spans(group["t_start"].to_numpy(dtype=float), group["t_end"].to_numpy(dtype=float), WORD_GAP_S)
+        for who, group in stretches.groupby(stretches["subject_id"].astype(str))
+    }
+
+
+def prosody_sources(config, recording: Recording, prep) -> dict[str, tuple[Path, pd.DataFrame | None]]:
+    """voice_sources, with a person's own track cut to the stretches of their transcribed words."""
+    sources = voice_sources(config, recording, prep)
+    if not any(who in prep.tracks for who in sources):
+        return sources
+    words = own_word_spans(config, recording.recording_id)
+    nothing = pd.DataFrame({"t_start": pd.Series(dtype=float), "t_end": pd.Series(dtype=float)})
+    return {who: (path, words.get(who, nothing) if who in prep.tracks else spans) for who, (path, spans) in sources.items()}
+
+
+def prosody_inputs(config, recording: Recording, prep) -> list[Path]:
+    """What prosody_sources reads, for a cache key."""
+    from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, WORDS_NAME
+
+    heard = layout_for(config, create=False).artifacts_dir(recording.recording_id, ASR_STEP)
+    return [*voice_inputs(config, recording, prep), *([heard / TRANSCRIPT_NAME, heard / WORDS_NAME] if prep.tracks else [])]
 
 
 def _drop_missing(rows: pd.DataFrame) -> pd.DataFrame:

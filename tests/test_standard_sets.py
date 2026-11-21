@@ -71,6 +71,8 @@ def test_the_extractor_writes_one_row_per_turn_and_feature(tmp_path, monkeypatch
     turns = pd.DataFrame({"subject_id": ["parent", "parent", "child"], "t_start": [10.0, 12.2, 11.0], "t_end": [12.0, 13.8, 12.0]})
     monkeypatch.setattr(module, "load_prep", lambda config, rid: prep)
     monkeypatch.setattr(module, "load_turns", lambda config, rid: turns)
+    words = pd.DataFrame({"t_start": [10.0, 12.2], "t_end": [12.0, 13.8]})
+    monkeypatch.setattr("macaw.extractors.audio.prosody.frame.own_word_spans", lambda config, rid: {"parent": words})
     recording = SimpleNamespace(
         recording_id="r1", entities=lambda: {"group_id": "1", "session_id": None, "task": None, "run": None}
     )

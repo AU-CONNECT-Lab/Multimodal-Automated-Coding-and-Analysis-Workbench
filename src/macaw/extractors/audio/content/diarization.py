@@ -846,6 +846,8 @@ def inside(t: np.ndarray, spans: pd.DataFrame) -> np.ndarray:
     """Which times fall in one of the spans; the spans must not overlap."""
     starts = spans["t_start"].to_numpy(dtype=float)
     ends = spans["t_end"].to_numpy(dtype=float)
+    if not starts.size:
+        return np.zeros(np.shape(t), dtype=bool)
     order = np.argsort(starts)
     starts, ends = starts[order], ends[order]
     index = np.searchsorted(starts, t, side="right") - 1

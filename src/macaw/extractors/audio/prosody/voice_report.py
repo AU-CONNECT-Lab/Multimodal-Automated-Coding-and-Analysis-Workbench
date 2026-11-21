@@ -9,9 +9,9 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
+from macaw.extractors.audio.content.diarization import turn_pieces
 from macaw.extractors.audio.prosody.backends import HNR_SILENCE, PITCH_SILENCE, load_audio, loud_share
-from macaw.extractors.audio.prosody.frame import SEMITONE_REF_HZ, UNHEARD, f0_range, to_semitones
+from macaw.extractors.audio.prosody.frame import ASR_STEP, SEMITONE_REF_HZ, UNHEARD, f0_range, prosody_inputs, prosody_sources, to_semitones
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -77,13 +77,13 @@ _SPECS = {
 SOLO_SHARE = "turn_solo_share"
 _SOLO_SPEC = (
     "Share of the turn its measures rest on: on a shared microphone only the stretches in which this person's voice is the only "
-    "one are measured, joined end to end; 1 on a microphone of their own, where the whole turn is. A turn measured on a small "
+    "one are measured, joined end to end, and on a microphone of their own only the stretches of their transcribed words. A turn measured on a small "
     "share of itself can be left out or weighed down."
 )
 
 _UNMEASURED = (
     f"Empty for every turn of {UNHEARD}, and for a turn too short for Praat's pitch analysis or, on a shared microphone, "
-    "with no stretch where their voice is the only one."
+    "with no stretch where their voice is the only one or, on a microphone of their own, with none of their transcribed words."
 )
 _MISSING = {
     **dict.fromkeys(
@@ -100,7 +100,10 @@ _MISSING = {
     "periods": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or with too few voice periods for Praat to compute it.",
     "turn_hnr_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat found every frame of it silent.",
     "cpps_db": f"{_UNMEASURED} Also empty for a turn with no voiced frame, or where Praat could not build its cepstrogram.",
-    SOLO_SHARE: f"Empty for every turn of {UNHEARD}. 0 means a turn on a shared microphone with no stretch where their voice is the only one.",
+    SOLO_SHARE: (
+        f"Empty for every turn of {UNHEARD}. 0 means a turn on a shared microphone with no stretch where their voice is the only one, "
+        "or on a microphone of their own with none of their transcribed words."
+    ),
 }
 
 _INSTALL = 'prosody.voice_report needs praat-parselmouth: pip install "pymacaw[audio]"'
@@ -122,11 +125,11 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class VoiceReportExtractor(Extractor):
     name = "prosody.voice_report"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody", "turns", "segment", "text.diarization")
-    requires = ("turns.structure", MediaPrepExtractor.name)
+    requires = ("turns.structure", ASR_STEP, MediaPrepExtractor.name)
 
     def check_available(self) -> None:
         try:
@@ -145,14 +148,14 @@ class VoiceReportExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
         turns = layout.artifacts_dir(recording.recording_id, "turns.structure") / _turns_name()
-        return [turns, *voice_inputs(self.config, recording, prep)]
+        return [turns, *prosody_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         cfg = self.config.prosody
         prep = load_prep(self.config, recording.recording_id)
         turns = load_turns(self.config, recording.recording_id)
         frames, warnings = [], []
-        sources = voice_sources(self.config, recording, prep)
+        sources = prosody_sources(self.config, recording, prep)
         for subject in recording.subjects:
             spoken = turns[turns["subject_id"].astype(str) == subject.subject_id]
             if spoken.empty or subject.subject_id not in sources:
@@ -169,7 +172,8 @@ class VoiceReportExtractor(Extractor):
                 voice_report(piece, rate, f0_min=f0_min, f0_max=f0_max, step_s=cfg.frame_step_s, loud_level=loud, joins=joined)
                 for piece, joined in zip(pieces, joins)
             ]
-            if spans is not None and (partial := sum(share < _SOLO_NOTE for share in kept)):
+            shared = subject.subject_id not in prep.tracks
+            if shared and spans is not None and (partial := sum(share < _SOLO_NOTE for share in kept)):
                 warnings.append(
                     QCWarning(
                         check=self.name, recording_id=recording.recording_id, subject_id=subject.subject_id, severity="info",

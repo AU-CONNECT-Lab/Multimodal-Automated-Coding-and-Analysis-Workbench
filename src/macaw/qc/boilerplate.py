@@ -442,11 +442,17 @@ def _shared(config) -> bool:
     return config.text.diarization == "pyannote"
 
 
+_OWN_WORDS = (
+    "within the stretches of their own transcribed words (words less than 0.5 s apart joined, and a whole line where the "
+    "recogniser gave no word times), so that another participant's voice leaking into the microphone was not measured as theirs"
+)
+
+
 def _where_voiced(config) -> str:
     if _shared(config):
-        return ("On each participant's own track, or, for a participant heard only on the shared microphone, within the "
-                "stretches where their voice was the only one")
-    return "On each participant's own track"
+        return (f"On each participant's own track {_OWN_WORDS}, or, for a participant heard only on the shared microphone, "
+                "within the stretches where their voice was the only one")
+    return f"On each participant's own track {_OWN_WORDS}"
 
 
 def _voice_report(config, spec, names) -> str:
@@ -461,6 +467,7 @@ def _voice_report(config, spec, names) -> str:
         "1.6); the mean harmonics-to-noise ratio; and smoothed cepstral peak prominence [hillenbrand1996] with a "
         "least-squares straight trend line. Praat's silence thresholds for pitch (3%) and harmonicity (10%) were taken "
         "relative to the 99.5th percentile of the whole track's 10 ms peak amplitudes rather than to the turn's maximum."
+        + f" On a participant's own track, the parts of a turn {_OWN_WORDS} were measured, joined end to end."
         + (" For a participant heard only on the shared microphone, the stretches of a turn where their voice was the "
            "only one were measured, joined end to end." if _shared(config) else "")
     )
@@ -481,8 +488,9 @@ def _standard_sets(config, spec, names) -> str:
     chosen = [known[prefix] for prefix in sorted({name.split("_", 1)[0] for name in names}) if prefix in known]
     return (
         f"For every turn, {_listed(chosen)} {'was' if len(chosen) == 1 else 'were'} extracted "
-        + ("from the speaker's own track or, for a participant heard only on the shared microphone, from the stretches "
-           "of the turn where their voice alone was heard, joined end to end, " if _shared(config) else "from the speaker's own track ")
+        + f"from the parts of the turn on the speaker's own track {_OWN_WORDS}, joined end to end, "
+        + ("or, for a participant heard only on the shared microphone, from the stretches of the turn where their voice "
+           "alone was heard, joined end to end, " if _shared(config) else "")
         + f"with openSMILE {spec.backend_version} [eyben2010]."
     )
 

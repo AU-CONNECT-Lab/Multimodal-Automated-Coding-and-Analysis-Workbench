@@ -212,12 +212,17 @@ class TestConfigDiff:
 
 @needs_pydantic
 class TestRunDryRun:
-    def test_dependencies_are_pulled_in_and_ordered_first(self, project):
-        """prosody.frame never appears without prep.media in front of it."""
+    def test_dependencies_are_pulled_in_and_ordered_first(self, project, monkeypatch):
+        """prosody.frame never appears without prep.media and text.asr in front of it."""
+        from macaw.extractors.audio.content.asr import ASRExtractor
+
+        monkeypatch.setattr(ASRExtractor, "check_available", lambda self: None)
         result = invoke("run", "-c", str(project.config), "-e", "prosody.frame", "--dry-run")
-        assert result.exit_code == 0
-        tasks = result.output.split()
-        assert tasks == ["003:prep.media", "004:prep.media", "003:prosody.frame", "004:prosody.frame"]
+        assert result.exit_code == 0, result.output
+        # a GPU step adds a note on how many run at once
+        tasks = [word for word in result.output.split() if word.startswith(("003:", "004:"))]
+        assert tasks.index("003:prep.media") < tasks.index("003:text.asr") < tasks.index("003:prosody.frame")
+        assert sorted(tasks) == sorted(f"{rid}:{name}" for rid in ("003", "004") for name in ("prep.media", "text.asr", "prosody.frame"))
 
     def test_workers_is_accepted_as_an_override(self, project):
         result = invoke("run", "-c", str(project.config), "-e", "prep.media", "-j", "2", "--dry-run")

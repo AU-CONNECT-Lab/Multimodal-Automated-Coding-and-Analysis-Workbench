@@ -114,6 +114,8 @@ def test_the_extractor_writes_one_row_per_turn_and_measure(tmp_path, monkeypatch
     )
     monkeypatch.setattr(module, "load_prep", lambda config, rid: prep)
     monkeypatch.setattr(module, "load_turns", lambda config, rid: turns)
+    words = pd.DataFrame({"t_start": [10.0, 11.2, 12.0], "t_end": [11.0, 11.5, 13.0]})
+    monkeypatch.setattr("macaw.extractors.audio.prosody.frame.own_word_spans", lambda config, rid: {"parent": words})
     recording = SimpleNamespace(
         recording_id="r1",
         subjects=[SimpleNamespace(subject_id="parent", role="parent"), SimpleNamespace(subject_id="child", role="child")],
@@ -126,8 +128,8 @@ def test_the_extractor_writes_one_row_per_turn_and_measure(tmp_path, monkeypatch
     assert slope.t_start.tolist() == [10.0, 11.2, 12.0]
     assert slope.value.iloc[0] > 0 and np.isnan(slope.value.iloc[1]) and slope.value.iloc[2] < 0
     solo = result.rows[result.rows.feature == "turn_solo_share"]
-    # on a microphone of one's own the whole turn is measured
-    assert solo.value.tolist() == [1.0, 1.0, 1.0]
+    # on a microphone of one's own only the stretches of one's transcribed words are measured
+    assert solo.sort_values("t_start").value.round(3).tolist() == [1.0, 0.5, 1.0]
     assert [w.message.startswith("1 of 3") for w in result.warnings] == [True]
 
 

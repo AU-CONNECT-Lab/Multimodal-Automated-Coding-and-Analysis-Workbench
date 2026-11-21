@@ -10,9 +10,9 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.diarization import turn_pieces, voice_inputs, voice_sources
+from macaw.extractors.audio.content.diarization import turn_pieces
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.audio.prosody.frame import UNHEARD
+from macaw.extractors.audio.prosody.frame import ASR_STEP, UNHEARD, prosody_inputs, prosody_sources
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -36,7 +36,7 @@ def voiced_only(column: str) -> bool:
     return (VOICED_ONLY in column and UNVOICED not in descriptor) or descriptor in COMPARE_VOICED
 _MISSING = (
     f"Empty for every turn of {UNHEARD}, and for a turn too short for openSMILE to measure or, on a shared microphone, "
-    "with no stretch where their voice is the only one."
+    "with no stretch where their voice is the only one or, on a microphone of their own, with none of their transcribed words."
 )
 _MISSING_VOICED = f"{_MISSING} Also empty for a turn with no voiced frame, since this measure is taken over voiced frames only."
 
@@ -63,11 +63,11 @@ def load_turns(config, recording_id: str):
 @register_extractor
 class StandardSetExtractor(Extractor):
     name = "prosody.standard_sets"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "prosody"
     config_sections = ("prosody.standard_sets", "turns", "segment", "text.diarization")
-    requires = ("turns.structure", MediaPrepExtractor.name)
+    requires = ("turns.structure", ASR_STEP, MediaPrepExtractor.name)
     packages = ("opensmile",)
 
     def check_available(self) -> None:
@@ -80,7 +80,7 @@ class StandardSetExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         prep = load_prep(self.config, recording.recording_id)
         turns = layout.artifacts_dir(recording.recording_id, "turns.structure") / _turns_name()
-        return [turns, *voice_inputs(self.config, recording, prep)]
+        return [turns, *prosody_inputs(self.config, recording, prep)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         import opensmile
@@ -89,7 +89,7 @@ class StandardSetExtractor(Extractor):
         turns = load_turns(self.config, recording.recording_id)
         warnings: list[QCWarning] = []
         frames, names = [], {}
-        sources = voice_sources(self.config, recording, prep)
+        sources = prosody_sources(self.config, recording, prep)
         for subject_id, spoken in turns.groupby("subject_id", observed=True):
             subject_id = str(subject_id)
             if subject_id not in sources:
@@ -124,7 +124,7 @@ class StandardSetExtractor(Extractor):
         return [
             FeatureSpec(
                 name=name,
-                description=f"openSMILE {feature_set} functional {name.split('_', 1)[1]}, over the turn in the speaker's own voice: their track, or their solo stretches of a shared one.",
+                description=f"openSMILE {feature_set} functional {name.split('_', 1)[1]}, over the turn in the speaker's own voice: the stretches of their transcribed words on their own track, or their solo stretches of a shared one.",
                 unit=None,
                 scale=Scale.EVENT,
                 group=self.group,

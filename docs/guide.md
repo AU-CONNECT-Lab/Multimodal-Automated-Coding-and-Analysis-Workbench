@@ -136,7 +136,7 @@ Cameras
 : Each camera carries the name of its folder in every recording. A grid states, for each participant, whether the camera is used for their body (pose and movement), their face (facial action units, head orientation, blinks) and their gaze, and whether the camera's own microphone carries their voice. A camera used for a single participant is that participant's own camera. A camera whose sound is not to be used, for example because every participant wears a microphone, carries no voice.
 
 Microphones
-: Each microphone or sound recorder carries the name of its folder and states whose voices it carries. A device that carries one participant's voice alone serves as that participant's own microphone; the voices on a device that carries several participants are separated automatically and assigned to participants by the researcher (step 6).
+: Each microphone or sound recorder carries the name of its folder and states whose voices it carries. A device that carries one participant's voice alone serves as that participant's own microphone; the voices on a device that carries several participants are separated automatically and assigned to participants by the researcher (step 6). Another participant's voice still leaks into an own microphone, more quietly, so the voice measures taken from it (pitch, intensity, voice quality and the standard feature sets) rest only on the stretches of the owner's transcribed words, with words less than 0.5 s apart joined; they therefore need the transcript, and a participant none of whose words was recognised has none.
 
 Things
 : Objects of interest, such as a table or a toy, which serve as targets of gaze ({ref}`gaze`) and appear in the drawings.
