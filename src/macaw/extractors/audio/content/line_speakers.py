@@ -31,6 +31,7 @@ from macaw.extractors.prep import load_prep
 from macaw.project.layout import layout_for
 from macaw.project.recording import Recording
 from macaw.store.schema import Scale
+from macaw.store._io import write_text_atomic
 
 # who made a change that no person looked at
 SUGGESTION = "suggestion"
@@ -299,7 +300,7 @@ def write_line_speakers(config, recording_id: str, lines: pd.DataFrame, stamp: s
         "n_doubted_left": int(left.sum()), "evidence": evidence(config, recording_id)[0], "changes": changes_of(lines),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(payload, indent=2))
     every_line(lines, payload["evidence"]).to_csv(lines_path(path), index=False, encoding="utf-8")
     return path
 

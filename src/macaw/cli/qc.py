@@ -23,6 +23,7 @@ from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_can
 from macaw.qc.look import PLAIN
 from macaw.qc.report import stale_pages, standing_page, write_project_report, write_recording_report
 from macaw import people_tables
+from macaw.store._io import write_text_atomic
 
 app = typer.Typer()
 logger = get_logger("qc")
@@ -403,7 +404,7 @@ def _shortened(ids: list[int], shown: int = 6) -> str:
 
 def _write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(payload, indent=2))
 
 
 @app.command("accept-voices", rich_help_panel="Review")

@@ -16,6 +16,7 @@ from macaw.project.recording import Recording
 from macaw.store import _io
 from macaw.store.annotations import build_annotations, read_annotations
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame, empty_frame
+from macaw.store._io import write_text_atomic
 
 LAYER = "C"
 _NAME = "annotations"
@@ -78,7 +79,7 @@ def import_coding(config, recording: Recording, path: Path, coder: str, against:
         report.notes.append(f"{person or 'everyone'} {tier}: brought in from this file before and not now, removed")
     found.setdefault(coder, {})[Path(path).name] = sorted([list(key) for key in now], key=str)
     sources.parent.mkdir(parents=True, exist_ok=True)
-    sources.write_text(json.dumps(found, indent=1, ensure_ascii=False), encoding="utf-8")
+    write_text_atomic(sources, json.dumps(found, indent=1, ensure_ascii=False))
     return report
 
 

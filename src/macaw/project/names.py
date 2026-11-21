@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from macaw.store._io import write_text_atomic
 
 
 def read_names(path: Path) -> dict[str, list[dict]]:
@@ -16,7 +17,7 @@ def read_names(path: Path) -> dict[str, list[dict]]:
 def write_names(path: Path, names: dict[str, list[dict]]) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({camera: clicks for camera, clicks in names.items() if clicks}, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps({camera: clicks for camera, clicks in names.items() if clicks}, indent=2))
     return path
 
 

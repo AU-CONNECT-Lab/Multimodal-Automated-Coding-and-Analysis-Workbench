@@ -15,6 +15,7 @@ from macaw.exceptions import AlignmentFailedError, MacawError
 from macaw.media.drift import MIN_SEGMENTS, drift_is_real, drift_walk_s, estimate_drift, segment_offsets
 from macaw.media.ffmpeg import decode_audio
 from macaw.project.recording import Recording
+from macaw.store._io import write_text_atomic
 
 SAMPLE_RATE = 16000
 # an hour-long file would make the FFT the slowest thing in the pipeline; once the coarse lag
@@ -420,7 +421,7 @@ def write_offset_table(results: list[AlignResult], path: Path) -> Path:
             if getattr(result, key) is not None:
                 entry[key] = [list(point) for point in getattr(result, key)]
         payload.append(entry)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(payload, indent=2))
     return path
 
 

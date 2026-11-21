@@ -20,6 +20,7 @@ from macaw.project.recording import build_recording
 from macaw.qc.transcript_check import KINDS, read_check, still_there
 from macaw.store import _io
 from macaw import people_tables
+from macaw.store._io import write_text_atomic
 
 app = typer.Typer(help="Correct a transcript by hand in ELAN, have a model mark doubtful lines, or go back to the recognised transcript.")
 
@@ -74,7 +75,7 @@ def import_(
     kept = keep_recognised(resolved, recording)
     shutil.copyfile(eaf, target)
     stamp = {"by": by or getpass.getuser(), "at": datetime.now().isoformat(timespec="seconds"), "from": eaf.name}
-    layout.corrected_transcript_stamp_path(recording).write_text(json.dumps(stamp, indent=2), encoding="utf-8")
+    write_text_atomic(layout.corrected_transcript_stamp_path(recording), json.dumps(stamp, indent=2))
     counts = corrected.groupby("subject_id").size()
     typer.echo(
         f"{recording}: kept {len(corrected)} utterances ({', '.join(f'{who} {n}' for who, n in counts.items())}); "

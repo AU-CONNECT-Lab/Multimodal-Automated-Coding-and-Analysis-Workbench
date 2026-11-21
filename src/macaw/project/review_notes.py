@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from macaw.store._io import write_text_atomic
 
 COLUMNS = ["recording_id", "tags", "text", "by", "at"]
 
@@ -23,7 +24,7 @@ def _write(path: Path, notes: list[dict]) -> None:
         path.unlink(missing_ok=True)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(notes, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_text_atomic(path, json.dumps(notes, indent=2, ensure_ascii=False))
 
 
 def add_note(path: Path, tags: list[str], text: str, by: str) -> dict:

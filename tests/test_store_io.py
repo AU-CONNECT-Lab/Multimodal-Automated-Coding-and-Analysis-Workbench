@@ -61,3 +61,30 @@ def test_a_frame_number_with_a_fraction_is_refused_and_a_whole_number_id_read_as
     assert list(out["frame"]) == [2, 3] and out["subject_id"].iloc[0] == "1" and out["subject_id"].isna().iloc[1]
     with pytest.raises(SchemaViolationError, match="2.9999"):
         coerce_frame(pd.DataFrame({"frame": [2.9999, 3.0], "subject_id": ["a", "b"]}), schema, "rows")
+
+
+def test_a_killed_write_of_what_people_marked_leaves_the_earlier_file_whole(tmp_path, monkeypatch):
+    import json
+
+    from macaw.project.gaze_labels import GazeLabel, read_labels, write_labels
+    from macaw.project.names import read_names, write_names
+    from macaw.project.review_notes import add_note, read_notes
+
+    names, labels, notes = tmp_path / "names.json", tmp_path / "gaze_labels.json", tmp_path / "notes.json"
+    write_names(names, {"cam": [{"person": "p1", "at": 1.0, "x": 0.5, "y": 0.5}]})
+    write_labels([GazeLabel(t=1.0, subject="p1", target="p2")], labels)
+    add_note(notes, [], "first", "ann")
+
+    def killed(staging, target):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_io, "swap_in", killed)
+    for write in (
+        lambda: write_names(names, {"cam": [{"person": "p2", "at": 2.0, "x": 0.1, "y": 0.1}]}),
+        lambda: write_labels([GazeLabel(t=2.0, subject="p2", target="p1")], labels),
+        lambda: add_note(notes, [], "second", "bo"),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            write()
+    assert read_names(names)["cam"][0]["person"] == "p1" and read_labels(labels)[0].subject == "p1"
+    assert [note["text"] for note in read_notes(notes)] == ["first"] and json.loads(names.read_text(encoding="utf-8"))

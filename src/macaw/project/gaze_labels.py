@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import pandas as pd
+from macaw.store._io import write_text_atomic
 
 ELSEWHERE = "elsewhere"
 # a frame where the labeller could not tell; kept so it is not offered again, never compared
@@ -32,7 +33,7 @@ def read_labels(path: Path) -> list[GazeLabel]:
 def write_labels(labels: list[GazeLabel], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(labels, key=lambda label: (label.t, label.subject))
-    path.write_text(json.dumps([asdict(label) for label in ordered], indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps([asdict(label) for label in ordered], indent=2))
     return path
 
 

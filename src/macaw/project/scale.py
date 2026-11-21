@@ -15,6 +15,7 @@ import pandas as pd
 from macaw.exceptions import MacawError
 from macaw.project.recording import VIDEO_SUFFIXES
 from macaw.project.room import CM_PER_UNIT
+from macaw.store._io import write_text_atomic
 
 HAND = "settings"
 MEASURED = "recording video"
@@ -92,7 +93,7 @@ def read_measurements(path: Path) -> list[Measurement]:
 
 def write_measurements(measurements: list[Measurement], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([asdict(item) for item in measurements], indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps([asdict(item) for item in measurements], indent=2))
     return path
 
 
