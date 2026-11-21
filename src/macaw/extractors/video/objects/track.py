@@ -628,7 +628,19 @@ class ObjectTrackExtractor(Extractor):
             if stop <= first:
                 continue
             fps = float(item.fps)
-            given, absent = said[STARTS].get(item.name, {}), said[ABSENT].get(item.name, {})
+            given, absent = {}, said[ABSENT].get(item.name, {})
+            for name, points in said[STARTS].get(item.name, {}).items():
+                placed = [{**point, "frame": int(round((point["t"] - item.offset_s) * fps))} for point in points]
+                inside = [point for point in placed if first <= point["frame"] < stop]
+                if inside:
+                    given[name] = inside
+                if len(inside) < len(placed):
+                    # a click made before the analysed part was changed points at another moment
+                    warnings.append(self._warning(
+                        recording, "warn",
+                        f"{len(placed) - len(inside)} of the points a person gave {name} on {item.name} lie outside the analysed part "
+                        f"and were not used{'' if inside else ', so it was looked for by name'}; start it again on the Review page",
+                    ))
             wanted = [name for name in cfg.names if name not in given and name not in absent]
             step = max(round(FIND_EVERY_S * fps), 1)
             found = self._find(finder, models.finder_model, item, (first, stop), step, wanted) if wanted else {}
@@ -637,7 +649,7 @@ class ObjectTrackExtractor(Extractor):
                 if name in absent:
                     entries[name] = {"from": NOT_HERE}
                 elif name in given:
-                    points = [{**point, "frame": int(np.clip(round((point["t"] - item.offset_s) * fps), first, stop - 1))} for point in given[name]]
+                    points = given[name]
                     starts += [TrackStart(name, point["frame"], point=(point["x"], point["y"])) for point in points]
                     entries[name] = {"from": PERSON, "frame": points[0]["frame"], "points": points}
                 elif name in found:

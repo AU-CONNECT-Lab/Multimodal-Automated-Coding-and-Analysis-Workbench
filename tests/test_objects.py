@@ -223,6 +223,17 @@ class TestExtractor:
         rows = pd.read_parquet(result.artifacts["objects.parquet"])
         assert rows.loc[rows["frame"] == 31, "x0"].tolist() == [40.0]
 
+    def test_a_point_outside_the_analysed_part_is_not_moved_to_its_edge_but_left_out(self, run):
+        said = {STARTS: {}, ABSENT: {}, KEPT: {}}
+        add_start(said, "front.mp4", "ball", 1.0, 5, 5, "ann")
+        add_start(said, "front.mp4", "ball", 9.0, 40, 40, "ann")
+        add_start(said, "front.mp4", "cup", 9.0, 20, 20, "ann")
+        finder, tracker, result = run(["ball", "cup"], [(6, "cup", (30, 30, 40, 40), 0.9)], said=said)
+        assert [(start.name, start.frame) for start in tracker.starts] == [("ball", 10), ("cup", 6)]
+        told = [warning.message for warning in result.warnings]
+        assert any(message.startswith("1 of the points a person gave ball on front.mp4 lie outside") for message in told)
+        assert any("gave cup on front.mp4" in message and "looked for by name" in message for message in told)
+
     def test_where_sam3_cannot_be_had_the_open_models_follow_and_a_person_is_told(self, run):
         boxes = [(6, "ball", (30, 30, 40, 40), 0.9)]
         finder, tracker, result = run(["ball"], boxes, sam3_missing="No access to facebook/sam3.")
