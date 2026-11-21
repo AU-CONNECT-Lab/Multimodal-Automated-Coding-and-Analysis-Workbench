@@ -810,7 +810,7 @@ def _transcript(config, layout, rid, path):
             [
                 _button("Export to ELAN", "transcript-export"),
                 _upload("Import a corrected transcript (.eaf)", TRANSCRIPT_UPLOAD, ".eaf"),
-                _button("Back to the recogniser's", "transcript-reset"),
+                *([_button("Back to the recogniser's", "transcript-reset")] if layout.corrected_transcript_path(rid).is_file() else []),
                 *([_button("Ask the model for doubtful lines", "transcript-check")] if config.coding.llm.model else []),
             ],
             className="buttons",
@@ -1027,7 +1027,7 @@ def action_command(
         return command("note", extra=["--remove", target])
     if action == "prepare":
         return command("previews")
-    if action == "transcript-reset":
+    if action == "transcript-reset-sure":
         return ["macaw", "transcript", "reset", "-c", str(config_path), "-r", rid]
     if action == "transcript-check":
         return ["macaw", "transcript", "check", "-c", str(config_path), "-r", rid]
@@ -1317,6 +1317,12 @@ def register(app, config_path: Path) -> None:
                 return no_update, [ui.command(argv), ui.note(f"Making the copies in the background; {log} says how far it got. A recording's player appears once its copy is made.", "ok")]
             elif action == "transcript-export":
                 argv = _transcript_command(config_path, rid, action, None, by)
+            elif action == "transcript-reset":
+                # hours of correction in ELAN go with one click, so the click only asks
+                return no_update, ui.note([
+                    "This deletes the corrected transcript; to have it back, import its .eaf again. ",
+                    _button("Drop the corrected transcript", "transcript-reset-sure"),
+                ], "warn")
             elif action == "apply-review":
                 chosen = {item["key"]: value for item, value in zip(act_ids, acts) if value}
                 argv = ["macaw", "review", "-c", str(config_path), "--apply", str(review_file(config_path, rid, by, chosen))]

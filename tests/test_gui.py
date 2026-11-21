@@ -1229,6 +1229,11 @@ def test_the_transcript_card_lists_the_lines_a_model_marked(project):
     write_transcript(TRANSCRIPT, directory / TRANSCRIPT_NAME)
     shown = text_of(review.body(project, "003"))
     assert "Export to ELAN" in shown and "doubtful lines" not in shown
+    # nothing to go back from until a correction is imported, and going back is asked again before it deletes one
+    assert "Back to the recogniser" not in shown
+    with pytest.raises(ValueError, match="unknown action"):
+        review.action_command(project, "003", "transcript-reset", "", "", {})
+    assert review.action_command(project, "003", "transcript-reset-sure", "", "", {})[1:3] == ["transcript", "reset"]
     project.write_text(project.read_text(encoding="utf-8") + "\ncoding:\n  llm:\n    model: tiny\n", encoding="utf-8")
     path = layout.transcript_check_path("003")
     path.parent.mkdir(parents=True, exist_ok=True)
