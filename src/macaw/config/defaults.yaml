@@ -162,8 +162,8 @@ gaze:
 
 objects:
   names: []                          # things to follow in the picture, in plain words, e.g. [ball, book]
-  finder: sam3                       # sam3: SAM 3 (SAM License, on request) | grounding_dino: Grounding DINO (Apache-2.0)
-  finder_model: null                 # sam3: facebook/sam3 | grounding_dino: IDEA-Research/grounding-dino-tiny or another on the Hugging Face hub
+  finder: sam3                       # sam3: SAM 3 (SAM License, on request) | llmdet: LLMDet (Apache-2.0) | grounding_dino: Grounding DINO (Apache-2.0)
+  finder_model: null                 # sam3: facebook/sam3 | llmdet: iSEE-Laboratory/llmdet_base, _tiny or _large | grounding_dino: IDEA-Research/grounding-dino-tiny or another on the Hugging Face hub
   finder_score: 0.35                 # 0-1; lower finds more starts and more that are not the thing
   tracker: sam3                      # sam3: SAM 3 (SAM License, on request) | sam2: SAM 2.1 (Apache-2.0), faster | edgetam: EdgeTAM (Apache-2.0), for computers without a graphics card
   tracker_model: null                # sam3: facebook/sam3 | sam2: facebook/sam2.1-hiera-base-plus, -tiny, -small or -large | edgetam: yonigozlan/EdgeTAM-hf

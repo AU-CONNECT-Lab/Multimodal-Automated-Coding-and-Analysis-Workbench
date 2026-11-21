@@ -403,9 +403,10 @@ def test_the_objects_are_described_once_in_the_first_paragraph_that_uses_them():
 
 def test_the_objects_are_told_with_the_open_models_where_sam3_gave_way():
     cfg = config(objects={"names": ["ball"], "finder_model": "facebook/sam3"})
-    gave_way = spec("objects.position", "ball_front_x", names=["ball"], finder="grounding_dino", tracker="sam2")
+    gave_way = spec("objects.position", "ball_front_x", names=["ball"], finder="llmdet", tracker="sam2")
     text = " ".join(" ".join(paragraphs) for paragraphs in describe(manifest(gave_way), cfg).values())
-    assert "Grounding DINO [liu2024] (IDEA-Research/grounding-dino-tiny)" in text and "SAM 2.1 [ravi2024] (facebook/sam2.1-hiera-base-plus)" in text
+    assert "LLMDet [fu2025] (iSEE-Laboratory/llmdet_base), an open-vocabulary detector built on Grounding DINO [liu2024]" in text
+    assert "SAM 2.1 [ravi2024] (facebook/sam2.1-hiera-base-plus)" in text
     assert "carion2025" not in text
     kept = spec("objects.position", "ball_front_x", names=["ball"], finder="sam3", tracker="sam3")
     text = " ".join(" ".join(paragraphs) for paragraphs in describe(manifest(kept), cfg).values())

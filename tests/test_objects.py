@@ -237,11 +237,11 @@ class TestExtractor:
     def test_where_sam3_cannot_be_had_the_open_models_follow_and_a_person_is_told(self, run):
         boxes = [(6, "ball", (30, 30, 40, 40), 0.9)]
         finder, tracker, result = run(["ball"], boxes, sam3_missing="No access to facebook/sam3.")
-        assert (finder.used, tracker.used, finder.model, tracker.model) == ("grounding_dino", "sam2", None, None)
+        assert (finder.used, tracker.used, finder.model, tracker.model) == ("llmdet", "sam2", None, None)
         told = [warning.message for warning in result.warnings if "SAM 3 cannot be used here" in warning.message]
-        assert len(told) == 1 and "grounding_dino" in told[0] and "No access to facebook/sam3." in told[0]
+        assert len(told) == 1 and "llmdet" in told[0] and "No access to facebook/sam3." in told[0]
         starts = json.loads(result.artifacts["starts.json"].read_text(encoding="utf-8"))["front.mp4"]
-        assert (starts["ball"]["finder"], starts["ball"]["tracker"]) == ("grounding_dino", "sam2")
+        assert (starts["ball"]["finder"], starts["ball"]["tracker"]) == ("llmdet", "sam2")
         finder, tracker, result = run(["ball"], boxes)
         assert (finder.used, tracker.used) == ("sam3", "sam3") and not any("SAM 3" in warning.message for warning in result.warnings)
 
@@ -252,7 +252,7 @@ class TestExtractor:
         objects = ObjectsSection(names=["ball"], tracker_model="facebook/sam3")
         first = track_module.object_models(objects)
         assert first == track_module.object_models(objects) and looked == ["facebook/sam3", "facebook/sam3"]
-        assert (first.finder, first.tracker, first.why) == ("grounding_dino", "sam2", "no access")
+        assert (first.finder, first.tracker, first.why) == ("llmdet", "sam2", "no access")
         mine = track_module.object_models(ObjectsSection(names=["ball"], finder="grounding_dino", tracker="sam2"))
         assert mine.why == "" and len(looked) == 2
         monkeypatch.setattr(track_module, "read_decisions", lambda path: {STARTS: {}, ABSENT: {}, KEPT: {}})

@@ -1360,6 +1360,7 @@ def _followed_things(config) -> str:
     )
     finder = (
         f"SAM 3 [carion2025] ({cfg.finder_model or 'facebook/sam3'})" if cfg.finder == "sam3"
+        else f"LLMDet [fu2025] ({cfg.finder_model or 'iSEE-Laboratory/llmdet_base'}), an open-vocabulary detector built on Grounding DINO [liu2024]," if cfg.finder == "llmdet"
         else f"Grounding DINO [liu2024] ({cfg.finder_model or 'IDEA-Research/grounding-dino-tiny'})" if cfg.finder == "grounding_dino"
         else cfg.finder
     )

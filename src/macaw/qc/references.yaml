@@ -295,6 +295,12 @@ ravi2024:
   title: "SAM 2: Segment anything in images and videos"
   howpublished: arXiv:2408.00714
   year: 2024
+fu2025:
+  type: misc
+  author: "Fu, Shenghao and Yang, Qize and Mo, Qijie and Yan, Junkai and Wei, Xihan and Meng, Jingke and Xie, Xiaohua and Zheng, Wei-Shi"
+  title: "LLMDet: Learning strong open-vocabulary object detectors under the supervision of large language models"
+  howpublished: arXiv:2501.18954
+  year: 2025
 zhou2025:
   type: misc
   author: "Zhou, Chong and Zhu, Chenchen and Xiong, Yunyang and Suri, Saksham and Xiao, Fanyi and Wu, Lemeng and Krishnamoorthi, Raghuraman and Dai, Bo and Loy, Chen Change and Chandra, Vikas and Soran, Bilge"

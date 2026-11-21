@@ -101,7 +101,7 @@ class GroundingDinoFinder(ObjectFinder):
     default_model = "IDEA-Research/grounding-dino-tiny"
     # the original authors' cut for keeping a word found in a box
     text_threshold = 0.25
-    # memory grows with each frame read at once while two already read as fast as eight (3 GB against 11 GB at 720p)
+    # memory grows with each frame read at once, while two already read as fast as more
     batch_size = 2
 
     @property
@@ -144,6 +144,14 @@ class GroundingDinoFinder(ObjectFinder):
                     if name is not None:
                         rows.append({"frame": frame, "label": name, "x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3], "score": score})
         return pd.DataFrame(rows, columns=list(FOUND_COLUMNS))
+
+
+@register_backend(FINDERS)
+class LlmDetFinder(GroundingDinoFinder):
+    """LLMDet, a Grounding DINO trained further with a language model; Apache-2.0 code and weights from the Hugging Face hub."""
+
+    name = "llmdet"
+    default_model = "iSEE-Laboratory/llmdet_base"
 
 
 def _given_name(label: str, names) -> str | None:
@@ -438,7 +446,7 @@ class EdgeTamTracker(_SamTracker):
 
 
 # the open models SAM 3 gives way to where this machine cannot have it
-OPEN_FINDER, OPEN_TRACKER = "grounding_dino", "sam2"
+OPEN_FINDER, OPEN_TRACKER = "llmdet", "sam2"
 
 
 @dataclass(frozen=True)
