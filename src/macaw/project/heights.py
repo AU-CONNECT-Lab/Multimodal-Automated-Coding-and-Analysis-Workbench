@@ -8,8 +8,11 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import ConfigError
+from macaw.project.room import CM_PER_UNIT
 
 COLUMNS = ("recording", "person", "height")
+# standing heights outside this, in cm, are a slip of the unit
+PLAUSIBLE_CM = (30.0, 250.0)
 
 
 def heights_path(config) -> Path:
@@ -39,6 +42,12 @@ def read_heights(config) -> dict[tuple[str, str], float]:
             height = float("nan")
         if not math.isfinite(height) or height <= 0:
             raise ConfigError(f"{path} line {line}: height '{row['height']}' is not a length in {config.project.units}")
+        low, high = (bound / CM_PER_UNIT[config.project.units] for bound in PLAUSIBLE_CM)
+        if not low <= height <= high:
+            raise ConfigError(
+                f"{path} line {line}: a height of {row['height']} {config.project.units} is not a person's; heights are in "
+                f"project.units ({config.project.units}), from {low:g} to {high:g}"
+            )
         if (recording, person) in found:
             raise ConfigError(f"{path} line {line}: {person} in {recording} is given twice")
         found[(recording, person)] = height

@@ -1,6 +1,6 @@
 """A change of the project's unit converts the lengths people already typed: the scale written by hand, the board's
-square, the 3D gesture and measure thresholds, in project.yaml and in each recording's own file, and the room of every setup.
-Measurements of an object keep the unit they were typed in, so they need nothing."""
+square, the 3D gesture and measure thresholds, in project.yaml and in each recording's own file, the room of every setup with
+what was measured in it, and the heights table. Measurements of an object keep the unit they were typed in, so they need nothing."""
 
 from __future__ import annotations
 
@@ -69,24 +69,47 @@ def _measure_thresholds(text: str, factor: float) -> str:
     return out.getvalue()
 
 
+def _place(place: dict, factor: float) -> dict:
+    place = dict(place or {})
+    for key in ("at", "size"):
+        if isinstance(place.get(key), list):
+            place[key] = [_number(value, factor) for value in place[key]]
+    for key in ("eyes", "height"):
+        if isinstance(place.get(key), (int, float)):
+            place[key] = _number(place[key], factor)
+    # what a person measured for a camera placed by the calibration, which the next placing fits to
+    if isinstance(place.get("measured"), dict):
+        place["measured"] = _place(place["measured"], factor)
+    return place
+
+
 def room_data(room: dict, factor: float) -> dict:
     out = dict(room)
     if isinstance(room.get("size"), list):
         out["size"] = [_number(value, factor) for value in room["size"]]
     for kind in ("people", "cameras", "microphones", "things"):
-        placed = {}
-        for name, place in (room.get(kind) or {}).items():
-            place = dict(place or {})
-            for key in ("at", "size"):
-                if isinstance(place.get(key), list):
-                    place[key] = [_number(value, factor) for value in place[key]]
-            for key in ("eyes", "height"):
-                if isinstance(place.get(key), (int, float)):
-                    place[key] = _number(place[key], factor)
-            placed[name] = place
+        placed = {name: _place(place, factor) for name, place in (room.get(kind) or {}).items()}
         if placed:
             out[kind] = placed
     return out
+
+
+def heights_table(path: Path, factor: float) -> bool:
+    """The heights table's heights converted in place; False when there is none or it holds no number."""
+    import pandas as pd
+
+    if not path.is_file():
+        return False
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    column = next((name for name in frame.columns if str(name).strip() == "height"), None)
+    if column is None:
+        return False
+    numbers = pd.to_numeric(frame[column].str.strip(), errors="coerce")
+    if numbers.isna().all():
+        return False
+    frame[column] = [str(_number(value, factor)) if pd.notna(value) else text for value, text in zip(numbers, frame[column])]
+    frame.to_csv(path, index=False)
+    return True
 
 
 def convert_entered(config, project_yaml: Path, old: str, new: str) -> list[Path]:
@@ -108,4 +131,7 @@ def convert_entered(config, project_yaml: Path, old: str, new: str) -> list[Path
         data["room"] = room_data(data["room"], factor)
         path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=None), encoding="utf-8")
         changed.append(path)
+    heights = Path(config.project.heights)
+    if heights_table(heights, factor):
+        changed.append(heights)
     return changed
