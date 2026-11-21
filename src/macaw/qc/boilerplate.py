@@ -363,10 +363,15 @@ def _prep(config, spec, names) -> str:
         window = f" from {_seconds(segment.task_start_s or 0.0)}"
         if segment.task_end_s is not None:
             window += f" to {_seconds(segment.task_end_s)}"
-    text = (
-        f"Media were probed and trimmed to the task window{window}, and each participant's audio was written to a "
-        f"mono {PREP_SAMPLE_RATE / 1000:g} kHz track."
+    heard = (
+        "the shared microphone's sound, and that of each participant with a microphone of their own, was written to mono "
+        f"{PREP_SAMPLE_RATE / 1000:g} kHz tracks" if _shared(config)
+        else f"each participant's audio was written to a mono {PREP_SAMPLE_RATE / 1000:g} kHz track"
     )
+    text = f"Media were probed and trimmed to the task window{window}, and {heard}."
+    if len(config.setup.cameras) + len(config.setup.microphones) < 2:
+        # one device has nothing to be aligned with
+        return text
     if align.method == "gcc_phat":
         text += (
             " Devices were aligned by cross-correlating loudness envelopes over a search range of "
@@ -1237,11 +1242,15 @@ def _au_check(config, spec, names) -> str:
 
 
 def _movement(config, spec, names) -> str:
+    from macaw.extractors.video.face import movement as m
+
     return (
         "From the face landmarks, mouth opening (the gap between the inner lips over the distance from the eyes to the "
-        "base of the nose) and its change per second, eye opening and blinks (eye opening below 70% of its median over "
-        "3 s for at most 0.5 s, with the eye seen at 85% or more of that median within 0.1 s before and after) were derived; "
-        f"eyes narrower than {config.face.blink_min_eye_px:g} px or in a head turned more than 45° were not read."
+        f"base of the nose) and its change per second, eye opening and blinks (eye opening below {m.CLOSED_SHARE:.0%} of its "
+        f"median over {m.BASELINE_S:g} s for at most {m.MAX_BLINK_S:g} s, with the eye seen at {m.OPEN_SHARE:.0%} or more of "
+        f"that median within {m.REOPEN_S:g} s before and after) were derived; eyes narrower than {config.face.blink_min_eye_px:g} px, "
+        f"faces narrower than {m.MIN_FACE_WIDTH_SHARE:.0%} of the person's usual width, and heads turned more than {m.MAX_YAW_DEG:g}° "
+        f"or tilted more than {m.MAX_PITCH_SHIFT_DEG:g}° from the person's usual pitch were not read."
     )
 
 

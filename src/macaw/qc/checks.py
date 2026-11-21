@@ -207,6 +207,8 @@ def check_transcript_match(recording: Recording, config: MacawConfig, results) -
 
     rid = recording.recording_id
     utterances = read_transcript(path)
+    if not set(utterances["subject_id"].dropna().astype(str)) & set(prep.tracks):
+        return CheckResult(skipped="no one in the transcript has a microphone of their own to compare it with")
     warnings, pieces = [], []
     for subject_id, spoken in utterances.groupby("subject_id", dropna=True, observed=True):
         subject_id = str(subject_id)
@@ -216,6 +218,10 @@ def check_transcript_match(recording: Recording, config: MacawConfig, results) -
         t = prep.t_origin_s + (np.arange(level.size) + 0.5) * ENERGY_FRAME_S
         inside = _within(t, spoken["t_start"].to_numpy(dtype=float), spoken["t_end"].to_numpy(dtype=float))
         if not inside.any() or inside.all():
+            warnings.append(QCWarning(
+                check="transcript_match", recording_id=rid, subject_id=subject_id, severity="info",
+                message="not compared: the transcript has them speaking " + ("nowhere" if not inside.any() else "throughout") + " on their mic",
+            ))
             continue
         contrast, z = _contrast(level, inside)
         matched = contrast >= _MATCH_DB and z >= _MATCH_Z

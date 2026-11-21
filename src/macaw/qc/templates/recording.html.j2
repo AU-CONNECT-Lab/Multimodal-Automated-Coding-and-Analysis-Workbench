@@ -125,7 +125,7 @@
 
 {% if dropped %}
 <h2 id="Dropped">Speech left out</h2>
-<p class="desc">Utterances the recogniser heard that the transcript leaves out: crosstalk was louder on another person's microphone, room bleed lay in the voice of someone heard only on the shared microphone. To put one back, export the transcript to ELAN, where these sit on tiers of their own.</p>
+<p class="desc">Utterances the recogniser heard that the transcript leaves out, for the reason in the last column: crosstalk louder on another person's microphone, room bleed in the voice of someone heard only on the shared microphone, words in none of the voices, or speech outside the prepared track or the analysed part. To put one back, export the transcript to ELAN, where these sit on tiers of their own.</p>
 <details{% if dropped | length <= 30 %} open{% endif %}>
   <summary>{{ dropped | length }} utterance(s)</summary>
   <div class="details-body">

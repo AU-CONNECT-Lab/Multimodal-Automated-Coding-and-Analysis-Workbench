@@ -427,3 +427,15 @@ def test_the_input_size_is_named_only_for_a_backend_that_takes_it(backend, sized
     specs = manifest(spec("pose.detect", "n_videos_read", backend, "1.0"))
     text, _ = render(describe(specs, config(pose={"backend": backend})), load_references())
     assert ("at an input size of 1280 px" in text) is sized
+
+
+def test_the_preparation_says_how_sound_was_kept_and_aligns_only_several_devices():
+    shared = boilerplate._prep(config(text={"diarization": "pyannote"}), None, [])
+    assert "the shared microphone's sound" in shared and "aligned" not in shared
+    own = boilerplate._prep(config(setup={"name": "main", "microphones": {"a": {"hears": ["parent"]}, "b": {"hears": ["child"]}}}), None, [])
+    assert "each participant's audio" in own and "Devices were aligned" in own
+
+
+def test_the_methods_say_which_faces_the_blinks_were_not_read_from():
+    said = boilerplate._movement(config(), None, [])
+    assert "tilted more than 15°" in said and "narrower than 70% of the person's usual width" in said

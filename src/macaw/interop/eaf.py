@@ -90,10 +90,13 @@ def _link_media(eaf, recording: Recording, out_path: Path) -> None:
                 "%s starts %.3f s after the recording's time 0 and is linked without an offset, so in ELAN it plays "
                 "%.3f s early", item.name, item.offset_s, item.offset_s,
             )
-        if item.clock_scale != 1.0 and item.span_s:
+        if item.clock_scale != 1.0:
+            from macaw.media.probe import probe
+
+            length = item.duration_s if item.duration_s is not None else probe(item.path).duration_s
             logger.warning(
-                "%s's clock was corrected for drift, which ELAN does not do: there it is up to %.0f ms off by its end",
-                item.name, abs(item.clock_scale - 1.0) * item.duration_s * 1000,
+                "%s's clock was corrected for drift (%.0f ppm), which ELAN does not do: there it is up to %.0f ms off by its end",
+                item.name, abs(item.clock_scale - 1.0) * 1e6, abs(item.clock_scale - 1.0) * (length or 0.0) * 1000,
             )
 
 
