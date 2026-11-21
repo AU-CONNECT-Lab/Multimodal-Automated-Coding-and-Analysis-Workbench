@@ -345,6 +345,12 @@ def _decisions(config, recording_ids: list[str]) -> pd.DataFrame:
     return pd.concat(decided, ignore_index=True) if decided else empty_frame(ANNOTATION_SCHEMA)
 
 
+def reviewers(config, recording_ids: list[str]) -> set[str]:
+    """Who decided units of the review queue: they coded only the units put to review, not every unit."""
+    decided = _decisions(config, recording_ids)
+    return set(decided["annotator"].dropna().astype(str))
+
+
 def apply_review(config, queue: pd.DataFrame) -> dict[str, int]:
     """Decided rows become a person's annotations in reviewed.parquet. Per recording, how many were added
     and, under '<id> (not found)', how many decisions matched no annotation."""

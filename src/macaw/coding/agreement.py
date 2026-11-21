@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Collection, Sequence
 
 import numpy as np
 import pandas as pd
@@ -417,6 +417,7 @@ def agreement_report(
     units_of: str | None = None,
     within: dict[str, tuple[float, float]] | None = None,
     segment: str | None = None,
+    reviewers: Collection[str] = (),
 ) -> dict:
     """Everything a methods section needs about one tier. n_units is reported rather than turned
     into a pass/fail: how much agreement is enough is the analyst's call."""
@@ -448,6 +449,7 @@ def agreement_report(
         "n_pairable": int((sizes >= 2).sum()),
         "n_annotators": len(names),
         "annotators": names,
+        "reviewers": sorted(set(names) & {str(name) for name in reviewers}),
         "alpha": krippendorff_alpha(units),
         "pairwise_kappa": pairwise_kappa(units),
         "per_code": per_code_alpha(units),
@@ -483,6 +485,13 @@ def _report_warnings(report: dict, units: pd.DataFrame) -> list[str]:
         warnings.append(
             f"{coverage:.0%} of units were rated by every annotator; the rest are treated as "
             "missing, which alpha handles and kappa does not."
+        )
+    if report.get("reviewers"):
+        warnings.append(
+            f"{', '.join(report['reviewers'])} decided only the units put to review: those the model was unsure of, "
+            "said it cannot tell or split its answers on, and a random check of the rest. Agreement with the model on "
+            "them is on the hard units, not on all; the random check in the quality-control report estimates how often "
+            "the model's sure answers are wrong."
         )
     duplicates = units.attrs.get("duplicate_ratings", 0)
     if duplicates:

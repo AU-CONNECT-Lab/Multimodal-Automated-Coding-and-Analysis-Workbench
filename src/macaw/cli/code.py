@@ -16,7 +16,7 @@ from macaw.coding.agreement import (
 from macaw.coding.describe import describe_codes, format_description
 from macaw.coding.imports import import_coding
 from macaw.coding.review_queue import (
-    apply_review, export_review, queue_summary, random_check_result, read_queue, with_model_answers, write_queue,
+    apply_review, export_review, queue_summary, random_check_result, read_queue, reviewers, with_model_answers, write_queue,
 )
 from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
@@ -130,7 +130,10 @@ def agreement(
         within, missing = segment_spans(resolved, annotations, segment)
         if missing:
             typer.echo(f"left out, no segment {segment}: {', '.join(missing)}\n")
-    report = agreement_report(annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units, within=within, segment=segment)
+    report = agreement_report(
+        annotations, tier=tier, layer=layer, grid_s=grid_s, units_of=units, within=within, segment=segment,
+        reviewers=reviewers(resolved, chosen),
+    )
     typer.echo(format_report(report))
     if out is not None:
         if grid_s is None:
@@ -234,12 +237,13 @@ def describe_codes_command(
 ) -> None:
     """How each code was used in each recording: units, time, runs of one code, and how many runs last one unit."""
     resolved = resolve_config(config, cli_overrides=set_ or ())
-    annotations = load_annotations(resolved, resolve_recordings(resolved, recordings))
+    chosen = resolve_recordings(resolved, recordings)
+    annotations = load_annotations(resolved, chosen)
     if tier is not None:
         annotations = annotations[annotations["tier"] == tier]
     if layer is not None:
         annotations = annotations[annotations["layer"] == layer]
-    table = describe_codes(annotations)
+    table = describe_codes(annotations, reviewers=reviewers(resolved, chosen))
     typer.echo(format_description(table))
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)

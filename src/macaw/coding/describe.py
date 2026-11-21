@@ -2,26 +2,33 @@
 
 from __future__ import annotations
 
+from typing import Collection
+
 import numpy as np
 import pandas as pd
 
 SEQUENCE_KEYS = ["recording_id", "annotator", "tier", "subject_id"]
+_RUN_COLUMNS = ("runs", "mean_run_units", "single_unit_share", "sequence_transitions")
 COLUMNS = [
     *SEQUENCE_KEYS, "label", "n", "time_s", "time_share", "runs", "mean_run_units", "single_unit_share",
-    "sequence_units", "sequence_transitions", "sequence_abstained_share",
+    "sequence_units", "sequence_transitions", "sequence_abstained_share", "sequence_uncoded_share",
 ]
 
 
-def describe_codes(annotations: pd.DataFrame) -> pd.DataFrame:
+def describe_codes(annotations: pd.DataFrame, reviewers: Collection[str] = ()) -> pd.DataFrame:
     """One row per code in each sequence of units, the units of one annotator on one tier for one person
-    in the order coded."""
+    in the order coded. A reviewer decided scattered units, so their runs are left blank."""
     if annotations.empty:
         return pd.DataFrame(columns=COLUMNS)
+    scattered = {str(name) for name in reviewers}
     # a recording-level tier has no person, and groupby would drop it
     frame = annotations.assign(subject_id=annotations["subject_id"].astype("string").fillna(""))
     rows = []
     for keys, sequence in frame.groupby(SEQUENCE_KEYS, sort=True, observed=True):
-        rows.extend(_describe_sequence(dict(zip(SEQUENCE_KEYS, keys)), sequence))
+        found = _describe_sequence(dict(zip(SEQUENCE_KEYS, keys)), sequence)
+        if str(keys[1]) in scattered:
+            found = [{**entry, **dict.fromkeys(_RUN_COLUMNS, np.nan)} for entry in found]
+        rows.extend(found)
     out = pd.DataFrame(rows, columns=COLUMNS)
     out["subject_id"] = out["subject_id"].replace("", pd.NA)
     return out
@@ -62,7 +69,9 @@ def _describe_sequence(keys: dict, sequence: pd.DataFrame) -> list[dict]:
                 "single_unit_share": float((lengths == 1).mean()),
                 "sequence_units": int(len(labels)),
                 "sequence_transitions": switches,
-                "sequence_abstained_share": float(1.0 - valid.mean()),
+                "sequence_abstained_share": float(abstained.mean()),
+                # a tie or no usable answer: no code, but no "cannot tell" either
+                "sequence_uncoded_share": float((~valid & ~abstained).mean()),
             }
         )
     return rows
@@ -71,9 +80,11 @@ def _describe_sequence(keys: dict, sequence: pd.DataFrame) -> list[dict]:
 def format_description(table: pd.DataFrame) -> str:
     if table.empty:
         return "no codes found"
-    shown = table.drop(columns=["sequence_abstained_share"]).copy()
+    shown = table.drop(columns=["sequence_abstained_share", "sequence_uncoded_share"]).copy()
     for column in ("time_s", "mean_run_units"):
-        shown[column] = shown[column].map(lambda value: f"{value:.1f}")
+        shown[column] = shown[column].map(lambda value: "" if pd.isna(value) else f"{value:.1f}")
+    for column in ("runs", "sequence_transitions"):
+        shown[column] = shown[column].map(lambda value: "" if pd.isna(value) else f"{int(value)}")
     for column in ("time_share", "single_unit_share"):
         shown[column] = shown[column].map(lambda value: "" if pd.isna(value) else f"{value:.0%}")
     shown["subject_id"] = shown["subject_id"].fillna("")

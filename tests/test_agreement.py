@@ -398,6 +398,11 @@ class TestAgreementReport:
         assert report["coverage"] == pytest.approx(1.0)
         assert report["warnings"] == []
 
+    def test_a_reviewer_is_named_and_their_units_said_to_be_the_hard_ones(self):
+        report = agreement_report(self.paired(), reviewers={"B", "someone else"})
+        assert report["reviewers"] == ["B"]
+        assert any(warning.startswith("B decided only the units put to review") for warning in report["warnings"])
+
     def test_tier_filter(self):
         frame = pd.concat(
             [self.paired(), annotations([("C", 0.0, 1.0, "x")], tier="pause")], ignore_index=True

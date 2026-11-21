@@ -50,6 +50,17 @@ class TestRuns:
         assert (ask.n, ask.runs, ask.single_unit_share, ask.sequence_transitions) == (3, 2, 0.5, 0)
         assert ask.time_share == pytest.approx(1.0) and ask.sequence_abstained_share == pytest.approx(0.25)
 
+    def test_a_tie_is_uncoded_not_abstained(self):
+        tied = coded(["ask", None, "ask", None]).assign(abstained=[False, False, False, True])
+        ask = row(describe_codes(tied), "ask")
+        assert ask.sequence_abstained_share == pytest.approx(0.25) and ask.sequence_uncoded_share == pytest.approx(0.25)
+
+    def test_a_reviewer_s_scattered_units_have_no_runs(self):
+        table = describe_codes(pd.concat([coded(["ask", "tell"]), coded(["tell", "tell"], annotator="dana")]), reviewers={"dana"})
+        dana = row(table, "tell", annotator="dana")
+        assert dana.n == 2 and pd.isna(dana.runs) and pd.isna(dana.single_unit_share) and pd.isna(dana.sequence_transitions)
+        assert row(table, "tell", annotator="llm").runs == 1
+
     def test_units_are_ordered_by_time_whatever_order_they_were_stored_in(self):
         table = describe_codes(coded(["ask", "ask", "tell"]).iloc[::-1])
         assert row(table, "ask").runs == 1
@@ -90,3 +101,8 @@ def test_the_command_prints_the_table_and_writes_it(tmp_path):
     assert "ask" in outcome.output and "67%" in outcome.output
     written = pd.read_csv(out)
     assert written.set_index("label").loc["ask", "runs"] == 1 and written.set_index("label").loc["tell", "single_unit_share"] == 1.0
+    decided = rows.iloc[[2]].assign(annotator="dana", label="ask", confidence=float("nan"), execution_id=None, config_hash=None)
+    write_annotations(coerce_frame(decided, ANNOTATION_SCHEMA, "annotations"), layout_for(resolve_config(config)).reviewed_codes_path("003"))
+    assert CliRunner().invoke(app, ["describe-codes", "-c", str(config), "-r", "003", "--out", str(out)]).exit_code == 0
+    written = pd.read_csv(out)
+    assert written.loc[written["annotator"] == "dana", "runs"].isna().all()
