@@ -93,8 +93,8 @@ class FaceSpeakingExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         landmarks, faces = self._files(recording.recording_id)
         prep = load_prep(self.config, recording.recording_id)
-        sounds = [prep.shared_track_path(name) for name in sorted(prep.shared_tracks)] or [prep.track_path(s) for s in sorted(prep.tracks)]
-        return [landmarks, faces, *sounds]
+        sounds = {self._sound(prep, subject.subject_id) for subject in recording.subjects} - {None}
+        return [landmarks, faces, *sorted(sounds)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         import torch

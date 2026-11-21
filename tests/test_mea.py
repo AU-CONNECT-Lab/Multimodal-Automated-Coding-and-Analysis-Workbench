@@ -200,3 +200,22 @@ class TestExtractor:
         frozen = rows[rows.feature == "picture_frozen"].sort_values("t_start")
         assert frozen.value.iloc[-1] == 1.0 and frozen.value.iloc[1:10].eq(0).all()
         assert any("same picture" in w.message for w in result.warnings)
+
+
+def test_a_project_without_regions_does_not_run_motion_energy_unasked():
+    from types import SimpleNamespace
+
+    from macaw.extractors.video.motion.mea import MEAExtractor
+
+    assert not MEAExtractor.wanted_by_default(SimpleNamespace(motion=SimpleNamespace(rois={})))
+    assert MEAExtractor.wanted_by_default(SimpleNamespace(motion=SimpleNamespace(rois={"parent": (0, 0, 10, 10)})))
+
+
+@pytest.mark.parametrize("setting", [{"threshold": -1}, {"threshold": 255}, {"smoothing_s": -0.5}])
+def test_motion_settings_outside_their_range_are_refused(setting):
+    from pydantic import ValidationError
+
+    from macaw.config.schema import MotionSection
+
+    with pytest.raises(ValidationError):
+        MotionSection(**setting)

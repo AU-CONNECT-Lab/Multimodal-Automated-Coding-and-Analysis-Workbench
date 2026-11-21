@@ -536,8 +536,8 @@ class ObjectsSection(_Section):
 
 class MotionSection(_Section):
     rois: dict[str, tuple[int, int, int, int]] = Field(default_factory=dict)
-    threshold: int = 10
-    smoothing_s: float = 0.0
+    threshold: int = Field(default=10, ge=0, le=254)
+    smoothing_s: float = Field(default=0.0, ge=0)
 
 
 class TurnsSection(_Section):

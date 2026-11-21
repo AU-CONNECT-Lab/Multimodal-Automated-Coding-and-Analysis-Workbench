@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -111,3 +113,27 @@ def test_a_copy_of_the_weights_cut_short_is_fetched_again(monkeypatch, tmp_path)
     monkeypatch.setattr(light_asd, "network", lambda state, device: state)
     assert speaking.FaceSpeakingExtractor._network(SimpleNamespace(), "cpu") == {"weights": 1}
     assert len(calls) == 2 and not cached.exists()
+
+
+def test_the_sounds_scored_against_are_the_ones_in_the_key():
+    from types import SimpleNamespace
+
+    from macaw.extractors.video.face import speaking as speaking_module
+    from macaw.extractors.video.face.speaking import FaceSpeakingExtractor
+
+    prep = SimpleNamespace(
+        shared_tracks={"room": None, "camera": None}, tracks={"parent": None, "child": None},
+        shared_track_path=lambda name: Path(f"{name}.wav"), track_path=lambda name: Path(f"{name}.wav"),
+    )
+    step = FaceSpeakingExtractor.__new__(FaceSpeakingExtractor)
+    step.config = None
+    step._files = lambda rid: (Path("landmarks"), Path("faces"))
+    recording = SimpleNamespace(recording_id="r1", subjects=[SimpleNamespace(subject_id="parent"), SimpleNamespace(subject_id="child")])
+    original = speaking_module.load_prep
+    speaking_module.load_prep = lambda config, rid: prep
+    try:
+        inputs = step.inputs_for(recording)
+    finally:
+        speaking_module.load_prep = original
+    # two shared microphones: each face is scored against its own track, so those are what the key holds
+    assert set(inputs[2:]) == {Path("parent.wav"), Path("child.wav")}

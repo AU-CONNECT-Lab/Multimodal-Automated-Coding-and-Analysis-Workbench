@@ -64,6 +64,11 @@ class MEAExtractor(Extractor):
     config_sections = ("motion", "segment", "video", "setup.cameras")
     requires = (MediaPrepExtractor.name, VideoPrepExtractor.name)
 
+    @classmethod
+    def wanted_by_default(cls, config) -> bool:
+        # a region per person is drawn by the project; named without one, the step says so
+        return bool(config.motion.rois)
+
     def check_available(self) -> None:
         try:
             import cv2  # noqa: F401
