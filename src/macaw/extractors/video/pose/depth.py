@@ -93,9 +93,9 @@ def depth_images(folder: Path) -> list[Path]:
 
 
 def read_png(path: Path) -> np.ndarray:
-    from macaw.extractors.video.pose.board import _cv2
+    from macaw.media.images import read_image
 
-    image = _cv2().imread(str(path), -1)
+    image = read_image(path, -1)
     if image is None or image.dtype != np.uint16 or image.ndim != 2:
         raise MacawError(f"{path}: not a 16-bit single-channel PNG")
     return image

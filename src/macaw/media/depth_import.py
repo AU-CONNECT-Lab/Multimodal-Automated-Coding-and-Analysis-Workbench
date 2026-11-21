@@ -160,9 +160,8 @@ def import_recording(path: Path, out: Path) -> dict:
 
 def write_folder(source: Source, video: Path, folder: Path) -> dict:
     """The shots on a grid of the source's frame rate: a missing frame repeats the last picture with an empty depth image."""
-    from macaw.extractors.video.pose.board import _cv2
+    from macaw.media.images import write_image
 
-    cv2 = _cv2()
     writer, size, start, last = None, None, None, None
     frames = empty = repeated = 0
     try:
@@ -179,12 +178,12 @@ def write_folder(source: Source, video: Path, folder: Path) -> dict:
                 continue
             while frames < slot:
                 writer.stdin.write(last.tobytes())
-                cv2.imwrite(str(folder / f"{frames:06d}.png"), np.zeros((size[1], size[0]), np.uint16))
+                write_image(folder / f"{frames:06d}.png", np.zeros((size[1], size[0]), np.uint16))
                 frames, repeated = frames + 1, repeated + 1
             writer.stdin.write(np.ascontiguousarray(shot.colour, dtype=np.uint8).tobytes())
             depth = np.asarray(shot.depth, np.uint16)
             empty += int(not depth.any())
-            cv2.imwrite(str(folder / f"{frames:06d}.png"), depth)
+            write_image(folder / f"{frames:06d}.png", depth)
             last, frames = shot.colour, frames + 1
     finally:
         if writer is not None:
