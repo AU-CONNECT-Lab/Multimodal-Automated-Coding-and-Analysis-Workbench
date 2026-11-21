@@ -740,3 +740,13 @@ def test_the_methods_text_names_the_finder_used():
     sam3 = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"])))
     assert "Grounding DINO [liu2024] (IDEA-Research/grounding-dino-tiny)" in dino and "SAM 3" not in dino
     assert "located by name with SAM 3 [carion2025] (facebook/sam3)" in sam3 and "Grounding DINO" not in sam3
+
+
+def test_edgetam_follows_things_and_is_named_in_the_methods():
+    from macaw.extractors import get_backend
+    from macaw.extractors.video.objects.track import TRACKERS, EdgeTamTracker
+    from macaw.qc.boilerplate import _followed_things, load_references
+
+    assert get_backend(TRACKERS, "edgetam") is EdgeTamTracker
+    text = _followed_things(SimpleNamespace(objects=ObjectsSection(names=["ball"], tracker="edgetam")))
+    assert "EdgeTAM [zhou2025] (yonigozlan/EdgeTAM-hf)" in text and "zhou2025" in load_references()

@@ -427,6 +427,15 @@ class Sam3Tracker(_SamTracker):
     model_class, processor_class = "Sam3TrackerVideoModel", "Sam3TrackerVideoProcessor"
 
 
+@register_backend(TRACKERS)
+class EdgeTamTracker(_SamTracker):
+    """EdgeTAM through transformers, a small SAM 2 for computers without a graphics card; Apache-2.0 code and weights."""
+
+    name = "edgetam"
+    default_model = "yonigozlan/EdgeTAM-hf"
+    model_class, processor_class = "EdgeTamVideoModel", "Sam2VideoProcessor"
+
+
 # the open models SAM 3 gives way to where this machine cannot have it
 OPEN_FINDER, OPEN_TRACKER = "grounding_dino", "sam2"
 

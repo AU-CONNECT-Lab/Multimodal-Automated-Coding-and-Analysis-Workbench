@@ -1355,6 +1355,7 @@ def _followed_things(config) -> str:
     tracker = (
         f"the tracker of SAM 3 [carion2025] ({cfg.tracker_model or 'facebook/sam3'})" if cfg.tracker == "sam3"
         else f"SAM 2.1 [ravi2024] ({cfg.tracker_model or 'facebook/sam2.1-hiera-base-plus'})" if cfg.tracker == "sam2"
+        else f"EdgeTAM [zhou2025] ({cfg.tracker_model or 'yonigozlan/EdgeTAM-hf'})" if cfg.tracker == "edgetam"
         else cfg.tracker
     )
     finder = (
