@@ -51,17 +51,27 @@ def _differing_sections(left: dict, right: dict) -> list[str]:
     )
 
 
-def _extractors_using(sections: list[str]) -> dict[str, list[str]]:
-    """A changed section only matters through the extractors that hash it."""
+def _differing_keys(left: Any, right: Any, prefix: str = "") -> list[str]:
+    """The dotted keys whose values differ, down to the first that is not a section on both sides."""
+    if not (isinstance(left, dict) and isinstance(right, dict)):
+        return [prefix] if left != right and prefix else []
+    return sorted(
+        found
+        for key in set(left) | set(right)
+        for found in _differing_keys(left.get(key), right.get(key), f"{prefix}.{key}" if prefix else str(key))
+    )
+
+
+def _extractors_using(keys: list[str]) -> dict[str, list[str]]:
+    """A changed key only matters through the extractors that hash it, or a section holding it."""
     affected: dict[str, list[str]] = {}
     for name in list_extractors():
-        # a declared section may be dotted, and a change to the parent still reaches it
         used = sorted(
             {
                 declared
                 for declared in get_extractor(name).config_sections
-                for section in sections
-                if declared == section or declared.startswith(f"{section}.")
+                for key in keys
+                if declared == key or key.startswith(f"{declared}.") or declared.startswith(f"{key}.")
             }
         )
         if used:
@@ -79,7 +89,7 @@ def diff(
     a: Path = typer.Argument(..., help="First resolved config."),
     b: Path = typer.Argument(..., help="Second resolved config."),
 ) -> None:
-    """Compare two runs' saved settings: which sections differ, and so which steps would run again."""
+    """Compare two runs' saved settings: which sections differ, and which steps' own settings differ, so that they and the steps after them would run again."""
     left, right = _load(a), _load(b)
     sections = _differing_sections(left, right)
     if not sections:
@@ -91,11 +101,11 @@ def diff(
         typer.echo(f"  {a.name}: {_describe(left.get(section))}")
         typer.echo(f"  {b.name}: {_describe(right.get(section))}")
 
-    affected = _extractors_using(sections)
+    affected = _extractors_using(_differing_keys(left, right))
     typer.echo("")
     if not affected:
-        typer.echo("no registered extractor hashes these sections; nothing would recompute")
+        typer.echo("no registered extractor hashes these settings; nothing would recompute")
         return
-    typer.echo("would recompute:")
+    typer.echo("would recompute, with the steps after them:")
     for name, used in affected.items():
         typer.echo(f"  {name}\t({', '.join(used)})")

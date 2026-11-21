@@ -201,6 +201,11 @@ class TestConfigDiff:
         assert "would recompute" in output
         assert "prosody.frame" in output
 
+    def test_only_the_steps_that_hash_the_key_that_changed_are_named(self, tmp_path):
+        a, b = self.pair(tmp_path, {"face": {"backend": "pyfeat", "au_above": 0.5}}, {"face": {"backend": "openface", "au_above": 0.5}})
+        named = {line.split()[0] for line in invoke("config", "diff", str(a), str(b)).output.split("would recompute")[1].splitlines()[1:] if line.strip()}
+        assert named == {"face.au", "face.au_check"}
+
     def test_a_section_no_extractor_hashes_recomputes_nothing(self, tmp_path):
         a, b = self.pair(tmp_path, {"execution": {"n_workers": 2}}, {"execution": {"n_workers": 8}})
         assert "nothing would recompute" in invoke("config", "diff", str(a), str(b)).output
