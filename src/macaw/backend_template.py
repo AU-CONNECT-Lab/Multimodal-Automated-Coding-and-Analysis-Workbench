@@ -321,7 +321,8 @@ VOICING = 0.5
 def frames(audio: np.ndarray, sr: float, step_s: float, width: int) -> np.ndarray:
     # one row per frame on the shared grid, each centred on its frame time
     times = frame_times(audio.size, sr, step_s)
-    padded = np.pad(np.asarray(audio, dtype=float), width // 2)
+    # a full width on either side, so the window at the very end is as long as the others
+    padded = np.pad(np.asarray(audio, dtype=float), (width // 2, width - width // 2))
     starts = np.round(times * sr).astype(int)
     return np.stack([padded[start : start + width] for start in starts])
 
@@ -377,6 +378,11 @@ def test_silence_has_no_pitch_and_the_grid_is_the_shared_one():
     sr = 16000
     f0 = pitch(np.zeros(sr), sr, 75, 500, 0.01)
     assert np.isnan(f0).all() and f0.size == frame_times(sr, sr, 0.01).size
+
+
+def test_a_pitch_floor_giving_an_odd_window_reads_to_the_end():
+    sr = 16000
+    assert pitch(np.zeros(sr), sr, 70, 500, 0.01).size == frame_times(sr, sr, 0.01).size
 ''')
 
 KINDS = {

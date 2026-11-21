@@ -50,6 +50,8 @@ it under `pipeline.run` in project.yaml. Its parameters go under `plugins` in pr
         quantiles: [0.1, 0.9]
 
 The example reads f0 from prosody.frame and reports each person's pitch spread. Replace the computation in `src/$module/extractor.py` and keep the shape: `requires` names what must run first, `inputs_for` lists the files whose content decides whether a cached result is still valid, `run` returns long-table rows plus one FeatureSpec per feature (its `missing` says what an empty value means, for the data dictionary beside an export), and `summarise` gives the same recording-level rows over one named segment, for projects that list segments in segments.csv.
+
+Editing `extractor.py` runs the step again. Editing another file it imports does not: raise `version` then.
 ''')
 
 EXTRACTOR = Template('''\
