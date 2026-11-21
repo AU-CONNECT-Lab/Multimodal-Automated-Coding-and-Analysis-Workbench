@@ -11,6 +11,7 @@ import yaml
 
 from macaw.interface import project_file
 from macaw.project.room import CM_PER_UNIT
+from macaw import people_tables
 
 LENGTHS = (
     "scale.per_px", "pose3d.board.square", "pose3d.board.marker",
@@ -100,7 +101,7 @@ def heights_table(path: Path, factor: float) -> bool:
 
     if not path.is_file():
         return False
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = people_tables.read_csv(path, dtype=str, keep_default_na=False)
     column = next((name for name in frame.columns if str(name).strip() == "height"), None)
     if column is None:
         return False

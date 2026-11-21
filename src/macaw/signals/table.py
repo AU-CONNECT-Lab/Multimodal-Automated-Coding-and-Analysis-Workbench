@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import ConfigError
+from macaw import people_tables
 
 COLUMNS = ("recording", "person", "stage", "file")
 DEFAULT_STAGE = "raw"
@@ -38,7 +39,7 @@ def read_signals(config) -> dict[str, list[SignalFile]]:
     path = signals_path(config)
     if not path.is_file():
         return {}
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = people_tables.read_csv(path, dtype=str, keep_default_na=False)
     frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in COLUMNS if column not in frame.columns]
     if missing:

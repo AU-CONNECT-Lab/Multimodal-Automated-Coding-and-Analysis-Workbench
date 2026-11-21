@@ -22,6 +22,7 @@ from macaw.project.recording import build_recording
 from macaw.qc.checks import POSE_SOURCE, RecordingResults, run_checks, write_candidates
 from macaw.qc.look import PLAIN
 from macaw.qc.report import stale_pages, standing_page, write_project_report, write_recording_report
+from macaw import people_tables
 
 app = typer.Typer()
 logger = get_logger("qc")
@@ -505,7 +506,7 @@ def line_speakers(
     if suggested:
         lines, route = keep_suggested(lines), SUGGESTED
     elif apply is not None:
-        table = pd.read_csv(apply).dropna(subset=["person"])
+        table = people_tables.read_csv(apply).dropna(subset=["person"])
         unknown = sorted(set(table["person"].astype(str)) - people)
         if unknown:
             raise MacawError(f"not a subject: {', '.join(unknown)}")

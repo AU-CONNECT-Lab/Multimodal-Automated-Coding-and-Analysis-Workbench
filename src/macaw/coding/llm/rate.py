@@ -40,6 +40,7 @@ from macaw.project.segments import segments_of
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
 from macaw.turns.talk import clip_talk, talk_inputs, talk_spans, voice_gaps, voices_time_talk
+from macaw import people_tables
 
 RATE_STEP = "coding.rate."
 RATINGS_NAME = "ratings.parquet"
@@ -409,7 +410,7 @@ def read_excerpts(path: Path, scales: ScaleSet) -> pd.DataFrame:
     path = Path(path)
     if not path.is_file():
         raise InputNotFoundError(f"Excerpts table not found: {path}")
-    table = pd.read_csv(path, dtype={"recording": str, "scale": str})
+    table = people_tables.read_csv(path, dtype={"recording": str, "scale": str})
     missing = [column for column in EXCERPT_COLUMNS if column not in table.columns]
     if missing:
         raise ConfigError(f"{path} has no column {', '.join(missing)}; it needs {', '.join(EXCERPT_COLUMNS)}")

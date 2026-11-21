@@ -9,6 +9,7 @@ import pandas as pd
 
 from macaw.exceptions import EafError, InputNotFoundError
 from macaw.interop.eaf import _elan
+from macaw import people_tables
 
 SUFFIXES = (".eaf", ".csv", ".tsv", ".xlsx")
 RAW_COLUMNS = ("file_tier", "participant", "annotator", "linguistic_type", "t_start", "t_end", "label")
@@ -56,7 +57,7 @@ def _read_table(path: Path, suffix: str) -> pd.DataFrame:
     if suffix == ".xlsx":
         table = pd.read_excel(path, dtype=str)
     else:
-        table = pd.read_csv(path, sep="\t" if suffix == ".tsv" else ",", dtype=str, keep_default_na=False)
+        table = people_tables.read_csv(path, sep="\t" if suffix == ".tsv" else ",", dtype=str, keep_default_na=False)
     table.columns = [str(column).strip().lower() for column in table.columns]
     missing = [column for column in TABLE_COLUMNS if column not in table.columns]
     if missing:

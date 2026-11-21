@@ -14,6 +14,7 @@ from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
 from macaw.project.layout import layout_for
 from macaw.project.recording import ENTITY_NAMES, recording_entities
+from macaw import people_tables
 
 PEOPLE_COLUMNS = ("recording", "segment", "scale", "coder", "score")
 MODEL, PERSON = "model", "person"
@@ -103,7 +104,7 @@ def people_ratings(config, scales: dict[str, RatingScale], recordings: list[str]
     path = Path(config.project.ratings)
     if not path.is_file():
         return pd.DataFrame(columns=[*TABLE_COLUMNS])
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = people_tables.read_csv(path, dtype=str, keep_default_na=False)
     frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in PEOPLE_COLUMNS if column not in frame.columns]
     if missing:

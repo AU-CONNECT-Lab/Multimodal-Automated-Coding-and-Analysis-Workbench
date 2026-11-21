@@ -9,6 +9,7 @@ import pandas as pd
 
 from macaw.exceptions import ConfigError
 from macaw.project.room import CM_PER_UNIT
+from macaw import people_tables
 
 COLUMNS = ("recording", "person", "height")
 # standing heights outside this, in cm, are a slip of the unit
@@ -24,7 +25,7 @@ def read_heights(config) -> dict[tuple[str, str], float]:
     path = heights_path(config)
     if not path.is_file():
         return {}
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = people_tables.read_csv(path, dtype=str, keep_default_na=False)
     frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in COLUMNS if column not in frame.columns]
     if missing:

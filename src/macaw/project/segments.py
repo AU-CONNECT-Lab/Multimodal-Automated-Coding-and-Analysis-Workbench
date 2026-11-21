@@ -12,6 +12,7 @@ import pandas as pd
 from macaw.exceptions import ConfigError
 from macaw.project.layout import layout_for
 from macaw.store.longtable import read_segment_rows
+from macaw import people_tables
 
 COLUMNS = ("recording", "segment", "start_s", "end_s")
 SUMMARY_STEP = "segments.summary"
@@ -29,7 +30,7 @@ def segments_path(config) -> Path:
 
 
 def _read_frame(path: Path) -> pd.DataFrame:
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = people_tables.read_csv(path, dtype=str, keep_default_na=False)
     frame.columns = [str(column).strip() for column in frame.columns]
     missing = [column for column in COLUMNS if column not in frame.columns]
     if missing:

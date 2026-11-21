@@ -24,6 +24,7 @@ from macaw.execution import runner
 from macaw.execution.runner import resolve_recordings
 from macaw.interop.coding_files import SUFFIXES
 from macaw.project.recording import build_recording
+from macaw import people_tables
 
 app = typer.Typer()
 
@@ -205,7 +206,7 @@ def draw_examples_command(
             typer.echo(f"{rid}: no transcript to take the words from, left out ({error})")
     table, report = draw_examples(coded, lines, codebook, per_code=per_code, seed=seed)
     out.parent.mkdir(parents=True, exist_ok=True)
-    table[list(COLUMNS)].to_csv(out, index=False)
+    people_tables.write_csv(table[list(COLUMNS)], out)
     for code, (drawn, available) in report.counts.items():
         typer.echo(f"{code}: {drawn} of {available}")
     if report.no_words:

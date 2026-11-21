@@ -11,6 +11,7 @@ import pandas as pd
 from macaw.exceptions import InputNotFoundError
 from macaw.store import _io
 from macaw.store.schema import ANNOTATION_SCHEMA, coerce_frame, empty_frame
+from macaw import people_tables
 
 NAME = "review queue"
 
@@ -143,7 +144,7 @@ def write_queue(queue: pd.DataFrame, path: Path) -> Path:
     frame = coerce_frame(queue, REVIEW_QUEUE_SCHEMA, NAME)
     if path.suffix.lower() == ".csv":
         path.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_csv(path, index=False, encoding="utf-8")
+        people_tables.write_csv(frame, path)
         return path
     return _io.write_file(frame, path, REVIEW_QUEUE_SCHEMA, NAME)
 
@@ -155,7 +156,7 @@ def read_queue(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".csv":
         # ids such as 003 must stay text, not become the number 3
         text = {column: "string" for column, kind in REVIEW_QUEUE_SCHEMA.items() if kind == "string"}
-        return coerce_frame(pd.read_csv(path, dtype=text), REVIEW_QUEUE_SCHEMA, NAME)
+        return coerce_frame(people_tables.read_csv(path, dtype=text), REVIEW_QUEUE_SCHEMA, NAME)
     return _io.read_file(path, REVIEW_QUEUE_SCHEMA, NAME)
 
 

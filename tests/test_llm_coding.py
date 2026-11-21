@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import re
 import threading
@@ -985,6 +986,14 @@ class TestExamples:
         with pytest.raises(CodebookError, match="greeting not in codebook 'acts'"):
             read_examples(path, CODEBOOK)
 
+    def test_a_table_saved_in_a_spreadsheet_s_local_encoding_is_refused_with_how_to_save_it(self, tmp_path):
+        from macaw.coding.examples import read_examples
+
+        path = tmp_path / "examples.csv"
+        path.write_bytes("code,text\ninform,José is here\n".encode("cp1252"))
+        with pytest.raises(ConfigError, match="examples.csv is not saved as UTF-8.*CSV UTF-8"):
+            read_examples(path, CODEBOOK)
+
     def test_the_model_sees_them_but_never_ones_from_the_recording_it_codes(self, monkeypatch, tmp_path, stub):
         path = tmp_path / "examples.csv"
         pd.DataFrame({
@@ -1029,6 +1038,8 @@ class TestExamples:
         assert result.exit_code == 0, result.output
         assert "question: 1 of 1" in result.output and "inform: 1 of 2" in result.output and "coded greeting" in result.output
         assert pd.read_csv(out)["code"].tolist() == ["question", "inform"]
+        # a spreadsheet program reads the byte-order mark as UTF-8
+        assert out.read_bytes().startswith(codecs.BOM_UTF8)
 
 
 class TestAgainstItself:

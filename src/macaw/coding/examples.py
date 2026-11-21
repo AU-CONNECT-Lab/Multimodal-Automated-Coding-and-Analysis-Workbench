@@ -10,6 +10,7 @@ import pandas as pd
 
 from macaw.coding.codebook import Codebook
 from macaw.exceptions import CodebookError, InputNotFoundError
+from macaw import people_tables
 
 COLUMNS = ("code", "speaker", "text", "before", "why", "recording_id", "subject_id", "t_start", "t_end")
 _SUFFIXES = (".csv", ".tsv", ".xlsx")
@@ -34,7 +35,7 @@ def read_examples(path: Path, codebook: Codebook) -> pd.DataFrame:
     if suffix == ".xlsx":
         table = pd.read_excel(path, dtype=str).fillna("")
     else:
-        table = pd.read_csv(path, sep="\t" if suffix == ".tsv" else ",", dtype=str, keep_default_na=False)
+        table = people_tables.read_csv(path, sep="\t" if suffix == ".tsv" else ",", dtype=str, keep_default_na=False)
     table.columns = [str(column).strip().lower() for column in table.columns]
     missing = [column for column in ("code", "text") if column not in table.columns]
     if missing:
