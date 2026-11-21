@@ -132,6 +132,31 @@ class TestFile:
         setup = read_setup(path, default_units="cm")
         assert setup.units == "cm" and [camera.name for camera in setup.cameras] == ["A", "B"]
 
+    @staticmethod
+    def two_cameras(terms: str, extra: str = "") -> str:
+        return "".join(
+            f'[cam_{index}]\nname = "{name}"\nsize = [640, 480]\nmatrix = [[600, 0, 320], [0, 600, 240], [0, 0, 1]]\n'
+            f"distortions = {terms}\nrotation = [0, {index * 0.5}, 0]\ntranslation = [{-50 * index}, 0, 0]\n{extra}\n"
+            for index, name in enumerate("AB")
+        )
+
+    def test_the_lens_terms_are_read_as_given(self, tmp_path):
+        path = tmp_path / "calibration.toml"
+        path.write_text(self.two_cameras("[0.1, 0.2, 0.0, 0.0, 0.3, 0.4, 0.5, 0.6]"), encoding="utf-8")
+        assert read_setup(path).cameras[0].distortions.tolist() == [0.1, 0.2, 0.0, 0.0, 0.3, 0.4, 0.5, 0.6]
+        path.write_text(self.two_cameras("[0.1]"), encoding="utf-8")
+        assert read_setup(path).cameras[0].distortions.tolist() == [0.1, 0.0, 0.0, 0.0, 0.0]
+
+    @pytest.mark.parametrize("terms, extra, reason", [
+        ("[0.1, 0.2, 0.3, 0.4]", "fisheye = true", "fisheye"),
+        ("[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]", "", "6 distortion terms"),
+    ])
+    def test_a_lens_that_cannot_be_read_is_refused(self, tmp_path, terms, extra, reason):
+        path = tmp_path / "calibration.toml"
+        path.write_text(self.two_cameras(terms, extra), encoding="utf-8")
+        with pytest.raises(ConfigError, match=reason):
+            read_setup(path)
+
     @pytest.mark.parametrize("text, reason", [
         ('[cam_0]\nname = "A"\nsize = [640, 480]\nmatrix = [[600, 0, 320], [0, 600, 240], [0, 0, 1]]\nrotation = [0, 0, 0]\ntranslation = [0, 0, 0]\n', "two cameras"),
         ("[metadata]\nunits = \"inch\"\n", "units"),
@@ -723,3 +748,14 @@ def test_a_body_model_on_one_camera_gives_its_height_and_scale(tmp_path, monkeyp
     assert value("placed_3d_share", "parent") == 0.8 and value("placed_3d_share", "child") == 0.5
     assert value("height_scale", "parent") == pytest.approx(1.68 / 1.6) and value("height_scale", "child") == 1.0
     assert value("model_height_m", "child") == 1.4 and "reprojection_error_px" not in set(rows.feature)
+
+
+def test_three_cameras_place_people_whenever_two_of_them_filmed():
+    """left films at 60 fps for the first second only; middle and right at 30 fps for two seconds."""
+    cameras = trio()
+    seated_person = {"parent": person([900.0, 0.0, 2000.0], [0.0, 0.0, -1.0], 120)}
+    fast = keypoints_of(cameras[:1], ["left"], {"parent": {j: xyz[:60] for j, xyz in person([900.0, 0.0, 2000.0], [0.0, 0.0, -1.0], 60).items()}}, 60, fps=60.0)
+    slow = keypoints_of(cameras[1:], ["middle", "right"], {"parent": {j: xyz[:60] for j, xyz in seated_person["parent"].items()}}, 60, fps=30.0)
+    keypoints = pd.concat([fast, slow], ignore_index=True)
+    points, _ = triangulate_people(keypoints, list(zip(cameras, ["left", "middle", "right"])), max_error_px=20.0)
+    assert points["t"].max() == pytest.approx(59 / 30.0, abs=1 / 60)

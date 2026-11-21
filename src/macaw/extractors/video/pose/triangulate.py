@@ -112,7 +112,7 @@ def points_file(config, recording_id: str) -> Path:
 @register_extractor
 class TriangulationExtractor(Extractor):
     name = "pose.triangulate"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -221,12 +221,14 @@ class TriangulationExtractor(Extractor):
 
 
 def triangulate_people(keypoints: pd.DataFrame, views: list[tuple[Camera, str]], *, max_error_px: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Each person's joints in the room, on the frames of the camera with the most frames; every other
-    camera's nearest frame counts as the same moment. Returns the points, in the calibration's units,
-    and per person and joint how often they were seen, placed, and how far the cameras missed each other."""
+    """Each person's joints in the room, at the frame rate of the fastest camera over the time any camera filmed, frames
+    numbered on that camera's clock; every camera's nearest frame counts as the same moment. Returns the points, in the
+    calibration's units, and per person and joint how often they were seen, placed, and how far the cameras missed each other."""
     clocks = {video: _clock(keypoints[keypoints["video"] == video]) for _, video in views}
-    step, start, first, last = clocks[max(clocks, key=lambda video: clocks[video][3] - clocks[video][2])]
-    grid = np.arange(first, last + 1)
+    step, start, _, _ = min(clocks.values(), key=lambda clock: clock[0])
+    begins = min(own_start + own_step * own_first for own_step, own_start, own_first, _ in clocks.values())
+    ends = max(own_start + own_step * own_last for own_step, own_start, _, own_last in clocks.values())
+    grid = np.arange(int(np.floor((begins - start) / step + 1e-6)), int(np.ceil((ends - start) / step - 1e-6)) + 1)
     t = start + step * grid
     nearest = [np.round((t - clocks[video][1]) / clocks[video][0]).astype(int) for _, video in views]
     cameras = [camera for camera, _ in views]

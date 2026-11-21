@@ -96,6 +96,18 @@ class CameraSetup:
         return next((camera for camera in self.cameras if camera.name == name), None)
 
 
+def _lens_terms(table: dict, where: str) -> np.ndarray:
+    """A lens's distortion terms as OpenCV orders them: up to five, the missing ones 0, or eight for a rational lens."""
+    if table.get("fisheye"):
+        raise ConfigError(f"{where} is a fisheye lens, which is not supported; calibrate it with a standard lens model")
+    terms = np.asarray(table.get("distortions", []), dtype=float).ravel()
+    if terms.size <= 5:
+        return np.concatenate([terms, np.zeros(5 - terms.size)])
+    if terms.size == 8:
+        return terms
+    raise ConfigError(f"{where} has {terms.size} distortion terms; five or fewer, or eight for a rational lens, can be read")
+
+
 def read_setup(path: Path, default_units: str = "mm") -> CameraSetup:
     """Every table with a camera matrix is a camera; [metadata] units, when there, says what the translations are in."""
     try:
@@ -112,7 +124,7 @@ def read_setup(path: Path, default_units: str = "mm") -> CameraSetup:
                 name=str(table.get("name", key)),
                 size=(int(table["size"][0]), int(table["size"][1])),
                 matrix=np.asarray(table["matrix"], dtype=float).reshape(3, 3),
-                distortions=np.resize(np.asarray(table.get("distortions", [0.0] * 5), dtype=float), 5),
+                distortions=_lens_terms(table, f"{path}: camera {key}"),
                 rotation=np.asarray(table["rotation"], dtype=float).reshape(3),
                 translation=np.asarray(table["translation"], dtype=float).reshape(3),
             ))
