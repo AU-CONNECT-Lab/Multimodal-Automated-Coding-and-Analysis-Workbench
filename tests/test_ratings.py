@@ -1036,6 +1036,13 @@ class TestExamples:
         found = read_examples(path, read_scales_from(SCALES), ["parent", "child"])
         assert found["warmth"][0].lines == [("parent", "Ready?"), ("child", "yes"), ("parent", "no")]
 
+    def test_a_badly_written_line_is_shown_with_the_project_s_own_role(self, tmp_path):
+        from macaw.coding.scales import read_examples
+
+        entry = {"warmth": [{"score": 4, "lines": ["subject_1 says hi"]}]}
+        with pytest.raises(CodebookError, match="such as - subject_1: How was it"):
+            read_examples(write_yaml(tmp_path / "bad.yaml", {"examples": entry}), read_scales_from(SCALES), ["subject_1", "subject_2"])
+
     def test_examples_follow_the_scale_and_the_transcript_still_comes_first(self, tmp_path):
         from macaw.coding.scales import read_examples
 

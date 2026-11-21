@@ -187,7 +187,7 @@ def _example_from(entry: Any, scale: RatingScale, speakers: list[str], path: Pat
     lines = []
     for line in entry.get("lines") or []:
         if not isinstance(line, dict) or len(line) != 1:
-            raise CodebookError(f"{where}: each line is one role and what they said, such as - parent: How was it?")
+            raise CodebookError(f"{where}: each line is one role and what they said, such as - {speakers[0] if speakers else 'role'}: How was it?")
         (role, text), = line.items()
         if str(role) not in speakers:
             raise CodebookError(f"{where}: {role} is not one of the speakers ({', '.join(speakers)})")
