@@ -43,12 +43,13 @@ def build_units(
     if annotations is None or annotations.empty:
         return _empty_units()
 
-    frame = annotations
+    frame = annotations.dropna(subset=["annotator"])
+    # an abstention, a tie or an answer without a code is missing data, not a category: two models that both
+    # declined to answer are not agreeing about anything, and a coder who could not tell did not leave it uncoded
+    declined = frame["label"].isna()
     if "abstained" in frame.columns:
-        # an abstention is missing data, not a category: two models that both declined to answer
-        # are not agreeing about anything
-        frame = frame[~frame["abstained"].fillna(False).astype(bool)]
-    frame = frame.dropna(subset=["label", "annotator"])
+        declined |= frame["abstained"].fillna(False).astype(bool)
+    unknown, frame = frame[declined], frame[~declined]
     if frame.empty:
         return _empty_units()
 
@@ -56,17 +57,36 @@ def build_units(
     if within is not None:
         # cut at each recording's span, but who coded a person is judged on the whole recording
         coded = _coders(frame)
-        parts = [clip_intervals(rows, *within[rid]) for rid, rows in frame.groupby(frame["recording_id"].astype(str), sort=False) if rid in within]
-        frame = pd.concat(parts, ignore_index=True) if parts else frame.iloc[0:0]
+        frame, unknown = _within(frame, within), _within(unknown, within)
     if units_of is not None:
-        units = _coder_units(frame, units_of, coded)
+        units = _coder_units(frame, units_of, coded, _unknown_spans(unknown))
     else:
-        units = _exact_units(frame) if grid_s is None else _grid_units(frame, float(grid_s), coded)
+        units = _exact_units(frame) if grid_s is None else _grid_units(frame, float(grid_s), coded, _unknown_spans(unknown))
     duplicates = int(units.duplicated(subset=["unit_id", "annotator"]).sum())
     out = units.drop_duplicates(subset=["unit_id", "annotator"], keep="first").reset_index(drop=True)
     out.attrs["duplicate_ratings"] = duplicates
     out.attrs["grid_ties"] = units.attrs.get("grid_ties", 0)
     return out
+
+
+def _within(frame: pd.DataFrame, within: dict[str, tuple[float, float]]) -> pd.DataFrame:
+    parts = [clip_intervals(rows, *within[rid]) for rid, rows in frame.groupby(frame["recording_id"].astype(str), sort=False) if rid in within]
+    return pd.concat(parts, ignore_index=True) if parts else frame.iloc[0:0]
+
+
+def _unknown_spans(unknown: pd.DataFrame) -> dict[tuple, list[tuple[float, float]]]:
+    """(person and tier keys..., annotator) -> the stretches that annotator gave no code for though they looked."""
+    columns = [column for column in _GROUP_KEY if column in unknown.columns]
+    found: dict[tuple, list[tuple[float, float]]] = {}
+    for row in unknown.itertuples(index=False):
+        values = row._asdict()
+        key = (*(str(values[column]) for column in columns), str(values["annotator"]))
+        found.setdefault(key, []).append((float(values["t_start"]), float(values["t_end"])))
+    return found
+
+
+def _declined(spans: dict[tuple, list[tuple[float, float]]], keys: tuple, annotator: str, start: float, end: float) -> bool:
+    return any(min(end, b) - max(start, a) > _SLIVER for a, b in spans.get((*_named(keys), str(annotator)), ()))
 
 
 def _exact_units(frame: pd.DataFrame) -> pd.DataFrame:
@@ -96,7 +116,9 @@ def _named(keys) -> tuple[str, ...]:
     return tuple(str(key) for key in (keys if isinstance(keys, tuple) else (keys,)))
 
 
-def _grid_units(frame: pd.DataFrame, grid_s: float, coded: dict[tuple[str, ...], set[str]] | None = None) -> pd.DataFrame:
+def _grid_units(
+    frame: pd.DataFrame, grid_s: float, coded: dict[tuple[str, ...], set[str]] | None = None, unknown: dict | None = None,
+) -> pd.DataFrame:
     if grid_s <= 0:
         raise ValueError("grid_s must be positive")
 
@@ -122,8 +144,9 @@ def _grid_units(frame: pd.DataFrame, grid_s: float, coded: dict[tuple[str, ...],
                 choices = covered.get((cell, annotator))
                 if not choices:
                     # a cell nobody covered is not a unit at all, but a cell one coder marked
-                    # and another left blank is a real disagreement
-                    rows.append((f"{prefix}|{cell}", annotator, NO_CODE, *where, *span))
+                    # and another left blank is a real disagreement, unless they could not tell there
+                    if not _declined(unknown or {}, keys, annotator, *span):
+                        rows.append((f"{prefix}|{cell}", annotator, NO_CODE, *where, *span))
                     continue
                 top = max(choices.values())
                 winners = sorted(label for label, seconds in choices.items() if seconds >= top - _SLIVER)
@@ -136,7 +159,9 @@ def _grid_units(frame: pd.DataFrame, grid_s: float, coded: dict[tuple[str, ...],
     return out
 
 
-def _coder_units(frame: pd.DataFrame, coder: str, coded: dict[tuple[str, ...], set[str]] | None = None) -> pd.DataFrame:
+def _coder_units(
+    frame: pd.DataFrame, coder: str, coded: dict[tuple[str, ...], set[str]] | None = None, unknown: dict | None = None,
+) -> pd.DataFrame:
     """A coder who coded nothing for this person and tier gives no rating; one who coded elsewhere gives NO_CODE."""
     columns = [column for column in _GROUP_KEY if column in frame.columns]
     rows: list[tuple] = []
@@ -168,7 +193,8 @@ def _coder_units(frame: pd.DataFrame, coder: str, coded: dict[tuple[str, ...], s
                 overlap[overlap <= _SLIVER] = 0.0
                 for unit, seconds in zip(ids[block], overlap):
                     if not (seconds > 0).any():
-                        rows.append((unit, str(other), NO_CODE, *where, *spans[unit]))
+                        if not _declined(unknown or {}, keys, other, *spans[unit]):
+                            rows.append((unit, str(other), NO_CODE, *where, *spans[unit]))
                         continue
                     totals = pd.Series(seconds).groupby(labels).sum()
                     winners = sorted(totals.index[totals >= totals.max() - _SLIVER])

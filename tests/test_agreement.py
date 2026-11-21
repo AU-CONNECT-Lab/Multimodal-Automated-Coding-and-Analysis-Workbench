@@ -518,3 +518,18 @@ class TestSegments:
         report = agreement_report(annotations([("A", 0.0, 1.0, "x"), ("B", 0.0, 1.0, "x")]), within=self.EARLY, segment="early")
         assert report_to_json(report)["segment"] == "early"
         assert "segment=early" in format_report(report)
+
+
+@pytest.mark.parametrize("mode", [{}, {"units_of": "anna"}, {"grid_s": 1.0}])
+def test_a_models_abstention_is_missing_however_the_units_are_drawn(mode):
+    from macaw.coding.agreement import agreement_report
+    from macaw.store.annotations import build_annotations
+
+    def coded(annotator, layer, intervals):
+        frame = pd.DataFrame(intervals, columns=["t_start", "t_end", "label", "abstained"])
+        return build_annotations(recording_id="r1", tier="acts", layer=layer, annotator=annotator, subject_id="A", intervals=frame)
+
+    model = coded("llm", "B", [(1.0, 2.0, "ask", False), (3.0, 4.0, None, True), (5.0, 6.0, "tell", False)])
+    anna = coded("anna", "C", [(1.0, 2.0, "ask", False), (3.0, 4.0, "tell", False), (5.0, 6.0, "tell", False)])
+    report = agreement_report(pd.concat([model, anna], ignore_index=True), tier="acts", **mode)
+    assert report["pairwise_kappa"][["n_units", "observed_agreement"]].to_dict("records") == [{"n_units": 2, "observed_agreement": 1.0}]
