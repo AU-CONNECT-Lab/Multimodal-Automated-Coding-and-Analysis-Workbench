@@ -270,7 +270,7 @@ The Review page of a recording whose two cameras could not be aligned with confi
 
 {bdg-secondary-line}`only when uncertain`
 
-Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file and play the clip, then keep the estimated offset or enter one by hand.
+Separate devices start recording at different moments, and MACAW aligns them by their sound. Inspect the figure for the file and play the clip, then keep the estimated offset, or set one by hand with `macaw set-offset`, which the card names; the offset is positive for a file that started after the reference.
 
 The clip shows ten seconds from the start, the middle and the end of the recording, with every camera side by side, a waveform for each sound and all the sound mixed together. A file that is out of step sounds doubled or echoed, and the peaks of its waveform fall beside those of the others. For a camera without sound the clip is the only check: compare a clap or the movement of the lips with what is heard. The clip is made again whenever an offset is set by hand.
 

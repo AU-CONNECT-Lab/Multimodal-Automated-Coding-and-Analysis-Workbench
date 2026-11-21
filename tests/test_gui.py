@@ -1174,8 +1174,11 @@ def test_the_editors_buttons_reach_the_saved_file(project):
     model["people"]["parent"]["x"] = 95
     assert "save it first" in text_of(draw(1, model, saved, "main"))
     # looking through a camera chooses it, so its numbers are beside the view
-    assert frame("camera", "room", None, 0)[2] == {"kind": "cameras", "name": "room"}
-    assert frame("free", "room", "003", 0) == (None, None, no_update)
+    assert frame("camera", "room", None, 0, model)[2] == {"kind": "cameras", "name": "room"}
+    assert frame("free", "room", "003", 0, model) == (None, None, no_update)
+    # a camera without a height is drawn from a stand-in height, which the page says
+    model["cameras"]["room"]["height"] = None
+    assert "Give room's height first" in text_of(frame("camera", "room", "003", 0, model)[1])
 
 
 def test_the_page_loads_the_room_editor_through_an_import_map(project):
@@ -1487,3 +1490,26 @@ def test_a_person_starts_a_thing_where_they_clicked_and_the_button_says_what_is_
     point = read_decisions(layout_for(resolve_config(project)).objects_path("003"))[STARTS]["room"]["ball"][0]
     assert (point["t"], point["x"], point["y"], point["by"].split()[0]) == (2.0, 120.0, 80.5, "ann")
     assert "Things followed" in text_of(body)
+
+
+def test_the_3d_card_reads_the_recording_s_own_calibration(project, monkeypatch):
+    from macaw.extractors.video.pose import triangulate
+
+    folder = project.parent / "recordings"
+    folder.mkdir(exist_ok=True)
+    (folder / "003.yaml").write_text("pose3d:\n  calibration: other_day\n", encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(triangulate, "points_file", lambda config, rid: seen.append(config.pose3d.calibration) or project.parent / "none.parquet")
+    assert results.points_3d(project, "003") is None and seen == ["other_day"]
+
+
+def test_a_command_shown_pastes_as_the_same_arguments():
+    import shlex
+    import sys
+
+    argv = ["macaw", "note", "--text", 'said "stop" for $5', ""]
+    shown = ui.command_text(argv)
+    if sys.platform == "win32":
+        assert shown == 'macaw note --text "said \\"stop\\" for $5" ""'
+    else:
+        assert shlex.split(shown) == argv

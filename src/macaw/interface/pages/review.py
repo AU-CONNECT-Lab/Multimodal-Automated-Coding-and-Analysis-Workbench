@@ -160,7 +160,8 @@ def _offsets(config, layout, rid):
         ui.table(["File", "Offset (s)", "Confidence", "Segments agreeing", "Status", ""], table_rows, numeric={"Offset (s)", "Confidence"}),
         player,
         html.Div([html.A(html.Img(src=file_url(path)), href=file_url(path), target="_blank") for path in figures], className="figures"),
-        desc="Play the clip, where a file out of step sounds doubled, and look at its figure before keeping its offset.",
+        desc="Play the clip, where a file out of step sounds doubled, and look at its figure before keeping its offset; "
+        f"set one by hand with macaw set-offset -r {rid} --device <file> --offset <seconds>.",
     )
 
 
@@ -1126,14 +1127,18 @@ def register(app, config_path: Path) -> None:
     )
 
     app.clientside_callback(
-        """function (clicks, timing) {
+        """function (clicks, timing, chosen) {
             const video = document.getElementById('""" + PLAYER + """');
-            if (!clicks || !video) { return window.dash_clientside.no_update; }
-            const t = timing && timing.length ? video.currentTime * timing[0].clock_scale + timing[0].offset_s : video.currentTime;
+            if (!clicks) { return window.dash_clientside.no_update; }
+            // without a copy to play, the moment chosen on the time strip, already on the recording's clock
+            const picked = chosen && chosen.length && chosen[0] ? chosen[0].t : null;
+            if (!video && picked == null) { return window.dash_clientside.no_update; }
+            const t = !video ? picked
+                : timing && timing.length ? video.currentTime * timing[0].clock_scale + timing[0].offset_s : video.currentTime;
             return {t: Math.round(t * 100) / 100, n: clicks};
         }""",
         Output({"type": LINE_AT, "key": MATCH}, "data"), Input({"type": LINE_HERE, "key": MATCH}, "n_clicks"),
-        State({"type": TIMING, "key": ALL}, "data"), prevent_initial_call=True,
+        State({"type": TIMING, "key": ALL}, "data"), State({"type": TIME, "key": ALL}, "data"), prevent_initial_call=True,
     )
 
     @app.callback(

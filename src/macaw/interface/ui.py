@@ -86,7 +86,16 @@ def with_code(text: str):
 
 def command(argv: list[str]):
     """The terminal command a button stands for, so the same step can be run without the GUI."""
-    return html.Pre(" ".join(f'"{part}"' if " " in part else part for part in argv), className="command")
+    return html.Pre(command_text(argv), className="command")
+
+
+def command_text(argv: list[str]) -> str:
+    """The argv quoted for this machine's shell, so text with quotes, $ or spaces pastes as the same arguments."""
+    import shlex
+    import subprocess
+    import sys
+
+    return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
 
 
 # the recording the one-recording pages show, picked in the header

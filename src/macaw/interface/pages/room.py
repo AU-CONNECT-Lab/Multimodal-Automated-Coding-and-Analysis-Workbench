@@ -804,20 +804,26 @@ def register(app, config_path: Path) -> None:
     @app.callback(
         Output("room-frame", "data"), Output("room-view-note", "children"), Output("room-selected", "data", allow_duplicate=True),
         Input("room-view-mode", "value"), Input("room-view-camera", "value"), Input(ui.SHOWN["setup"], "data"), Input("room-view-at", "value"),
+        State("room-model", "data"),
         prevent_initial_call=True,
     )
-    def frame(mode, camera, rid, at):
+    def frame(mode, camera, rid, at, model):
         from macaw.interface.pages.naming import frame_of
 
         if mode != "camera" or not camera:
             return None, None, no_update
         chosen = {"kind": "cameras", "name": camera}
+        # the editor stands a camera without a height at one of its own, which the facing and tilt would then fit
+        first = (
+            f"Give {camera}'s height first: without it the view is drawn from 150 cm up. "
+            if ((model or {}).get("cameras", {}).get(camera) or {}).get("height") is None else ""
+        )
         if not rid:
-            return {"camera": camera}, "No recording to take a frame from.", chosen
+            return {"camera": camera}, first + "No recording to take a frame from.", chosen
         shown, problem = frame_of(config_path, rid, camera, float(at or 0.0))
         if problem:
-            return {"camera": camera}, problem, chosen
-        return shown, "Drag to aim, scroll for the lens angle, until the drawing lies on the picture.", chosen
+            return {"camera": camera}, first + problem, chosen
+        return shown, first + "Drag to aim, scroll for the lens angle, until the drawing lies on the picture.", chosen
 
     app.clientside_callback(
         """function (model, selected, frame, mode, style) {

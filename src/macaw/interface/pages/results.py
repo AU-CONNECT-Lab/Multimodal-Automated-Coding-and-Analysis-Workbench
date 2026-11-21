@@ -154,7 +154,7 @@ def points_3d(config_path: Path, rid: str):
     from macaw.extractors.video.pose.triangulate import points_file
     from macaw.store.keypoints import read_keypoints
 
-    path = points_file(resolve_config(config_path), rid)
+    path = points_file(resolve_config(config_path, recording_id=rid), rid)
     return read_keypoints(path, recording_id=rid) if path.is_file() else None
 
 
@@ -209,7 +209,7 @@ def view_3d(config_path: Path, rid: str, at_s: float, points=None):
     from macaw.extractors.video.pose.skeleton import SKELETON_EDGES
     from macaw.extractors.video.pose.triangulate import calibration_path
 
-    config = resolve_config(config_path)
+    config = resolve_config(config_path, recording_id=rid)
     points = points_3d(config_path, rid) if points is None else points
     if points is None or points.empty:
         return html.P("No 3D for this recording: it needs calibrated cameras, a camera that records depth, or pose3d.one_camera.", className="none")
