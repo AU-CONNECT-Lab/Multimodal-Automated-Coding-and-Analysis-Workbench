@@ -125,7 +125,8 @@ def measured_square(config) -> float:
     from macaw.project.room import CM_PER_UNIT
 
     per_mm = 10.0 * CM_PER_UNIT[config.project.units]
-    return round(config.pose3d.board.in_mm(config.project.units).square_mm / per_mm, 3)
+    # significant digits, so a square of 0.0755 m keeps its last one
+    return float(f"{config.pose3d.board.in_mm(config.project.units).square_mm / per_mm:.6g}")
 
 
 def board_view(config_path: Path):

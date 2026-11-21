@@ -77,3 +77,11 @@ def test_each_setting_said_to_be_in_the_project_s_unit_is_converted():
         if "# project.units" in line:
             typed.add(".".join(stack))
     assert typed and typed <= set(LENGTHS) | set(BY_ROLE)
+
+
+def test_the_square_shown_in_metres_keeps_its_last_digit():
+    from macaw.config.schema import BoardSection
+    from macaw.interface.pages.cameras import measured_square
+
+    config = SimpleNamespace(project=SimpleNamespace(units="m"), pose3d=SimpleNamespace(board=BoardSection(square=0.0755)))
+    assert measured_square(config) == 0.0755
