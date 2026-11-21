@@ -57,7 +57,7 @@ def to_state_sequence(
     frame["_end"] = pd.to_numeric(frame["t_end"], errors="coerce")
     origin = float(t_start) if t_start is not None else float(frame["_start"].min())
     stop = float(t_end) if t_end is not None else float(frame["_end"].max())
-    n_cells = int(np.ceil((stop - origin) / step_s - 1e-9))
+    n_cells = len(state_grid(origin, stop, step_s))
     if n_cells <= 0:
         return _empty(SEQUENCE_COLUMNS)
 
@@ -75,6 +75,11 @@ def to_state_sequence(
             rows.append((recording_id, series, origin + index * step_s, _winner(coverage[index], empty_state)))
 
     return pd.DataFrame(rows, columns=list(SEQUENCE_COLUMNS))
+
+
+def state_grid(t_start: float, t_end: float, step_s: float) -> np.ndarray:
+    """The start of every cell from t_start up to t_end."""
+    return t_start + np.arange(max(int(np.ceil((t_end - t_start) / step_s - 1e-9)), 0)) * step_s
 
 
 def _coverage(

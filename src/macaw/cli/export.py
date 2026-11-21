@@ -28,6 +28,7 @@ from macaw.store.sequence import (
     EMPTY_STATE,
     floor_intervals,
     speaking_intervals,
+    state_grid,
     to_state_sequence,
 )
 from macaw.store.wide import to_wide, with_segment
@@ -95,7 +96,7 @@ def export(
         if of not in SEQUENCES:
             raise MacawError(f"Unknown sequence '{of}'. Choose one of: {', '.join(SEQUENCES)}")
         if of == "annotations":
-            _export_sequence(layout, recording_ids, step, out)
+            _export_sequence(config, layout, recording_ids, step, out)
         else:
             _export_talk_sequence(config, layout, recording_ids, of, step, out)
         return
@@ -346,17 +347,25 @@ def _tiers(found: list[tuple[str, pd.DataFrame]]) -> set[str]:
     return {str(tier) for _, frame in found for tier in frame["tier"].dropna().unique()}
 
 
-def _export_sequence(layout, recording_ids: list[str], step: float, out: Path | None) -> None:
-    """Annotations resampled onto a fixed grid, the shape recurrence analysis wants."""
+def _export_sequence(config_path: Path, layout, recording_ids: list[str], step: float, out: Path | None) -> None:
+    """Annotations resampled onto a fixed grid, the shape recurrence analysis wants; each recording over its own analysed part."""
+    from macaw.extractors.prep import load_prep
+
     found = _annotation_frames(layout, recording_ids)
     if not found:
         raise MacawError(
             f"No annotations under {layout.recordings_dir}. Run a coding extractor before exporting."
         )
 
-    sequence = to_state_sequence(
-        pd.concat([frame for _, frame in found], ignore_index=True), step_s=step
-    )
+    pieces = []
+    for recording_id, frame in found:
+        try:
+            prep = load_prep(resolve_config(config_path, recording_id=recording_id), recording_id)
+            window = {"t_start": prep.t_origin_s, "t_end": prep.t_origin_s + prep.duration_s}
+        except MacawError:   # before prep.media the recording's own annotations span it
+            window = {}
+        pieces.append(to_state_sequence(frame.assign(recording_id=recording_id), step_s=step, **window))
+    sequence = pd.concat(pieces, ignore_index=True)
     if sequence.empty:
         raise MacawError("Nothing to sample: every annotation interval was empty or unlabelled.")
 
@@ -404,7 +413,8 @@ def _export_talk_sequence(config_path: Path, layout, recording_ids: list[str], o
             t_start=prep.t_origin_s, t_end=prep.t_origin_s + prep.duration_s,
         )
         if of == "speech":
-            series = _with_silent_people(series, subjects, recording_id)
+            grid = state_grid(prep.t_origin_s, prep.t_origin_s + prep.duration_s, step)
+            series = _with_silent_people(series, subjects, recording_id, grid)
         pieces.append(series)
     if not pieces:
         raise MacawError(f"No {source} output to export. Run it first.")
@@ -415,10 +425,9 @@ def _export_talk_sequence(config_path: Path, layout, recording_ids: list[str], o
     typer.echo(str(out))
 
 
-def _with_silent_people(sequence: pd.DataFrame, subjects: list[str], recording_id: str) -> pd.DataFrame:
-    """Someone who never spoke still gets their series, all none."""
-    grid = sequence["t"].drop_duplicates().to_numpy()
-    missing = [subject for subject in subjects if subject not in set(sequence["series"])]
+def _with_silent_people(sequence: pd.DataFrame, subjects: list[str], recording_id: str, grid) -> pd.DataFrame:
+    """Someone who never spoke still gets their series, all none, as do all in a recording where nobody spoke."""
+    missing = [subject for subject in subjects if sequence.empty or subject not in set(sequence["series"])]
     filler = [
         pd.DataFrame({"recording_id": recording_id, "series": subject, "t": grid, "state": EMPTY_STATE})
         for subject in missing

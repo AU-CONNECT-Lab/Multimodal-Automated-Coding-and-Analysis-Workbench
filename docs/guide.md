@@ -368,7 +368,7 @@ Run one of the following commands in the project folder. Each reports where it s
 : The same table, with the same data dictionary, as a Parquet file, which is smaller and faster to read than a CSV when measures are exported frame by frame; R reads it with the arrow package.
 
 `macaw export -f sequence`
-: For each participant, whether they are speaking at each second, for sequence analysis.
+: For each participant, whether they are speaking at each second, for sequence analysis; `--of floor` gives whose turn it is, and `--of annotations` the codes. Each recording is sampled over its own analysed part, and a participant who never speaks still has a series.
 
 `macaw export -f eaf`
 : One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`). Every linked file is placed by its offset, so all play in step in ELAN. ELAN accepts no negative offset, so its time 0 is the moment the last file began; the file records that moment, and importing it again puts every time back on the recording's clock. Codes that start before that moment are not in the file, and the export says how many. A drift correction is not carried into ELAN, and the export names any file it concerns.

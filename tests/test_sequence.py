@@ -191,3 +191,30 @@ class TestTalk:
 
     def test_no_turns_no_floor(self):
         assert floor_intervals(talk([])).empty
+
+
+def test_each_recordings_annotations_are_sampled_over_its_own_analysed_part(make_intervals, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from macaw.cli import export
+    from macaw.extractors import prep
+
+    found = [("a", make_intervals([("p1", "act", 0.5, 1.5, "x")], "a")), ("b", make_intervals([("p1", "act", 100.0, 101.0, "y")], "b"))]
+    monkeypatch.setattr(export, "_annotation_frames", lambda layout, ids: found)
+    monkeypatch.setattr(export, "resolve_config", lambda path, recording_id=None: recording_id)
+    windows = {"a": (0.0, 2.0), "b": (100.0, 3.0)}
+    monkeypatch.setattr(prep, "load_prep", lambda config, rid: SimpleNamespace(t_origin_s=windows[rid][0], duration_s=windows[rid][1]))
+    export._export_sequence("project.yaml", SimpleNamespace(recordings_dir=tmp_path, output_dir=tmp_path), ["a", "b"], 1.0, tmp_path / "s.csv")
+    sequence = pd.read_csv(tmp_path / "s.csv")
+    assert list(sequence.loc[sequence["recording_id"] == "a", "t"]) == [0.0, 1.0]
+    assert list(sequence.loc[sequence["recording_id"] == "b", "t"]) == [100.0, 101.0, 102.0]
+
+
+def test_a_recording_where_nobody_spoke_keeps_everyones_series():
+    from macaw.cli.export import _with_silent_people
+    from macaw.store.sequence import state_grid
+
+    empty = to_state_sequence(pd.DataFrame(), step_s=1.0)
+    filled = _with_silent_people(empty, ["p1", "p2"], "r", state_grid(10.0, 12.0, 1.0))
+    assert len(filled) == 4 and set(filled["series"]) == {"p1", "p2"} and set(filled["state"]) == {EMPTY_STATE}
+    assert list(filled.loc[filled["series"] == "p1", "t"]) == [10.0, 11.0]
