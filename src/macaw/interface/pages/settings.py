@@ -276,7 +276,10 @@ def register(app, config_path: Path) -> None:
             after, message = _runs_again_note(config_path, text)
             if after is None:
                 return [no_update] * len(ids), no_update, message
-            before = resolve_config(config_path).project.units
+            try:
+                before = resolve_config(config_path).project.units
+            except MacawError:   # a file that did not read is mended here; nothing typed in it was converted
+                before = after.project.units
             project_file.save(config_path, text)
             notes = [ui.note(f"Saved to {config_path.name}.", "ok")]
             if after.project.units != before:

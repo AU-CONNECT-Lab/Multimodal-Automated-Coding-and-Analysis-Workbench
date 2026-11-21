@@ -67,7 +67,7 @@ def saved(config, rid: str, camera: str, people: list[str], part: tuple[float, f
         at = float(click["at"])
         used = "yes" if outside(at, part) is None else "no, outside the analysed part"
         row = [swatch(click["person"], people), f"{at:g}", f"{float(click['x']):.0%} across, {float(click['y']):.0%} down", click.get("by", "").split(" ")[0]]
-        rows.append(row + ([used] if part else []) + ([take_back(f"{at:g}|{click['person']}")] if take_back else []))
+        rows.append(row + ([used] if part else []) + ([take_back(f"{at!r}|{click['person']}")] if take_back else []))
     columns = ["Person", "At (s)", "Where", "By"] + (["Used"] if part else []) + ([""] if take_back else [])
     return html.Div([html.P(f"Clicks kept on {camera}; each one counts until taken back."), ui.table(columns, rows, numeric={"At (s)"}, fit=True)])
 

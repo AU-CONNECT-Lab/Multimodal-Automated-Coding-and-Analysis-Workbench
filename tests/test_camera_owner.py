@@ -408,6 +408,16 @@ class TestNamePeople:
         assert self.name(project, "--camera", "room", "--clear").exit_code == 0
         assert not layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8").strip("{}\n ")
 
+    def test_a_click_typed_to_more_digits_than_shown_is_taken_back_from_the_page(self, project):
+        from macaw.interface.pages import naming
+
+        self.name(project, "--camera", "room", "--at", "1234.567", "--person", "parent=0.25,0.4")
+        targets = []
+        naming.saved(project.resolved(), "003", "room", ["parent", "child"], take_back=lambda target: targets.append(target) or "")
+        argv = naming.take_back_command(project.config, "003", "room", targets[0])
+        assert invoke(*argv[1:]).exit_code == 0
+        assert json.loads(layout_for(project.resolved()).names_path("003").read_text(encoding="utf-8")).get("room", []) == []
+
     def test_one_click_is_taken_back_and_the_others_stay(self, project):
         self.name(project, "--camera", "room", "--at", "2.5", "--person", "parent=0.25,0.4", "--person", "child=0.7,0.45")
         self.name(project, "--camera", "room", "--at", "9", "--person", "child=0.6,0.5")

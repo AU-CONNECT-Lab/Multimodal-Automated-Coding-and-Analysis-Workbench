@@ -4,6 +4,8 @@ Every button stands for a `macaw` command, shown next to it."""
 from __future__ import annotations
 
 import base64
+import os
+import tempfile
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -756,12 +758,19 @@ def frame_uri(config_path: Path, rid: str, video: str, at_s: float) -> tuple[str
         return None, f"{video} is not a video of {rid}."
     if config.video.normalise and item.prepared_video is None:
         return None, "Run prep.video first: frames are shown from its copy of the video, the one people are measured on."
-    dest = layout_for(config, create=False).work_dir / "gui" / "scale" / f"{rid}_{Path(video).stem}.jpg"
+    folder = layout_for(config, create=False).work_dir / "gui" / "scale"
+    folder.mkdir(parents=True, exist_ok=True)
+    # a file of its own: the scale, gaze and object cards ask for a frame at the same moment, each in a thread of its own
+    handle, name = tempfile.mkstemp(prefix=f"{rid}_{Path(video).stem}_", suffix=".jpg", dir=folder)
+    os.close(handle)
+    dest = Path(name)
     try:
         extract_frame(item.frames_path, item.own_time(at_s), dest)
+        return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None
     except Exception as error:
         return None, f"No frame at {at_s:g} s: {error}"
-    return "data:image/jpeg;base64," + base64.b64encode(dest.read_bytes()).decode(), None
+    finally:
+        dest.unlink(missing_ok=True)
 
 
 def graph_style(figure):

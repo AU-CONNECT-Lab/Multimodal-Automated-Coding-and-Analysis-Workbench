@@ -1218,6 +1218,12 @@ def test_changing_the_unit_converts_the_lengths_already_typed(project, monkeypat
     own = (recordings / "003.yaml").read_text(encoding="utf-8")
     assert "per_px: 0.0984" in own and "# measured by hand" in own
 
+    # a file that no longer reads is mended in the text box and saved
+    mended = project.read_text(encoding="utf-8")
+    project.write_text(mended + "\nnot_a_section: 1\n", encoding="utf-8")
+    _, _, message = save(None, None, 1, [], [], mended)
+    assert project.read_text(encoding="utf-8") == mended and "Saved to project.yaml" in text_of(message)
+
 
 def test_the_transcript_card_lists_the_lines_a_model_marked(project):
     from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, write_transcript
