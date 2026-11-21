@@ -23,8 +23,9 @@ NO_ANSWER = "no_usable_answer"
 RANDOM_CHECK = "random_check"
 
 # what a decision points back at. The queue is a file that outlives the frame it came from, so
-# it keys on the row's own content rather than on a position.
-MATCH_KEY = ("recording_id", "subject_id", "tier", "t_start", "t_end", "annotator", "label")
+# it keys on the row's own content rather than on a position. Not on the label: a rerun may change the
+# model's code, and the decision is about the unit, not about the code the model gave.
+MATCH_KEY = ("recording_id", "subject_id", "tier", "t_start", "t_end", "annotator")
 
 _CARRIED = (
     "recording_id",

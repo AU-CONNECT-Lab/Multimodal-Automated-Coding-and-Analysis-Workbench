@@ -251,6 +251,15 @@ class TestApplyDecisions:
         back = read_queue(write_queue(queue, tmp_path / "queue.csv"))
         assert len(apply_decisions(frame, back)) == 3
 
+    def test_a_decision_holds_when_a_rerun_changed_the_model_s_code(self, scene, tmp_path):
+        frame, queue = scene
+        queue.loc[0, ["decision", "reviewer"]] = ["directive", "qy"]
+        back = read_queue(write_queue(queue, tmp_path / "queue.csv"))
+        rerun = frame.assign(label=["question", "directive"])
+        out = apply_decisions(rerun, back)
+        assert out.attrs["unmatched_decisions"] == 0
+        assert out.query("annotator == 'qy'")[["t_start", "label"]].values.tolist() == [[0.0, "directive"]]
+
     def test_a_decision_pointing_at_nothing_is_counted(self, scene):
         frame, queue = scene
         queue.loc[0, ["t_start", "decision", "reviewer"]] = [99.0, "directive", "qy"]
