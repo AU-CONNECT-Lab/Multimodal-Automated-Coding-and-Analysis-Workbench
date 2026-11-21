@@ -145,8 +145,8 @@ class TestListening:
         monkeypatch.setattr(listening_module, "load_transcript", lambda config, rid, others=False: self.TALK)
         times = np.arange(0.0, 10.0, 0.5)
         series = pd.concat([
-            pd.DataFrame({"subject_id": "child", "feature": "upper_body_speed", "t_start": times, "value": np.where(times < 3.0, 2.0, 10.0)}),
-            pd.DataFrame({"subject_id": "parent", "feature": "upper_body_speed", "t_start": times, "value": 4.0}),
+            pd.DataFrame({"subject_id": "child", "camera": "room", "feature": "upper_body_speed", "t_start": times, "value": np.where(times < 3.0, 2.0, 10.0)}),
+            pd.DataFrame({"subject_id": "parent", "camera": "room", "feature": "upper_body_speed", "t_start": times, "value": 4.0}),
         ], ignore_index=True)
         monkeypatch.setattr(ListeningExtractor, "_series", lambda self, recording: series)
         recording = SimpleNamespace(
@@ -176,7 +176,7 @@ class TestListening:
         monkeypatch.setattr(listening_module, "load_transcript", lambda config, rid, others=False: self.TALK)
         times = np.arange(0.0, 10.0, 0.5)
         series = pd.concat([
-            pd.DataFrame({"subject_id": person, "feature": feature, "t_start": times, "value": value})
+            pd.DataFrame({"subject_id": person, "camera": "room", "feature": feature, "t_start": times, "value": value})
             for person, value in (("parent", 12.0), ("child", 6.0)) for feature in ("upper_body_speed", "motion_energy")
         ], ignore_index=True)
         monkeypatch.setattr(ListeningExtractor, "_series", lambda self, recording: series)
