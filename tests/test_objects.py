@@ -598,7 +598,7 @@ class TestPosition:
         from macaw.extractors.video.objects import position as position_module
         from macaw.extractors.video.objects.position import ObjectPositionExtractor
 
-        def build(starts):
+        def build(starts, side_offset=0.0, front_s=None):
             things = pd.DataFrame(
                 [{"video": "front.mp4", "frame": f, "label": "ball", "cx": 10.0 + f, "cy": 20.0, "area": 100.0, "score": 0.9, "in_view": True}
                  for f in range(5, 30) if not 12 <= f < 15]
@@ -608,7 +608,10 @@ class TestPosition:
             monkeypatch.setattr(position_module, "load_objects", lambda config, rid, everything=False: things)
             monkeypatch.setattr(position_module, "load_starts", lambda config, rid: starts)
             monkeypatch.setattr(position_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=3.0))
-            files = [video_file("front.mp4", ["parent"], fps=FPS, offset_s=0.5), video_file("side.mp4", ["child"], fps=FPS, offset_s=0.0)]
+            files = [
+                video_file("front.mp4", ["parent"], fps=FPS, offset_s=0.5, duration_s=front_s),
+                video_file("side.mp4", ["child"], fps=FPS, offset_s=side_offset),
+            ]
             config = SimpleNamespace(objects=ObjectsSection(names=["ball", "toy car"]))
             return ObjectPositionExtractor(config).run(recording_of(files, ["parent", "child"], recording_id="r1"), tmp_path)
 
@@ -653,6 +656,30 @@ class TestPosition:
         share = part[part.feature == "ball_front_mp4_in_view_share"]
         # the front camera's frames from 0.9 s to 1.5 s are 4 to 9, and the ball is in view from frame 5
         assert share.value.item() == pytest.approx(5 / 6) and share.t_start.item() == 0.9 and share.t_end.item() == 1.5
+
+    def test_a_segment_takes_each_camera_on_its_own_frames(self, run, tmp_path, monkeypatch):
+        from macaw.extractors.video.objects import position as position_module
+        from macaw.extractors.video.objects.position import ObjectPositionExtractor
+        from macaw.store.longtable import write_long_table
+
+        followed = {"from": PERSON, "frame": 0}
+        # the side camera's frames fall between the front camera's
+        result = run({"front.mp4": {"ball": followed}, "side.mp4": {"toy car": followed}}, side_offset=0.03)
+        write_long_table(result.rows, tmp_path / "features")
+        monkeypatch.setattr(position_module, "layout_for", lambda config, create=False: SimpleNamespace(long_table_path=lambda rid: tmp_path / "features"))
+        recording = SimpleNamespace(recording_id="r1", entities=lambda: {})
+        part = ObjectPositionExtractor(SimpleNamespace(objects=ObjectsSection(names=["ball", "toy car"]))).summarise(recording, 2.0, 3.0)
+        value = lambda name: part[part.feature == name].value.item()
+        assert value("toy_car_side_mp4_in_view_share") == 1.0 and value("toy_car_side_mp4_longest_gap_s") == 0.0
+        assert value("ball_front_mp4_in_view_share") == 1.0
+
+    def test_frames_after_a_camera_ends_are_not_counted_out_of_view(self, run):
+        result = run({"front.mp4": {"ball": {"from": PERSON, "frame": 5}}}, front_s=2.0)
+        seen = result.rows[result.rows.feature == "ball_front_mp4_in_view"]
+        # the front camera starts at 0.5 s and lasts 2 s, so its last frame is at 2.4 s, before the 3 s window ends
+        assert len(seen) == 20 and seen.t_start.max() == pytest.approx(2.4)
+        share = result.rows[result.rows.feature == "ball_front_mp4_in_view_share"].value.item()
+        assert share == pytest.approx(12 / 20)
 
     def test_nothing_followed_gives_no_rows_and_says_so(self, run):
         result = run({"front.mp4": {"ball": {"from": NOT_FOUND}}})

@@ -497,7 +497,12 @@ def frame_span(item: MediaFile, start_s: float, end_s: float) -> tuple[int, int]
     fps = item.fps or 0.0
     if fps <= 0:
         raise UnreadableMediaError(f"{item.path}: no frame rate to convert frames to time")
-    return max(math.floor((start_s - item.offset_s) * fps), 0), math.ceil((end_s - item.offset_s) * fps) + 1
+    # the frames from start to end, both included, as pose counts them; none past the video's own end, which another device may outlast
+    first = max(math.ceil((start_s - item.offset_s) * fps - 1e-9), 0)
+    stop = math.floor((end_s - item.offset_s) * fps + 1e-9) + 1
+    if item.span_s is not None:
+        stop = min(stop, math.floor(item.span_s * fps + 1e-9))
+    return first, stop
 
 
 def proposals(found: pd.DataFrame, names: list[str]) -> dict[str, dict]:

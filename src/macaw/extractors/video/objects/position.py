@@ -44,7 +44,7 @@ def feature(thing: str, camera: str, measure: str) -> str:
 @register_extractor
 class ObjectPositionExtractor(Extractor):
     name = "objects.position"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "objects"
     phase = Phase.DERIVE
@@ -102,8 +102,12 @@ class ObjectPositionExtractor(Extractor):
         if saved.empty:
             return None
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities(), subject_id=None)
-        wide = saved.pivot_table(index="t_start", columns="feature", values="value", observed=True).sort_index()
-        return _coverage(pd.Series(wide.index.to_numpy(dtype=float)), {str(key): wide[key].to_numpy() for key in wide.columns}, common, (start_s, end_s))
+        parts = []
+        # each camera on its own frames, as the whole run counts them
+        for _, own in saved.groupby(saved["camera"].astype(str), sort=True):
+            wide = own.pivot_table(index="t_start", columns="feature", values="value", observed=True).sort_index()
+            parts.append(_coverage(pd.Series(wide.index.to_numpy(dtype=float)), {str(key): wide[key].to_numpy() for key in wide.columns}, common, (start_s, end_s)))
+        return concat_long_tables(parts)
 
     def _specs(self, named: list[tuple[str, str]], starts: dict) -> list[FeatureSpec]:
         cfg = self.config.objects
@@ -144,7 +148,7 @@ class ObjectPositionExtractor(Extractor):
                 interpolation="none",
                 aggregation="mean",
                 missing=(
-                    "Never empty in the frames of the recording." if measure == "in_view"
+                    "Never empty in the frames the camera recorded; a camera that ends before the analysed part has no rows after its end." if measure == "in_view"
                     else "Empty in frames the tracker gave no score for." if measure == "score"
                     else f"Empty in frames where {thing} is out of view on this camera."
                 ),
