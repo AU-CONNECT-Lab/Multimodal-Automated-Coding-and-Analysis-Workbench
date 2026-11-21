@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import EafError, InputNotFoundError
-from macaw.interop.eaf import _elan, _link_media, _ms, _text, tier_for_subject
+from macaw.interop.eaf import _elan, _link_media, _ms, _text, tier_for_subject, timed_annotations
 from macaw.project.recording import Recording
 from macaw.qc.transcript_check import KINDS
 
@@ -81,7 +81,13 @@ def read_transcript_eaf(path: Path, subjects: list[str]) -> pd.DataFrame:
         subject_id = attributes.get("PARTICIPANT") or ""
         if subject_id not in subjects:
             raise EafError(f"{path}: transcript tier '{name}' belongs to '{subject_id}', who is not a subject ({', '.join(subjects)})")
-        for start, end, value, *_ in eaf.get_annotation_data_for_tier(name):
+        timed, untimed = timed_annotations(eaf, name)
+        if untimed:
+            raise EafError(
+                f"{path}: {untimed} annotation(s) on tier {name} have no time of their own; give each line its own start and "
+                "end on the transcript tier in ELAN"
+            )
+        for start, end, value, *_ in timed:
             if str(value).strip():
                 rows.append({"subject_id": subject_id, "t_start": start / 1000.0, "t_end": end / 1000.0, "text": str(value).strip()})
     if not rows:

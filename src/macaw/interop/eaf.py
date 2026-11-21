@@ -58,6 +58,14 @@ def _ms(value) -> int:
     return int(round(float(value) * 1000.0))
 
 
+def timed_annotations(eaf, tier: str) -> tuple[list, int]:
+    """The tier's annotations that have times of their own, and how many have none: those on a Time Subdivision or
+    Included In tier whose time slots ELAN leaves unaligned."""
+    found = eaf.get_annotation_data_for_tier(tier)
+    timed = [annotation for annotation in found if annotation[0] is not None and annotation[1] is not None]
+    return timed, len(found) - len(timed)
+
+
 def tier_for_subject(subject_id: str, kind: str) -> str:
     """ELAN tier ids have to be unique across the file, so the subject goes into the name. On
     the way back in it is read from the tier's PARTICIPANT attribute, never by splitting this."""
@@ -214,7 +222,10 @@ def import_eaf(
         )
         tier = _strip_affixes(name, subject_id, layer, annotator)
 
-        for annotation in eaf.get_annotation_data_for_tier(name):
+        timed, untimed = timed_annotations(eaf, name)
+        if untimed:
+            logger.warning("%s: %d annotation(s) on tier %s have no time of their own and were left out", path, untimed, name)
+        for annotation in timed:
             start, end, value = annotation[0], annotation[1], annotation[2]
             rows.append(
                 {

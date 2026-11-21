@@ -40,6 +40,8 @@ def import_coding(config, recording: Recording, path: Path, coder: str) -> Impor
     directory = layout.annotations_path(recording.recording_id)
     held = read_annotations(directory) if directory.is_dir() else empty_frame(ANNOTATION_SCHEMA)
     report = ImportReport(recording.recording_id, coder)
+    for tier, count in raw.attrs.get("untimed", {}).items():
+        report.notes.append(f"{tier}: {count} annotation(s) without a time of their own (a Time Subdivision or Included In tier) left out")
     frames = []
     for (file_tier, participant), rows in raw.groupby(["file_tier", "participant"], dropna=False, sort=True):
         participant = None if pd.isna(participant) else str(participant)

@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import EafError, InputNotFoundError
-from macaw.interop.eaf import _elan
+from macaw.interop.eaf import _elan, timed_annotations
 from macaw import people_tables
 
 SUFFIXES = (".eaf", ".csv", ".tsv", ".xlsx")
@@ -35,10 +35,13 @@ def _read_eaf(path: Path) -> pd.DataFrame:
         eaf = Eaf(str(path))
     except Exception as error:
         raise EafError(f"{path}: could not be read as ELAN ({error})") from error
-    rows = []
+    rows, untimed = [], {}
     for name in eaf.get_tier_names():
         attributes = eaf.tiers[name][2] if name in eaf.tiers else {}
-        for annotation in eaf.get_annotation_data_for_tier(name):
+        timed, missing = timed_annotations(eaf, name)
+        if missing:
+            untimed[name] = missing
+        for annotation in timed:
             rows.append(
                 {
                     "file_tier": name,
@@ -50,7 +53,9 @@ def _read_eaf(path: Path) -> pd.DataFrame:
                     "label": str(annotation[2] or "").strip(),
                 }
             )
-    return pd.DataFrame(rows, columns=list(RAW_COLUMNS))
+    table = pd.DataFrame(rows, columns=list(RAW_COLUMNS))
+    table.attrs["untimed"] = untimed
+    return table
 
 
 def _read_table(path: Path, suffix: str) -> pd.DataFrame:
