@@ -209,14 +209,16 @@ class TestElan:
             path = export_eaf(empty, SimpleNamespace(recording_id="r1", media=media), tmp_path / "r1.eaf")
         return path.read_text(encoding="utf-8"), caplog.text
 
-    def test_a_file_that_started_first_skips_its_start(self, exported):
+    def test_elans_0_is_where_the_last_file_began_and_each_earlier_file_skips_to_it_on_its_own_clock(self, exported):
         text, _ = exported
-        assert 'TIME_ORIGIN="3250"' in text and 'TIME_ORIGIN="1000"' in text
-        assert text.count("TIME_ORIGIN") == 2
+        assert 'macaw_recording_s_at_elan_0">2.000<' in text
+        # late.wav began last; slow.wav's own clock runs 0.02 % slower, so 3 recording seconds are 2999 of its ms
+        assert 'TIME_ORIGIN="2000"' in text and 'TIME_ORIGIN="5250"' in text and 'TIME_ORIGIN="2999"' in text
+        assert text.count("TIME_ORIGIN") == 3
 
     def test_what_elan_cannot_show_is_said(self, exported):
         _, log = exported
-        assert "late.wav starts 2.000 s after" in log
+        assert "starts" not in log   # a file that began late plays in step from ELAN's 0
         assert "slow.wav's clock was corrected for drift" in log and "120 ms" in log
 
 

@@ -99,7 +99,8 @@ def _link_media(eaf, recording: Recording, out_path: Path) -> float:
         mimetype = _MIME.get(
             path.suffix.lower(), "video/mp4" if item.kind == "video" else "audio/x-wav"
         )
-        origin = _ms(zero - item.offset_s)
+        # the moment of the file's own clock that lies at the recording's zero
+        origin = _ms(item.own_time(zero))
         eaf.add_linked_file(path.absolute().as_uri(), relpath=relative, mimetype=mimetype, time_origin=origin if origin > 0 else None)
         if item.clock_scale != 1.0:
             from macaw.media.probe import probe
