@@ -584,6 +584,15 @@ class TestAUAgreement:
         assert by["a"].severity == "info" and "2 of 3 action units (au12, au43); read au09 with care" in by["a"].message
         assert by["b"].severity == "warn"
 
+    def test_a_unit_too_little_seen_to_compare_is_no_disagreement(self):
+        from macaw.qc.checks import check_au_agreement
+
+        nan = float("nan")
+        result = check_au_agreement(RECORDING, None, self.results({"a": {"au01": 0.8, "au02": nan, "au04": nan}, "b": {"au01": nan}}))
+        by = {w.subject_id: w for w in result.warnings}
+        assert by["a"].severity == "info" and by["a"].message == "the two face models agree on 1 of 1 action units (au01); too little to compare on au02, au04"
+        assert by["b"].severity == "info" and by["b"].message == "too little of the face to compare the two face models"
+
     def test_without_the_second_model_it_says_how_to_get_one(self):
         from macaw.qc.checks import check_au_agreement
 

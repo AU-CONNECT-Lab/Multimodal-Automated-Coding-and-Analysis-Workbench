@@ -424,6 +424,8 @@ class TestReportPage:
         text = page.read_text(encoding="utf-8")
         assert "room" in text and "1, 3" in text and "which nobody was clicked on" in text
         assert "pose.review" in summary["waiting"]
+        # the style sheet is written as it is, not escaped as text
+        assert "details > summary" in text and "&gt; summary" not in text
 
 
 class TestCloseAndIgnored:

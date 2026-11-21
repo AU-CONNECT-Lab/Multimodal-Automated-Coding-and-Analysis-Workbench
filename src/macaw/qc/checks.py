@@ -639,16 +639,26 @@ def check_au_agreement(recording: Recording, config: MacawConfig, results) -> Ch
     warnings = []
     for subject_id, rows in summary.groupby("subject_id", observed=True):
         rho = dict(zip(rows["feature"].str.removesuffix("_agreement"), rows["value"]))
-        agreed = sorted(unit for unit, value in rho.items() if value >= _AU_AGREE)
-        others = sorted(unit for unit in rho if unit not in agreed)
+        # too little of the face, or a unit that never moved, gives no agreement to read, which is not disagreement
+        compared = {unit: value for unit, value in rho.items() if pd.notna(value)}
+        if not compared:
+            warnings.append(QCWarning(
+                check="au_agreement", recording_id=rid, subject_id=str(subject_id), severity="info",
+                message="too little of the face to compare the two face models", details={"rho": dict.fromkeys(rho)},
+            ))
+            continue
+        agreed = sorted(unit for unit, value in compared.items() if value >= _AU_AGREE)
+        others = sorted(unit for unit in compared if unit not in agreed)
+        unread = sorted(unit for unit in rho if unit not in compared)
         warnings.append(
             QCWarning(
                 check="au_agreement", recording_id=rid, subject_id=str(subject_id),
                 severity="warn" if len(agreed) < len(others) else "info",
-                message=f"the two face models agree on {len(agreed)} of {len(rho)} action units"
+                message=f"the two face models agree on {len(agreed)} of {len(compared)} action units"
                 + (f" ({', '.join(agreed)})" if agreed else "")
-                + (f"; read {', '.join(others)} with care" if others else ""),
-                details={"rho": rho},
+                + (f"; read {', '.join(others)} with care" if others else "")
+                + (f"; too little to compare on {', '.join(unread)}" if unread else ""),
+                details={"rho": {unit: (None if pd.isna(value) else value) for unit, value in rho.items()}},
             )
         )
     return CheckResult(warnings=warnings)
