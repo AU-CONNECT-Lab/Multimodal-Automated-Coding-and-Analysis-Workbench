@@ -255,3 +255,35 @@ class TestCommand:
         ]
         result = CliRunner().invoke(app, ["agreement", "--segment", "late", "-c", str(project.path)])
         assert result.exit_code == 1 and "the segments are: early" in str(result.exception)
+
+
+def test_coding_timed_on_another_device_s_file_is_put_on_the_recording_s_clock(project, tmp_path, monkeypatch):
+    import dataclasses
+
+    from macaw.media import align
+
+    from macaw.project.recording import MediaFile
+
+    config, recording = project.configure(IMPORTS)
+    recording = dataclasses.replace(recording, media=[MediaFile(path=tmp_path / "cam" / "a.mp4", kind="video", device="cam")])
+    device = recording.media[0].name
+    # that file began 2 s after the one the recording's clock is set by
+    monkeypatch.setattr(
+        align, "apply_offset_table",
+        lambda found, path: dataclasses.replace(found, media=[dataclasses.replace(item, offset_s=2.0) for item in found.media]),
+    )
+    path = tmp_path / "coded.csv"
+    pd.DataFrame({"tier": ["Child Gaze"], "start": [1.0], "end": [2.0], "code": ["Mom"]}).to_csv(path, index=False)
+    import_coding(config, recording, path, "anna", against=device)
+    assert imported(config)[["t_start", "t_end"]].values.tolist() == [[3.0, 4.0]]
+    with pytest.raises(ConfigError, match="--against takes a device"):
+        import_coding(config, recording, path, "anna", against="nowhere")
+    # a file macaw wrote is on the recording's clock already
+    written = write_eaf(tmp_path / "macaw.eaf", {"Child Gaze": (None, [(0, 1000, "Mom")])})
+    from pympi.Elan import Eaf
+
+    eaf = Eaf(str(written))
+    eaf.add_property("macaw_recording_s_at_elan_0", "2.000")
+    eaf.to_file(str(written))
+    with pytest.raises(ConfigError, match="leave out --against"):
+        import_coding(config, recording, written, "anna", against=device)

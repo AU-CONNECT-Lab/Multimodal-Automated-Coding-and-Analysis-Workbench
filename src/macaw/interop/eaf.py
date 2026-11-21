@@ -72,8 +72,24 @@ def tier_for_subject(subject_id: str, kind: str) -> str:
     return kind if not _text(subject_id) else f"{subject_id}_{kind}"
 
 
-def _link_media(eaf, recording: Recording, out_path: Path) -> None:
-    """Each file with its offset as ELAN's time origin, the moment in the file at annotation time 0."""
+# the recording time ELAN's time 0 stands for, kept in the file so that what comes back is put on the recording's clock again
+ZERO_PROPERTY = "macaw_recording_s_at_elan_0"
+
+
+def elan_zero(recording: Recording) -> float:
+    """ELAN takes no negative media offset, so its time 0 is where the last file to start began."""
+    return max([0.0, *(float(item.offset_s) for item in recording.media)])
+
+
+def elan_zero_of(eaf) -> float:
+    return next((float(value) for key, value in eaf.get_properties() if key == ZERO_PROPERTY), 0.0)
+
+
+def _link_media(eaf, recording: Recording, out_path: Path) -> float:
+    """Each file with its time origin, the moment in the file at ELAN's time 0; returns the recording time of that 0."""
+    zero = elan_zero(recording)
+    if zero > 0:
+        eaf.add_property(ZERO_PROPERTY, f"{zero:.3f}")
     for item in recording.media:
         path = Path(item.path)
         try:
@@ -83,13 +99,8 @@ def _link_media(eaf, recording: Recording, out_path: Path) -> None:
         mimetype = _MIME.get(
             path.suffix.lower(), "video/mp4" if item.kind == "video" else "audio/x-wav"
         )
-        origin = _ms(-item.offset_s)
+        origin = _ms(zero - item.offset_s)
         eaf.add_linked_file(path.absolute().as_uri(), relpath=relative, mimetype=mimetype, time_origin=origin if origin > 0 else None)
-        if origin < 0:
-            logger.warning(
-                "%s starts %.3f s after the recording's time 0 and is linked without an offset, so in ELAN it plays "
-                "%.3f s early", item.name, item.offset_s, item.offset_s,
-            )
         if item.clock_scale != 1.0:
             from macaw.media.probe import probe
 
@@ -98,6 +109,7 @@ def _link_media(eaf, recording: Recording, out_path: Path) -> None:
                 "%s's clock was corrected for drift (%.0f ppm), which ELAN does not do: there it is up to %.0f ms off by its end",
                 item.name, abs(item.clock_scale - 1.0) * 1e6, abs(item.clock_scale - 1.0) * (length or 0.0) * 1000,
             )
+    return zero
 
 
 def _attach_vocabulary(eaf, linguistic_type: str, cv_id: str, labels: list[str]) -> None:
@@ -155,10 +167,10 @@ def export_eaf(
     eaf = Eaf()
     if "default" in eaf.get_tier_names():
         eaf.remove_tier("default")      # the empty tier a fresh file starts with
-    _link_media(eaf, recording, out_path)
+    zero = _link_media(eaf, recording, out_path)
 
     names = _tier_names(frame) if not frame.empty else {}
-    skipped = 0
+    skipped = before = 0
     grouped = (
         frame.groupby(["subject_id", "tier", "layer", "annotator"], dropna=False, sort=True)
         if not frame.empty
@@ -180,7 +192,10 @@ def export_eaf(
         eaf.add_tier(name, ling=linguistic_type, part=subject_id or None, ann=annotator or None)
 
         for row in group.itertuples(index=False):
-            start, end = _ms(row.t_start), _ms(row.t_end)
+            if float(row.t_start) < zero:
+                before += 1
+                continue
+            start, end = _ms(row.t_start - zero), _ms(row.t_end - zero)
             if end <= start:
                 skipped += 1
                 continue
@@ -189,6 +204,11 @@ def export_eaf(
     if skipped:
         logger.warning(
             "%d annotation(s) dropped from %s: ELAN has no zero-length annotation", skipped, out_path.name
+        )
+    if before:
+        logger.warning(
+            "%d annotation(s) start before %.3f s, when the last file began and ELAN's time 0 lies, and are not in %s",
+            before, zero, out_path.name,
         )
 
     eaf.to_file(str(out_path))
@@ -211,6 +231,7 @@ def import_eaf(
     except Exception as error:
         raise EafError(f"{path}: could not be read as ELAN ({error})") from error
 
+    zero = elan_zero_of(eaf)
     rows = []
     for name in eaf.get_tier_names():
         attributes = eaf.tiers[name][2] if name in eaf.tiers else {}
@@ -234,8 +255,8 @@ def import_eaf(
                 {
                     "subject_id": subject_id,
                     "tier": tier,
-                    "t_start": float(start) / 1000.0,
-                    "t_end": float(end) / 1000.0,
+                    "t_start": float(start) / 1000.0 + zero,
+                    "t_end": float(end) / 1000.0 + zero,
                     "label": value,
                     "annotator": annotator,
                     "layer": layer,

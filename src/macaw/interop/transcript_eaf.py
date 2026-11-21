@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import EafError, InputNotFoundError
-from macaw.interop.eaf import _elan, _link_media, _ms, _text, tier_for_subject, timed_annotations
+from macaw.interop.eaf import _elan, _link_media, _ms, _text, elan_zero_of, tier_for_subject, timed_annotations
 from macaw.project.recording import Recording
 from macaw.qc.transcript_check import KINDS
 
@@ -32,7 +32,7 @@ def export_transcript_eaf(
     doubts = doubts if doubts is not None else pd.DataFrame(columns=["subject_id", "t_start", "t_end", "text", "kind", "why"])
     for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE, WHY_TYPE, *([DOUBT_TYPE] if not doubts.empty else [])):
         eaf.add_linguistic_type(kind)
-    _link_media(eaf, recording, out_path)
+    zero = _link_media(eaf, recording, out_path)
     subjects = [subject.subject_id for subject in recording.subjects]
     # a further speaker the transcript holds, such as other, keeps a tier of its own
     subjects += sorted(set(transcript["subject_id"].dropna().astype(str)) - set(subjects))
@@ -50,9 +50,12 @@ def export_transcript_eaf(
             tier = tier_for_subject(subject_id, name)
             eaf.add_tier(tier, ling=kind, part=subject_id)
             for row in rows.itertuples(index=False):
-                start = _ms(row.t_start)
+                # before ELAN's time 0, where the last file began; the recogniser's lines there are kept on reading back
+                if float(row.t_start) < zero:
+                    continue
+                start = _ms(row.t_start - zero)
                 # a line of no length still goes out, or a corrected transcript read back would lose it
-                end = max(_ms(row.t_end), start + 1)
+                end = max(_ms(row.t_end - zero), start + 1)
                 text = (
                     _text(row.text) if kind in (TRANSCRIPT_TYPE, DROPPED_TYPE) else f"{KINDS[row.kind]}: {_text(row.why)}" if kind == DOUBT_TYPE
                     else f"{row.reason}: {_text(row.detail)}"
@@ -73,7 +76,7 @@ def read_transcript_eaf(path: Path, subjects: list[str]) -> pd.DataFrame:
         eaf = Eaf(str(path))
     except Exception as error:
         raise EafError(f"{path}: could not be read as ELAN ({error})") from error
-    rows = []
+    rows, zero = [], elan_zero_of(eaf)
     for name in eaf.get_tier_names():
         attributes = eaf.tiers[name][2]
         if attributes.get("LINGUISTIC_TYPE_REF") != TRANSCRIPT_TYPE:
@@ -89,7 +92,9 @@ def read_transcript_eaf(path: Path, subjects: list[str]) -> pd.DataFrame:
             )
         for start, end, value, *_ in timed:
             if str(value).strip():
-                rows.append({"subject_id": subject_id, "t_start": start / 1000.0, "t_end": end / 1000.0, "text": str(value).strip()})
+                rows.append({"subject_id": subject_id, "t_start": start / 1000.0 + zero, "t_end": end / 1000.0 + zero, "text": str(value).strip()})
     if not rows:
         raise EafError(f"{path}: no annotation on any transcript tier")
-    return pd.DataFrame(rows, columns=list(CORRECTED_COLUMNS)).sort_values(["t_start", "subject_id"], ignore_index=True)
+    out = pd.DataFrame(rows, columns=list(CORRECTED_COLUMNS)).sort_values(["t_start", "subject_id"], ignore_index=True)
+    out.attrs["zero"] = zero
+    return out

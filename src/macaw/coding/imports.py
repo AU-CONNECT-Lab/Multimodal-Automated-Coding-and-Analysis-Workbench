@@ -31,10 +31,13 @@ class ImportReport:
     notes: list[str] = field(default_factory=list)
 
 
-def import_coding(config, recording: Recording, path: Path, coder: str) -> ImportReport:
+def import_coding(config, recording: Recording, path: Path, coder: str, against: str | None = None) -> ImportReport:
     """Importing again replaces this coder's codes for the same person and tier, and those the same file brought in
-    before, so a tier given to another person or renamed leaves nothing behind; other coders' stay."""
+    before, so a tier given to another person or renamed leaves nothing behind; other coders' stay. With against, the
+    file's times are on that device's own clock and are put on the recording's."""
     raw = read_coding_file(path)
+    if against is not None:
+        raw = _on_recording_clock(raw, config, recording, against, path)
     people = [str(subject.subject_id) for subject in recording.subjects]
     layout = layout_for(config, create=False)
     directory = layout.annotations_path(recording.recording_id)
@@ -77,6 +80,25 @@ def import_coding(config, recording: Recording, path: Path, coder: str) -> Impor
     sources.parent.mkdir(parents=True, exist_ok=True)
     sources.write_text(json.dumps(found, indent=1, ensure_ascii=False), encoding="utf-8")
     return report
+
+
+def _on_recording_clock(raw: pd.DataFrame, config, recording: Recording, against: str, path: Path) -> pd.DataFrame:
+    from macaw.media.align import apply_offset_table
+
+    if raw.attrs.get("zero"):
+        raise ConfigError(f"{Path(path).name} was written by macaw and is on the recording's clock already; leave out --against")
+    timed = apply_offset_table(recording, layout_for(config, create=False).offset_table_path(recording.recording_id))
+    names = [item.name for item in timed.media]
+    if against not in names:
+        raise ConfigError(f"--against takes a device of {recording.recording_id}: {', '.join(names)}")
+    item = timed.media_named(against)
+    # where ELAN plays that file from a moment of its own, its time 0 is that moment
+    origin = raw.attrs.get("origins", {}).get(Path(item.path).name, 0.0)
+    out = raw.copy()
+    for column in ("t_start", "t_end"):
+        out[column] = item.offset_s + (out[column] + origin) * item.clock_scale
+    out.attrs = dict(raw.attrs)
+    return out
 
 
 def _place(file_tier: str, participant: str | None, rows: pd.DataFrame, imports: dict, people: list[str], coder: str, held: pd.DataFrame):

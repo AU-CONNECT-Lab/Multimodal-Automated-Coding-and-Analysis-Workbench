@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from macaw.exceptions import EafError, InputNotFoundError
-from macaw.interop.eaf import _elan, timed_annotations
+from macaw.interop.eaf import _elan, elan_zero_of, timed_annotations
 from macaw import people_tables
 
 SUFFIXES = (".eaf", ".csv", ".tsv", ".xlsx")
@@ -35,7 +35,7 @@ def _read_eaf(path: Path) -> pd.DataFrame:
         eaf = Eaf(str(path))
     except Exception as error:
         raise EafError(f"{path}: could not be read as ELAN ({error})") from error
-    rows, untimed = [], {}
+    rows, untimed, zero = [], {}, elan_zero_of(eaf)
     for name in eaf.get_tier_names():
         attributes = eaf.tiers[name][2] if name in eaf.tiers else {}
         timed, missing = timed_annotations(eaf, name)
@@ -48,13 +48,18 @@ def _read_eaf(path: Path) -> pd.DataFrame:
                     "participant": attributes.get("PARTICIPANT") or None,
                     "annotator": attributes.get("ANNOTATOR") or None,
                     "linguistic_type": attributes.get("LINGUISTIC_TYPE_REF") or None,
-                    "t_start": annotation[0] / 1000.0,
-                    "t_end": annotation[1] / 1000.0,
+                    "t_start": annotation[0] / 1000.0 + zero,
+                    "t_end": annotation[1] / 1000.0 + zero,
                     "label": str(annotation[2] or "").strip(),
                 }
             )
     table = pd.DataFrame(rows, columns=list(RAW_COLUMNS))
     table.attrs["untimed"] = untimed
+    # a file macaw wrote is on the recording's clock once its zero is added; another's media, by its offset in ELAN
+    table.attrs["zero"] = zero
+    table.attrs["origins"] = {
+        Path(str(media.get("MEDIA_URL") or "")).name: float(media.get("TIME_ORIGIN") or 0) / 1000.0 for media in eaf.media_descriptors
+    }
     return table
 
 

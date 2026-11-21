@@ -250,3 +250,23 @@ class TestImport:
     def test_a_missing_file_is_reported(self, tmp_path):
         with pytest.raises(InputNotFoundError):
             import_eaf(tmp_path / "nope.eaf", recording_id="r")
+
+
+def test_every_file_lines_up_from_where_the_last_one_began_and_times_come_back_on_the_recording_s_clock(make_annotations, tmp_path):
+    from pympi.Elan import Eaf
+
+    from macaw.project.recording import MediaFile
+
+    media = [
+        MediaFile(path=tmp_path / f"{name}.mp4", kind="video", device=name, offset_s=offset)
+        for name, offset in (("reference", 0.0), ("late", 2.0), ("early", -1.0))
+    ]
+    recording = SimpleNamespace(recording_id="r", media=media)
+    frame = make_annotations([{"t_start": 1.0, "t_end": 1.5}, {"t_start": 5.0, "t_end": 6.0}])
+    export_eaf(frame, recording, tmp_path / "a.eaf")
+    eaf = Eaf(str(tmp_path / "a.eaf"))
+    origins = {descriptor["MEDIA_URL"].rsplit("/", 1)[-1]: descriptor.get("TIME_ORIGIN") for descriptor in eaf.media_descriptors}
+    assert {name: int(value or 0) for name, value in origins.items()} == {"reference.mp4": 2000, "late.mp4": 0, "early.mp4": 3000}
+    # the code at 1 s, before the late camera began, cannot be in ELAN; the one at 5 s comes back where it was
+    back = import_eaf(tmp_path / "a.eaf", recording_id="r")
+    assert back[["t_start", "t_end"]].values.tolist() == [[5.0, 6.0]]

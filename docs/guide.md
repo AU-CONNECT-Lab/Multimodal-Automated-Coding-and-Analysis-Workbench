@@ -371,7 +371,7 @@ Run one of the following commands in the project folder. Each reports where it s
 : For each participant, whether they are speaking at each second, for sequence analysis.
 
 `macaw export -f eaf`
-: One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`). A linked file that began before the reference device is placed by its offset; one that began after it is linked without an offset and plays early in ELAN, and a drift correction is not carried into ELAN. The export names any such file.
+: One ELAN file per recording containing the machine codes, as a starting point for manual coding, which can be imported again ({ref}`own-coding`). Every linked file is placed by its offset, so all play in step in ELAN. ELAN accepts no negative offset, so its time 0 is the moment the last file began; the file records that moment, and importing it again puts every time back on the recording's clock. Codes that start before that moment are not in the file, and the export says how many. A drift correction is not carried into ELAN, and the export names any file it concerns.
 
 `macaw export -f skeleton`
 : Each participant's body keypoints frame by frame, one CSV per recording, in pixels with the detector's confidence for each point. With several calibrated cameras ({ref}`three-d`), a second file gives the points in metres.

@@ -554,6 +554,12 @@ class ASRExtractor(Extractor):
         layout = layout_for(self.config, create=False)
         rid = recording.recording_id
         corrected = read_transcript_eaf(layout.corrected_transcript_path(rid), turn_takers(self.config, recording))
+        zero, recognised = corrected.attrs.get("zero", 0.0), layout.recognised_transcript_path(rid)
+        if zero > 0 and recognised.is_file():
+            # the recogniser's lines before ELAN's time 0, which the file could not hold
+            earlier = read_transcript(recognised)
+            earlier = earlier.loc[earlier["t_start"] < zero, list(corrected.columns)]
+            corrected = pd.concat([earlier, corrected], ignore_index=True).sort_values(["t_start", "subject_id"], ignore_index=True)
         utterances = corrected.assign(
             recording_id=rid,
             utterance_index=corrected.groupby("subject_id").cumcount().astype("int64"),

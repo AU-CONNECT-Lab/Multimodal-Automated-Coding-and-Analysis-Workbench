@@ -165,3 +165,20 @@ def test_exporting_again_keeps_the_file_a_person_may_have_corrected(project, tmp
     kept = [path for path in tmp_path.glob("t.*.eaf")]
     assert again.exit_code == 0 and len(kept) == 1 and "a doggy" in kept[0].read_text(encoding="utf-8")
     assert f"the earlier one kept as {kept[0].name}" in again.output
+
+
+def test_lines_before_elan_s_time_0_are_kept_from_the_recogniser_when_the_correction_is_read(project, tmp_path):
+    from macaw.project.recording import MediaFile
+
+    # one file began 2 s into the recording, so ELAN's time 0 lies there and the parent's line at 1 s is not in the file
+    late = SimpleNamespace(**{**project.recording.__dict__, "media": [MediaFile(path=tmp_path / "late.mp4", kind="video", device="late", offset_s=2.0)]})
+    path = export_transcript_eaf(TRANSCRIPT, DROPPED.iloc[0:0], late, tmp_path / "t.eaf")
+    back = read_transcript_eaf(path, ["parent", "child"])
+    assert back[["subject_id", "t_start", "text"]].values.tolist() == [["child", 3.0, "doggy"]] and back.attrs["zero"] == 2.0
+    layout = layout_for(project.resolved)
+    layout.corrected_transcript_path("003").parent.mkdir(parents=True, exist_ok=True)
+    layout.corrected_transcript_path("003").write_bytes(path.read_bytes())
+    write_transcript(TRANSCRIPT, layout.recognised_transcript_path("003"))
+    prep = PrepInfo(recording_id="003", t_origin_s=0.5, duration_s=10.0, sample_rate=16000)
+    utterances, _ = ASRExtractor(project.resolved)._from_correction(project.recording, prep, [])
+    assert utterances[["subject_id", "t_start"]].values.tolist() == [["parent", 0.5], ["child", 2.5]]

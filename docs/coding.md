@@ -323,7 +323,7 @@ macaw import-codes coding/anna --coder anna
 
 Importing again under the same name replaces that coder's codes for the same participant and tier, and everything the same file brought in before, so that a tier first given to the wrong participant or under the wrong name leaves nothing behind once the settings are put right; the command lists what it removed. Other coders' codes are kept.
 
-Accepted files are ELAN files (`.eaf`) and tables (`.csv`, `.tsv` or `.xlsx`) with the columns `tier`, `start`, `end` and `code`, and optionally `person`, as most coding programs can export. Start and end are given in seconds or as a clock time such as `1:02.5`, counted from the start of the recording's video, as ELAN shows them when that file is coded.
+Accepted files are ELAN files (`.eaf`) and tables (`.csv`, `.tsv` or `.xlsx`) with the columns `tier`, `start`, `end` and `code`, and optionally `person`, as most coding programs can export. Start and end are given in seconds or as a clock time such as `1:02.5`. They are read on the recording's clock, which is that of the file the recording's offsets are measured against. Coding timed on another device's file is imported with `--against` and that device's name, for example `macaw import-codes coding/anna --coder anna --against side_camera`, which places each time by that file's offset; for an ELAN file, a time origin set there for that file's media is taken into account. An ELAN file written by `macaw export -f eaf` or `macaw transcript export` is on the recording's clock already and needs no `--against`.
 
 Which participant each tier belongs to, and under which name it is stored, is stated once in the settings, using each tier's name as it appears in the files:
 

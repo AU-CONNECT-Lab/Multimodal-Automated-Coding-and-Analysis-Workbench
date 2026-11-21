@@ -152,6 +152,9 @@ def import_codes(
     paths: list[Path] = typer.Argument(..., help="Coding files (.eaf, .csv, .tsv, .xlsx), or folders of them."),
     coder: str = typer.Option(..., "--coder", help="Who coded. Importing again replaces this coder's codes on the same tiers."),
     recording: str = typer.Option(None, "--recording", "-r", help="The recording, when one file's name does not start with it."),
+    against: str = typer.Option(
+        None, "--against", help="The device whose file the coding was timed on, when not the one the recording's clock is set by.",
+    ),
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
 ) -> None:
     """Bring your own coding in beside the machine's, for macaw agreement, describe-codes and the gesture measures.
@@ -173,7 +176,7 @@ def import_codes(
         raise MacawError(f"{', '.join(unnamed)}: the name does not start with a recording; rename the file or give -r")
     for path, owner in owners.items():
         own = resolve_config(config, recording_id=owner)
-        report = import_coding(own, build_recording(owner, own), path, coder)
+        report = import_coding(own, build_recording(owner, own), path, coder, against)
         kept = ", ".join(f"{person or 'everyone'} {tier} {n}" for (person, tier), n in sorted(report.kept.items(), key=str))
         typer.echo(f"{owner}  {path.name}  {coder}: {kept or 'nothing brought in'}")
         for line in report.left_out:
