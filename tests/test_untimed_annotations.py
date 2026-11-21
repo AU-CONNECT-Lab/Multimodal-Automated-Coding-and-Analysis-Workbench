@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 pytest.importorskip("pympi")
@@ -27,12 +26,3 @@ def test_an_annotation_without_a_time_of_its_own_is_left_out_and_counted(tmp_pat
     path.write_text(UNALIGNED, encoding="utf-8")
     table = read_coding_file(path)
     assert table["label"].tolist() == ["y"] and table.attrs["untimed"] == {"gaze": 1}
-
-
-def test_frames_are_written_into_a_folder_named_with_letters_beyond_ascii(tmp_path):
-    from macaw.qc.overlay import _write_jpeg
-
-    folder = tmp_path / "项目_renders"
-    folder.mkdir()
-    _write_jpeg(folder / "a.jpg", np.zeros((8, 8, 3), dtype=np.uint8))
-    assert (folder / "a.jpg").read_bytes()[:2] == b"\xff\xd8"

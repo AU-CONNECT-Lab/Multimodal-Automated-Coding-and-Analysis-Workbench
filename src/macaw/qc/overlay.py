@@ -11,6 +11,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors.video.pose.skeleton import SKELETON_EDGES, STANDARD_JOINTS
+from macaw.media.images import write_image
 from macaw.media.probe import jumps_exactly, probe
 from macaw.project.recording import Recording
 from macaw.store.schema import coerce_frame, empty_frame
@@ -166,14 +167,6 @@ def _targets(row, videos: list) -> list:
     return videos
 
 
-def _write_jpeg(path: Path, image: np.ndarray) -> None:
-    # encoded here and written by Python, as OpenCV's own writer fails without a word on a path with letters such as 项目
-    ok, encoded = cv2_module().imencode(".jpg", image)
-    if not ok:
-        raise ExternalToolError(f"could not encode the frame for {path.name}")
-    path.write_bytes(encoded.tobytes())
-
-
 def read_frames(source: Path, wanted) -> Iterator[tuple[int, np.ndarray]]:
     """(frame, picture) for each wanted frame number of a video that it has, in frame order."""
     cv2 = cv2_module()
@@ -244,9 +237,9 @@ def render_review(
                 drawn = draw_overlay(image, people, subjects, header)
                 if things is not None and not things.empty:
                     drawn = draw_things(drawn, things[(things["frame"] == frame) & (things["video"] == device)])
-                _write_jpeg(out_dir / name, drawn)
+                write_image(out_dir / name, drawn)
                 if plain_dir is not None:
-                    _write_jpeg(plain_dir / name, image)
+                    write_image(plain_dir / name, image)
                 entries.append(
                     {
                         "file": name,
