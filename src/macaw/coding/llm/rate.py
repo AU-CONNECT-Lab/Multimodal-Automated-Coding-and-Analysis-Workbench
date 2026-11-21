@@ -88,7 +88,7 @@ class RatingExtractor(Extractor):
     """Never registered itself: each version under coding.ratings is a step of its own."""
 
     name = "coding.rate"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "coding"
     requires = (ASRExtractor.name, MediaPrepExtractor.name)
