@@ -269,6 +269,14 @@ class TestExtractor:
         assert [label for label, row in rows.items() if row["in_view"]] == ["book"]
         assert rows["ball"]["score"] == 0.3 and rows["ball"]["outline"] and rows["cup"]["outline"] == [] and "area" not in rows["cup"]
 
+    def test_box_centre_and_area_are_those_of_what_the_outline_holds(self):
+        ring = square(10, 10, 30, 30) & ~square(15, 15, 25, 25)
+        # a speck far off, which the outline leaves out
+        ring[50, 55] = True
+        row = outline_rows("front.mp4", 0, {"ring": (ring, 0.9)})[0]
+        assert (row["x0"], row["y0"], row["x1"], row["y1"]) == (10.0, 10.0, 30.0, 30.0)
+        assert (row["cx"], row["cy"], row["area"]) == (20.0, 20.0, 400.0)
+
 
 class TestSettings:
     def test_names_are_checked(self):

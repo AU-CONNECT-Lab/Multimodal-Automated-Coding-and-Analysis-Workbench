@@ -18,7 +18,7 @@ from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
 from macaw.extractors.video.objects.decisions import ABSENT, STARTS, read_decisions, tracking_key
-from macaw.extractors.video.objects.outline import mask_outline
+from macaw.extractors.video.objects.outline import mask_outline, outlined
 from macaw.project.layout import layout_for
 from macaw.project.recording import MediaFile, Recording
 from macaw.store.schema import Scale
@@ -524,10 +524,12 @@ def outline_rows(video: str, frame: int, seen: dict[str, tuple[np.ndarray, float
         row = {"video": video, "frame": int(frame), "label": name, "score": round(float(present), 4), "in_view": False, "outline": []}
         outline = mask_outline(mask) if mask.any() else []
         if outline:
-            ys, xs = np.nonzero(mask)
+            # box, centre and area of what the outline holds, so they agree with the outline kept and drawn
+            whole = outlined(mask)
+            ys, xs = np.nonzero(whole)
             row.update(
                 x0=float(xs.min()), y0=float(ys.min()), x1=float(xs.max() + 1), y1=float(ys.max() + 1),
-                cx=round(float(xs.mean()) + 0.5, 2), cy=round(float(ys.mean()) + 0.5, 2), area=float(mask.sum()), outline=outline,
+                cx=round(float(xs.mean()) + 0.5, 2), cy=round(float(ys.mean()) + 0.5, 2), area=float(whole.sum()), outline=outline,
                 in_view=bool(present >= IN_VIEW),
             )
         rows.append(row)

@@ -10,8 +10,7 @@ _SPECK = 0.01
 _SIMPLIFY_PX = 1.0
 
 
-def mask_outline(mask: np.ndarray) -> list[list[int]]:
-    """The outer edge of each part of a boolean mask, as flat [x0, y0, x1, y1, ...] lists."""
+def _parts(mask: np.ndarray) -> list[np.ndarray]:
     import cv2
 
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -19,14 +18,28 @@ def mask_outline(mask: np.ndarray) -> list[list[int]]:
     if not areas:
         return []
     largest = max(areas)
+    return [contour for contour, area in zip(contours, areas) if area >= _SPECK * largest]
+
+
+def mask_outline(mask: np.ndarray) -> list[list[int]]:
+    """The outer edge of each part of a boolean mask, as flat [x0, y0, x1, y1, ...] lists."""
+    import cv2
+
     kept = []
-    for contour, area in zip(contours, areas):
-        if area < _SPECK * largest:
-            continue
+    for contour in _parts(mask):
         simple = cv2.approxPolyDP(contour, _SIMPLIFY_PX, True).reshape(-1, 2)
         if len(simple) >= 3:
             kept.append(simple.astype(int).ravel().tolist())
     return kept
+
+
+def outlined(mask: np.ndarray) -> np.ndarray:
+    """The mask as its outline holds it: specks left out, holes filled."""
+    import cv2
+
+    filled = np.zeros(mask.shape, dtype=np.uint8)
+    cv2.drawContours(filled, _parts(mask), -1, 1, thickness=cv2.FILLED)
+    return filled.astype(bool)
 
 
 def polygons(outline) -> list[np.ndarray]:
