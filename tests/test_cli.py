@@ -702,7 +702,7 @@ class TestHiddenVideoExport:
         assert result.exit_code == 0, result.output + str(result.exception)
         assert sorted(path.name for path in out.iterdir()) == ["003_room_faces_hidden.mp4", "003_room_faces_hidden_not_hidden.csv"]
         gaps = pd.read_csv(out / "003_room_faces_hidden_not_hidden.csv")
-        assert gaps.values.tolist() == [["parent", 0.0, 1.0]]
+        assert gaps.values.tolist() == [["parent", 0.0, 1.0]] and list(gaps.columns) == ["subject_id", "copy_start_s", "copy_end_s"]
         assert "Watch each copy before sharing it" in result.output
 
     def test_skeletons_alone_have_nothing_left_to_list(self, filmed):

@@ -316,14 +316,14 @@ def _export_video(config_path: Path, resolved, layout, recording_ids: list[str],
             written += 1
             if hide == "faces":
                 listed = target.with_name(f"{target.stem}_not_hidden.csv")
-                gaps.round({"t_start": 3, "t_end": 3}).to_csv(listed, index=False, encoding="utf-8")
+                gaps.round({"copy_start_s": 3, "copy_end_s": 3}).to_csv(listed, index=False, encoding="utf-8")
                 typer.echo(str(listed))
     if not written:
         raise MacawError(f"No body points under {layout.recordings_dir}. Run the pose steps (macaw run) before exporting.")
     if hide == "faces":
         typer.echo(
             "Heads are blurred only where a body was found. Watch each copy before sharing it; the _not_hidden.csv beside it "
-            "lists when a named person had no blur, in or out of the picture. Bodies, clothes and the room stay visible."
+            "lists when a named person had no blur, in or out of the picture, in seconds of the copy. Bodies, clothes and the room stay visible."
         )
 
 

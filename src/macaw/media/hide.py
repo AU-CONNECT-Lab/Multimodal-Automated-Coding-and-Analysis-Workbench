@@ -29,7 +29,8 @@ _ABOVE_SHOULDERS = 0.6
 _BLUR_CELLS = 4
 _GROUND = 128
 CIRCLE_COLUMNS = ["who", "frame", "x", "y", "r"]
-GAP_COLUMNS = ["subject_id", "t_start", "t_end"]
+# seconds of the hidden copy, where whoever checks it before sharing looks
+GAP_COLUMNS = ["subject_id", "copy_start_s", "copy_end_s"]
 
 
 def head_circles(people: pd.DataFrame) -> pd.DataFrame:
