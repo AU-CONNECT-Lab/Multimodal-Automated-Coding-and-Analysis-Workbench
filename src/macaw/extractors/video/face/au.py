@@ -91,7 +91,7 @@ def _au_scale(backend: str, model: str) -> str:
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = (
@@ -190,7 +190,7 @@ class FaceExtractor(Extractor):
             frames.append(
                 build_long_rows(
                     values=values, scale=Scale.FRAME, recording_id=recording.recording_id, source=self.name,
-                    entities=recording.entities(), subject_id=subject,
+                    entities=recording.entities(), subject_id=subject, camera=views.get(subject),
                 )
             )
             if cfg.landmarks:

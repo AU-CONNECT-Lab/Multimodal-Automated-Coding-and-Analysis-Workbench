@@ -105,8 +105,8 @@ def test_a_column_in_centimetres_names_the_pixels_it_came_from(exported, tmp_pat
 
 def test_the_long_layout_lists_its_own_columns_then_each_measure(exported, tmp_path):
     out, table, sidecar = export(exported, tmp_path, "--long")
-    assert list(table.column[:16]) == list(pd.read_csv(out).columns)
-    assert set(table.column[16:]) == set(pd.read_csv(out).feature)
+    assert list(table.column[:17]) == list(pd.read_csv(out).columns)
+    assert set(table.column[17:]) == set(pd.read_csv(out).feature)
     assert set(sidecar["scale"]["Levels"]) == {"frame", "event", "window", "recording"}
     assert "frame: one video or audio frame" in table.set_index("column").at["scale", "meaning"]
 

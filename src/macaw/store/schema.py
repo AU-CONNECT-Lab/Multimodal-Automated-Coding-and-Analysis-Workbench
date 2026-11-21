@@ -31,6 +31,7 @@ LONG_TABLE_SCHEMA: dict[str, str] = {
     "run": "string",
     "subject_id": "string",
     "subject_id_b": "string",
+    "camera": "string",       # the camera whose picture a measure was taken on; null when not one camera's
     "source": "string",       # extractor name, e.g. "prosody.frame"
     "scale": "string",        # one of Scale
     "t_start": "float64",     # seconds, recording clock

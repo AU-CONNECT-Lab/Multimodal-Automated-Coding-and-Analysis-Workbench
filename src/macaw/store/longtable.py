@@ -90,6 +90,7 @@ def build_long_rows(
     entities: Mapping[str, str | None] | None = None,
     subject_id: str | None = None,
     subject_id_b: str | None = None,
+    camera: str | None = None,
     execution_id: str | None = None,
     config_hash: str | None = None,
 ) -> pd.DataFrame:
@@ -119,6 +120,7 @@ def build_long_rows(
         melted[column] = entities.get(column)
     melted["subject_id"] = subject_id
     melted["subject_id_b"] = subject_id_b
+    melted["camera"] = camera
     melted["source"] = source
     melted["scale"] = scale.value if isinstance(scale, Scale) else scale
     melted["execution_id"] = execution_id

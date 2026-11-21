@@ -26,6 +26,11 @@ from macaw.turns.talk import talk_inputs, talk_params, talk_spans, voices_time_t
 LISTENING_S = "listening_s"
 
 
+def _one_camera(rows: pd.DataFrame) -> str | None:
+    cameras = rows["camera"].dropna().astype(str).unique()
+    return str(cameras[0]) if len(cameras) == 1 else None
+
+
 def producers() -> dict[str, str]:
     """Each movement series a person can be measured on while listening, and the step that gives it."""
     return {**{name: KinematicsExtractor.name for name in _SUBJECT_SPECS}, "motion_energy": MEAExtractor.name}
@@ -39,7 +44,7 @@ def body_lengths() -> set[str]:
 @register_extractor
 class ListeningExtractor(Extractor):
     name = "pose.listening"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.RECORDING
     group = "pose"
     phase = Phase.DERIVE
@@ -117,7 +122,7 @@ class ListeningExtractor(Extractor):
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(values), scale=Scale.RECORDING, recording_id=recording.recording_id, source=self.name,
-                    entities=recording.entities(), subject_id=person,
+                    entities=recording.entities(), subject_id=person, camera=_one_camera(series[series["subject_id"].astype(str) == person]),
                 )
             )
         return concat_long_tables(frames)
@@ -130,7 +135,7 @@ class ListeningExtractor(Extractor):
             path = layout.long_table_path(recording.recording_id) / f"{step}.parquet"
             if path.is_file():
                 frames.append(read_long_table(path, recording_id=recording.recording_id, features=list(wanted)))
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["subject_id", "feature", "t_start", "value"])
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["subject_id", "camera", "feature", "t_start", "value"])
 
     def _specs(self, recording: Recording) -> list[FeatureSpec]:
         layout = layout_for(self.config, create=False)

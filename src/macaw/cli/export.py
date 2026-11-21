@@ -153,7 +153,7 @@ def _in_project_units(config_path: Path, units: str, layout, table: pd.DataFrame
     """Features in metres again in the project's unit, and pixel features too for each recording with a scale;
     scale.csv says which scale. specs holds each recording's own feature specs."""
     from macaw.project.room import CM_PER_UNIT
-    from macaw.project.scale import DEPTH_NOTE, recording_scale, suffix, unit_rows, unusable
+    from macaw.project.scale import DEPTH_NOTE, converts, holds_on, pixel_power, recording_scale, suffix, unit_rows, unusable
     from macaw.qc.checks import RecordingResults
 
     pieces, used, converted = [table], [], 0
@@ -164,13 +164,25 @@ def _in_project_units(config_path: Path, units: str, layout, table: pd.DataFrame
             continue
         own = resolve_config(config_path, recording_id=recording_id)
         scale = recording_scale(own, layout, recording_id)
-        problem = unusable(scale, own, recording_id, RecordingResults(layout, recording_id).keypoints()) if scale is not None else None
+        keypoints = RecordingResults(layout, recording_id).keypoints() if scale is not None else None
+        problem = unusable(scale, own, recording_id, keypoints) if scale is not None else None
         if problem:
             logger.warning("%s: %s; left in pixels", recording_id, problem)
         usable = scale is not None and problem is None
         roles = {subject.subject_id: subject.role or subject.subject_id for subject in build_recording(recording_id, own).subjects}
-        factor = (lambda first, second: scale.factor(roles.get(first, first), roles.get(second, second))) if usable else None
-        found = unit_rows(rows, features, units, factor)
+        cameras = holds_on(scale, keypoints) if usable else set()
+
+        def factor(first, second, camera):
+            return scale.factor(roles.get(first, first), roles.get(second, second)) if converts(cameras, camera) else None
+
+        found = unit_rows(rows, features, units, factor if usable else None)
+        if usable:
+            pixels = rows[rows["feature"].isin([name for name, unit in features.items() if pixel_power(unit)])]
+            left = sorted(set(pixels.loc[[not converts(cameras, camera) for camera in pixels["camera"]], "feature"].astype(str)))
+            if left:
+                logger.info(
+                    "%s: %s stay in pixels, taken on another camera than %s or on no one camera", recording_id, ", ".join(left), scale.video,
+                )
         converted += not found.empty
         pieces.append(found)
         if not usable:

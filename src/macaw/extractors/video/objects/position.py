@@ -44,7 +44,7 @@ def feature(thing: str, camera: str, measure: str) -> str:
 @register_extractor
 class ObjectPositionExtractor(Extractor):
     name = "objects.position"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "objects"
     phase = Phase.DERIVE
@@ -85,7 +85,7 @@ class ObjectPositionExtractor(Extractor):
                 values[feature(name, item.name, "score")] = score["score"].to_numpy(dtype=float)
                 named.append((name, item.name))
                 spans[feature(name, item.name, "in_view")] = values[feature(name, item.name, "in_view")]
-            frames.append(build_long_rows(values=values, scale=Scale.FRAME, **common))
+            frames.append(build_long_rows(values=values, scale=Scale.FRAME, camera=item.name, **common))
             frames.append(_coverage(values["t_start"], {key: spans[key] for key in spans if key in values}, common, (prep.t_origin_s, prep.t_origin_s + prep.duration_s)))
         warnings = [] if named else [QCWarning(
             check=self.name, recording_id=recording.recording_id, subject_id=None, severity="info",

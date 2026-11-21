@@ -35,6 +35,7 @@ from macaw.store import body_model as body_model_store
 from macaw.store import cache as cache_store
 from macaw.store import keypoints as keypoints_store
 from macaw.store import longtable as longtable_store
+from macaw.store.schema import LONG_TABLE_SCHEMA
 
 
 @dataclass
@@ -310,9 +311,10 @@ def _make_key(config, cls, extractor, recording, config_hash):
         extractor_version=cls.version,
         inputs=[*extractor.inputs_for(recording), *([script] if script else []), *files],
         # the rows carry the recording's id, so two recordings with the same files must not share an entry;
-        # who takes part decides what many steps look for (how many voices, whose rows) without being a section of theirs
+        # who takes part decides what many steps look for (how many voices, whose rows) without being a section of theirs;
+        # a new column in the long table makes every step write its rows again
         config_hash=hash_value(
-            [config_hash, recording.recording_id, [subject.subject_id for subject in recording.subjects], extra, used]
+            [config_hash, recording.recording_id, [subject.subject_id for subject in recording.subjects], extra, used, list(LONG_TABLE_SCHEMA)]
         ),
     )
 

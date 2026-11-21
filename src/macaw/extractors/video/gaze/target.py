@@ -214,7 +214,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.8.0"
+    version = "0.9.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "objects.names", "segment", "video", "setup.cameras", "setup.room")
@@ -380,6 +380,8 @@ class GazeTargetExtractor(Extractor):
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities())
         frames = []
         if "gaze_x" in points:
+            # a point in the picture comes only from a backend that reads the gaze camera's picture
+            views = {person: item.name for person, item in recording.views("gaze").items()}
             for subject, mine in points.groupby("subject_id", sort=True):
                 mine = mine.sort_values("t")
                 frames.append(
@@ -392,7 +394,7 @@ class GazeTargetExtractor(Extractor):
                                 **({PEAK: mine[PEAK].to_numpy(dtype=float)} if PEAK in mine else {}),
                             }
                         ),
-                        scale=Scale.FRAME, subject_id=str(subject), **common,
+                        scale=Scale.FRAME, subject_id=str(subject), camera=views.get(str(subject)), **common,
                     )
                 )
         measured = set()

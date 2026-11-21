@@ -159,13 +159,25 @@ def measured_videos(keypoints: pd.DataFrame) -> set[str]:
     return set(seen["video"].astype(str))
 
 
+def holds_on(scale: RecordingScale, keypoints: pd.DataFrame) -> set[str] | None:
+    """The cameras whose pixels the scale converts; None for numbers in the settings, which the user gave for every camera."""
+    if scale.source == MEASURED:
+        return {scale.video}
+    if scale.source == CALIBRATION:
+        # a clip stands for the one camera people are measured on, and unusable says so when there are several
+        videos = measured_videos(keypoints)
+        return videos if len(videos) == 1 else set()
+    return None
+
+
+def converts(cameras: set[str] | None, camera) -> bool:
+    """Whether a row taken on camera is converted by a scale holding on cameras; a row from no one camera never is."""
+    return camera is not None and not pd.isna(camera) and (cameras is None or str(camera) in cameras)
+
+
 def unusable(scale: RecordingScale, config, recording_id: str, keypoints: pd.DataFrame) -> str | None:
     """Why a measured scale cannot convert this recording's pixels; None when it can."""
     videos = sorted(measured_videos(keypoints))
-    if scale.source == MEASURED:
-        elsewhere = [video for video in videos if video != scale.video]
-        if elsewhere:
-            return f"people are measured on {', '.join(elsewhere)} too, not only on {scale.video} where the object was measured"
     if scale.source == CALIBRATION:
         if len(videos) > 1:
             return f"people are measured on {len(videos)} videos ({', '.join(videos)}), and a calibration clip stands for one camera"
@@ -212,8 +224,8 @@ def shown_in(unit: str | None, units: str) -> tuple[float, str | None]:
 
 def unit_rows(rows: pd.DataFrame, features: dict[str, str | None], units: str, factor_of=None) -> pd.DataFrame:
     """A copy of every metre feature's rows, and of every pixel feature's rows where factor_of gives a scale, in the
-    project's unit, each named <feature>_<unit>. factor_of gives the cm per pixel for a (subject_id, subject_id_b)
-    pair, or None to leave those rows in pixels."""
+    project's unit, each named <feature>_<unit>. factor_of gives the cm per pixel for a (subject_id, subject_id_b,
+    camera), or None to leave those rows in pixels."""
     per = CM_PER_UNIT[units]
     metres = {name: power for name, power in ((name, metre_power(unit)) for name, unit in features.items()) if power}
     pixels = {name: power for name, power in ((name, pixel_power(unit)) for name, unit in features.items()) if power} if factor_of else {}
@@ -223,8 +235,10 @@ def unit_rows(rows: pd.DataFrame, features: dict[str, str | None], units: str, f
         exact["value"] = exact["value"].astype(float).to_numpy() * (CM_PER_METRE / per) ** exact["feature"].map(metres).astype(float).to_numpy()
         pieces.append(exact)
     picked = rows[rows["feature"].isin(list(pixels))]
-    for (first, second), group in picked.groupby(["subject_id", "subject_id_b"], dropna=False, observed=True):
-        factor = factor_of(None if pd.isna(first) else str(first), None if pd.isna(second) else str(second))
+    for (first, second, camera), group in picked.groupby(["subject_id", "subject_id_b", "camera"], dropna=False, observed=True):
+        factor = factor_of(
+            None if pd.isna(first) else str(first), None if pd.isna(second) else str(second), None if pd.isna(camera) else str(camera)
+        )
         if factor is None:
             continue
         group = group.copy()

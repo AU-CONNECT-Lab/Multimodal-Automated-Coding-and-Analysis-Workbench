@@ -185,7 +185,7 @@ _MISSING = {
 @register_extractor
 class KinematicsExtractor(Extractor):
     name = "pose.kinematics"
-    version = "0.10.0"
+    version = "0.11.0"
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
@@ -227,6 +227,7 @@ class KinematicsExtractor(Extractor):
                 values=_subject_values(kp, smoothing_s),
                 scale=Scale.FRAME,
                 subject_id=subject_id,
+                camera=picture_of(kp),
                 **common,
             )
             for subject_id, kp in by_subject.items()
@@ -253,6 +254,7 @@ class KinematicsExtractor(Extractor):
                         scale=Scale.FRAME,
                         subject_id=a,
                         subject_id_b=b,
+                        camera=picture_of(view),
                         **common,
                     )
                 )
@@ -360,7 +362,7 @@ class KinematicsExtractor(Extractor):
                     {"t_start": _frame_times(kp_a).reindex(values.index).to_numpy(), measure.name: values.to_numpy()}
                 )
                 rows.append(build_long_rows(
-                    values=table, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, **common
+                    values=table, scale=Scale.FRAME, subject_id=a, subject_id_b=None if b == a else b, camera=picture_of(kp_a), **common
                 ))
                 if measure.below is not None:
                     summary, coded = below_outputs(measure.name, measure.below, a, b, table["t_start"], table[measure.name], common)
@@ -425,6 +427,14 @@ def _pair_rows(keypoints: pd.DataFrame, recording: Recording, a: str, b: str) ->
 
 def _keypoints_file(config, recording_id: str) -> Path:
     return layout_for(config, create=False).keypoints_path(recording_id) / f"{PoseExtractor.name}.parquet"
+
+
+def picture_of(kp: pd.DataFrame) -> str | None:
+    """The camera whose picture these keypoints are on; None for points in the room or from several cameras."""
+    if (kp["units"] == UNITS_METRE).any():
+        return None
+    videos = kp["video"].dropna().astype(str).unique()
+    return str(videos[0]) if len(videos) == 1 else None
 
 
 def _length_unit(keypoints: pd.DataFrame) -> str:
@@ -593,7 +603,7 @@ def postural_openness(kp: pd.DataFrame) -> pd.Series:
 def body_size_row(kp: pd.DataFrame, subject_id: str, common: dict) -> pd.DataFrame:
     times = _frame_times(kp)
     values = pd.DataFrame({"t_start": [float(times.min())], "t_end": [float(times.max())], BODY_SIZE: [_body_size(kp)]})
-    return build_long_rows(values=values, scale=Scale.RECORDING, subject_id=subject_id, **common)
+    return build_long_rows(values=values, scale=Scale.RECORDING, subject_id=subject_id, camera=picture_of(kp), **common)
 
 
 def _body_size(kp: pd.DataFrame) -> float:

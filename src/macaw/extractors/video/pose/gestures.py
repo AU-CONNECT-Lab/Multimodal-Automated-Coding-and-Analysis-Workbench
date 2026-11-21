@@ -18,6 +18,7 @@ from macaw.extractors.video.pose.kinematics import (
     _keypoints_file,
     _length_unit,
     _points,
+    picture_of,
     _smoothed_derivative,
     _xy,
     joined_annotations,
@@ -135,7 +136,7 @@ _BOTH_HANDS_MISSING = {
 @register_extractor
 class GestureExtractor(Extractor):
     name = "pose.gestures"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.EVENT
     group = "pose"
     phase = Phase.DERIVE
@@ -166,7 +167,7 @@ class GestureExtractor(Extractor):
             times, sides, placed = self._tracks(kp)
             values = measure_gestures(times, sides, placed, own, still_speed=cfg.still_speed, peak_prominence=cfg.peak_prominence, both_hands=cfg.holds == "both_hands")
             warnings += _unseen(self.name, recording, str(subject_id), values, "was tracked")
-            frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), **common))
+            frames.append(build_long_rows(values=values, scale=Scale.EVENT, subject_id=str(subject_id), camera=picture_of(kp), **common))
             moments = gesture_moments(times, sides, own, still_speed=cfg.still_speed, peak_prominence=cfg.peak_prominence, both_hands=cfg.holds == "both_hands")
             coded += _moment_annotations(self.name, recording, str(subject_id), moments, suffix="")
         rows = concat_long_tables(frames)

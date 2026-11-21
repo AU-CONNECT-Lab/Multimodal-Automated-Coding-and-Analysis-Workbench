@@ -659,6 +659,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
     changes over the recording. No scale, nothing to check."""
     from macaw.extractors.video.pose.keypoints import measured_views
     from macaw.project.scale import MEASURED, apparent_size, recording_scale, size_change, unusable
+    from macaw.project.scale import measured_videos as measured_videos_of
 
     rid = recording.recording_id
 
@@ -678,6 +679,11 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
     problem = unusable(scale, config, rid, keypoints)
     if problem:
         warnings.append(warning(None, "warn", f"{problem}; exports leave this recording in pixels"))
+    elsewhere = sorted(video for video in measured_videos_of(keypoints) if scale.source == MEASURED and video != scale.video)
+    if elsewhere:
+        warnings.append(warning(
+            None, "info", f"the scale was measured on {scale.video}, so measures in pixels taken on {', '.join(elsewhere)} stay in pixels",
+        ))
     roles = {subject.subject_id: subject.role or subject.subject_id for subject in recording.subjects}
     for subject_id, view in sorted(measured_views(keypoints, recording).items()):
         if scale.source == MEASURED and view != scale.video:

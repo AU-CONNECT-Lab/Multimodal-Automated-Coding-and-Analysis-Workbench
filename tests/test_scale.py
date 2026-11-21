@@ -18,6 +18,8 @@ from macaw.project.scale import (
     MEASURED,
     Measurement,
     apparent_size,
+    converts,
+    holds_on,
     in_unit,
     unit_rows,
     pixel_power,
@@ -81,10 +83,10 @@ def clip(project, name="lab.mp4", size="64x48"):
     return name
 
 
-def rows_of(values: dict, subject="parent", subject_b=None) -> pd.DataFrame:
+def rows_of(values: dict, subject="parent", subject_b=None, camera="room") -> pd.DataFrame:
     rows = build_long_rows(
         values=pd.DataFrame({"t_start": [0.0, 1.0], **values}),
-        scale=Scale.FRAME, recording_id="003", source="pose.kinematics", subject_id=subject,
+        scale=Scale.FRAME, recording_id="003", source="pose.kinematics", subject_id=subject, camera=camera,
     )
     rows["subject_id_b"] = subject_b
     return rows
@@ -100,7 +102,7 @@ class TestUnits:
 
     def test_lengths_scale_once_and_areas_twice(self):
         rows = rows_of({"hand_distance": [100.0, 40.0], "extent": [400.0, 0.0], "f0_hz": [200.0, 210.0]})
-        converted = unit_rows(rows, {"hand_distance": "px", "extent": "px^2", "f0_hz": "Hz"}, "cm", lambda first, second: 0.5)
+        converted = unit_rows(rows, {"hand_distance": "px", "extent": "px^2", "f0_hz": "Hz"}, "cm", lambda first, second, camera: 0.5)
         values = converted.groupby("feature")["value"].apply(list).to_dict()
         assert values == {"hand_distance_cm": [50.0, 20.0], "extent_cm": [100.0, 0.0]}
 
@@ -111,7 +113,7 @@ class TestUnits:
         assert inches.keys() == {"wrist_speed_3d_in", "extent_3d_in"}
         assert inches["wrist_speed_3d_in"] == pytest.approx([39.3701, 19.685], rel=1e-4)
         assert inches["extent_3d_in"] == pytest.approx([15.5, 0.0], rel=1e-3)
-        scaled = unit_rows(rows, features, "m", lambda first, second: 0.5).groupby("feature")["value"].apply(list).to_dict()
+        scaled = unit_rows(rows, features, "m", lambda first, second, camera: 0.5).groupby("feature")["value"].apply(list).to_dict()
         assert scaled["hand_distance_m"] == pytest.approx([0.5, 0.2]) and scaled["wrist_speed_3d_m"] == pytest.approx([1.0, 0.5])
         assert in_unit("m/s", "in") == "in/s" and in_unit("px^2", "m") == "m^2"
 
@@ -122,8 +124,22 @@ class TestUnits:
 
     def test_rows_without_a_factor_stay_in_pixels_only(self):
         rows = concat_long_tables([rows_of({"hand_distance": [100.0, 40.0]}), rows_of({"hand_distance": [10.0, 20.0]}, subject="child")])
-        converted = unit_rows(rows, {"hand_distance": "px"}, "cm", lambda first, second: 0.5 if first == "parent" else None)
+        converted = unit_rows(rows, {"hand_distance": "px"}, "cm", lambda first, second, camera: 0.5 if first == "parent" else None)
         assert set(converted["subject_id"]) == {"parent"} and converted["value"].tolist() == [50.0, 20.0]
+
+    def test_only_rows_taken_on_the_scales_camera_are_converted(self):
+        rows = concat_long_tables([
+            rows_of({"hand_distance": [100.0, 40.0]}), rows_of({"toy_side_area": [400.0, 100.0]}, subject=None, camera="side"),
+            rows_of({"reprojection_px": [2.0, 3.0]}, camera=None),
+        ])
+        scale = SimpleNamespace(source=MEASURED, video="room")
+        cameras = holds_on(scale, pd.DataFrame())
+        features = {"hand_distance": "px", "toy_side_area": "px^2", "reprojection_px": "px"}
+        converted = unit_rows(rows, features, "cm", lambda first, second, camera: 0.5 if converts(cameras, camera) else None)
+        assert set(converted["feature"]) == {"hand_distance_cm"}
+        # numbers in the settings hold for every camera, but never for a measure from no one camera
+        converted = unit_rows(rows, features, "cm", lambda first, second, camera: 0.5 if converts(None, camera) else None)
+        assert set(converted["feature"]) == {"hand_distance_cm", "toy_side_area_cm"}
 
 
 class TestScale:
@@ -274,6 +290,27 @@ def test_an_export_gives_each_person_their_own_centimetres(project, tmp_path):
     assert set(used.source) == {HAND} and used.holds.str.contains("as far from the camera").all()
 
 
+def test_an_object_measured_on_one_camera_converts_only_that_cameras_pixels(project, tmp_path):
+    layout = layout_for(resolve_config(project))
+    write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
+    directory = layout.long_table_path("003")
+    directory.mkdir(parents=True)
+    concat_long_tables([
+        rows_of({"hand_distance": [100.0, 50.0]}), rows_of({"hand_distance": [70.0, 80.0]}, subject="child", camera="side"),
+    ]).to_parquet(directory / "pose.kinematics.parquet", index=False)
+    manifest = FeatureManifest()
+    manifest.add(FeatureSpec(name="hand_distance", description="", unit="px", scale=Scale.FRAME, group="pose", extractor="pose.kinematics", extractor_version="0.4.0"))
+    write_manifest(manifest, layout.manifest_fragment_path("003", "pose.kinematics"))
+    out = tmp_path / "features.csv"
+    result = runner.invoke(app, ["export", "-c", str(project), "--long", "--out", str(out)])
+    assert result.exit_code == 0, said(result)
+    table = pd.read_csv(out)
+    converted = table[table.feature == "hand_distance_cm"]
+    assert set(converted.subject_id) == {"parent"} and set(converted.camera) == {"room"}
+    assert converted.value.tolist() == pytest.approx([20.0, 10.0])
+    assert set(table[table.feature == "hand_distance"].camera) == {"room", "side"}
+
+
 def test_a_parquet_export_holds_the_same_table_as_the_csv(project, tmp_path):
     _pixel_measures(project)
     tables = {}
@@ -350,7 +387,7 @@ class TestCheck:
         layout = layout_for(resolve_config(project))
         write_measurements([Measurement("room", 5.0, [[0, 0], [30, 40]], 10.0)], layout.scale_path("003"))
         outcome = check_scale(self.recording(), resolve_config(project), self.results(project, person("parent", n_frames=60, fps=5.0)))
-        assert any("not only on room" in warning.message for warning in outcome.warnings)
+        assert any("measured on room, so measures in pixels taken on" in warning.message and warning.severity == "info" for warning in outcome.warnings)
 
     def test_a_clip_named_but_never_measured_is_said(self, project):
         settings(project, "scale:\n  calibration: lab.mp4\n")

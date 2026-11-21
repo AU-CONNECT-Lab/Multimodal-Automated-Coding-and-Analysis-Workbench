@@ -56,7 +56,7 @@ def on_spans(times, on) -> pd.DataFrame:
 @register_extractor
 class ObjectTouchExtractor(Extractor):
     name = "objects.touch"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.FRAME
     group = "objects"
     phase = Phase.DERIVE
@@ -115,7 +115,7 @@ class ObjectTouchExtractor(Extractor):
             if not counted:
                 warnings.append(self._warning(recording, subject_id, "warn", f"no thing is followed on {video}, the camera this person's body is measured on"))
                 continue
-            frames.append(build_long_rows(values=values.reset_index(drop=True), scale=Scale.FRAME, subject_id=subject_id, **common))
+            frames.append(build_long_rows(values=values.reset_index(drop=True), scale=Scale.FRAME, subject_id=subject_id, camera=video, **common))
             warnings.append(self._warning(recording, subject_id, "info", f"stretches with a hand on a thing: {', '.join(counted)} (read from the picture: over the thing as the camera sees it)"))
         rows = concat_long_tables(frames)
         return ExtractorResult(

@@ -56,6 +56,12 @@ FIXED: dict[str, tuple[str, str | None, str]] = {
     "subject_id_b": (
         "The second person of a pair, for measures between two people.", None, "Empty for a row of one person or of the recording as a whole.",
     ),
+    "camera": (
+        "The camera whose picture the measure was taken on; a measure in pixels holds only within that camera's picture, "
+        "and is converted with a scale only where the scale was measured on that camera.",
+        None,
+        "Empty for a measure not taken on one camera's picture, such as one from sound, from 3-D points or from several cameras.",
+    ),
     "t_start": ("Start of the span the row covers, on the recording's clock.", "s", NEVER),
     "t_end": ("End of the span the row covers, on the recording's clock.", "s", NEVER),
     "source": ("The step that wrote the row.", None, NEVER),
