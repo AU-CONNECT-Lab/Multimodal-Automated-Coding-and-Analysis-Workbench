@@ -58,13 +58,19 @@ def realsense(path: Path) -> Source:
     unit_m = float(device.first_depth_sensor().get_depth_scale())
     rgb = streams[rs.stream.color].format() == rs.format.rgb8
 
+    fps = float(streams[rs.stream.color].fps())
+
     def shots() -> Iterator[Shot]:
         align = rs.align(rs.stream.color)
         try:
             while True:
                 try:
                     frames = pipe.wait_for_frames(5000)
-                except RuntimeError:
+                except RuntimeError as error:
+                    # the end of the file and a file that breaks off both stop the frames coming
+                    stopped = broke_off(device.as_playback(), fps)
+                    if stopped:
+                        raise MacawError(f"{path.name} {stopped}: {error}") from None
                     return
                 aligned = align.process(frames)
                 picture, depth = aligned.get_color_frame(), aligned.get_depth_frame()
@@ -75,7 +81,13 @@ def realsense(path: Path) -> Source:
         finally:
             pipe.stop()
 
-    return Source(colour, unit_m, float(streams[rs.stream.color].fps()), shots(), notes)
+    return Source(colour, unit_m, fps, shots(), notes)
+
+
+def broke_off(playback, fps: float) -> str | None:
+    """Where a playback that gave no more frames stopped, when that is more than a frame before the file's end."""
+    at, length = playback.get_position() / 1e9, playback.get_duration().total_seconds()
+    return f"stops giving frames at {at:.2f} s of {length:.2f} s" if length - at > 1.0 / fps else None
 
 
 def kinect(path: Path) -> Source:
@@ -133,10 +145,15 @@ def import_recording(path: Path, out: Path) -> dict:
     reader = {".bag": realsense, ".mkv": kinect}.get(path.suffix.lower())
     if reader is None:
         raise MacawError(f"{path.name}: give a RealSense .bag or an Azure Kinect or Orbbec Femto .mkv")
-    source = reader(path)
     folder = out / DEPTH_FOLDER
-    folder.mkdir(parents=True, exist_ok=True)
     video = out / f"{path.stem}.mp4"
+    # images left from another import would be paired with frames past this video's end
+    there = [item.name for item in (out.iterdir() if out.is_dir() else []) if item.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv") and item.resolve() != path.resolve()]
+    if (folder.is_dir() and any(folder.glob("*.png"))) or there:
+        held = ", ".join([*([f"{DEPTH_FOLDER}/"] if folder.is_dir() and any(folder.glob("*.png")) else []), *there])
+        raise MacawError(f"{out} already holds {held}; move them away or import into an empty folder")
+    source = reader(path)
+    folder.mkdir(parents=True, exist_ok=True)
     written = write_folder(source, video, folder)
     return {"video": video, "depth": folder, **written, "notes": source.notes}
 

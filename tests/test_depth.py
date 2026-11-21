@@ -281,3 +281,32 @@ def test_the_depth_steps_run_again_when_what_they_read_from_earlier_steps_change
         path.write_text("key", encoding="utf-8")
     assert stamps["prep.video"] in DepthPrepExtractor(config).inputs_for(recording)
     assert set(stamps.values()) <= set(DepthPoseExtractor(config).inputs_for(recording))
+
+
+def test_a_recording_that_breaks_off_is_told_from_one_played_to_its_end():
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from macaw.media.depth_import import broke_off
+
+    def playback(at_s, length_s):
+        return SimpleNamespace(get_position=lambda: int(at_s * 1e9), get_duration=lambda: timedelta(seconds=length_s))
+
+    assert broke_off(playback(59.99, 60.0), 30.0) is None
+    assert broke_off(playback(12.5, 60.0), 30.0) == "stops giving frames at 12.50 s of 60.00 s"
+
+
+def test_a_folder_that_holds_an_earlier_import_is_not_imported_into(tmp_path):
+    from macaw.exceptions import MacawError
+    from macaw.media.depth_import import DEPTH_FOLDER, import_recording
+
+    source = tmp_path / "kinect" / "take2.mkv"
+    (tmp_path / "kinect" / DEPTH_FOLDER).mkdir(parents=True)
+    source.write_bytes(b"")
+    (tmp_path / "kinect" / DEPTH_FOLDER / "000000.png").write_bytes(b"")
+    with pytest.raises(MacawError, match="already holds depth/"):
+        import_recording(source, tmp_path / "kinect")
+    (tmp_path / "kinect" / DEPTH_FOLDER / "000000.png").unlink()
+    (tmp_path / "kinect" / "take1.mp4").write_bytes(b"")
+    with pytest.raises(MacawError, match="already holds take1.mp4"):
+        import_recording(source, tmp_path / "kinect")
