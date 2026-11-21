@@ -1055,3 +1055,23 @@ def test_the_unit_table_carries_what_was_said_and_the_line_before(monkeypatch):
     assert list(out.columns) == ["recording_id", "subject_id", "tier", "t_start", "t_end", "words", "before", "ann"]
     assert out["words"].tolist() == ["where is it?", "it is red", "ok", ""]
     assert out["before"].tolist() == ["", "mother: where is it?", "child: it is red", "mother: ok"]
+
+
+def test_a_codebook_too_long_for_the_models_context_stops_the_coding_after_one_request(monkeypatch, tmp_path):
+    monkeypatch.setattr(module, "load_transcript", transcript_of(TALK))
+    backend = CountingBackend(label_by_text_and_seed, context=50)
+    kept = tmp_path / "answers.jsonl"
+    with pytest.raises(LLMBackendError, match="OLLAMA_CONTEXT_LENGTH"):
+        sample_labels(coding_units(PER_TRACK, RECORDING, "utterance"), CODEBOOK, backend, LLMSection(model="tiny", n_samples=3, batch_size=1), kept_at=kept)
+    # the answer to a prompt the server may have cut is not kept for the next try
+    assert len(backend.calls) == 1 and (not kept.is_file() or not kept.read_text(encoding="utf-8").strip())
+
+
+def test_an_ollama_model_named_without_its_tag_is_found_as_latest(monkeypatch):
+    from macaw.coding.llm import backends as llm_backends
+
+    listed = {"models": [{"name": "qwen3:latest", "model": "qwen3:latest", "context_length": 8192, "digest": "abcdef0123456789"}]}
+    monkeypatch.setattr(llm_backends, "_get", lambda url: listed)
+    backend = llm_backends.OllamaBackend(LLMSection(provider="ollama", model="qwen3"))
+    assert backend.context_length() == 8192 and backend._served_version() == "qwen3@abcdef012345"
+    assert llm_backends.OllamaBackend(LLMSection(provider="ollama", model="qwen3:8b")).context_length() is None

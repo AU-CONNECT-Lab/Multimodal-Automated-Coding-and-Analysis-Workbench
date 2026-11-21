@@ -379,8 +379,10 @@ class OllamaBackend(OpenAICompatibleBackend):
     )
 
     def _serves(self, served: list[str]) -> bool:
-        # a tag left out means latest
-        return any(self.cfg.model in (name, name.removesuffix(":latest")) for name in served)
+        return any(self._is_mine(name) for name in served)
+
+    def _is_mine(self, name: str | None) -> bool:
+        return bool(name) and _tagged(str(name)) == _tagged(str(self.cfg.model))
 
     def _think_fields(self, think: bool) -> dict:
         # its chat completions endpoint reads reasoning_effort and ignores a think field
@@ -393,7 +395,7 @@ class OllamaBackend(OpenAICompatibleBackend):
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
             return None
         for entry in loaded:
-            if self.cfg.model in (entry.get("name"), entry.get("model")) and entry.get("context_length"):
+            if (self._is_mine(entry.get("name")) or self._is_mine(entry.get("model"))) and entry.get("context_length"):
                 return int(entry["context_length"])
         return None
 
@@ -405,9 +407,14 @@ class OllamaBackend(OpenAICompatibleBackend):
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
             return str(self.cfg.model)
         for entry in listed:
-            if entry.get("name") == self.cfg.model or entry.get("model") == self.cfg.model:
+            if self._is_mine(entry.get("name")) or self._is_mine(entry.get("model")):
                 return f"{self.cfg.model}@{entry.get('digest', '')[:12]}"
         return str(self.cfg.model)
+
+
+def _tagged(model: str) -> str:
+    # to Ollama a tag left out means latest
+    return model if ":" in model else f"{model}:latest"
 
 
 @register_backend(BACKEND_GROUP)

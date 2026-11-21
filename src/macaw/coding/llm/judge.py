@@ -567,8 +567,9 @@ def sample_labels(
         batches.append((system, user, ids, [picture for unit_id in ids for picture in frames[unit_id]] if frames else ()))
 
     kept = KeptAnswers(kept_at)
+    held: list[tuple] = []
 
-    def answer(sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool, bool, str]:
+    def answer(first: bool, sample: int, system: str, user: str, ids: list, images) -> tuple[pd.DataFrame, bool, bool, str]:
         seed = cfg.seed + sample if backend.takes_seed else None
         key = request_key(backend, cfg, system, user, sample, seed, images) if kept_at is not None else None
         entry = kept.get(key)
@@ -585,11 +586,23 @@ def sample_labels(
                 f"{backend.name} {cfg.model}: the answer was cut off at max_tokens ({cfg.max_tokens}) before any code "
                 "came back. A model that reasons before it answers spends tokens on that first; raise coding.llm.max_tokens."
             )
-        if not was_kept:
+        if not was_kept and first:
+            # kept once the context is known to have held the whole prompt
+            held.append((key, entry))
+        elif not was_kept:
             kept.keep(key, entry)
         return parsed.assign(sample=sample), entry["cut_off"], was_kept, entry["text"]
 
-    given = run_in_order([partial(answer, sample, *batch) for sample in range(cfg.n_samples) for batch in batches], cfg.concurrency)
+    def checked() -> None:
+        from macaw.coding.llm.rate import check_context, estimated_tokens
+
+        # the codebook leads the prompt, so a server that cuts a long one from the front loses it without saying so
+        check_context(backend, max((estimated_tokens(system + user) for system, user, *_ in batches), default=0), cfg)
+        for pair in held:
+            kept.keep(*pair)
+
+    jobs = [(sample, *batch) for sample in range(cfg.n_samples) for batch in batches]
+    given = run_in_order([partial(answer, index == 0, *job) for index, job in enumerate(jobs)], cfg.concurrency, after_first=checked)
     answers = [parsed for parsed, *_ in given]
     columns = ("unit_id", "sample", "label", "reason", "problem", "given")
     if not answers:
