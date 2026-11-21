@@ -236,6 +236,8 @@ def rating_agreement(
             for right in names[position + 1:]:
                 both = wide[[left, right]].dropna()
                 row = {"scale": scale_name, "person": scale.person if scale else None, "rater_a": left, "rater_b": right, "n": len(both)}
+                # a model's median of an even number of answers can fall between two points, and never equals a whole score
+                row["n_between"] = int((both % 1 != 0).any(axis=1).sum())
                 if cluster:
                     labels = groups.reindex(both.index)
                     if labels.isna().any():
@@ -257,7 +259,7 @@ def rating_agreement(
                     row[f"{key}_low"] = float(np.percentile(finite, tail)) if finite.size else np.nan
                     row[f"{key}_high"] = float(np.percentile(finite, 100.0 - tail)) if finite.size else np.nan
                 rows.append(row)
-    columns = ["scale", "person", "rater_a", "rater_b", "n", *(["n_clusters"] if cluster else [])]
+    columns = ["scale", "person", "rater_a", "rater_b", "n", "n_between", *(["n_clusters"] if cluster else [])]
     columns += [name for key in STATISTICS for name in (key, f"{key}_low", f"{key}_high")]
     return pd.DataFrame(rows, columns=columns)
 
@@ -267,7 +269,7 @@ def format_agreement(found: pd.DataFrame) -> str:
         return "no scale was scored by two raters on the same recordings"
     blocks = []
     for scale, own in found.groupby("scale", sort=False):
-        shown = pd.DataFrame({"rater_a": own["rater_a"], "rater_b": own["rater_b"], "n": own["n"]})
+        shown = pd.DataFrame({"rater_a": own["rater_a"], "rater_b": own["rater_b"], "n": own["n"], "between": own["n_between"]})
         if "n_clusters" in own.columns:
             shown["clusters"] = own["n_clusters"]
         for key, title in (("icc", "ICC(A,1)"), ("kappa", "kappa"), ("exact", "exact"), ("within_one", "within 1")):

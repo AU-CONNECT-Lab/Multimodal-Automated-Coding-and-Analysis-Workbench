@@ -86,6 +86,11 @@ class TestAgreement:
         again = rating_agreement(table, self.SCALES, raters=["anna", "ben"], n_boot=300, seed=4)
         assert len(first) == 1 and first.equals(again)
 
+    def test_a_model_s_score_between_two_points_is_counted(self):
+        table = table_of({"anna": [3, 4, 2, 5], "full_text": [3.5, 4, 2, 4.5]})
+        row = rating_agreement(table, self.SCALES, n_boot=0).iloc[0]
+        assert row["n_between"] == 2 and row["exact"] == 0.5
+
     def test_a_two_point_scale_has_no_within_one(self):
         table = table_of({"anna": [1, 0, 1, 1], "ben": [1, 0, 0, 1]}, scale="on_task")
         row = rating_agreement(table, self.SCALES, n_boot=0).iloc[0]
