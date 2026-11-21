@@ -55,9 +55,56 @@ def write_setup(path: Path, setup: SetupSection) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     from macaw.store._io import write_text_atomic
 
+    content = setup_content(setup)
+    if path.is_file():
+        write_text_atomic(path, _kept_as_written(path.read_text(encoding="utf-8"), content))
+        return path
     # short lists of names or numbers on one line
-    write_text_atomic(path, yaml.safe_dump(setup_content(setup), sort_keys=False, allow_unicode=True, default_flow_style=None))
+    write_text_atomic(path, yaml.safe_dump(content, sort_keys=False, allow_unicode=True, default_flow_style=None))
     return path
+
+
+def _kept_as_written(text: str, content: dict) -> str:
+    """The file's text with this content, a person's comments and layout kept wherever a value did not change."""
+    import io
+
+    from ruamel.yaml import YAML
+    from ruamel.yaml.comments import CommentedMap
+
+    rt = YAML()
+    rt.preserve_quotes = True
+    rt.width = 4096
+    rt.indent(mapping=2, sequence=4, offset=2)
+    data = rt.load(text)
+    if not isinstance(data, CommentedMap):
+        data = CommentedMap()
+    _merge(data, content)
+    out = io.StringIO()
+    rt.dump(data, out)
+    return out.getvalue()
+
+
+def _merge(old, new: dict) -> None:
+    for key in [key for key in old if key not in new]:
+        del old[key]
+    for key, value in new.items():
+        if isinstance(value, dict) and isinstance(old.get(key), dict):
+            _merge(old[key], value)
+        elif key not in old or old[key] != value:
+            old[key] = _round_trip(value)
+
+
+def _round_trip(value):
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+    if isinstance(value, dict):
+        return CommentedMap((key, _round_trip(item)) for key, item in value.items())
+    if isinstance(value, list):
+        seq = CommentedSeq(_round_trip(item) for item in value)
+        if not any(isinstance(item, dict) for item in value):
+            seq.fa.set_flow_style()
+        return seq
+    return value
 
 
 def device_people(setup: SetupSection, device: str) -> tuple[list[str], list[str]]:

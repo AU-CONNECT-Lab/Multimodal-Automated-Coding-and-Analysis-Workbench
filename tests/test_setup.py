@@ -148,6 +148,19 @@ class TestSetupFile:
         assert "name" not in yaml.safe_load(again.read_text(encoding="utf-8"))
         assert resolve_config(project).setup == config.setup
 
+    def test_saving_the_setup_again_keeps_what_a_person_wrote_beside_it(self, project):
+        write_devices(project, cameras={"front": camera(), "side": camera(uses=("body",))})
+        path = setup_path(resolve_config(project))
+        path.write_text("# the lab's playroom\n" + path.read_text(encoding="utf-8").replace("side:", "side:  # by the door"), encoding="utf-8")
+        config = resolve_config(project)
+        changed = config.setup.model_copy(update={"ignore": {"front": [(0.0, 0.0, 0.5, 0.5)]}})
+        text = write_setup(path, changed).read_text(encoding="utf-8")
+        assert "# the lab's playroom" in text and "# by the door" in text
+        assert resolve_config(project).setup == changed
+        dropped = changed.model_copy(update={"cameras": {"front": changed.cameras["front"]}, "ignore": {}})
+        text = write_setup(path, dropped).read_text(encoding="utf-8")
+        assert "# the lab's playroom" in text and "side" not in text and resolve_config(project).setup == dropped
+
 
 class TestRequired:
     def test_nothing_runs_before_the_setup_is_saved(self, project):
