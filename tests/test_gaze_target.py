@@ -468,3 +468,48 @@ def test_the_gaze_and_object_models_are_loaded_once_per_setting(monkeypatch):
     objects = GroundingDinoBackend()
     assert objects.network(None, "cuda") is objects.network(None, "cuda")
     assert loaded == ["cuda"]
+
+
+def test_a_thing_placed_for_one_person_alone_is_not_read_for_the_other(run_angles):
+    labels = [(t / FPS, "child", "bottle") for t in range(3)]
+    result = run_angles({"parent": [-90.0] * 10, "child": [40.0] * 10}, room=TestAngles.ROOM, labels=labels)
+    bottle = result.rows[result.rows.feature.str.contains("bottle")]
+    assert set(bottle.subject_id) == {"child"}
+    assert not result.rows.feature.str.startswith("joint_attention").any()
+
+
+def test_angles_are_set_against_the_camera_that_read_the_face(tmp_path, monkeypatch):
+    """The face is read on a camera ahead of the parent, the gaze set on one at their side, which faces the child."""
+    from macaw.store.longtable import build_long_rows, write_long_table
+
+    stored = tmp_path / "pose.keypoints.parquet"
+    write_keypoints(keypoints({"parent": (100, 100), "child": (400, 100)}, video="front.mp4"), stored)
+    rows = build_long_rows(values=pd.DataFrame({"t_start": np.arange(10) / FPS, "face_yaw_deg": 0.0, "face_pitch_deg": 0.0}),
+                           recording_id="r1", source="face.au", scale="frame", subject_id="parent")
+    face = tmp_path / "face.au.parquet"
+    write_long_table(rows, face)
+    monkeypatch.setattr(target_module, "_keypoints_file", lambda config, rid: stored)
+    monkeypatch.setattr(target_module, "_face_rows_file", lambda config, rid: face)
+    monkeypatch.setattr(target_module, "layout_for", lambda config, create=False: SimpleNamespace(gaze_labels_path=lambda rid: tmp_path / "none.json"))
+    monkeypatch.setattr(target_module, "apply_prep_timing", lambda config, rec: SimpleNamespace(t_origin_s=0.0, duration_s=0.9))
+    front = video_file("front.mp4", ("parent", "child"), uses=("body", "face"), fps=FPS, offset_s=0.0)
+    side = video_file("side.mp4", ("parent", "child"), uses=("gaze",), fps=FPS, offset_s=0.0)
+    recording = recording_of([front, side], recording_id="r1", group_id="1", session_id=None)
+    # the child sits beside the front camera, which the parent faces; the side camera looks across at the parent
+    room = RoomSection(
+        cameras={"front.mp4": {"at": [0, 0], "height": 100, "facing": 0}, "side.mp4": {"at": [100, 100], "height": 100, "facing": -90}},
+        people={"parent": {"at": [0, 100], "eyes": 100}, "child": {"at": [10, 0], "eyes": 100}},
+    )
+    config = SimpleNamespace(gaze=GazeSection(backend="angles", tolerance_deg=20), setup=SimpleNamespace(room=room))
+    result = GazeTargetExtractor(config).run(recording, tmp_path)
+    share = result.rows[(result.rows.feature == "looks_at_share") & (result.rows.subject_id == "parent")]["value"]
+    # looking into the front camera is looking at the child beside it
+    assert share.tolist() == [1.0]
+
+
+def test_a_point_on_two_overlapping_heads_goes_to_the_one_whose_centre_is_nearer():
+    heads = pd.concat([box(100, 100, 200, 200, "child"), box(180, 100, 280, 200, "sibling")])
+    named = name_targets(gaze("parent", 190, 150), heads)
+    assert set(named.target) == {"child"}
+    named = name_targets(gaze("parent", 195, 150), heads)
+    assert set(named.target) == {"sibling"}

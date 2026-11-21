@@ -125,7 +125,8 @@ def _missing(points: bool) -> dict[str, str]:
             "no camera is set to read it, face.au found no face of theirs, or neither the room laid out in the setup nor labelled "
             "frames say where anyone or anything is for them"
         )
-        unseen, nothing = "neither the room nor labelled frames say where one of the two is", "setup.room.things and the labelled frames name no things"
+        unseen = "neither the room nor labelled frames say where one of the two is"
+        nothing = "neither setup.room.things nor the labelled frames place a named thing for both of them"
         undecided = left_out = ""
         placed = (
             "neither the room laid out in the setup (with the camera that reads subject_id's face and both people placed) nor at least "
@@ -213,7 +214,7 @@ def finds_points(config) -> bool:
 @register_extractor
 class GazeTargetExtractor(Extractor):
     name = "gaze.target"
-    version = "0.7.0"
+    version = "0.8.0"
     scale = Scale.FRAME
     group = "gaze"
     config_sections = ("gaze", "objects.names", "segment", "video", "setup.cameras", "setup.room")
@@ -264,7 +265,9 @@ class GazeTargetExtractor(Extractor):
         keypoints = keypoints_store.read_keypoints(
             _keypoints_file(self.config, recording.recording_id), recording_id=recording.recording_id
         )
-        views = {person: item.name for person, item in recording.views("gaze").items()}
+        # face.au's head and eye angles are relative to the camera that reads the face
+        use = "gaze" if backend.finds_points else "face"
+        views = {person: item.name for person, item in recording.views(use).items()}
         by_name = {item.name: item for item in recording.media if item.kind == "video"}
         if backend.finds_points:
             points, warnings = self._points(recording, backend, keypoints, views, by_name, span)
@@ -438,8 +441,9 @@ class GazeTargetExtractor(Extractor):
                         scale=Scale.RECORDING, subject_id=a, subject_id_b=b, **common,
                     )
                 )
-            if things:
-                frames.extend(self._joint_rows(joint_attention(points, a, b, things), a, b, common))
+            shared = [thing for thing in things if _placed(points, a, thing) and _placed(points, b, thing)]
+            if shared:
+                frames.extend(self._joint_rows(joint_attention(points, a, b, shared), a, b, common))
         return concat_long_tables(frames)
 
     def _thing_rows(self, mine: pd.DataFrame, a: str, things: list[str], common: dict) -> list[pd.DataFrame]:
@@ -448,7 +452,7 @@ class GazeTargetExtractor(Extractor):
         for thing in things:
             angle = f"angle_{thing}"
             # read from angles, only the things the room or labelled frames place for this person can be looked at
-            if mine.empty or ("gaze_x" not in mine and angle not in mine):
+            if mine.empty or ("gaze_x" not in mine and (angle not in mine or mine[angle].isna().all())):
                 continue
             looks, name = looks_at(mine, thing), slug(thing)
             values = {"t_start": mine["t"].to_numpy(), f"looks_at_{name}": looks.to_numpy()}
@@ -529,7 +533,7 @@ class GazeTargetExtractor(Extractor):
         if backend.finds_points:
             rule = (
                 "1 while the point subject_id looks at lies on subject_id_b's head box and the model puts it in the picture "
-                f"(in-frame score at least {IN_FRAME_CUT}), else 0."
+                f"(in-frame score at least {IN_FRAME_CUT}), else 0; on two overlapping head boxes, on the one whose centre is nearer."
             )
             params = {"model": cfg.model or getattr(backend, "default_model", None), "in_frame_cut": IN_FRAME_CUT}
         else:
@@ -565,11 +569,20 @@ class GazeTargetExtractor(Extractor):
         return QCWarning(check=self.name, recording_id=recording.recording_id, subject_id=subject_id, severity=severity, message=message)
 
 
+def _placed(points: pd.DataFrame, subject: str, thing: str) -> bool:
+    """Whether a look of subject's at thing can be read: always from the picture, from angles only where thing has a direction."""
+    if "gaze_x" in points:
+        return True
+    angle = f"angle_{thing}"
+    return angle in points and bool(points.loc[points["subject_id"] == subject, angle].notna().any())
+
+
 def name_targets(found: pd.DataFrame, heads: pd.DataFrame) -> pd.DataFrame:
     """Adds target (whose head the point lies on, else elsewhere or off_screen) and to_<subject>, the distance
     to each other head shown in that frame in widths of its box."""
     out = found.copy()
     out["target"] = np.where(out["in_frame"] >= IN_FRAME_CUT, ELSEWHERE, OFF_SCREEN)
+    nearest = np.full(len(out), np.inf)
     for other, boxes in heads.groupby("subject_id", sort=True):
         joined = out[["frame", "subject_id", "gaze_x", "gaze_y"]].merge(boxes[["frame", "x0", "y0", "x1", "y1"]], on="frame", how="left")
         width = (joined["x1"] - joined["x0"]).to_numpy()
@@ -578,8 +591,13 @@ def name_targets(found: pd.DataFrame, heads: pd.DataFrame) -> pd.DataFrame:
         distance = np.array(np.hypot(dx, dy) / width, dtype=float)
         distance[(joined["subject_id"] == other).to_numpy()] = np.nan
         out[f"to_{other}"] = distance
-        on_head = (distance == 0) & (out["target"] == ELSEWHERE).to_numpy()
+        # where head boxes overlap, the head whose centre is nearer the point
+        centre = np.array(
+            np.hypot(joined["gaze_x"] - (joined["x0"] + joined["x1"]) / 2, joined["gaze_y"] - (joined["y0"] + joined["y1"]) / 2) / width, dtype=float
+        )
+        on_head = (distance == 0) & (out["target"] != OFF_SCREEN).to_numpy() & (centre < nearest)
         out.loc[on_head, "target"] = str(other)
+        nearest[on_head] = centre[on_head]
     return out
 
 
