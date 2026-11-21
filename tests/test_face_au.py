@@ -309,3 +309,24 @@ def test_the_pyfeat_detector_is_built_once_per_setting(monkeypatch):
     backend.detector("v1", "cuda", gaze=True)
     backend.detector("v2", "cuda")
     assert built == [("v1", "cuda", None), ("v1", "cuda", "l2cs"), ("v2", "cuda", None)]
+
+
+def test_the_record_names_the_model_each_face_backend_ran():
+    from macaw.extractors.video.face.au import model_named
+
+    assert model_named("pyfeat", None) == "v1" and model_named("openface", None) is None
+    assert model_named("mediapipe", "C:/models/face_landmarker.task") == "face_landmarker.task"
+
+
+def test_openfaces_version_comes_from_its_release_folder_or_is_unknown(monkeypatch):
+    from macaw.extractors.video.face.backends import OpenFaceBackend
+    from macaw.project.manifest import FeatureSpec
+    from macaw.qc.boilerplate import _FACE, _backend
+
+    backend = OpenFaceBackend()
+    monkeypatch.setattr(OpenFaceBackend, "_executable", lambda self: "C:/tools/OpenFace_2.2.0_win_x64/FaceLandmarkVidMulti.exe")
+    assert backend.version == "2.2.0"
+    monkeypatch.setattr(OpenFaceBackend, "_executable", lambda self: "/usr/local/bin/FaceLandmarkVidMulti")
+    assert backend.version == "unknown"
+    spec = FeatureSpec(name="au12", description="", unit=None, scale="frame", group="face", extractor="face.au", extractor_version="0", backend="openface", backend_version="unknown")
+    assert _backend(_FACE, spec) == "OpenFace [baltrusaitis2018]"

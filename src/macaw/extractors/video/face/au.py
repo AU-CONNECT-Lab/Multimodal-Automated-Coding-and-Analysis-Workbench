@@ -216,7 +216,7 @@ class FaceExtractor(Extractor):
         )
 
     def _specs(self, emitted: set[str], backend) -> list[FeatureSpec]:
-        model = self.config.face.model or "v1"
+        model = model_named(backend.name, self.config.face.model)
         described = {
             **{
                 code.lower(): (f"Action unit {int(code[2:])} ({meaning}), {_au_scale(backend.name, model)}.", None)
@@ -351,6 +351,13 @@ class FaceAUCheckExtractor(FaceExtractor):
 
 def _default_model(backend: str) -> str | None:
     return "v1" if backend == "pyfeat" else None
+
+
+def model_named(backend: str, model: str | None) -> str | None:
+    """The model a face backend ran, as the record names it: a model file by its name alone."""
+    if model and backend == "mediapipe":
+        return Path(model).name
+    return model or _default_model(backend)
 
 
 def _described(backend: str, model: str | None) -> str:

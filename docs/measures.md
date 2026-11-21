@@ -99,7 +99,7 @@ motion:
 
 When the camera was placed differently in some sessions, those recordings get their own regions in their recording files.
 
-`motion_energy` is averaged over `motion.smoothing_s`; `motion_energy_raw` gives the same share frame by frame before averaging, for analyses that apply their own filter. A change of the whole picture, such as a light switched on or a camera knocked, also changes each region and is not movement. For each participant's camera, `picture_change` gives the share of the whole picture that changed in each frame (above 0.5 such an event rather than movement), and `picture_frozen` marks with 1 each frame identical to the one before, in which a stalled recording shows no movement whatever the participant did. Frames marked by either are best left out before motion energy is analysed.
+Motion energy grows with the time between frames, so values are comparable only between videos at the same frame rate; `video.fps` brings every video to one. `motion_energy` is averaged over `motion.smoothing_s`; `motion_energy_raw` gives the same share frame by frame before averaging, for analyses that apply their own filter. A change of the whole picture, such as a light switched on or a camera knocked, also changes each region and is not movement. For each participant's camera, `picture_change` gives the share of the whole picture that changed in each frame (above 0.5 such an event rather than movement), and `picture_frozen` marks with 1 each frame identical to the one before, in which a stalled recording shows no movement whatever the participant did. Frames marked by either are best left out before motion energy is analysed.
 
 (counts)=
 ## Counts and shares per person

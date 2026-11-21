@@ -33,8 +33,8 @@ BASELINE_S = 3.0
 CLOSED_TIER = "eyes_closed"
 BLINK, TOO_LONG, NOT_SEEN_OPEN = "blink", "too long", "not seen open"
 MAX_BLINK_S = 0.5
-# frames either side of a closure that must show the eye open
-REOPEN_FRAMES = 3
+# seconds either side of a closure within which the eye must be seen open
+REOPEN_S = 0.1
 # beyond this the far eye is foreshortened and its landmarks guessed
 MAX_YAW_DEG = 45.0
 # a head lowered or raised this far from the person's usual pitch moves the lids by itself
@@ -81,7 +81,7 @@ _MISSING = {
 @register_extractor
 class FaceMovementExtractor(Extractor):
     name = "face.movement"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = ("face.blink_min_eye_px", "segment")
@@ -203,12 +203,15 @@ class FaceMovementExtractor(Extractor):
         return [QCWarning(check=self.name, recording_id=recording.recording_id, subject_id=subject_id, severity="warn", message=message)]
 
     def _specs(self, emitted: set[str]) -> list[FeatureSpec]:
-        params = {"blink_min_eye_px": self.config.face.blink_min_eye_px, "model": self.config.face.model or "v1"}
+        from macaw.extractors.video.face.au import model_named
+
+        params = {"blink_min_eye_px": self.config.face.blink_min_eye_px, "model": model_named(self.config.face.backend, self.config.face.model)}
         described = {
             **{name: (text, None, Scale.FRAME) for name, text in _FRAME_SPECS.items()},
             "blink_duration_s": (
-                f"A blink: eye_opening falls below {CLOSED_SHARE:.0%} of its median over {BASELINE_S:g} s and the eye "
-                f"is seen open again within {MAX_BLINK_S:g} s.", "s", Scale.EVENT,
+                f"A blink: eye_opening falls below {CLOSED_SHARE:.0%} of its median over {BASELINE_S:g} s for no longer than "
+                f"{MAX_BLINK_S:g} s, with the eye seen open (at least {OPEN_SHARE:.0%} of that median) within {REOPEN_S:g} s "
+                "before and after.", "s", Scale.EVENT,
             ),
             "blinks_per_min": ("Blinks per minute of the time the eyes could be read.", "1/min", Scale.RECORDING),
             "eyes_measurable_s": (
@@ -317,6 +320,7 @@ def closed_runs(eyes: pd.Series, frame: pd.Series, t: pd.Series) -> pd.DataFrame
     if period <= 0 or eyes.notna().sum() == 0:
         return pd.DataFrame({"t_start": pd.Series(dtype=float), "t_end": pd.Series(dtype=float), "kind": pd.Series(dtype=object)})
     window = max(int(round(BASELINE_S / period)), 3)
+    reopen = max(int(round(REOPEN_S / period)), 1)
     baseline = eyes.rolling(window, center=True, min_periods=window // 3).median()
     closed = (eyes < CLOSED_SHARE * baseline).to_numpy()
     open_ = (eyes >= OPEN_SHARE * baseline).to_numpy()
@@ -335,7 +339,7 @@ def closed_runs(eyes: pd.Series, frame: pd.Series, t: pd.Series) -> pd.DataFrame
             continue
         kind = (
             TOO_LONG if (stop - start_at) * period > MAX_BLINK_S
-            else BLINK if open_[max(start_at - REOPEN_FRAMES, 0):start_at].any() and open_[stop:stop + REOPEN_FRAMES].any()
+            else BLINK if open_[max(start_at - reopen, 0):start_at].any() and open_[stop:stop + reopen].any()
             else NOT_SEEN_OPEN
         )
         blinks.append((times[first], times[last] + period, kind))

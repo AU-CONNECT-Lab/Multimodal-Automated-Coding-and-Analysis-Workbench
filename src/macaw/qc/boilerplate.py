@@ -401,6 +401,8 @@ def _video(config, spec, names) -> str:
 
 def _backend(phrases: dict[str, str], spec: FeatureSpec, **extra) -> str:
     phrase = phrases.get(spec.backend, "the {name} {version} backend")
+    if spec.backend_version in (None, "", "unknown", "not installed"):
+        phrase = phrase.replace(" {version}", "")
     return phrase.format(name=spec.backend, version=spec.backend_version, **extra)
 
 
@@ -1173,7 +1175,8 @@ def _mea(config, spec, names) -> str:
     return (
         "Motion energy was measured by frame differencing in a region drawn by hand around each participant "
         f"[ramseyer2011]: the share of the region's pixels whose grey level changed by more than {motion.threshold} "
-        f"between consecutive frames{smoothing}."
+        f"between consecutive frames{smoothing}. As the change between frames grows with the time between them, values "
+        "were compared only between videos at the same frame rate."
     )
 
 
@@ -1187,10 +1190,13 @@ _FACE_CITED = {"pyfeat": "Py-Feat [cheong2023]", "openface": "OpenFace [baltrusa
 
 
 def _face(config, spec, names) -> str:
-    model = spec.params.get("model") or config.face.model or "v1"
+    from macaw.extractors.video.face.au import model_named
+
+    model = spec.params.get("model") or model_named(spec.backend, config.face.model)
     measured = []
     if any(name.startswith("au") for name in names):
-        measured.append("facial action unit intensities")
+        # py-feat gives how likely each unit is present, not a FACS intensity
+        measured.append("facial action unit scores (0 to 1)" if spec.backend == "pyfeat" else "facial action unit intensities")
     if any(name.startswith("face_yaw") for name in names):
         measured.append("head pose")
     if any(name.startswith("gaze_") for name in names):
@@ -1226,8 +1232,8 @@ def _movement(config, spec, names) -> str:
     return (
         "From the face landmarks, mouth opening (the gap between the inner lips over the distance from the eyes to the "
         "base of the nose) and its change per second, eye opening and blinks (eye opening below 70% of its median over "
-        f"3 s) were derived; eyes narrower than {config.face.blink_min_eye_px:g} px or in a head turned more than 45° "
-        "were not read."
+        "3 s for at most 0.5 s, with the eye seen at 85% or more of that median within 0.1 s before and after) were derived; "
+        f"eyes narrower than {config.face.blink_min_eye_px:g} px or in a head turned more than 45° were not read."
     )
 
 

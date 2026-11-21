@@ -173,7 +173,11 @@ class OpenFaceBackend(FaceBackend):
 
     @property
     def version(self) -> str:
-        return Path(self._executable()).parent.name
+        import re
+
+        # the release folders carry it (OpenFace_2.2.0_win_x64); a build from source does not
+        found = re.search(r"(\d+\.\d+(?:\.\d+)?)", str(Path(self._executable()).parent))
+        return found.group(1) if found else "unknown"
 
     def _executable(self) -> str:
         import os

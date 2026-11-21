@@ -24,7 +24,8 @@ PICTURE_NAME = "picture.parquet"
 
 _DESCRIPTION = (
     "Share of the region's pixels whose grey level changed by more than motion.threshold since "
-    "the previous frame (motion energy analysis, frame differencing)."
+    "the previous frame (motion energy analysis, frame differencing). It grows with the time between frames, so it is "
+    "comparable only between videos at the same frame rate (video.fps sets one)."
 )
 _RAW_DESCRIPTION = (
     "motion_energy before motion.smoothing_s averages it: the share of the region's pixels whose grey level changed by more "
