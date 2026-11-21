@@ -61,7 +61,7 @@ BACKEND_KEYPOINT_SCHEMA: dict[str, str] = {
 # Same subset rule for the parameter table, plus track_id, which the stored table has no
 # column for: it is only the join key that carries parameters from a track to a subject, and
 # the extractor drops it once subject_id has been filled in.
-_EXTRACTOR_OWNED = ("recording_id", "subject_id", "source", "t")
+_EXTRACTOR_OWNED = ("recording_id", "subject_id", "source", "video", "t")
 BACKEND_BODY_MODEL_SCHEMA: dict[str, str] = {
     "track_id": KEYPOINT_SCHEMA["track_id"],
     **{

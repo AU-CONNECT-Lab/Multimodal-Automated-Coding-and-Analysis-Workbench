@@ -68,7 +68,7 @@ SEGMENT_TABLE_SCHEMA: dict[str, str] = {
 KEYPOINT_SCHEMA: dict[str, str] = {
     "recording_id": "string",
     "subject_id": "string",
-    "source": "string",       # pose backend, e.g. "pose.rtmpose"
+    "source": "string",       # the step that wrote them, e.g. "pose.keypoints"
     "video": "string",        # file the frame numbers and track ids belong to
     "frame": "int64",
     "t": "float64",
@@ -96,7 +96,8 @@ UNITS_METRE = "metre"
 BODY_MODEL_SCHEMA: dict[str, str] = {
     "recording_id": "string",
     "subject_id": "string",
-    "source": "string",       # pose backend, same vocabulary as KEYPOINT_SCHEMA
+    "source": "string",       # the step that wrote them, as in KEYPOINT_SCHEMA
+    "video": "string",        # file the frame numbers belong to
     "frame": "int64",
     "t": "float64",
     "body_model": "string",   # one of BODY_MODELS

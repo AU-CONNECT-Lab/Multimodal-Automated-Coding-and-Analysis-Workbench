@@ -35,7 +35,7 @@ from macaw.project.names import read_names
 from macaw.project.recording import MediaFile, Recording, build_recording
 from macaw.store.keypoints import read_keypoints
 from macaw.store.longtable import build_long_rows, concat_long_tables
-from macaw.store.schema import KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
+from macaw.store.schema import BODY_MODEL_SCHEMA, KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
 
 # A track this broken is worth telling the user about rather than quietly averaging over.
 _LOW_CONTINUITY = 0.8
@@ -149,6 +149,7 @@ def _videos_with_frames(sources, start: float, end: float) -> int:
 
 
 DETECTIONS_NAME = "detections.parquet"
+BODY_DETECTIONS_NAME = "body_model.parquet"
 LOOK_NAME = "look_names.json"
 LOOKER = "the picture-reading model"
 SWAPS_NAME = "swaps.json"
@@ -271,6 +272,7 @@ class PoseDetectExtractor(Extractor):
         sources = recording.cameras()
 
         pieces: list[pd.DataFrame] = []
+        bodies: list[pd.DataFrame] = []
         frame_sizes: dict[str, list[int]] = {}
         n_processed = n_with_anyone = 0
         for item in sources:
@@ -298,6 +300,9 @@ class PoseDetectExtractor(Extractor):
             piece = frames.keypoints
             if frames.frame_size is not None:
                 frame_sizes[item.name] = [int(side) for side in frames.frame_size]
+            if frames.body_model is not None and not frames.body_model.empty:
+                body = frames.body_model.assign(video=item.name, t=frames.body_model["frame"] / fps + item.offset_s)
+                bodies.append(body[(body["t"] >= start) & (body["t"] <= end)])
             if piece.empty:
                 continue
 
@@ -319,6 +324,10 @@ class PoseDetectExtractor(Extractor):
         directory = workspace / self.name
         directory.mkdir(parents=True, exist_ok=True)
         detections.to_parquet(directory / DETECTIONS_NAME, index=False)
+        artifacts = {DETECTIONS_NAME: directory / DETECTIONS_NAME, BACKEND_NAME: directory / BACKEND_NAME}
+        if bodies:
+            pd.concat(bodies, ignore_index=True).to_parquet(directory / BODY_DETECTIONS_NAME, index=False)
+            artifacts[BODY_DETECTIONS_NAME] = directory / BODY_DETECTIONS_NAME
         (directory / BACKEND_NAME).write_text(
             json.dumps({"name": backend.name, "version": backend.version, "joint_set": backend.joint_set, "frame_sizes": frame_sizes}),
             encoding="utf-8",
@@ -333,7 +342,7 @@ class PoseDetectExtractor(Extractor):
                 )
                 for name, (description, unit) in _DETECT_SPECS.items()
             ],
-            artifacts={DETECTIONS_NAME: directory / DETECTIONS_NAME, BACKEND_NAME: directory / BACKEND_NAME},
+            artifacts=artifacts,
             warnings=warnings,
         )
 
@@ -484,9 +493,20 @@ class PoseExtractor(Extractor):
             rows=rows,
             specs=self._specs(backend),
             keypoints=keypoints,
+            body_model=self._named_bodies(recording, keypoints),
             artifacts=artifacts,
             warnings=warnings,
         )
+
+    def _named_bodies(self, recording: Recording, keypoints: pd.DataFrame) -> pd.DataFrame | None:
+        """A backend's body model rows under the names its people were given in the same frames."""
+        path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, PoseDetectExtractor.name) / BODY_DETECTIONS_NAME
+        if not path.is_file():
+            return None
+        named = keypoints.loc[keypoints["subject_id"].notna(), ["video", "frame", "track_id", "subject_id"]].drop_duplicates()
+        bodies = pd.read_parquet(path).merge(named, on=["video", "frame", "track_id"])
+        bodies = bodies.drop(columns="track_id").assign(recording_id=recording.recording_id, source=self.name)
+        return coerce_frame(bodies, BODY_MODEL_SCHEMA, "body model")
 
     @staticmethod
     def _click(item, video: dict | None, click: dict) -> Click:

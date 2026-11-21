@@ -47,6 +47,7 @@ def build_body_model_rows(
     recording_id: str,
     subject_id: str,
     source: str,
+    video: str,
     body_model: str,
     frames: np.ndarray,
     times: np.ndarray,
@@ -54,7 +55,7 @@ def build_body_model_rows(
     pose: np.ndarray,
     camera: np.ndarray,
 ) -> pd.DataFrame:
-    """Backends hand back arrays per person; this is the only place they become rows."""
+    """One person's parameters, an array per kind with a row per frame, as stored rows."""
     frames = np.asarray(frames)
     for name, block, columns in (
         ("shape", shape, SHAPE_COLUMNS),
@@ -71,6 +72,7 @@ def build_body_model_rows(
         "recording_id": recording_id,
         "subject_id": subject_id,
         "source": source,
+        "video": video,
         "frame": frames,
         "t": np.asarray(times, dtype=float),
         "body_model": body_model,
@@ -94,7 +96,7 @@ def to_arrays(df: pd.DataFrame) -> dict[str, np.ndarray]:
 
 
 def has_body_model(df: pd.DataFrame) -> bool:
-    """False when every row is "none"; feature code takes the keypoint-only branch."""
+    """False when every row is "none", the backend giving keypoints alone."""
     if df.empty or "body_model" not in df.columns:
         return False
     return bool((df["body_model"] != "none").any())

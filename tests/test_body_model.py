@@ -37,7 +37,8 @@ def rows():
     return build_body_model_rows(
         recording_id="sub-003_ses-12mo",
         subject_id="child",
-        source="pose.rtmpose",
+        source="pose.keypoints",
+        video="room.mp4",
         body_model="smil",
         frames=np.arange(N_FRAMES),
         times=np.arange(N_FRAMES) / 30.0,
@@ -107,7 +108,7 @@ class TestBuildRows:
     def test_identity_columns_are_broadcast(self, rows):
         assert set(rows["subject_id"]) == {"child"}
         assert set(rows["body_model"]) == {"smil"}
-        assert set(rows["source"]) == {"pose.rtmpose"}
+        assert set(rows["source"]) == {"pose.keypoints"}
 
     def test_parameters_land_in_the_right_columns(self, rows):
         """Column-major mistakes are the likely bug, so check a cell in each block."""
@@ -120,7 +121,7 @@ class TestBuildRows:
     def test_wrong_shape_width_is_rejected(self):
         with pytest.raises(ValueError, match="shape"):
             build_body_model_rows(
-                recording_id="r", subject_id="child", source="s", body_model="smpl",
+                recording_id="r", subject_id="child", source="s", video="v", body_model="smpl",
                 frames=np.arange(N_FRAMES), times=np.zeros(N_FRAMES),
                 shape=make_block(9),                     # one column short
                 pose=make_block(len(POSE_COLUMNS)),
@@ -130,7 +131,7 @@ class TestBuildRows:
     def test_frame_count_mismatch_is_rejected(self):
         with pytest.raises(ValueError, match="pose"):
             build_body_model_rows(
-                recording_id="r", subject_id="child", source="s", body_model="smpl",
+                recording_id="r", subject_id="child", source="s", video="v", body_model="smpl",
                 frames=np.arange(N_FRAMES), times=np.zeros(N_FRAMES),
                 shape=make_block(len(SHAPE_COLUMNS)),
                 pose=np.zeros((N_FRAMES + 1, len(POSE_COLUMNS))),

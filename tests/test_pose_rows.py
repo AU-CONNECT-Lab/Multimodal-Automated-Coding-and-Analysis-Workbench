@@ -18,6 +18,7 @@ from macaw.extractors.video.pose.keypoints import PoseDetectExtractor, PoseExtra
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
 from macaw.project.recording import MediaFile, Recording, Subject
 from macaw.store.schema import (
+    BODY_MODEL_SCHEMA,
     KEYPOINT_SCHEMA,
     LONG_TABLE_SCHEMA,
     coerce_frame,
@@ -700,3 +701,29 @@ class TestJoinedFragments:
         continuity = rows[(rows.feature == "track_continuity") & (rows.subject_id == "parent")]
         assert float(continuity.value.iloc[0]) == 1.0
         assert set(result.keypoints.loc[result.keypoints.subject_id == "parent", "track_id"]) == {1, 2}
+
+
+class BodyBackend(FakeBackend):
+    """Gives one body model row per person and frame, its first shape value the person's x in that frame."""
+
+    def infer(self, video_path, **kwargs):
+        from macaw.extractors.video.pose.backends import BACKEND_BODY_MODEL_SCHEMA
+
+        found = super().infer(video_path, **kwargs)
+        people = found.keypoints.groupby(["frame", "track_id"], as_index=False)["x"].first()
+        body = pd.DataFrame({column: 0.0 for column in BACKEND_BODY_MODEL_SCHEMA}, index=people.index)
+        body = body.assign(track_id=people["track_id"], frame=people["frame"], body_model="smpl", shape_0=people["x"])
+        return PoseFrames(keypoints=found.keypoints, body_model=coerce_frame(body, BACKEND_BODY_MODEL_SCHEMA, "body"))
+
+
+def test_a_backends_body_model_is_kept_under_the_names_its_people_were_given(extractor, recording, tmp_path):
+    clicks(tmp_path, "room.mp4", 0.5, parent=(100.0, 200.0), child=(500.0, 200.0))
+    result = extractor(BodyBackend()).run(recording([media()]), tmp_path)
+    validate_frame(result.body_model, BODY_MODEL_SCHEMA, "body model")
+    # the tracks swap part way, so following the names rather than the track ids keeps each person's own rows
+    assert result.body_model.groupby("subject_id")["shape_0"].unique().map(list).to_dict() == {"child": [500.0], "parent": [100.0]}
+    assert set(result.body_model["source"]) == {"pose.keypoints"} and set(result.body_model["video"]) == {"room.mp4"}
+
+
+def test_without_a_body_model_none_is_written(shared):
+    assert shared[1].body_model is None
