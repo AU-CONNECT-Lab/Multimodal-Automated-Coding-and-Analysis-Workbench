@@ -662,6 +662,26 @@ def test_the_board_says_which_paper_it_fits(project):
     assert path_from_url(file_url(drawn).removeprefix("/files/"), resolve_config(project)) == drawn.resolve()
 
 
+def test_a_setup_drawing_and_a_network_path_are_served(project):
+    from macaw.interface.files import posix_of, url_path
+
+    drawing = resolve_config(project).project.setups_dir / "main.png"
+    drawing.write_bytes(b"png")
+    assert path_from_url(file_url(drawing).removeprefix("/files/"), resolve_config(project)) == drawing.resolve()
+    for posix in ("//labserver/share/out/a.mp4", "C:/data/a.mp4", "/home/lab/a.mp4"):
+        assert posix_of(url_path(posix)) == posix
+
+
+def test_a_recording_s_settings_that_do_not_read_are_not_left_on_disk(project):
+    from macaw.interface import project_file
+
+    path = project_file.save_for_recording(project, "003", {"segment.task_start_s": 1.0})
+    before = path.read_text(encoding="utf-8")
+    with pytest.raises(MacawError):
+        project_file.save_for_recording(project, "003", {"segment.task_start_s": "soon"})
+    assert path.read_text(encoding="utf-8") == before
+
+
 def test_the_whole_workbench_lays_out(project):
     shown = text_of(build_layout(project.resolve()))
     assert all(name in shown for name in ("overview-grid", "run-steps", "review-body", "results-view", "settings-yaml", "theme-choice", "style-choice"))

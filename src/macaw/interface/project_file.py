@@ -321,14 +321,21 @@ def save_for_recording(config_path: Path, recording_id: str, values: dict[str, A
     """Sets these keys in one recording's own settings file, which then has to read as before."""
     folder = Path(resolve_config(config_path).project.recording_config_dir)
     path = folder / f"{recording_id}.yaml"
-    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    text = path.read_text(encoding="utf-8") if path.is_file() else None
     folder.mkdir(parents=True, exist_ok=True)
-    save(path, with_values(text, values))
-    resolve_config(config_path, recording_id=recording_id)
+    save(path, with_values(text or "", values))
+    try:
+        resolve_config(config_path, recording_id=recording_id)
+    except Exception:
+        # a file that no longer reads is not left behind
+        save(path, text) if text is not None else path.unlink(missing_ok=True)
+        raise
     return path
 
 
 def save(path: Path, text: str) -> None:
     """Writes the text with the line endings the file already has."""
+    from macaw.store._io import write_text_atomic
+
     newline = "\r\n" if path.is_file() and b"\r\n" in path.read_bytes() else "\n"
-    path.write_text(text, encoding="utf-8", newline=newline)
+    write_text_atomic(path, text, newline)

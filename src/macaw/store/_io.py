@@ -44,6 +44,13 @@ def swap_in(staging: Path, target: Path) -> None:
             time.sleep(_SWAP_WAIT_S)
 
 
+def write_text_atomic(target: Path, text: str, newline: str = "\n") -> None:
+    """Text written whole beside the target and swapped in, so a killed write leaves the old file, never half a new one."""
+    tmp = target.with_name(f".{target.name}.tmp")
+    tmp.write_text(text, encoding="utf-8", newline=newline)
+    swap_in(tmp, target)
+
+
 def _write_atomic(df: pd.DataFrame, target: Path) -> None:
     # written whole beside the target first; the leading dot keeps one a killed write left out of what reads the directory
     tmp = target.with_name(f".{target.name}.tmp")

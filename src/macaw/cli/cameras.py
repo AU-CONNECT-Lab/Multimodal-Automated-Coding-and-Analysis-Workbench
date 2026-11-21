@@ -162,7 +162,7 @@ def place_cameras_command(
     tied to the room by what it already gives and the board lying flat; writes setups/<setup>.yaml."""
     import yaml
 
-    from macaw.config.schema import MacawConfig
+    from macaw.config.schema import MacawConfig, PlacedCamera
     from macaw.extractors.video.pose.cameras import read_setup
     from macaw.extractors.video.pose.triangulate import calibration_path
     from macaw.project.placing import (
@@ -186,6 +186,9 @@ def place_cameras_command(
         raise MacawError(f"the cameras of {calibration} are not found yet: run macaw calibrate-cameras {calibration} first")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     laid = MacawConfig.model_validate({**resolved.model_dump(), "setup": {**data, "name": name}}).setup
+    # a camera of the setup not yet placed in its room is placed as the Setup page places it
+    for device in laid.cameras:
+        laid.room.cameras.setdefault(device, PlacedCamera())
     cameras = read_setup(source, resolved.pose3d.units)
     floor, problem = floor_of(resolved, calibration, cameras)
     if problem:

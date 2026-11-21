@@ -53,8 +53,10 @@ def _plain(value):
 def write_setup(path: Path, setup: SetupSection) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    from macaw.store._io import write_text_atomic
+
     # short lists of names or numbers on one line
-    path.write_text(yaml.safe_dump(setup_content(setup), sort_keys=False, allow_unicode=True, default_flow_style=None), encoding="utf-8")
+    write_text_atomic(path, yaml.safe_dump(setup_content(setup), sort_keys=False, allow_unicode=True, default_flow_style=None))
     return path
 
 

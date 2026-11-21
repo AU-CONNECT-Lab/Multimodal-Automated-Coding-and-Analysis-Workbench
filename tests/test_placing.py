@@ -415,3 +415,19 @@ def test_a_number_typed_over_a_calibrated_camera_joins_what_was_measured():
     assert entry["measured"] == {"at": [100, 50], "tilt": 15.0} and entry["calibration"] == "lab"
     entry = moved(model, "cameras", "front", {"x": 90})["cameras"]["front"]
     assert entry["measured"] == {"at": [90.0, 31.2]}
+
+
+def test_a_camera_of_the_setup_not_yet_in_its_room_is_placed_by_the_command_too(calibrated_project):
+    import yaml
+    from typer.testing import CliRunner
+
+    from macaw.cli.main import app
+
+    setup_file = calibrated_project.parent / "setups" / "main.yaml"
+    data = yaml.safe_load(setup_file.read_text(encoding="utf-8"))
+    del data["room"]["cameras"]["right"]
+    setup_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    placed = CliRunner().invoke(app, ["place-cameras", "-c", str(calibrated_project)])
+    assert placed.exit_code == 0, placed.output + str(placed.exception)
+    room = yaml.safe_load(setup_file.read_text(encoding="utf-8"))["room"]["cameras"]
+    assert room["right"]["lens"] == pytest.approx(room["left"]["lens"], abs=5)
