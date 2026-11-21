@@ -373,6 +373,9 @@ def _pictures_back(video_path, last: int, first: int) -> Iterator[tuple[int, np.
         end = last + 1
         while end > first:
             begin = max(end - stretch, first)
+            if end <= last:
+                # the seek starts from the beginning, which the stretch read after it has left
+                capture.open(str(video_path))
             index, held = _seek(capture, cv2, begin, Path(video_path)), []
             while index < end:
                 ok, image = capture.read()
@@ -555,7 +558,7 @@ def doubts(entry: dict) -> list[str]:
 @register_extractor
 class ObjectTrackExtractor(Extractor):
     name = "objects.track"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "objects"
     config_sections = (

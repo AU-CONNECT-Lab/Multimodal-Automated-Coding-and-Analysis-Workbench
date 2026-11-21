@@ -349,9 +349,10 @@ class TestFollowingBack:
         writer.release()
         # eight frames a stretch, so 4 to 21 is read in three stretches
         monkeypatch.setattr(track_module, "_BACK_BYTES", 8 * 32 * 32 * 3)
-        handed = list(track_module._pictures_back(path, 21, 4))
-        assert [index for index, _ in handed] == list(range(21, 3, -1))
-        assert all(abs(int(image.mean()) - index * 8) <= 2 for index, image in handed)
+        for first in (4, 0):
+            handed = list(track_module._pictures_back(path, 21, first))
+            assert [index for index, _ in handed] == list(range(21, first - 1, -1))
+            assert all(abs(int(image.mean()) - index * 8) <= 2 for index, image in handed)
 
     def test_each_thing_is_followed_back_only_before_its_own_first_start(self, monkeypatch):
         from macaw.extractors.video.objects.track import Sam2Tracker, TrackStart
