@@ -20,6 +20,7 @@ from macaw.config.schema import LookSection
 from macaw.exceptions import MacawError
 from macaw.extractors import get_backend
 from macaw.extractors.video.pose.skeleton import STANDARD_JOINTS
+from macaw.media.images import read_image
 from macaw.qc.overlay import cv2_module, draw_overlay, draw_things
 
 MISSED, TWICE, ON_NO_ONE, WRONG_NAME, NOT_THE_THING = "missed", "twice", "on_no_one", "wrong_name", "not_the_thing"
@@ -210,8 +211,8 @@ def look_at_frame(
     }
 
 
-def _look_at_file(backend, cv2, path, people, subjects, described, things=None) -> dict:
-    return look_at_frame(backend, cv2.imread(str(path)), people, subjects, described, things)
+def _look_at_file(backend, path, people, subjects, described, things=None) -> dict:
+    return look_at_frame(backend, read_image(path), people, subjects, described, things)
 
 
 def _key(picture: bytes, people: list[dict], model: str, described: dict[str, str], things: pd.DataFrame | None = None) -> str:
@@ -228,7 +229,7 @@ def look_at_recording(
 ) -> dict:
     """Asks about each review frame not already answered for the same picture, people, model and descriptions, then draws the random check."""
     rid = recording.recording_id
-    cv2 = cv2_module()
+    cv2_module()   # missing OpenCV stops the step before any question is sent
     subjects = [subject.subject_id for subject in recording.subjects]
     described = {name: looks for name, looks in cfg.people.items() if name in subjects}
     model = backend.model_version()
@@ -245,7 +246,7 @@ def look_at_recording(
         entry = earlier.get(row.file)
         if entry is None or entry.get("key") != key:
             entry = {"file": row.file, "t": float(row.t), "video": row.video, "frame": int(row.frame), "reason": row.reason, "key": key}
-            asked.append((entry, functools.partial(_look_at_file, backend, cv2, path, people, subjects, described, shown)))
+            asked.append((entry, functools.partial(_look_at_file, backend, path, people, subjects, described, shown)))
         found.append(entry)
     for (entry, _), answer in zip(asked, run_in_order([job for _, job in asked], cfg.concurrency)):
         entry.update(answer)

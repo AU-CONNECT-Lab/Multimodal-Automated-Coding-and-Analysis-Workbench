@@ -41,3 +41,24 @@ def test_an_imported_depth_recording_lands_in_a_folder_named_with_letters_beyond
     shots = (Shot(t, picture, np.full((48, 64), 1000 + i, np.uint16)) for i, t in enumerate([0.0, 0.1, 0.2]))
     write_folder(Source(colour, 0.001, 10.0, shots, []), folder / "cam.mp4", folder)
     assert [int(read_png(folder / f"{index:06d}.png").max()) for index in range(3)] == [1000, 1001, 1002]
+
+
+def test_the_model_is_shown_a_review_frame_kept_in_a_folder_named_with_letters_beyond_ascii(folder):
+    import pandas as pd
+
+    from macaw.coding.llm.backends import LLMResponse
+    from macaw.media.images import write_image
+    from macaw.qc.look import _look_at_file
+
+    shown = []
+
+    class Model:
+        def complete(self, system, user, *, seed=None, images=()):
+            shown.extend(images)
+            return LLMResponse(text='{"people": 0}', model="m")
+
+    write_image(folder / "a.jpg", np.full((40, 60, 3), 128, dtype=np.uint8))
+    people = pd.DataFrame({"joint": pd.Series(dtype=str), "x": pd.Series(dtype=float), "y": pd.Series(dtype=float),
+                           "subject_id": pd.Series(dtype=object), "track_id": pd.Series(dtype=float)})
+    answer = _look_at_file(Model(), folder / "a.jpg", people, [], {})
+    assert answer["people_seen"] == 0 and shown and shown[0][:2] == b"\xff\xd8"
