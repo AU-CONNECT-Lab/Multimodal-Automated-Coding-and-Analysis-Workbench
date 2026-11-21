@@ -321,7 +321,7 @@ class JudgementExtractor(Extractor):
                 "and were not asked for again.",
             )
         if cfg.n_samples == 1:
-            note("llm_single_sample", "info", "coding.llm.n_samples is 1, so no confidence was measured; only abstentions go to the review queue.")
+            note("llm_single_sample", "info", "coding.llm.n_samples is 1, so no confidence was measured; only abstentions and units without a usable answer go to the review queue.")
         if not backend.takes_seed and cfg.n_samples > 1:
             note("llm_no_seed", "info", f"{backend.name} takes no seed, so a rerun can give different labels.")
         if seed_caveat(backend, cfg):
