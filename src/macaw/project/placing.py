@@ -398,8 +398,8 @@ MEASURED_FIELDS = ("at", "height", "facing", "tilt")
 def as_measured(room: RoomSection) -> RoomSection:
     """The room with each camera a calibration placed back at the numbers a person gave, so a placing never checks itself."""
     cameras = {
-        name: placed.model_copy(update={field: getattr(placed.measured, field) for field in MEASURED_FIELDS})
-        if placed.calibration and placed.measured is not None else placed
+        name: placed.model_copy(update={field: getattr(placed.measured, field) if placed.measured else None for field in MEASURED_FIELDS})
+        if placed.calibration else placed
         for name, placed in room.cameras.items()
     }
     return room.model_copy(update={"cameras": cameras})

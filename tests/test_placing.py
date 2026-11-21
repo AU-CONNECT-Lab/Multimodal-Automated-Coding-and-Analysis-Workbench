@@ -380,8 +380,31 @@ def test_the_setup_page_shows_saves_and_uses_the_board_lying_flat(calibrated_pro
     after, message = room.from_calibration(calibrated_project, model)
     assert "Placed left, right from the calibration lab." in text_of(message)
     assert after["cameras"]["right"]["height"] == pytest.approx(130, abs=1) and after["cameras"]["right"]["calibration"] == "lab"
-    # a number changed by hand is no longer the calibration's; one left as it was keeps the mark
+    # a number changed by hand counts as measured; the camera's other numbers stay the calibration's
     kept = room.moved(after, "cameras", "right", {"height": after["cameras"]["right"]["height"]})
-    assert kept["cameras"]["right"]["calibration"] == "lab"
-    assert room.moved(after, "cameras", "right", {"height": 140})["cameras"]["right"]["calibration"] is None
+    assert kept["cameras"]["right"]["calibration"] == "lab" and kept["cameras"]["right"]["measured"] == after["cameras"]["right"]["measured"]
+    typed = room.moved(after, "cameras", "right", {"height": 140})["cameras"]["right"]
+    assert typed["calibration"] == "lab" and typed["height"] == 140
+    assert typed["measured"] == {**(after["cameras"]["right"]["measured"] or {}), "height": 140}
     assert room.room_of(after)["cameras"]["left"]["calibration"] == "lab"
+
+
+def test_a_camera_placed_from_the_calibration_alone_is_given_as_unmeasured_to_the_next_placing():
+    from macaw.project.placing import as_measured
+
+    room = room_with({})
+    placed = room.cameras["side"]
+    placed.at, placed.height, placed.facing, placed.tilt, placed.calibration = [120.0, 30.0], 150.0, 10.0, 12.0, "lab"
+    given = as_measured(room).cameras["side"]
+    assert (given.at, given.height, given.facing, given.tilt) == (None, None, None, None)
+
+
+def test_a_number_typed_over_a_calibrated_camera_joins_what_was_measured():
+    from macaw.interface.pages.room import moved
+
+    model = {"cameras": {"front": {"x": 118.4, "y": 31.2, "height": 151.0, "facing": 9.5, "tilt": 12.0, "lens": 70.0,
+                                   "calibration": "lab", "measured": {"at": [100, 50]}}}}
+    entry = moved(model, "cameras", "front", {"tilt": 15})["cameras"]["front"]
+    assert entry["measured"] == {"at": [100, 50], "tilt": 15.0} and entry["calibration"] == "lab"
+    entry = moved(model, "cameras", "front", {"x": 90})["cameras"]["front"]
+    assert entry["measured"] == {"at": [90.0, 31.2]}

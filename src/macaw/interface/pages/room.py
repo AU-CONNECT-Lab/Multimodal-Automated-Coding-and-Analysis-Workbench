@@ -317,11 +317,22 @@ def moved(model: dict, kind: str, name: str, fields: dict) -> dict:
     model = _copy(model)
     entry = model[kind][name]
     given = {field: _number(value, field) for field, value in fields.items() if field in FIELDS[kind]}
-    # numbers changed by hand are no longer the calibration's
-    if kind == "cameras" and any(entry.get(field) != value for field, value in given.items()):
-        entry["calibration"] = None
+    changed = {field: value for field, value in given.items() if entry.get(field) != value}
+    if kind == "cameras" and entry.get("calibration") and changed:
+        entry["measured"] = _measured_by_hand(entry, changed)
     entry.update(given)
     return model
+
+
+def _measured_by_hand(entry: dict, changed: dict) -> dict | None:
+    """A camera's measured numbers with those typed over its calibration's, which the next placing fits to; the rest stay the calibration's."""
+    measured = dict(entry.get("measured") or {})
+    if "x" in changed or "y" in changed:
+        x, y = changed.get("x", entry.get("x")), changed.get("y", entry.get("y"))
+        measured["at"] = [x, y] if x is not None and y is not None else None
+    measured.update({field: value for field, value in changed.items() if field in ("height", "facing", "tilt")})
+    measured = {field: value for field, value in measured.items() if value is not None}
+    return measured or None
 
 
 def filled(model: dict, placing, calibration: str, room=None) -> dict:
