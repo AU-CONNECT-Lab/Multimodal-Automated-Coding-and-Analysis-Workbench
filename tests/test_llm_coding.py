@@ -967,11 +967,20 @@ class TestExamples:
             "code": ["inform", "question"], "speaker": ["B", "A"], "text": ["it is blue", "where is it?"],
             "before": ["A: what colour?", ""], "why": ["answers", ""], "recording_id": ["r2", "r1"],
         }).to_csv(path, index=False)
+        monkeypatch.setattr(module, "project_recordings", lambda config: {"r1", "r2"})
         result = run_judge(monkeypatch, tmp_path, stub, n_samples=1, examples=path)
         system = stub.requests[0]["body"]["messages"][0]["content"]
         assert "as examples:\n- Before it, A: what colour?\n  B: it is blue\n  Code: inform. Why: answers\n" in system
         assert "where is it?" not in system
         assert any(warning.check == "llm_own_examples" and warning.message.startswith("1 of the examples") for warning in result.warnings)
+
+    def test_an_example_from_a_recording_the_project_lacks_is_refused(self, monkeypatch, tmp_path, stub):
+        # a spreadsheet saving r001 as 1 would let the recording's own answers through
+        path = tmp_path / "examples.csv"
+        pd.DataFrame({"code": ["inform", "inform"], "text": ["it is blue", "it is red"], "recording_id": ["1", ""]}).to_csv(path, index=False)
+        monkeypatch.setattr(module, "project_recordings", lambda config: {"001"})
+        with pytest.raises(CodebookError, match="recording_id 1 is no recording of this project"):
+            run_judge(monkeypatch, tmp_path, stub, n_samples=1, examples=path)
 
     def test_editing_the_examples_codes_again(self, tmp_path):
         write_codebook(CODEBOOK, tmp_path / "acts.yaml")

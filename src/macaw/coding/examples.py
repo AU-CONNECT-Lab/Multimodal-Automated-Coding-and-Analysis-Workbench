@@ -50,6 +50,18 @@ def read_examples(path: Path, codebook: Codebook) -> pd.DataFrame:
     return table
 
 
+def check_recordings(table: pd.DataFrame, known: set[str], name: str) -> pd.DataFrame:
+    """The table, once every recording it names is one of known; a recording must be found to keep its own examples out."""
+    stray = sorted(set(table["recording_id"]) - {""} - known)
+    if stray:
+        raise CodebookError(
+            f"{name}: recording_id {', '.join(stray)} is no recording of this project, so those examples could be shown to "
+            "the recording they come from. A spreadsheet may have changed the ids (001 saved as 1); write them as the "
+            "project names its recordings, or leave the cell empty for an example from elsewhere."
+        )
+    return table
+
+
 def draw_examples(
     coded: pd.DataFrame, lines: dict[str, pd.DataFrame], codebook: Codebook, *, per_code: int, seed: int = 0
 ) -> tuple[pd.DataFrame, DrawReport]:

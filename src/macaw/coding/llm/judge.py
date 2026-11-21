@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from macaw.coding.codebook import Codebook, read_codebook, validate_codebook
-from macaw.coding.examples import read_examples
+from macaw.coding.examples import check_recordings, read_examples
 from macaw.coding.llm.backends import (
     KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
 )
@@ -32,7 +32,7 @@ from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_
 from macaw.media.ffmpeg import extract_frame
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
-from macaw.project.recording import Recording
+from macaw.project.recording import Recording, detect_recordings
 from macaw.project.segments import clip_intervals
 from macaw.store import _io
 from macaw.store.annotations import build_annotations
@@ -76,6 +76,11 @@ _MISSING = {
         f"{_UNCODED}, and where no unit of this person was coded in the span. 0 means none of their units went to the review queue."
     ),
 }
+
+
+def project_recordings(config) -> set[str]:
+    project = config.project
+    return set(detect_recordings(project.raw_dir, project.recording_pattern, project.recording_prefix))
 
 
 @register_extractor
@@ -207,7 +212,10 @@ class JudgementExtractor(Extractor):
         _, cfg = self.settings(self.config)
         if cfg.examples is None:
             return pd.DataFrame(columns=["code", "speaker", "text", "before", "why", "recording_id"])
-        return read_examples(cfg.examples, codebook)
+        examples = read_examples(cfg.examples, codebook)
+        if not examples["recording_id"].ne("").any():
+            return examples
+        return check_recordings(examples, project_recordings(self.config), Path(cfg.examples).name)
 
     def _codebook(self) -> Codebook:
         path, cfg = self.settings(self.config)
@@ -222,7 +230,7 @@ class JudgementExtractor(Extractor):
         if codebook.unit == "window":
             raise CodebookError(f"{path}: unit 'window' cannot be coded yet; use utterance or turn.")
         if cfg.examples is not None:
-            read_examples(cfg.examples, codebook)
+            self._examples(codebook)
         return codebook
 
     def _annotations(self, recording: Recording, judged: pd.DataFrame, tier: str, annotator: str) -> pd.DataFrame:

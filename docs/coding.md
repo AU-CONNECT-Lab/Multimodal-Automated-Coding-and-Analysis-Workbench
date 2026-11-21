@@ -126,7 +126,7 @@ Once human coding has been imported ({ref}`own-coding`), a few units of each cod
 macaw draw-examples examples.csv --coder anna --per-code 3
 ```
 
-Each row gives the code, the speaker, the words, the preceding line and the source. Remove or edit rows as needed, and add a reason in the `why` column where the model should read one. Then select the file under *Examples people coded*. A recording is never shown its own examples. Units used to estimate agreement should not be the ones the examples were drawn from.
+Each row gives the code, the speaker, the words, the preceding line and the source. Remove or edit rows as needed, and add a reason in the `why` column where the model should read one. Then select the file under *Examples people coded*. A recording is never shown its own examples, which is why the `recording_id` column must keep the recordings' names exactly: a spreadsheet program may turn `001` into `1`, and coding then stops with a message naming the ids it does not recognise. Leave the cell empty for an example from outside the project. Units used to estimate agreement should not be the ones the examples were drawn from.
 
 ### Comparing codebooks, models or inputs
 
