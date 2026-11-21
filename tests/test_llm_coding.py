@@ -354,6 +354,16 @@ class TestBackends:
         assert stub.requests[0]["headers"]["authorization"] == "Bearer sk-test"
         assert backend.model_version() == "tiny"
 
+    def test_a_hosted_model_s_answers_are_kept_under_the_name_asked_for_not_the_one_it_answers_with(self, monkeypatch, stub):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        cfg = LLMSection(provider="openai", model="x", base_url=f"{stub.url}/v1")
+        backend = OpenAIBackend(cfg)
+        before = backends_module.request_key(backend, cfg, "s", "u", 0, 1)
+        backend.complete("s", "u")
+        assert backend.model_version() == "tiny" and backends_module.request_key(backend, cfg, "s", "u", 0, 1) == before
+        local = OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1"))
+        assert local.key_model() == "tiny@abcdef123456"
+
     def test_anthropic_messages_api(self, monkeypatch, stub):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
         backend = AnthropicBackend(LLMSection(provider="anthropic", model="claude-x", base_url=f"{stub.url}/v1"))

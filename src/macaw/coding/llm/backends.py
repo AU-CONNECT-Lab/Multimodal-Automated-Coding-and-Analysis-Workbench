@@ -92,6 +92,10 @@ class LLMBackend(Backend):
     def model_version(self) -> str:
         return self._seen_model or str(self.cfg.model)
 
+    def key_model(self) -> str:
+        # the name asked for, not the dated one a hosted service answers with, so a kept answer is found before any request
+        return str(self.cfg.model)
+
     def context_length(self) -> int | None:
         """Tokens the loaded model reads at most, prompt and answer together; None where the server does not say."""
         return None
@@ -206,7 +210,7 @@ def request_key(
 ) -> str:
     """Everything an answer depends on; the same key is the same question to the same model."""
     return hash_value({
-        "provider": backend.name, "model": backend.model_version(), "temperature": cfg.temperature, "max_tokens": cfg.max_tokens,
+        "provider": backend.name, "model": backend.key_model(), "temperature": cfg.temperature, "max_tokens": cfg.max_tokens,
         "think": cfg.think, "system": system, "user": user, "sample": sample, "seed": seed,
         "images": [hashlib.sha256(image).hexdigest() for image in images],
     })
@@ -351,6 +355,9 @@ class OpenAICompatibleBackend(LLMBackend):
         if self._served is None:
             self._served = self._served_version()
         return self._served
+
+    def key_model(self) -> str:
+        return self.model_version() if self.is_local else super().key_model()
 
     _served: str | None = None
 
