@@ -216,6 +216,23 @@ class TestCommand:
         assert imported(config, "dyad01")["label"].tolist() == ["parent"]
         assert imported(config, "dyad010")["label"].tolist() == ["elsewhere"]
 
+    def test_an_earlier_version_kept_beside_a_file_in_the_folder_is_left_out(self, project, tmp_path):
+        from macaw import people_tables
+
+        project.configure(IMPORTS)
+        folder = tmp_path / "coding"
+        folder.mkdir()
+        write_eaf(folder / "dyad01.eaf", {"Child Gaze": (None, [(0, 1000, "Away")])})
+        first = people_tables.set_aside(folder / "dyad01.eaf")
+        write_eaf(folder / "dyad01.eaf", {"Child Gaze": (None, [(0, 1000, "Away")])})
+        second = people_tables.set_aside(folder / "dyad01.eaf")
+        assert first.is_file() and second.is_file() and first != second
+        write_eaf(folder / "dyad01.eaf", {"Child Gaze": (None, [(0, 1000, "Mom")])})
+        result = CliRunner().invoke(app, ["import-codes", str(folder), "--coder", "anna", "-c", str(project.path)])
+        assert result.exit_code == 0, result.output
+        assert "2 earlier version(s)" in result.output
+        assert imported(resolve_config(project.path), "dyad01")["label"].tolist() == ["parent"]
+
     def test_a_file_named_after_no_recording_needs_r(self, project, tmp_path):
         project.configure(IMPORTS)
         path = write_eaf(tmp_path / "family1.eaf", {"Child Gaze": (None, [(0, 1000, "Mom")])})

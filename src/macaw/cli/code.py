@@ -165,6 +165,11 @@ def import_codes(
         for path in paths
         for found in (sorted(item for item in path.iterdir() if item.suffix.lower() in SUFFIXES) if path.is_dir() else [path])
     ]
+    # earlier versions kept beside a file written again, which a folder holds too
+    earlier = [path for path in files if path.parent in paths and path not in paths and people_tables.is_set_aside(path)]
+    files = [path for path in files if path not in earlier]
+    if earlier:
+        typer.echo(f"{len(earlier)} earlier version(s) kept beside a file written again left out, such as {earlier[0].name}")
     if not files:
         raise MacawError(f"no coding files ({', '.join(SUFFIXES)}) there")
     if recording is not None and len(files) > 1:

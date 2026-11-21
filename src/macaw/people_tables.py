@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -26,9 +27,22 @@ def set_aside(path: Path) -> Path | None:
     path = Path(path)
     if not path.is_file():
         return None
-    kept = path.with_name(f"{path.stem}.{datetime.now():%Y%m%d-%H%M%S}{path.suffix}")
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    kept = path.with_name(f"{path.stem}.{stamp}{path.suffix}")
+    count = 1
+    while kept.exists():   # set aside twice in one second: the first one kept stays
+        count += 1
+        kept = path.with_name(f"{path.stem}.{stamp}-{count}{path.suffix}")
     path.replace(kept)
     return kept
+
+
+_SET_ASIDE = re.compile(r"\.\d{8}-\d{6}(-\d+)?$")
+
+
+def is_set_aside(path: Path) -> bool:
+    """A file set_aside kept, which reading a folder of people's files leaves out."""
+    return bool(_SET_ASIDE.search(Path(path).stem))
 
 
 def said_aside(kept: Path | None) -> str:
