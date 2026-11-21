@@ -53,6 +53,13 @@ class TestBackchannels:
         )
         assert code_backchannels(turns, cfg).empty
 
+    def test_an_entry_of_two_words_matches_those_words(self, make_turns):
+        turns = with_text(
+            make_turns([("parent", 0, 3), ("child", 3.1, 3.4), ("parent", 3.5, 6)]),
+            ["a story", "Uh huh.", "and then"],
+        )
+        assert list(code_backchannels(turns, CodingSection(backchannel_lexicon=["uh huh", "yeah"])).subject_id) == ["child"]
+
     def test_a_sentence_containing_the_token_is_not_one(self, make_turns, cfg):
         turns = with_text(
             make_turns([("parent", 0, 3), ("child", 3.1, 3.9), ("parent", 4, 6)]),

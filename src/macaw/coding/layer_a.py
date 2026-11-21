@@ -40,7 +40,8 @@ def _tokens(text) -> set[str]:
 
 def code_backchannels(turns: pd.DataFrame, cfg: CodingSection) -> pd.DataFrame:
     """Lexicon match, short duration, does not take the floor. Three rules is enough."""
-    lexicon = {token.strip().lower() for token in cfg.backchannel_lexicon if str(token).strip()}
+    # an entry of several words, such as "uh huh", is cut into words as the turns are
+    lexicon = set().union(*(_tokens(entry) for entry in cfg.backchannel_lexicon))
     if turns.empty or not lexicon:
         return _empty_intervals()
 
@@ -187,7 +188,7 @@ _MISSING = {
 @register_extractor
 class LayerACodingExtractor(Extractor):
     name = "coding.layer_a"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.EVENT
     group = "coding"
     # only the coding keys it reads, so a language model setting leaves it alone
