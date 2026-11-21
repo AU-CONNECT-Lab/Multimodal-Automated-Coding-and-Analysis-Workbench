@@ -32,6 +32,7 @@ class Segment:
     extractors: list[str]
     gpu: bool
     profile: str = ""
+    tiers: list[str] = field(default_factory=list)   # every tier among its steps, which one job has to cover
 
 
 @dataclass
@@ -91,8 +92,24 @@ def segments(config: MacawConfig, hpc: HPCConfig, dag, steps: list[str]) -> list
         found[-1].extractors.extend(same)
         left -= set(same)
     for segment in found:
-        segment.profile = max((tiers[name] for name in segment.extractors), key=lambda tier: _weight(resolve_profile(hpc, tier)))
+        segment.tiers = sorted({tiers[name] for name in segment.extractors})
+        segment.profile = max(segment.tiers, key=lambda tier: _weight(resolve_profile(hpc, tier)))
     return found
+
+
+def request(hpc: HPCConfig, segment: Segment) -> ResourceProfile:
+    """The heaviest tier's job, with the most memory, cores and time any of the segment's tiers asks for."""
+    base = resolve_profile(hpc, segment.profile)
+    every = [resolve_profile(hpc, tier) for tier in segment.tiers or [segment.profile]]
+
+    def most(field_name: str, size):
+        given = [getattr(profile, field_name) for profile in every if getattr(profile, field_name) is not None]
+        return max(given, key=size) if given else getattr(base, field_name)
+
+    return base.model_copy(update={
+        "memory": most("memory", _megabytes), "memory_per_cpu": most("memory_per_cpu", _megabytes),
+        "time": most("time", _seconds), "cpus_per_task": max(profile.cpus_per_task for profile in every),
+    })
 
 
 def sbatch_flags(profile: ResourceProfile) -> list[str]:
@@ -229,7 +246,7 @@ def submit_script(config: MacawConfig, hpc: HPCConfig, found: list[Segment], map
     lines = ["#!/bin/bash", "# submit from a login node: bash submit.sh", "set -eo pipefail", 'cd "$(dirname "$0")"']
     jobs = []
     for number, segment in enumerate(found, start=1):
-        profile = resolve_profile(hpc, segment.profile)
+        profile = request(hpc, segment)
         flags = [
             f"--job-name={prefix}-{number}", f"--array={array_spec(mapping, max_concurrent=profile.array_limit)}",
             f"--output=logs/{number}_%A_%a.out", *sbatch_flags(profile),

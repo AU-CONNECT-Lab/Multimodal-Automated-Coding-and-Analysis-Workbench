@@ -189,7 +189,8 @@ def test_the_arrays_run_each_recording_through_and_a_second_generate_finds_nothi
     (project.root / "hpc.yaml").write_text(yaml.safe_dump(hpc), encoding="utf-8")
 
     invoke = lambda *args: CliRunner().invoke(app, list(args), catch_exceptions=False)  # noqa: E731
-    result = invoke("hpc", "generate", "-c", str(project.config), "-e", "prosody.frame")
+    # a CPU step after prep.media that needs no model
+    result = invoke("hpc", "generate", "-c", str(project.config), "-e", "prep.media", "-e", "segments.summary")
     assert result.exit_code == 0, result.output
     assert "1  gpu  data_manage  prep.media" in result.output and "2  cpu  " in result.output
     directory = Path(result.output.split("bash ")[-1].strip()).parent
@@ -201,7 +202,7 @@ def test_the_arrays_run_each_recording_through_and_a_second_generate_finds_nothi
             assert outcome.exit_code == 0 and "done 1  " in outcome.output and "failed 0" in outcome.output, outcome.output
     closing = invoke(*shlex.split((directory / "finish.sh").read_text(encoding="utf-8").splitlines()[-1])[3:])
     assert "failed 0" in closing.output and (project.resolved().project.output_dir / "manifest.json").is_file()
-    assert "nothing left to run" in invoke("hpc", "generate", "-c", str(project.config), "-e", "prosody.frame").output
+    assert "nothing left to run" in invoke("hpc", "generate", "-c", str(project.config), "-e", "prep.media", "-e", "segments.summary").output
 
 
 def test_prefetch_loads_each_model_once_into_the_shared_cache(project, monkeypatch):
@@ -351,3 +352,15 @@ class TestFetchBeforeTheRun:
         config = project.resolved()
         assert runner_module._fetch_models(project.config, runner_module.layout_for(config), ["text.asr"], set(), ["003"], set(), "x2") == set()
         assert commands == []
+
+
+def test_a_job_asks_for_the_most_memory_cores_and_time_among_its_steps_tiers():
+    from macaw.config.hpc import HPCConfig
+
+    hpc = HPCConfig(defaults=ResourceProfile(partition="batch"), resource_profiles={
+        "big_mem": ResourceProfile(memory="128gb", time="02:00:00", cpus_per_task=4),
+        "long_cpu": ResourceProfile(memory="16gb", time="2-00:00:00", cpus_per_task=32, partition="long"),
+    })
+    segment = slurm.Segment(extractors=["a", "b"], gpu=False, profile="big_mem", tiers=["big_mem", "long_cpu"])
+    asked = slurm.request(hpc, segment)
+    assert (asked.memory, asked.time, asked.cpus_per_task, asked.partition) == ("128gb", "2-00:00:00", 32, "batch")

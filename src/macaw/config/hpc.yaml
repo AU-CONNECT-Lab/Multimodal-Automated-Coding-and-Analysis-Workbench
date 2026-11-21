@@ -13,9 +13,11 @@ defaults:
 
 # Named resource tiers. Extractors reference a tier by name through
 # Extractor.resource_profile, so adding an extractor never means editing this file.
+# Steps that run one after another on the same kind of node share one job, which asks
+# for the most memory, cores and time among their tiers: a tier's time is for that job.
 #
 # array_limit caps how many recordings of one array run at once. It is the %N in
-# --array=1-50%15. Set it per tier so heavy work stays inside node memory while light
+# --array=0-49%15. Set it per tier so heavy work stays inside node memory while light
 # work runs wide. Omit it to leave the array unthrottled.
 resource_profiles:
   data_manage:                       # probing, muxing, anything mostly waiting on disk
