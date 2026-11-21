@@ -176,6 +176,10 @@ class Layout:
     def imported_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "imported.parquet"
 
+    # which person and tier each coder's file brought in, so importing the file again replaces all of them
+    def imported_sources_path(self, recording_id: str) -> Path:
+        return self.recording_dir(recording_id) / "imported_sources.json"
+
     # beside the steps' files, so a rerun of the model pass leaves people's decisions alone
     def reviewed_codes_path(self, recording_id: str) -> Path:
         return self.annotations_path(recording_id) / "reviewed.parquet"
@@ -200,6 +204,7 @@ class Layout:
             self.recognised_words_path(recording_id),
             self.scale_path(recording_id),
             self.imported_codes_path(recording_id),
+            self.imported_sources_path(recording_id),
             self.reviewed_codes_path(recording_id),
             self.look_checks_path(recording_id),
             self.review_notes_path(recording_id),

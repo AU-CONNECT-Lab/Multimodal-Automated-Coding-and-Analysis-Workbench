@@ -321,7 +321,7 @@ On the Review page, enter a name under *Your name*, select the recording and pre
 macaw import-codes coding/anna --coder anna
 ```
 
-Importing again under the same name replaces that coder's codes for the same participant and tier; other coders' codes are kept.
+Importing again under the same name replaces that coder's codes for the same participant and tier, and everything the same file brought in before, so that a tier first given to the wrong participant or under the wrong name leaves nothing behind once the settings are put right; the command lists what it removed. Other coders' codes are kept.
 
 Accepted files are ELAN files (`.eaf`) and tables (`.csv`, `.tsv` or `.xlsx`) with the columns `tier`, `start`, `end` and `code`, and optionally `person`, as most coding programs can export. Start and end are given in seconds or as a clock time such as `1:02.5`, counted from the start of the recording's video, as ELAN shows them when that file is coded.
 

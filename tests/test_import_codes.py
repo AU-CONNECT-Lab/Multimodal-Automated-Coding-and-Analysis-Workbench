@@ -132,6 +132,19 @@ class TestImport:
         assert mine == {"gaze_target": "elsewhere", "speech": "question"}
         assert len(rows[rows["annotator"] == "ben"]) == 2
 
+    def test_a_tier_given_to_the_wrong_person_leaves_nothing_behind_once_put_right(self, project, tmp_path):
+        config, recording = project.configure(IMPORTS.replace("person: child", "person: parent"))
+        path = write_eaf(tmp_path / "a.eaf", {"Child Gaze": (None, [(0, 1000, "Mom")]), "speech": ("child", [(0, 500, "question")])})
+        import_coding(config, recording, path, "anna")
+        # another file of the same coder keeps its own tiers
+        import_coding(config, recording, write_eaf(tmp_path / "other.eaf", {"speech": ("parent", [(0, 300, "ask")])}), "anna")
+        project.path.write_text(project.path.read_text(encoding="utf-8").replace("person: parent", "person: child"), encoding="utf-8")
+        config, recording = project.configure()
+        report = import_coding(config, recording, path, "anna")
+        rows = imported(config)
+        assert sorted(zip(rows["subject_id"], rows["tier"])) == [("child", "gaze_target"), ("child", "speech"), ("parent", "speech")]
+        assert report.notes == ["parent gaze_target: brought in from this file before and not now, removed"]
+
     def test_machine_codes_handed_back_unchanged_are_not_the_coder_s(self, project, tmp_path):
         config, recording = project.configure()
         machine = build_annotations(

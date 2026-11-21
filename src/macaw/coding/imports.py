@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,7 +32,8 @@ class ImportReport:
 
 
 def import_coding(config, recording: Recording, path: Path, coder: str) -> ImportReport:
-    """Importing again replaces this coder's codes for the same person and tier; other coders' stay."""
+    """Importing again replaces this coder's codes for the same person and tier, and those the same file brought in
+    before, so a tier given to another person or renamed leaves nothing behind; other coders' stay."""
     raw = read_coding_file(path)
     people = [str(subject.subject_id) for subject in recording.subjects]
     layout = layout_for(config, create=False)
@@ -61,8 +63,17 @@ def import_coding(config, recording: Recording, path: Path, coder: str) -> Impor
             )
         )
         report.kept[(person, tier)] = report.kept.get((person, tier), 0) + len(intervals)
-    if frames:
-        _store(layout.imported_codes_path(recording.recording_id), coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, _NAME))
+    new = coerce_frame(pd.concat(frames, ignore_index=True), ANNOTATION_SCHEMA, _NAME) if frames else empty_frame(ANNOTATION_SCHEMA)
+    sources = layout.imported_sources_path(recording.recording_id)
+    found = json.loads(sources.read_text(encoding="utf-8")) if sources.is_file() else {}
+    before = {(person, tier) for person, tier in found.get(coder, {}).get(Path(path).name, [])}
+    now = {(_text(person), tier) for person, tier in zip(new["subject_id"], new["tier"])}
+    gone = _store(layout.imported_codes_path(recording.recording_id), new, coder, before - now)
+    for person, tier in sorted(gone, key=str):
+        report.notes.append(f"{person or 'everyone'} {tier}: brought in from this file before and not now, removed")
+    found.setdefault(coder, {})[Path(path).name] = sorted([list(key) for key in now], key=str)
+    sources.parent.mkdir(parents=True, exist_ok=True)
+    sources.write_text(json.dumps(found, indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
 
@@ -102,10 +113,16 @@ def _unchanged(rows: pd.DataFrame, held: pd.DataFrame, person: str, tier: str, a
     return spans(rows) == spans(theirs)
 
 
-def _store(target: Path, new: pd.DataFrame) -> None:
+def _store(target: Path, new: pd.DataFrame, coder: str, dropped: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Writes new over the same coder, person and tier, and removes the coder's dropped ones; returns those that held codes."""
+    gone: set[tuple[str, str]] = set()
     if target.is_file():
         old = _io.read_file(target, ANNOTATION_SCHEMA, _NAME)
-        replaced = set(zip(new["annotator"], new["subject_id"].map(_text), new["tier"]))
-        stays = [key not in replaced for key in zip(old["annotator"], old["subject_id"].map(_text), old["tier"])]
-        new = pd.concat([old[stays], new], ignore_index=True)
+        replaced = set(zip(new["annotator"], new["subject_id"].map(_text), new["tier"])) | {(coder, *key) for key in dropped}
+        keys = list(zip(old["annotator"], old["subject_id"].map(_text), old["tier"]))
+        gone = {(person, tier) for annotator, person, tier in keys if annotator == coder and (person, tier) in dropped}
+        new = pd.concat([old[[key not in replaced for key in keys]], new], ignore_index=True)
+    if new.empty and not target.is_file():
+        return gone
     _io.write_file(new.sort_values(["annotator", "subject_id", "tier", "t_start"], na_position="first").reset_index(drop=True), target, ANNOTATION_SCHEMA, _NAME)
+    return gone
