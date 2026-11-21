@@ -266,6 +266,22 @@ def random_check_result(config, recording_ids: list[str]) -> tuple[int, int]:
 
 
 def _full_queue(config, recording_ids: list[str]) -> pd.DataFrame:
+    """The queue before decisions, each recording by its own coding.llm settings."""
+    from macaw.execution.runner import recording_configs
+
+    configs = recording_configs(config, list(recording_ids))
+    groups: dict[tuple, list[str]] = {}
+    for rid in recording_ids:
+        llm = configs[rid].coding.llm
+        groups.setdefault((llm.review_threshold, llm.review_random, llm.seed), []).append(rid)
+    parts = [_queue_over(config, ids, *settings) for settings, ids in groups.items()]
+    if len(parts) == 1:
+        return parts[0]
+    both = pd.concat(parts, ignore_index=True) if parts else empty_frame(REVIEW_QUEUE_SCHEMA)
+    return coerce_frame(both.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable").reset_index(drop=True), REVIEW_QUEUE_SCHEMA, NAME)
+
+
+def _queue_over(config, recording_ids: list[str], threshold: float, per_recording: int, seed: int) -> pd.DataFrame:
     from macaw.coding.agreement import load_annotations
     from macaw.coding.llm.judge import LAYER
 
@@ -278,9 +294,8 @@ def _full_queue(config, recording_ids: list[str]) -> pd.DataFrame:
         annotations = annotations[~_keys(annotations).isin(set(_keys(decided))).to_numpy()]
     if annotations.empty:
         return empty_frame(REVIEW_QUEUE_SCHEMA)
-    llm = config.coding.llm
-    queue = build_queue(annotations, threshold=llm.review_threshold)
-    checks = random_checks(annotations, queue, per_recording=llm.review_random, seed=llm.seed)
+    queue = build_queue(annotations, threshold=threshold)
+    checks = random_checks(annotations, queue, per_recording=per_recording, seed=seed)
     both = pd.concat([queue, checks], ignore_index=True) if not checks.empty else queue
     return coerce_frame(both.sort_values(["recording_id", "t_start", "subject_id", "tier"], kind="stable").reset_index(drop=True), REVIEW_QUEUE_SCHEMA, NAME)
 

@@ -796,6 +796,17 @@ class TestReview:
         apply_review(project.resolved, queue)
         assert len(pd.read_parquet(layout_for(project.resolved).reviewed_codes_path("r1"))) == 1
 
+    def test_a_recording_queues_by_its_own_review_threshold(self, project):
+        queued = export_review(project.resolved, ["r1"])
+        assert queued.loc[queued["t_start"] == 2.0, "reason"].tolist() == ["low_confidence"]
+        from pathlib import Path
+
+        own = Path(project.resolved.project.recording_config_dir) / "r1.yaml"
+        own.parent.mkdir(parents=True, exist_ok=True)
+        own.write_text("coding:\n  llm:\n    review_threshold: 0.5\n", encoding="utf-8")
+        queued = export_review(resolve_config(project.config), ["r1"])
+        assert queued.loc[queued["t_start"] == 2.0, "reason"].tolist() != ["low_confidence"]
+
     def test_the_exported_queue_shows_the_models_votes_and_reasons(self, project, tmp_path):
         from macaw.coding.llm.judge import SAMPLES_NAME, JudgementExtractor
 
