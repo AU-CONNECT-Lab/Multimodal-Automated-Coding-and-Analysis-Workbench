@@ -620,6 +620,14 @@ class TestGazeLabels:
         assert [w.message for w in result.warnings] == ["gaze.target agrees with 2 of 3 labelled frames (67%)"]
         assert reasons(result) == ["labelled parent, found elsewhere"] and result.candidates["t"].tolist() == [0.7]
 
+    def test_a_look_out_of_the_picture_agrees_with_a_label_of_elsewhere(self, tmp_path):
+        from macaw.config.schema import GazeSection
+        from macaw.qc.checks import check_gaze_labels
+
+        points = pd.DataFrame({"subject_id": "child", "t": np.arange(10) / 10, "target": ["off_screen"] * 10})
+        result = check_gaze_labels(RECORDING, SimpleNamespace(gaze=GazeSection()), self.results(tmp_path, [(0.3, "child", "elsewhere")], points))
+        assert [w.message for w in result.warnings] == ["gaze.target agrees with 1 of 1 labelled frames (100%)"]
+
     def test_frames_two_people_labelled_say_how_often_they_named_the_same_target(self, tmp_path):
         from macaw.config.schema import GazeSection
         from macaw.qc.checks import check_gaze_labels

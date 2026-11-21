@@ -727,7 +727,7 @@ def check_scale(recording: Recording, config: MacawConfig, results) -> CheckResu
 def check_gaze_labels(recording: Recording, config: MacawConfig, results) -> CheckResult:
     """Frames a person labelled with macaw label-gaze against what gaze.target found in them: how often the two
     agree for each person, and the frames where they do not. No labels, nothing to check."""
-    from macaw.extractors.video.gaze.target import POINTS_NAME, finds_points
+    from macaw.extractors.video.gaze.target import ELSEWHERE, OFF_SCREEN, POINTS_NAME, finds_points
     from macaw.project.gaze_labels import labeller_pairs, labels_frame, read_labels
 
     rid = recording.recording_id
@@ -751,6 +751,8 @@ def check_gaze_labels(recording: Recording, config: MacawConfig, results) -> Che
     warnings, pieces = list(between), []
     for subject, mine in labels.groupby("subject", sort=True):
         found = points.loc[points["subject_id"] == subject, ["t", "target"]].rename(columns={"target": "found"}).sort_values("t")
+        # a look out of the picture is what a person labels elsewhere, as off_screen is not among the labels they can give
+        found["found"] = found["found"].replace(OFF_SCREEN, ELSEWHERE)
         if found.empty:
             continue
         joined = pd.merge_asof(mine.sort_values("t"), found, on="t", direction="nearest", tolerance=_GAZE_LABEL_S).dropna(subset=["found"])
