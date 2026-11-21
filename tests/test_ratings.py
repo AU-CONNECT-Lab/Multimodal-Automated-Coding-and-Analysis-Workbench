@@ -911,6 +911,8 @@ class TestEvidence:
         assert (rows[0]["t_start"], rows[0]["t_end"], rows[0]["speaker"]) == (11.0, 13.0, "parent")
         flow = module_scale(SCALES["scales"][2])
         assert check_cited([{"line": 2, "quote": "It's fine"}], lines, flow, 0.0)[0]["problem"] == ""
+        copied = check_cited([{"line": "[line 2]", "quote": "fine"}, {"line": "Line 1", "quote": "school"}], lines, flow, 0.0)
+        assert [(row["line"], row["problem"]) for row in copied] == [(2, ""), (1, "")]
 
     def test_words_running_into_a_neighbouring_line_are_told_apart(self):
         from macaw.coding.llm.evidence import NOT_IN_LINE, RUNS_ON, check_cited

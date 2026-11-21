@@ -19,6 +19,8 @@ NO_LIST = "no list of evidence"
 NO_LINE, OTHER_SPEAKER, NO_QUOTE, NOT_IN_LINE = "no such line", "said by another person", "no words copied", "words not in the line"
 RUNS_ON = "words run on into the next or last line"
 _NOT_WORD = re.compile(r"[^\w\s]", re.UNICODE)
+# the label each line of the transcript ends with, copied as the line's number
+_LINE_LABEL = re.compile(r"\[?\s*line\s*(\d+)\s*\]?", re.IGNORECASE)
 
 
 def cited(text: str) -> list | None:
@@ -35,8 +37,12 @@ def normalised(text: str) -> str:
 def _number(value) -> int | None:
     if isinstance(value, bool):
         return None
+    text = str(value).strip()
+    label = _LINE_LABEL.fullmatch(text)
+    if label:
+        return int(label.group(1))
     try:
-        number = float(str(value).strip())
+        number = float(text)
     except ValueError:
         return None
     return int(number) if number.is_integer() else None
