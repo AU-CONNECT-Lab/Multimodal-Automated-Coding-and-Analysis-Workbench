@@ -263,6 +263,19 @@ class TestExtractor:
         monkeypatch.setattr(track_module, "_sam3_missing", lambda model: "")
         assert ObjectTrackExtractor(SimpleNamespace(objects=objects)).extra_key(recording) != gave_way
 
+    def test_sam3_found_missing_is_looked_for_again_after_a_while_in_a_long_running_workbench(self, monkeypatch):
+        now, missing = [0.0], ["no access"]
+        monkeypatch.setattr(track_module, "_CHOSEN", {})
+        monkeypatch.setattr(track_module, "_CHOSEN_AT", {})
+        monkeypatch.setattr(track_module.time, "monotonic", lambda: now[0])
+        monkeypatch.setattr(track_module, "_sam3_missing", lambda model: missing[0])
+        objects = ObjectsSection(names=["ball"])
+        assert track_module.object_models(objects).tracker == "sam2"
+        missing[0] = ""
+        assert track_module.object_models(objects).tracker == "sam2"
+        now[0] = track_module._RECHECK_S + 1
+        assert track_module.object_models(objects).tracker == "sam3"
+
     def test_a_thing_out_of_view_keeps_its_score_and_any_outline(self):
         seen = {"ball": (square(1, 1, 5, 5), 0.3), "cup": (np.zeros(SIZE, dtype=bool), 0.9), "book": (square(1, 1, 5, 5), 0.8)}
         rows = {row["label"]: row for row in outline_rows("front.mp4", 3, seen)}

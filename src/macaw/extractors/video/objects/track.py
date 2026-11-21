@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 import re
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -448,12 +449,19 @@ class ObjectModels:
 
 
 _CHOSEN: dict[tuple, ObjectModels] = {}
+_CHOSEN_AT: dict[tuple, float] = {}
+# s after which SAM 3 found missing is looked for again, so the workbench learns of access granted while it is open
+_RECHECK_S = 300.0
 
 
 def object_models(objects) -> ObjectModels:
-    """The finder and tracker set, SAM 3 swapped for the open ones where this machine cannot have it; looked up once a process."""
+    """The finder and tracker set, SAM 3 swapped for the open ones where this machine cannot have it."""
     key = (objects.finder, objects.finder_model, objects.tracker, objects.tracker_model)
+    known = _CHOSEN.get(key)
+    if known is not None and known.why and time.monotonic() - _CHOSEN_AT.get(key, 0.0) > _RECHECK_S:
+        del _CHOSEN[key]
     if key not in _CHOSEN:
+        _CHOSEN_AT[key] = time.monotonic()
         finder, finder_model, tracker, tracker_model, why = *key, []
         if finder == "sam3" and (missing := _sam3_missing(finder_model or Sam3Finder.default_model)):
             finder, finder_model = OPEN_FINDER, None
