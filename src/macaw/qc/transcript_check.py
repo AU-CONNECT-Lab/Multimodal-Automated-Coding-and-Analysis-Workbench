@@ -77,18 +77,25 @@ def check_lines(
         functools.partial(backend.complete, *check_prompt(lines.iloc[start : start + batch_size], lines.iloc[max(0, start - CONTEXT_LINES) : start]), seed=seed)
         for start in starts
     ]
+    unread = 0
     for start, response in zip(starts, run_in_order(asks, concurrency)):
         batch = lines.iloc[start : start + batch_size]
         answer = whole_answer(response)
+        if not isinstance(answer.get("lines"), list):
+            # an answer that cannot be read marks nothing, which is not the same as finding nothing to mark
+            unread += len(batch)
+            continue
         ids = set(batch["id"])
         for item in answer.get("lines") or []:
             if isinstance(item, dict) and str(item.get("id", "")).strip() in ids:
                 kind = str(item.get("kind") or "").strip().lower()
                 marked[str(item["id"]).strip()] = (kind if kind in KINDS else next(iter(KINDS)), str(item.get("why") or "").strip())
     found = lines[lines["id"].isin(marked)]
-    return found.assign(
+    out = found.assign(
         kind=[marked[line_id][0] for line_id in found["id"]], why=[marked[line_id][1] for line_id in found["id"]],
     )[COLUMNS]
+    out.attrs["unread"] = unread
+    return out
 
 
 def check_transcript(
@@ -99,7 +106,8 @@ def check_transcript(
     marked = check_lines(backend, lines, batch_size=batch_size, seed=seed, concurrency=concurrency)
     found = {
         "model": backend.model_version(), "provider": provider, "asked_at": datetime.now().isoformat(timespec="seconds"),
-        "transcript": fingerprint(lines), "n_lines": len(lines), "lines": marked.to_dict("records"),
+        "transcript": fingerprint(lines), "n_lines": len(lines), "n_unread": marked.attrs.get("unread", 0),
+        "lines": marked.to_dict("records"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(found, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -126,7 +134,13 @@ def describe(found: dict, transcript: pd.DataFrame | None = None) -> str:
     if lines:
         counts = {kind: sum(1 for line in lines if line.get("kind") == kind) for kind in KINDS}
         text += ": " + ", ".join(f"{count} {KINDS[kind]}" for kind, count in counts.items() if count)
+    if found.get("n_unread"):
+        text += f"; {found['n_unread']} line(s) got no answer that could be read"
     if transcript is not None:
         _, gone = still_there(found, transcript)
         text += f"; {gone} of them changed since" if gone else ""
+        now = transcript_lines(transcript, sorted(transcript["subject_id"].dropna().astype(str).unique()))
+        if not gone and found.get("transcript") and found["transcript"] != fingerprint(now):
+            # recognised again since: lines new to it were never checked
+            text += "; the transcript has changed since it was checked, so run macaw transcript check again"
     return text

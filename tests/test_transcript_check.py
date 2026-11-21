@@ -129,3 +129,15 @@ def test_the_qc_report_says_how_many_lines_a_model_marked(project):  # noqa: F81
     rows = _decisions(project.resolved, layout, RecordingResults(layout, "003"), "003", [], [], [], [], [])
     row = next(row for row in rows if row["what"] == "Transcript lines a model marked")
     assert row["decided"].startswith("1 of 3 line(s) marked by tiny: 1 possibly misheard; macaw transcript export -r 003")
+
+
+def test_an_answer_that_cannot_be_read_is_not_taken_for_nothing_found_and_a_new_transcript_is_told():
+    from macaw.qc.transcript_check import fingerprint
+
+    lines = transcript_lines(LONGER, ["parent", "child"])
+    marked = check_lines(Model(lambda system, user: "I could not decide."), lines, batch_size=10)
+    found = {"model": "tiny", "n_lines": 3, "n_unread": marked.attrs["unread"], "lines": [], "transcript": fingerprint(lines)}
+    assert describe(found) == "0 of 3 line(s) marked by tiny; 3 line(s) got no answer that could be read"
+    assert "check again" not in describe(found, LONGER)
+    again = LONGER.assign(text=LONGER["text"] + " again")
+    assert describe(found, again).endswith("the transcript has changed since it was checked, so run macaw transcript check again")
