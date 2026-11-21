@@ -312,6 +312,22 @@ class TestReviewGate:
         notes = PoseReviewGate(resolved).notes(build_recording("003", resolved))
         assert [note.check for note in notes] == ["camera_owner_unreviewed"]
 
+    def test_a_recording_s_own_setting_decides_whether_its_check_waits(self, project):
+        from macaw.execution.dag import build_dag
+        from macaw.execution.runner import check_gates
+        from macaw.project.status import people_waiting
+
+        project.owners({"parent_cam": owner([1], "doubt")})
+        resolved = project.resolved()
+        dag = build_dag(resolved, [PoseReviewGate.name])
+        gates = lambda: {wait.gate for wait in check_gates(resolved, dag, ["003"])[0]}
+        listed = lambda: {gate for gate, _ in people_waiting(resolved)[0].get("003", [])}
+        assert PoseReviewGate.name in gates() and PoseReviewGate.name in listed()
+        folder = project.config.parent / "recordings"
+        folder.mkdir(exist_ok=True)
+        (folder / "003.yaml").write_text("pose:\n  review: skip\n", encoding="utf-8")
+        assert PoseReviewGate.name not in gates() and PoseReviewGate.name not in listed()
+
     def test_always_holds_every_camera_until_a_person_keeps_it(self, project):
         project.owners({"parent_cam": owner([1]), "child_cam": owner([3], subject="child")})
         data = yaml.safe_load(project.config.read_text(encoding="utf-8"))

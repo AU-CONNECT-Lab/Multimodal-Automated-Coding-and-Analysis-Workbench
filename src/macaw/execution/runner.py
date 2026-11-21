@@ -120,17 +120,19 @@ def check_gates(
     notes: dict[tuple[str, str], list[QCWarning]] = {}
     gates = _gates(dag)
     upstream = {gate: sorted(dag.ancestors(gate) - set(gates)) for gate in gates}
+    # each recording's gates as its tasks run, by its own settings, such as pose.review or another setup
+    own = recording_configs(config, list(recording_ids)) if gates else {}
     for recording_id in recording_ids if gates else ():
         recording, unreadable = None, None
         try:
-            recording = build_recording(recording_id, config)
+            recording = build_recording(recording_id, own[recording_id])
         except MacawError as error:
             unreadable = str(error)
         for gate in gates:
             missing = [
                 name for name in upstream[gate] if task_id_for(recording_id, name) not in finished
             ] if finished is not None else []
-            extractor = get_extractor(gate)(config)
+            extractor = get_extractor(gate)(own[recording_id])
             try:
                 if finished is not None and recording is not None and not missing:
                     extractor.clear_by_itself(recording)

@@ -51,11 +51,14 @@ def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
     from macaw.project.recording import build_recording
     from macaw.qc.report import _waiting
 
+    from macaw.execution.runner import recording_configs
+
     recordings = resolve_recordings(config, None)
+    own = recording_configs(config, recordings)
     gates = {}
     for rid in recordings:
         try:
-            found = _waiting(config, build_recording(rid, config))
+            found = _waiting(own[rid], build_recording(rid, own[rid]))
         except MacawError:
             continue
         if found:

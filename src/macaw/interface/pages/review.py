@@ -100,7 +100,10 @@ def recording_label(config, rid: str, waiting: int | None = None) -> str:
 
     if waiting is None:
         try:
-            waiting = len(_waiting(config, build_recording(rid, config)))
+            from macaw.execution.runner import recording_configs
+
+            own = recording_configs(config, [rid])[rid]
+            waiting = len(_waiting(own, build_recording(rid, own)))
         except Exception:   # a recording that cannot be read is listed by its name alone
             waiting = 0
     tags = note_tags(read_notes(layout_for(config, create=False).review_notes_path(rid)))
@@ -881,7 +884,7 @@ def decided_text(decided: int, shown: int) -> str:
 
 def review_file(config_path: Path, rid: str, by: str, picks: dict[str, str]) -> Path:
     """The queue with the person's picks filled in, written where macaw review --apply reads it."""
-    config = resolve_config(config_path)
+    config = resolve_config(config_path, recording_id=rid)
     queue = _waiting_acts(config, rid)
     keys = [_act_key(row.subject_id, row.t_start, row.tier) for row in queue.itertuples()]
     queue["decision"] = [picks.get(key) or pd.NA for key in keys]
@@ -916,9 +919,10 @@ def body(config_path: Path, rid: str | None, camera: str | None = None):
     config = resolve_config(config_path)
     own = resolve_config(config_path, recording_id=rid)
     layout = layout_for(config, create=False)
-    recording = build_recording(rid, config)
+    # the recording as its own settings make it: its setup's devices, its checks and its codebook
+    recording = build_recording(rid, own)
     results = RecordingResults(layout, rid)
-    waiting = _waiting(config, recording)
+    waiting = _waiting(own, recording)
     parts = [
         _player(own, build_recording(rid, own), camera),
         # two short cards side by side rather than each across the page
@@ -935,7 +939,7 @@ def body(config_path: Path, rid: str | None, camera: str | None = None):
         _model_look(config, layout, rid),
         _voices(own, layout, recording),
         _lines(own, layout, recording),
-        _speech_acts(config, layout, recording),
+        _speech_acts(own, layout, recording),
         _coding(layout, rid),
         _scale(resolve_config(config_path, recording_id=rid), layout, recording),
         _gaze(resolve_config(config_path, recording_id=rid), layout, recording),
