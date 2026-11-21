@@ -300,6 +300,17 @@ class TestSettings:
         with pytest.raises(ValueError, match="toy car and Toy-Car differ only in case or marks"):
             ObjectsSection(names=["toy car", "ball", "Toy-Car"])
 
+    @pytest.mark.parametrize("names", [["Share"], ["ball", "n"], ["head"]])
+    def test_a_name_may_not_take_a_measure_between_people(self, names):
+        with pytest.raises(ValueError, match="already uses"):
+            ObjectsSection(names=names)
+
+    @pytest.mark.parametrize("names", [["ball", "ball share"], ["ball n", "Ball"]])
+    def test_a_name_may_not_be_another_with_share_or_n_after_it(self, names):
+        with pytest.raises(ValueError, match="would share their measures' names"):
+            ObjectsSection(names=names)
+        ObjectsSection(names=["ball", "ball sharer", "headband"])
+
     def test_a_name_may_not_be_a_role(self, tmp_path):
         from macaw.config.loader import scaffold_project_config, resolve_config
 
@@ -661,6 +672,14 @@ class TestPosition:
         assert np.isnan(score[:5]).all() and score[12:15].tolist() == [0.2] * 3 and score[5] == 0.9
         assert ball("in_view_share").value.item() == pytest.approx(18 / 26)
         assert ball("longest_gap_s").value.item() == pytest.approx(5 / FPS)
+
+    def test_a_thing_and_camera_that_run_together_as_another_pair_are_refused(self):
+        from macaw.exceptions import ConfigError
+        from macaw.extractors.video.objects.position import _refuse_shared_names
+
+        _refuse_shared_names(["ball", "toy car"], ["front.mp4", "side.mp4"])
+        with pytest.raises(ConfigError, match="toy on camera box_front and toy box on camera front"):
+            _refuse_shared_names(["toy", "toy box"], ["front", "box_front"])
 
     def test_a_segment_has_its_own_share_in_view(self, run, tmp_path, monkeypatch):
         from macaw.extractors.video.objects import position as position_module

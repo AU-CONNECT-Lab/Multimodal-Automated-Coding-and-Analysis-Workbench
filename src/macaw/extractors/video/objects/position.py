@@ -9,6 +9,7 @@ import pandas as pd
 
 from macaw.extractors import register_extractor
 from macaw.extractors.base import Extractor, ExtractorResult, Phase, QCWarning
+from macaw.exceptions import ConfigError
 from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.objects.review import ObjectReviewGate
 from macaw.extractors.video.objects.touch import slug
@@ -41,6 +42,19 @@ def feature(thing: str, camera: str, measure: str) -> str:
     return f"{slug(thing)}_{slug(camera)}_{measure}"
 
 
+def _refuse_shared_names(things: list[str], cameras: list[str]) -> None:
+    """A thing and a camera whose names run together as another pair's would give both pairs one measure."""
+    pairs: dict[str, tuple[str, str]] = {}
+    for thing in things:
+        for camera in cameras:
+            other = pairs.setdefault(feature(thing, camera, ""), (thing, camera))
+            if other != (thing, camera):
+                raise ConfigError(
+                    f"objects.position: {other[0]} on camera {other[1]} and {thing} on camera {camera} would share the names "
+                    f"of their measures ({feature(thing, camera, 'x')}); rename one of the things in objects.names"
+                )
+
+
 @register_extractor
 class ObjectPositionExtractor(Extractor):
     name = "objects.position"
@@ -67,6 +81,7 @@ class ObjectPositionExtractor(Extractor):
         prep = apply_prep_timing(self.config, recording)
         common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities(), subject_id=None)
         frames, named, spans = [], [], {}
+        _refuse_shared_names(self.config.objects.names, [item.name for item in object_cameras(recording)])
         for item in object_cameras(recording):
             followed = [name for name in self.config.objects.names if "frame" in starts.get(item.name, {}).get(name, {})]
             first, stop = frame_span(item, prep.t_origin_s, prep.t_origin_s + prep.duration_s)

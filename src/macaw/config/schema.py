@@ -541,9 +541,22 @@ class ObjectsSection(_Section):
         if alike:
             raise ValueError(f"objects.names: {'; '.join(alike)} differ only in case or marks and would share their measures' names")
         clash = sorted(set(self.names) & {"elsewhere", "off_screen", "unsure", "camera"})
+        clash += sorted(name for name in self.names if thing_slug(name) in _TAKEN_SLUGS and name not in clash)
         if clash:
             raise ValueError(f"objects.names cannot use {', '.join(clash)}, which MACAW already uses")
+        slugs = {thing_slug(name): name for name in self.names}
+        # looks_at_<thing>_share of one thing would be looks_at_<thing> of a thing named "<thing> share"
+        shadowed = [
+            f"{slugs[stem]} and {name}" for name in self.names for ending in ("_share", "_n")
+            if thing_slug(name).endswith(ending) and (stem := thing_slug(name)[: -len(ending)]) in slugs
+        ]
+        if shadowed:
+            raise ValueError(f"objects.names: {'; '.join(shadowed)} would share their measures' names; rename one of them")
         return self
+
+
+# a thing so named would take the name of a measure between people, as looks_at_share or gaze_share_on_head
+_TAKEN_SLUGS = {"share", "n", "head"}
 
 
 class MotionSection(_Section):
