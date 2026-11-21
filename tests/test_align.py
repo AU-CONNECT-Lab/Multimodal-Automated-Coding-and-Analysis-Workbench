@@ -399,6 +399,15 @@ class TestSetOffsetCommand:
         assert mine.offset_s == 4.5 and mine.note.startswith("set by hand by ann ")
         assert [(item["offset_s"], item["confidence"], item["why"]) for item in mine.replaced] == [(4.0, 0.9, "set by hand")]
 
+    def test_a_changed_offset_says_what_was_marked_on_the_recordings_clock(self, project):
+        assert "keep the recording times" not in self.invoke(project, "--device", "parent_mic", "--offset", "4.2").output
+        labels = make_layout(project.config.parent / "out").gaze_labels_path("003")
+        labels.parent.mkdir(parents=True, exist_ok=True)
+        labels.write_text("[]", encoding="utf-8")
+        result = self.invoke(project, "--device", "parent_mic", "--offset", "4.5")
+        assert result.exit_code == 0 and "Gaze labels keep the recording times they were marked at" in result.output
+        assert "keep the recording times" not in self.invoke(project, "--device", "parent_mic", "--offset", "4.5").output
+
     def test_the_reference_cannot_be_moved(self, project):
         assert self.invoke(project, "--device", "room_mic", "--offset", "1.0").exit_code != 0
 

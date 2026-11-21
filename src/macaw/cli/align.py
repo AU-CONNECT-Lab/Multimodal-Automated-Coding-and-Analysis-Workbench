@@ -135,7 +135,22 @@ def set_offset(
     results = [result for result in results if result.target != media] + [entry]
     write_offset_table(results, path)
     typer.echo(f"{recording}: {media} set to {offset:+.3f} s against {reference}")
+    marked = marked_on_the_clock(resolved, layout, recording)
+    if marked and (old is None or abs(old.offset_s - offset) > 1e-6):
+        typer.echo(f"{', '.join(marked)} keep the recording times they were marked at; check them against the new offset")
     _clip(built, results, None, clip_path(layout, recording), resolved.video.encoder)
+
+
+def marked_on_the_clock(config, layout, recording_id: str) -> list[str]:
+    """What people marked on the recording's clock, which a changed offset does not move with the files."""
+    from macaw.project.segments import segments_of
+
+    found = [
+        ("Segments", bool(segments_of(config, recording_id))),
+        ("Gaze labels", layout.gaze_labels_path(recording_id).is_file()),
+        ("Imported coding", layout.imported_codes_path(recording_id).is_file()),
+    ]
+    return [name for name, there in found if there]
 
 
 @app.command("accept-offset", rich_help_panel="Preparing the recordings")
