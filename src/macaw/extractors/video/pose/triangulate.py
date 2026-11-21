@@ -57,6 +57,8 @@ BONES = (
 _BONE_SPREAD = 0.15
 # cameras that disagree on a person by more than this share of pose3d.max_reprojection_px on median see someone else
 _DISAGREE_SHARE = 1 / 3
+# placed in fewer than this share of the points two cameras saw, the cameras disagree on the person
+_AGREED_SHARE = 0.5
 _WRISTS = ("left_wrist", "right_wrist")
 _DERIVATIVES = (("speed", 1), ("acceleration", 2), ("jerk", 3))
 
@@ -201,10 +203,16 @@ class TriangulationExtractor(Extractor):
                 rid, subject_id, "info",
                 f"in 3D in {share:.0%} of the frames a camera saw them; the cameras' views of them miss each other by {error:.1f} px on median",
             ))
-            if error > cfg.max_reprojection_px * _DISAGREE_SHARE:
+            # points the cameras disagree on are not placed, so their miss never reaches the median
+            twice = own["seen_twice"].sum()
+            agreed = own["triangulated"].sum() / twice if twice else 1.0
+            if error > cfg.max_reprojection_px * _DISAGREE_SHARE or agreed < _AGREED_SHARE:
+                how = f"by {error:.1f} px on median" if error > cfg.max_reprojection_px * _DISAGREE_SHARE else (
+                    f"on {1 - agreed:.0%} of the body points two cameras saw, which were left out"
+                )
                 warnings.append(self._warning(
                     rid, subject_id, "warn",
-                    f"the cameras disagree on this person by {error:.1f} px on median: check that they carry the same name on "
+                    f"the cameras disagree on this person {how}: check that they carry the same name on "
                     "every camera, and that the cameras did not move since the calibration",
                 ))
         for subject_id, own in points.groupby("subject_id"):
@@ -258,6 +266,7 @@ def triangulate_people(keypoints: pd.DataFrame, views: list[tuple[Camera, str]],
         errors = error.reshape(len(grid), len(joints))
         quality.append(pd.DataFrame({
             "subject_id": str(subject_id), "joint": joints, "seen": seen.sum(axis=0),
+            "seen_twice": ((weights > 0).sum(axis=-1) >= 2).sum(axis=0),
             "triangulated": found.reshape(len(grid), len(joints)).sum(axis=0),
             "error_px": [float(np.nanmedian(column)) if np.isfinite(column).any() else np.nan for column in errors.T],
             "views": [float(np.median(column[column > 0])) if (column > 0).any() else np.nan for column in used.sum(axis=1).reshape(len(grid), len(joints)).T],
@@ -265,7 +274,7 @@ def triangulate_people(keypoints: pd.DataFrame, views: list[tuple[Camera, str]],
     columns = ["subject_id", "frame", "t", "joint", "x", "y", "z", "confidence"]
     return (
         pd.concat(points, ignore_index=True) if points else pd.DataFrame(columns=columns),
-        pd.concat(quality, ignore_index=True) if quality else pd.DataFrame(columns=["subject_id", "joint", "seen", "triangulated", "error_px", "views"]),
+        pd.concat(quality, ignore_index=True) if quality else pd.DataFrame(columns=["subject_id", "joint", "seen", "seen_twice", "triangulated", "error_px", "views"]),
     )
 
 
@@ -691,22 +700,25 @@ _PLACING_SPECS = {
             DEPTH_STEP: "Share of this person's body points seen on the depth camera that were placed in 3D, with depth around them.",
             ONE_CAMERA_STEP: "Share of the frames the body model read in which this person was seen and a fitted body was matched to them.",
         }[way],
-        None, "Empty for a person the step placing people in 3D kept no count of.",
+        None, "Empty for a person the step placing people in 3D kept no count of, and in the rows of a segment.",
     ),
     "reprojection_error_px": (
         lambda way: "Median over this person's joints of how far, in pixels, the cameras' views of the joint miss the point placed in 3D.",
-        "px", "Empty unless people are placed in 3D from calibrated cameras, and for a person none of whose joints two cameras saw.",
+        "px", (
+            "Empty unless people are placed in 3D from calibrated cameras, for a person none of whose joints two cameras saw, and "
+            "in the rows of a segment."
+        ),
     ),
     "model_height_m": (
         lambda way: "Height of the body the model fitted to this person, median over the frames, before it was scaled to a stated height.",
-        "m", "Empty unless people are placed in 3D by a body model on one camera.",
+        "m", "Empty unless people are placed in 3D by a body model on one camera, and in the rows of a segment.",
     ),
     "height_scale": (
         lambda way: (
             "Factor the fitted body was scaled by to reach this person's height in the heights table; 1 where no height is stated, "
             "so that their distances are only as right as the fitted body's size."
         ),
-        None, "Empty unless people are placed in 3D by a body model on one camera.",
+        None, "Empty unless people are placed in 3D by a body model on one camera, and in the rows of a segment.",
     ),
     "bone_spread_3d": (
         lambda way: (

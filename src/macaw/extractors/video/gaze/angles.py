@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-CAMERA = "camera"
 # a person needs this many labelled frames looking at a target before those frames, not the seats, say where it is
 MIN_LABELS = 3
 

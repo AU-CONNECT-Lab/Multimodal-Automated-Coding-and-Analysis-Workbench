@@ -759,3 +759,40 @@ def test_three_cameras_place_people_whenever_two_of_them_filmed():
     keypoints = pd.concat([fast, slow], ignore_index=True)
     points, _ = triangulate_people(keypoints, list(zip(cameras, ["left", "middle", "right"])), max_error_px=20.0)
     assert points["t"].max() == pytest.approx(59 / 30.0, abs=1 / 60)
+
+
+def test_a_clip_at_a_variable_frame_rate_is_read_by_its_time_stamps(tmp_path):
+    import subprocess
+
+    from macaw.extractors.video.pose.board import frame_at
+    from macaw.media.probe import require_ffmpeg
+
+    cv2 = pytest.importorskip("cv2")
+    clip = tmp_path / "vfr.mp4"
+    # 30 fps for two seconds, then 15 fps: frame 75 is at 3 s, where a constant rate would put frame 90 or so
+    subprocess.run([
+        require_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30:duration=4",
+        "-vf", "setpts='if(lt(N,60),N/30,2+(N-60)/15)/TB'", "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip),
+    ], check=True)
+    capture, frames = cv2.VideoCapture(str(clip)), []
+    while (read := capture.read())[0]:
+        frames.append(read[1].astype(int))
+    capture.release()
+    found = frame_at(clip, 3.0)
+    assert int(np.argmin([np.abs(frame - found).sum() for frame in frames])) == 75
+
+
+def test_two_people_whose_names_are_swapped_on_one_camera_are_warned_of():
+    from types import SimpleNamespace
+
+    from macaw.extractors.video.pose.triangulate import TriangulationExtractor
+
+    cameras = trio()[:2]
+    people = {"parent": person([500.0, 0.0, 2000.0], [1.0, 0.0, 0.0], 10), "child": person([1300.0, 0.0, 2000.0], [-1.0, 0.0, 0.0], 10)}
+    keypoints = keypoints_of(cameras, ["left", "middle"], people, 10)
+    on_right = keypoints["video"] == "middle"
+    keypoints.loc[on_right, "subject_id"] = keypoints.loc[on_right, "subject_id"].map({"parent": "child", "child": "parent"})
+    points, quality = triangulate_people(keypoints, list(zip(cameras, ["left", "middle"])), max_error_px=20.0)
+    step = TriangulationExtractor(SimpleNamespace(pose3d=SimpleNamespace(max_reprojection_px=20.0)))
+    said = [w for w in step._quality_warnings("003", quality, points) if w.severity == "warn"]
+    assert {w.subject_id for w in said} == {"parent", "child"} and all("same name" in w.message for w in said)

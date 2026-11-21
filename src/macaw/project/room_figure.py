@@ -56,7 +56,7 @@ def name_beside(at, facing: float | None, gap: float) -> tuple[np.ndarray, str, 
 
 
 def draw_room(
-    room: RoomSection, roles: list[str], units: str, path: Path, *, reads: dict[str, list[str]] | None = None,
+    room: RoomSection, units: str, path: Path, *, reads: dict[str, list[str]] | None = None,
 ) -> Path:
     """Writes the drawing as a PNG; what the room leaves blank is left out. reads gives the people each camera is read
     for, whose heads its sight lines go to in the side view."""

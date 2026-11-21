@@ -228,7 +228,7 @@ def draw_room_command(
     laid = MacawConfig.model_validate({**resolved.model_dump(), "setup": {**data, "name": name}}).setup
     reads = {camera: device.people() for camera, device in laid.cameras.items()}
     try:
-        target = draw_room(laid.room, list(resolved.project.roles), resolved.project.units, out or path.with_suffix(".png"), reads=reads)
+        target = draw_room(laid.room, resolved.project.units, out or path.with_suffix(".png"), reads=reads)
     except ValueError as error:
         raise MacawError(f"setup {name}: {error}; place people, devices or things on the Setup page first") from None
     typer.echo(str(target))

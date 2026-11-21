@@ -33,7 +33,7 @@ def set_scale(
     recording: str = typer.Option(None, "--recording", "-r", help="Measure on this recording's own video."),
     calibration: str = typer.Option(None, "--calibration", help="Measure on this clip in project.calibration_dir instead."),
     media: str = typer.Option(None, "--camera", help="The camera measured on; needed when the recording has several."),
-    points: str = typer.Option(None, "--points", help="The object's two ends in pixels of the frame: x1,y1,x2,y2."),
+    points: str = typer.Option(None, "--points", help="The object's two ends in pixels of the frame the video steps read (prep.video's copy, as the Review page shows it): x1,y1,x2,y2."),
     length: float = typer.Option(None, "--length", help="Its real length, in project.units (centimetres unless set to m or in)."),
     person: str = typer.Option(None, "--person", help="Role at whose place the object stood. Default: everyone."),
     at: float = typer.Option(0.0, "--at", help="Time of the frame in seconds, on the recording's clock or the clip's."),

@@ -76,7 +76,7 @@ pose3d:
   calibration: lab
 ```
 
-A lab that has calibrated its cameras with Anipose can place its `calibration.toml` in the `calibration` folder and name it instead, as `calibration: lab.toml`.
+A lab that has calibrated its cameras with Anipose can place its `calibration.toml` in the `calibration` folder and name it instead, as `calibration: lab.toml`. When the file does not state the unit of its translations under `[metadata] units`, they are read in `pose3d.units` (millimetres unless set), which should be the unit the board's squares were measured in; a wrong unit scales every 3D distance by the same factor.
 
 ### 4. Place the cameras in the room
 

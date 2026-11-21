@@ -156,11 +156,13 @@ def find_board(
         square = (int(width * width_factor / 2) * 2, int(height / 2) * 2) if width_factor != 1.0 else (width, height)
         clip = CameraClip(name, square)
         detector = cv2.aruco.CharucoDetector(board)
-        index = 0
+        taken: set[int] = set()
         while capture.grab():
-            common = index / fps + offset_s
+            # each frame's own time stamp, so a clip recorded at a variable rate keeps its moments
+            common = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 + offset_s
             step = round(common / every_s)
-            if abs(common - step * every_s) <= 0.5 / fps and step >= 0 and (end_s is None or common <= end_s):
+            if abs(common - step * every_s) <= 0.5 / fps and step >= 0 and step not in taken and (end_s is None or common <= end_s):
+                taken.add(step)
                 ok, frame = capture.retrieve()
                 if ok:
                     if square != (width, height):
@@ -169,7 +171,6 @@ def find_board(
                     corners, ids, _, _ = detector.detectBoard(gray)
                     if ids is not None and len(ids) >= _MIN_CORNERS:
                         clip.sightings.append(Sighting(step, ids.ravel().astype(int), corners.reshape(-1, 2).astype(float)))
-            index += 1
     finally:
         capture.release()
     return clip
@@ -194,15 +195,19 @@ def frame_at(path: Path, at_s: float, width_factor: float = 1.0) -> np.ndarray |
         raise MacawError(f"cannot open {path}")
     try:
         fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-        count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        index = round(at_s * fps)
-        if index < 0 or (count and index >= count):
+        if at_s < -0.5 / fps:
             return None
-        capture.set(cv2.CAP_PROP_POS_FRAMES, index)
-        ok, frame = capture.read()
+        # by time stamp rather than frame number, which a variable frame rate puts elsewhere
+        capture.set(cv2.CAP_PROP_POS_MSEC, max(at_s - 1.0, 0.0) * 1000.0)
+        frame = None
+        while capture.grab():
+            if capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 >= at_s - 0.5 / fps:
+                ok, frame = capture.retrieve()
+                frame = frame if ok else None
+                break
     finally:
         capture.release()
-    if not ok:
+    if frame is None:
         return None
     if width_factor != 1.0:
         height, width = frame.shape[:2]
