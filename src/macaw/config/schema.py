@@ -588,7 +588,7 @@ class LLMSection(_Section):
     n_samples: int = Field(default=5, ge=1)
     seed: int = 0
     allow_abstain: bool = True
-    review_threshold: float = 0.7
+    review_threshold: float = Field(default=0.7, ge=0, le=1)
     review_random: int = Field(default=5, ge=0)
     batch_size: int = Field(default=20, ge=1)
     context_units: int = Field(default=5, ge=0)
@@ -621,7 +621,7 @@ class JudgeVersion(_Section):
     n_samples: int | None = Field(default=None, ge=1)
     seed: int | None = None
     allow_abstain: bool | None = None
-    review_threshold: float | None = None
+    review_threshold: float | None = Field(default=None, ge=0, le=1)
     batch_size: int | None = Field(default=None, ge=1)
     context_units: int | None = Field(default=None, ge=0)
     coded_roles: list[str] | None = None
