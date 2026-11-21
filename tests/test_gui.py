@@ -627,7 +627,7 @@ def test_the_3d_view_opens_where_most_points_were_placed():
     assert results.fullest_moment(points) == 1.0
 
 
-def test_the_3d_plays_beside_the_recording_once_it_has_a_copy_and_opens_at_the_fullest_moment(project):
+def test_the_3d_plays_beside_the_recording_once_it_has_a_copy_and_opens_at_the_fullest_moment(project, monkeypatch):
     import json
 
     points = pd.DataFrame({"t": [0.0, 1.0, 1.0, 2.5], "joint": list("abcd")})
@@ -635,9 +635,12 @@ def test_the_3d_plays_beside_the_recording_once_it_has_a_copy_and_opens_at_the_f
     shown = json.loads(strip.to_plotly_json()["props"]["data-strip"])
     assert shown["start"] == 1.0 and shown["length"] >= 2.5 and shown["timeStore"] == results.TIME_3D and shown["video"] is None
     assert "Make a copy to play here" in text_of(copy)
+    from macaw.project import previews
+
     preview = layout_for(resolve_config(project)).preview_path("dyad01")
     preview.parent.mkdir(parents=True, exist_ok=True)
     preview.write_bytes(b"mp4")
+    monkeypatch.setattr(previews, "current_recording_preview", lambda config, rid: preview)
     player, strip = results.strip_3d(project, "dyad01", points)
     assert player.id == results.PLAYER_3D and json.loads(strip.to_plotly_json()["props"]["data-strip"])["video"] == results.PLAYER_3D
 
@@ -798,8 +801,9 @@ def test_the_latest_run_is_named_by_when_it_began(project, monkeypatch):
 def test_the_segments_page_plays_a_copy_and_saves_what_is_marked(project):
     from macaw.exceptions import ExternalToolError
     from macaw.interface.pages import segments
-    from macaw.media.ffmpeg import make_preview, run_ffmpeg
+    from macaw.media.ffmpeg import run_ffmpeg
     from macaw.media.probe import probe
+    from macaw.project.previews import make_recording_preview
 
     video = project.parent / "raw" / "003" / "room" / "a.mp4"
     try:
@@ -808,8 +812,7 @@ def test_the_segments_page_plays_a_copy_and_saves_what_is_marked(project):
     except ExternalToolError:
         pytest.skip("needs ffmpeg")
     assert "Make a copy to play here" in text_of(segments.body(project, "003"))
-    config = resolve_config(project)
-    copy = probe(make_preview(segments.played(config, "003"), layout_for(config).preview_path("003")))
+    copy = probe(make_recording_preview(resolve_config(project, recording_id="003"), "003"))
     assert copy.video_streams() and copy.audio_streams()
     assert segments.PLAYER in text_of(segments.body(project, "003"))
 

@@ -11,11 +11,8 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import ConfigError, MacawError
 from macaw.interface import cli_bridge, project_file, ui
 from macaw.interface.files import file_url
-from macaw.media.ffmpeg import make_preview
 from macaw.media.probe import probe
-from macaw.project.layout import layout_for
-from macaw.project.previews import loudness
-from macaw.project.recording import build_recording
+from macaw.project.previews import current_recording_preview, loudness, make_recording_preview, played, recording_clock
 from macaw.project.segments import Segment, remove_segment, seconds_text, segments_of, segments_path, set_segment, summaries
 
 LABEL = "Segments"
@@ -38,23 +35,13 @@ def layout(config_path: Path):
     )
 
 
-def played(config, rid: str) -> Path:
-    """The file a preview is made of; config is the recording's own settings."""
-    return build_recording(rid, config).reference_media().path
-
-
 def played_clock(config, rid: str) -> tuple[float, float]:
-    """Where the played file's own seconds fall on the recording's clock, its offset and clock scale, once prep.media has run;
+    """Where the copy's own seconds fall on the recording's clock, its time 0 and clock scale, once prep.media has run;
     the file played need not be the one the clock was set by."""
-    from macaw.project.previews import timed_recording
-
     try:
-        recording, _ = timed_recording(config, rid)
-        path = played(config, rid)
-    except (MacawError, OSError):   # without its files the strip reads the recording's clock as is
+        return recording_clock(config, rid)
+    except (MacawError, OSError, StopIteration):   # without its files the strip reads the recording's clock as is
         return 0.0, 1.0
-    item = next((item for item in recording.media if item.path == path), None)
-    return (float(item.offset_s), float(item.clock_scale)) if item is not None else (0.0, 1.0)
 
 
 def own_times(times, clock: tuple[float, float]) -> list[float]:
@@ -97,15 +84,15 @@ def body(config_path: Path, rid: str | None):
         return ui.note("No recordings found under the project's raw folder.", "info")
     config = resolve_config(config_path)
     own = resolve_config(config_path, recording_id=rid)
-    preview = layout_for(config, create=False).preview_path(rid)
     try:
         source, clock = played(own, rid), played_clock(own, rid)
+        preview = current_recording_preview(own, rid)
     except MacawError as error:
         return ui.note(str(error), "bad")
     length = recording_length(config, own, rid)
     loud = None
-    if preview.is_file():
-        player = html.Video(src=file_url(preview), id=PLAYER, preload="metadata", className="player")
+    if preview is not None:
+        player = html.Video(src=f"{file_url(preview)}?v={int(preview.stat().st_mtime)}", id=PLAYER, preload="metadata", className="player")
         try:
             loud = loudness(preview)
         except MacawError:   # a copy without sound still plays
@@ -116,7 +103,7 @@ def body(config_path: Path, rid: str | None):
              ui.button("Make a copy to play here", {"type": ACT, "action": "prepare"}, primary=True, icon_name="play")],
         )
     strip = ui.time_strip(
-        STRIP, video=PLAYER if preview.is_file() else None, offset=clock[0], scale=clock[1], length=length,
+        STRIP, video=PLAYER if preview is not None else None, offset=clock[0], scale=clock[1], length=length,
         window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), edit=True,
         segments=on_own_clock(strip_segments(config, rid), clock), loudness=loud, editStore=EDITS,
     )
@@ -195,9 +182,8 @@ def register(app, config_path: Path) -> None:
         if isinstance(trigger, dict) and not ctx.triggered[0]["value"]:
             return no_update, no_update
         if isinstance(trigger, dict) and trigger.get("action") == "prepare":
-            config = resolve_config(config_path)
             try:
-                make_preview(played(resolve_config(config_path, recording_id=rid), rid), layout_for(config).preview_path(rid))
+                make_recording_preview(resolve_config(config_path, recording_id=rid), rid)
             except MacawError as error:
                 return no_update, ui.note(str(error), "bad")
         return body(config_path, rid), None

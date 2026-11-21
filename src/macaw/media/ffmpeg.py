@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 
 from macaw.exceptions import ExternalToolError, UnreadableMediaError
-from macaw.media.probe import StreamInfo, jumps_exactly, probe, require_ffmpeg
+from macaw.media.probe import StreamInfo, jumps_exactly, picture_lead, probe, require_ffmpeg
 
 # every call starts with these: no banner, errors only, never prompt to overwrite
 _BASE = ["-hide_banner", "-loglevel", "error", "-y"]
@@ -218,22 +218,30 @@ def encode_frames(
 
 
 def make_preview(src: Path, dest: Path, *, height: int = 360, sound: Path | None = None, sound_at_s: float = 0.0) -> Path:
-    """A small copy of a recording file that a browser plays, timed like the file, with its own sound or with sound
-    from another file whose start falls sound_at_s into it."""
+    """A small copy of a recording file that a browser plays, whose time 0 is the file's first picture, with the file's
+    own sound where it falls or with sound from another file whose start falls sound_at_s into the copy."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_name(dest.stem + ".partial.mp4")
+    info = probe(src)
     pictures = []
-    if probe(src).video_streams():
+    if info.video_streams():
         pictures = [
-            "-map", "0:v:0", "-vf", f"yadif=deint=interlaced,scale=-2:{height}",
+            "-map", "0:v:0", "-vf", f"yadif=deint=interlaced,scale=-2:{height},setpts=PTS-STARTPTS",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
         ]
-    inputs, heard = ["-i", str(src)], ["-map", "0:a:0?"]
+    inputs, heard = ["-i", str(src)], []
     if sound is not None:
-        # a sound that starts after the picture is delayed, one that starts before it is cut
-        shift = ["-itsoffset", f"{sound_at_s:.3f}"] if sound_at_s >= 0 else ["-ss", f"{-sound_at_s:.3f}"]
-        inputs, heard = [*inputs, *shift, "-i", str(sound)], ["-map", "1:a:0"]
-    run_ffmpeg([*inputs, *pictures, *heard, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(partial)])
+        inputs, heard = [*inputs, "-i", str(sound)], ["-map", "1:a:0"]
+    elif info.audio_streams():
+        sound_at_s, heard = -picture_lead(info), ["-map", "0:a:0"]
+    if heard:
+        # both streams start at 0, so a browser cannot place the copy's 0 on either; the sound is cut or delayed to fit
+        place = (
+            f"adelay=delays={round(sound_at_s * 1000)}:all=1" if sound_at_s >= 0.0005
+            else f"atrim=start={-sound_at_s:.6f}" if sound_at_s <= -0.0005 else "anull"
+        )
+        heard += ["-af", f"asetpts=PTS-STARTPTS,{place},asetpts=PTS-STARTPTS", "-c:a", "aac", "-b:a", "96k"]
+    run_ffmpeg([*inputs, *pictures, *heard, "-movflags", "+faststart", str(partial)])
     partial.replace(dest)
     return dest

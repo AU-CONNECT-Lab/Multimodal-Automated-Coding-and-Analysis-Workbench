@@ -152,6 +152,17 @@ def frame_rate(stream: StreamInfo) -> Fraction | None:
     return nearest if abs(nearest - base) <= Fraction(15, 1000) * base else base.limit_denominator(1001)
 
 
+def picture_lead(info: MediaInfo) -> float:
+    """How far a file's first picture lies after its first sound; 0 for a file without both."""
+    if not info.video_streams() or not info.audio_streams():
+        return 0.0
+    stream = info.video_streams()[0]
+    pictures = stream.start_s if stream.start_s is not None else info.start_s
+    sound = info.audio_streams()[0].start_s
+    # a file's clock is its sound's, the one alignment measures on; a silent file's is its pictures'
+    return pictures - sound if sound is not None else 0.0
+
+
 def probe(path: Path) -> MediaInfo:
     path = Path(path)
     if not path.is_file():

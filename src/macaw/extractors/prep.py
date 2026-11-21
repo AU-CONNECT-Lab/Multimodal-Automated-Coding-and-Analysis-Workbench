@@ -27,7 +27,7 @@ from macaw.media.align import (
     read_offset_table,
 )
 from macaw.media.ffmpeg import HDR_TRANSFERS, decode_audio, has_filter, normalise_video, run_ffmpeg
-from macaw.media.probe import frame_rate, is_variable_rate, probe
+from macaw.media.probe import frame_rate, is_variable_rate, picture_lead, probe
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
@@ -673,17 +673,15 @@ class VideoPrepExtractor(Extractor):
         rate = frame_rate(stream)
         if rate is None:
             raise UnreadableMediaError(f"{item.path}: no frame rate to count frames by")
-        # a file's clock is its sound's, the one alignment measures on; a silent file's is its pictures'
         pictures = stream.start_s if stream.start_s is not None else info.start_s
-        sound = info.audio_streams()[0].start_s if info.audio_streams() else None
-        clock = sound if sound is not None else pictures
+        lead = picture_lead(info)
         target = rate if cfg.fps is None else self._target(item, rate)
         entry = {
             "name": item.name,
             "file": None,
             "fps": float(target) if cfg.normalise else stream.fps,
-            "frames_start_s": 0.0 if cfg.normalise else pictures - clock,
-            "first_picture_s": pictures - clock,
+            "frames_start_s": 0.0 if cfg.normalise else lead,
+            "first_picture_s": lead,
             "source_fps": float(rate),
             "average_fps": float(stream.average_fps) if stream.average_fps else None,
             "declared_fps": float(stream.declared_fps) if stream.declared_fps else None,
@@ -703,7 +701,7 @@ class VideoPrepExtractor(Extractor):
             name = f"{item.name}.mp4"
             tone_map = stream.color_transfer in HDR_TRANSFERS and has_filter("zscale")
             counts = normalise_video(
-                item.path, workspace / name, fps=target, start_s=clock, quality=cfg.quality, encoder=cfg.encoder,
+                item.path, workspace / name, fps=target, start_s=pictures - lead, quality=cfg.quality, encoder=cfg.encoder,
                 tone_map=stream if tone_map else None,
             )
             prepared = probe(workspace / name).video_streams()[0]
