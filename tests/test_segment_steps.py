@@ -116,8 +116,11 @@ def test_voices_and_their_overlap_are_counted_inside(project):
     assert part[("n_voices_found", None, None)] == 1 and part[("overlapped_speech_fraction", None, None)] == 0.0
 
 
-def test_pitch_is_summarised_over_the_frames_inside(project, write_wav):
+def test_pitch_is_summarised_over_the_frames_inside(project, write_wav, monkeypatch):
     p = project()
+    # both talk throughout, so every frame of their own microphones is theirs
+    words = pd.DataFrame({"t_start": [10.0], "t_end": [12.01]})
+    monkeypatch.setattr("macaw.extractors.audio.prosody.frame.own_word_spans", lambda config, rid: {"parent": words, "child": words})
     folder = p.layout.artifacts_dir(RID, MediaPrepExtractor.name)
     prep = PrepInfo(recording_id=RID, t_origin_s=10.0, duration_s=2.0, sample_rate=SAMPLE_RATE,
                     tracks={"parent": "parent.wav", "child": "child.wav"})
@@ -145,7 +148,7 @@ def test_pitch_is_summarised_over_the_frames_inside(project, write_wav):
     # under the same floor as the whole recording: the parent is voiced in the first second only
     late = step.segment_warnings(p.recording, Segment("late", 11.2, 12.0))
     assert [(w.check, w.subject_id) for w in late] == [("voiced_fraction", "parent"), ("voiced_fraction", "child")]
-    assert late[0].message.startswith("Only 0.0% of frames are voiced in segment late, below the expected 10.0%")
+    assert late[0].message.startswith("Only 0.0% of the frames within their words are voiced in segment late, below the expected 10.0%")
     assert (late[0].t_start, late[0].t_end) == (11.2, 12.0)
     assert [w.subject_id for w in step.segment_warnings(p.recording, Segment("early", 10.0, 11.0))] == ["child"]
 
