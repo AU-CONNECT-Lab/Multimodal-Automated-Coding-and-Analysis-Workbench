@@ -321,3 +321,20 @@ def test_a_csv_queue_keeps_ids_that_look_like_numbers(tmp_path):
     pd.DataFrame([{column: None for column in REVIEW_QUEUE_SCHEMA} | {"recording_id": "003", "subject_id": "01", "t_start": 1.0}]).to_csv(path, index=False)
     queue = read_queue(path)
     assert queue["recording_id"].tolist() == ["003"] and queue["subject_id"].tolist() == ["01"]
+
+
+def test_rows_alike_elsewhere_in_the_annotations_do_not_cost_any_decision():
+    from macaw.store.annotations import build_annotations
+
+    def coded(annotator, layer, tier, rows):
+        columns = ["t_start", "t_end", "label", "confidence", "abstained", "needs_review"]
+        return build_annotations(recording_id="r1", tier=tier, layer=layer, annotator=annotator, subject_id="A", intervals=pd.DataFrame(rows, columns=columns))
+
+    model = coded("llm:x", "B", "acts", [(1.0, 2.0, "praise", 0.4, False, True), (3.0, 4.0, "ask", 0.4, False, True)])
+    # an imported coder's tier that holds the same interval twice
+    twice = coded("alice", "C", "gaze", [(5.0, 6.0, "toy", float("nan"), False, False)] * 2)
+    queue = build_queue(model, threshold=0.7)
+    queue["decision"], queue["reviewer"] = ["praise", "inform"], "bob"
+    merged = apply_decisions(pd.concat([model, twice], ignore_index=True), queue)
+    added = merged.iloc[merged.attrs["added_rows"]]
+    assert added[["t_start", "label", "annotator"]].values.tolist() == [[1.0, "praise", "bob"], [3.0, "inform", "bob"]]

@@ -194,14 +194,14 @@ def apply_decisions(annotations: pd.DataFrame, decisions: pd.DataFrame) -> pd.Da
     added["execution_id"] = pd.NA
     added["config_hash"] = pd.NA
 
-    out = pd.concat([frame, added], ignore_index=True)
+    out = pd.concat([frame.assign(_added=False), added.assign(_added=True)], ignore_index=True)
     # applying the same decisions twice must not double the human rows
-    out = out.drop_duplicates(
-        subset=["recording_id", "subject_id", "tier", "t_start", "t_end", "annotator", "label"],
-        keep="last",
-    )
-    out = coerce_frame(out.reset_index(drop=True), ANNOTATION_SCHEMA, "annotations")
+    out = out.drop_duplicates(subset=["recording_id", "subject_id", "tier", "t_start", "t_end", "annotator", "label"], keep="last")
+    # where the people's rows lie, which rows alike elsewhere in the table cannot shift
+    rows = np.flatnonzero(out["_added"].to_numpy(dtype=bool)).tolist()
+    out = coerce_frame(out.drop(columns="_added").reset_index(drop=True), ANNOTATION_SCHEMA, "annotations")
     out.attrs["unmatched_decisions"] = int(len(verdicts) - keys[touched].nunique())
+    out.attrs["added_rows"] = rows
     return out
 
 
@@ -359,8 +359,7 @@ def apply_review(config, queue: pd.DataFrame) -> dict[str, int]:
         earlier = _io.read_file(target, ANNOTATION_SCHEMA, "annotations") if target.is_file() else empty_frame(ANNOTATION_SCHEMA)
         annotations = annotations[~_keys(annotations).isin(set(_keys(earlier))).to_numpy()].reset_index(drop=True)
         merged = apply_decisions(annotations, decisions)
-        # apply_decisions appends the people's rows after the ones it was given
-        added = merged.iloc[len(annotations):]
+        added = merged.iloc[merged.attrs.get("added_rows", [])]
         if merged.attrs.get("unmatched_decisions"):
             counts[f"{recording_id} (not found)"] = int(merged.attrs["unmatched_decisions"])
         if added.empty:
