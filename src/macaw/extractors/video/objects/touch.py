@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import numpy as np
@@ -22,14 +21,13 @@ from macaw.project.recording import Recording
 from macaw.store.annotations import build_annotations
 from macaw.store.longtable import build_long_rows, concat_long_tables
 from macaw.store.schema import Scale
+from macaw.config.schema import thing_slug
 
 TIER = "on_{thing}"
 _SPAN_COLUMNS = ["t_start", "t_end"]
 
 
-def slug(name: str) -> str:
-    """A thing's name as part of a feature name: lower case, words joined by underscores."""
-    return re.sub(r"[^0-9a-z]+", "_", name.strip().lower()).strip("_") or "thing"
+slug = thing_slug
 
 
 def wrist_distances(wrists: pd.DataFrame, things: pd.DataFrame) -> pd.Series:

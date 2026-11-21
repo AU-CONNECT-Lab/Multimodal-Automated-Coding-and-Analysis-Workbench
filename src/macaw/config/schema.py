@@ -512,6 +512,11 @@ class GazeSection(_Section):
     min_look_s: float = Field(default=0.2, ge=0)
 
 
+def thing_slug(name: str) -> str:
+    """A thing's name as part of a feature name: lower case, words joined by underscores."""
+    return re.sub(r"[^0-9a-z]+", "_", name.strip().lower()).strip("_") or "thing"
+
+
 class ObjectsSection(_Section):
     names: list[str] = added(default_factory=list)
     finder: str = added(default="sam3")
@@ -528,6 +533,13 @@ class ObjectsSection(_Section):
     def _names(self) -> "ObjectsSection":
         if len(set(self.names)) != len(self.names):
             raise ValueError("objects.names names a thing twice")
+        # their features and tiers are named by the slug, so two names alike but for case or marks would share them
+        by_slug: dict[str, list[str]] = {}
+        for name in self.names:
+            by_slug.setdefault(thing_slug(name), []).append(name)
+        alike = [" and ".join(names) for names in by_slug.values() if len(names) > 1]
+        if alike:
+            raise ValueError(f"objects.names: {'; '.join(alike)} differ only in case or marks and would share their measures' names")
         clash = sorted(set(self.names) & {"elsewhere", "off_screen", "unsure", "camera"})
         if clash:
             raise ValueError(f"objects.names cannot use {', '.join(clash)}, which MACAW already uses")

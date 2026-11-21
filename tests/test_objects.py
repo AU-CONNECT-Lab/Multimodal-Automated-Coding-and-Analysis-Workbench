@@ -284,6 +284,8 @@ class TestSettings:
             ObjectsSection(names=["ball", "ball"])
         with pytest.raises(ValueError, match="elsewhere"):
             ObjectsSection(names=["elsewhere"])
+        with pytest.raises(ValueError, match="toy car and Toy-Car differ only in case or marks"):
+            ObjectsSection(names=["toy car", "ball", "Toy-Car"])
 
     def test_a_name_may_not_be_a_role(self, tmp_path):
         from macaw.config.loader import scaffold_project_config, resolve_config
