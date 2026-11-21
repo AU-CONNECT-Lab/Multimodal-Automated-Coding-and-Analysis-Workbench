@@ -407,6 +407,21 @@ def test_methods_names_the_people_the_model_was_told_about(project):
     assert "whether it was a real person and, given a description of the child and parent, which of them it was;" in text
 
 
+def test_frames_without_a_readable_answer_are_said_to_be_neither_flagged_nor_checked(project):
+    from macaw.config.loader import resolve_config
+    from macaw.qc.boilerplate import _looked
+
+    layout = asked(project, [(ONE, False)])
+    look_file = layout.look_path(RID)
+    found = json.loads(look_file.read_text(encoding="utf-8"))
+    for entry in found["frames"]:
+        entry.update(unreadable=1, problems=[], random_check=False)
+    look_file.write_text(json.dumps(found), encoding="utf-8")
+    n = len(found["frames"])
+    assert f"{n} frame(s) got no answer that could be read and were neither flagged nor drawn" in look.describe(look.summary(layout, RID))
+    assert f"For {n} frames it gave no answer that could be read" in _looked(look.project_summary(resolve_config(project)))
+
+
 class TestThings:
     SQUARE = {"video": "room.avi", "frame": 5, "label": "ball", "x0": 200.0, "y0": 60.0, "x1": 260.0, "y1": 120.0, "outline": [[200, 60, 260, 60, 260, 120, 200, 120]]}
 

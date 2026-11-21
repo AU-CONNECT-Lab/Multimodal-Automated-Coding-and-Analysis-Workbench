@@ -326,6 +326,8 @@ def summary(layout, recording_id: str) -> dict | None:
         "drawn": len(drawn), "drawn_checked": sum(said[entry["file"]] is not None for entry in drawn),
         "drawn_wrong": sum(said[entry["file"]] == WRONG for entry in drawn),
         "unreadable": sum(entry.get("unreadable", 0) for entry in frames),
+        # neither flagged nor drawn at random, so nobody looks at them
+        "unread_frames": sum(1 for entry in frames if entry.get("unreadable") and not entry["problems"]),
         "things": sum(len(entry.get("things", [])) for entry in frames),
         "kinds": dict(Counter(item["kind"] for entry in flagged for item in entry["problems"])),
     }
@@ -341,6 +343,8 @@ def describe(found: dict) -> str:
             f"; a person found {found['drawn_wrong']} of {found['drawn_checked']} frame(s) it passed, drawn at random, wrong"
             if found["drawn_checked"] else f"; {found['drawn']} frame(s) it passed wait for a person"
         )
+    if found.get("unread_frames"):
+        text += f"; {found['unread_frames']} frame(s) got no answer that could be read and were neither flagged nor drawn"
     return text
 
 
@@ -353,7 +357,7 @@ def project_summary(config) -> dict | None:
     found = [item for item in (summary(layout, rid) for rid in resolve_recordings(config, None)) if item]
     if not found:
         return None
-    counts = ("frames", "flagged", "flagged_checked", "flagged_right", "drawn", "drawn_checked", "drawn_wrong", "things")
+    counts = ("frames", "flagged", "flagged_checked", "flagged_right", "drawn", "drawn_checked", "drawn_wrong", "things", "unread_frames")
     return {
         **{key: sum(item[key] for item in found) for key in counts},
         "recordings": len(found), "models": sorted({str(item["model"]) for item in found}),

@@ -186,6 +186,8 @@ def _looked(found: dict) -> str:
         f"It flagged {found['flagged']} of {found['frames']} frames"
     )
     text += f", and a person confirmed {found['flagged_right']} of the {found['flagged_checked']} checked." if found["flagged_checked"] else "."
+    if found.get("unread_frames"):
+        text += f" For {found['unread_frames']} frames it gave no answer that could be read; these were neither flagged nor checked."
     if found["drawn_checked"]:
         text += (
             f" Of the frames it passed, {found['drawn_checked']} drawn at random were checked by a person, who found "
