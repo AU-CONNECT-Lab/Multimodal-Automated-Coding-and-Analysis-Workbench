@@ -307,7 +307,12 @@ def clean(
     ),
 ) -> None:
     """Delete stored results so the steps run again: the cache only, or with --all the computed output too."""
+    from macaw.execution.runner import _clear_own
+
     resolved = resolve_config(config, output_dir=output_dir, work_dir=work_dir)
+    if extractor is not None:
+        # after the settings are read, which make each version under coding.judges and coding.ratings a step
+        get_extractor(extractor)
     layout = layout_for(resolved, create=False)
     cache_root = (
         Path(resolved.execution.cache_dir) if resolved.execution.cache_dir else layout.cache_dir
@@ -320,15 +325,22 @@ def clean(
         shutil.rmtree(kept, ignore_errors=True)
     for answers in layout.cache_dir.glob(f"answers/*/{extractor or '*'}.jsonl"):
         answers.unlink(missing_ok=True)
-    if cache_only:
-        return
-
     targets = (
         sorted(path for path in layout.recordings_dir.glob("*") if path.is_dir())
         if layout.recordings_dir.exists()
         else []
     )
-    if not targets:
+    # a finished step's mark, which a resumed run trusts its outputs by; without it the step looks for its cache, now gone
+    for path in targets:
+        for done in (path / "done").glob(f"{extractor or '*'}.key"):
+            done.unlink(missing_ok=True)
+    if cache_only or not targets:
+        return
+    if extractor is not None:
+        typer.confirm(f"--all also deletes what {extractor} computed in the folders of {len(targets)} recordings. Continue?", abort=True)
+        for path in targets:
+            _clear_own(layout, path.name, extractor)
+        typer.echo(f"{extractor}'s output removed from {len(targets)} recording folders")
         return
     typer.confirm(
         f"--all also deletes the computed output in the folders of {len(targets)} recordings under "

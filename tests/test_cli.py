@@ -337,14 +337,29 @@ class TestClean:
         place = (lambda step: layout.unfinished_path("003", step) / "answers.jsonl") if where == "unfinished" else (
             lambda step: layout.answers_path("003", step)
         )
-        kept = {step: place(step) for step in ("coding.rate.a", "coding.rate.b")}
+        kept = {step: place(step) for step in ("coding.judge", "coding.layer_a")}
         for path in kept.values():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}", encoding="utf-8")
-        assert invoke("clean", "-c", str(project.config), "-e", "coding.rate.a").exit_code == 0
-        assert not kept["coding.rate.a"].exists() and kept["coding.rate.b"].exists()
+        assert invoke("clean", "-c", str(project.config), "-e", "coding.judge").exit_code == 0
+        assert not kept["coding.judge"].exists() and kept["coding.layer_a"].exists()
         assert invoke("clean", "-c", str(project.config)).exit_code == 0
-        assert not kept["coding.rate.b"].exists()
+        assert not kept["coding.layer_a"].exists()
+
+    def test_the_steps_cleaned_run_again_and_all_with_one_step_takes_only_its_output(self, project):
+        layout = layout_for(resolve_config(project.config), create=False)
+        done = {step: layout.completion_path("003", step) for step in ("face.au", "pose.keypoints")}
+        output = {step: layout.long_table_path("003") / f"{step}.parquet" for step in done}
+        for path in [*done.values(), *output.values()]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+        # a resumed run trusts a step's outputs while its mark stands, so cleaning it takes the mark too
+        assert invoke("clean", "-c", str(project.config), "-e", "face.au").exit_code == 0
+        assert not done["face.au"].exists() and done["pose.keypoints"].exists()
+        result = runner.invoke(app, ["clean", "-c", str(project.config), "-e", "face.au", "--all"], input="y\n")
+        assert result.exit_code == 0, result.output
+        assert not output["face.au"].exists() and output["pose.keypoints"].exists() and done["pose.keypoints"].exists()
+        assert "Unknown extractor 'face.AU'" in str(invoke("clean", "-c", str(project.config), "-e", "face.AU").exception)
 
     def test_all_asks_before_deleting_output(self, project):
         """Declining must leave the directory alone."""
