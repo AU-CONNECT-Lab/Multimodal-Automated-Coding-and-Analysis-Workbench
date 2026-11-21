@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from macaw.config.loader import resolve_config
-from macaw.exceptions import BackendNotAvailableError, MacawError
+from macaw.exceptions import AlignmentFailedError, BackendNotAvailableError, MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.logging_setup import get_logger
 from macaw.media.align import (
@@ -57,13 +57,20 @@ def align(
         return
 
     layout = layout_for(resolved)
+    failed = []
     for recording_id in resolve_recordings(resolved, recordings):
         # the recording's own settings, which may choose another setup and its devices
         own = resolve_config(config, recording_id=recording_id, cli_overrides=overrides)
         recording, cfg = build_recording(recording_id, own), own.align
         infos = _probe_all(recording)
         figures = layout.renders_dir(recording_id) / "align"
-        results = align_recording(recording, cfg, infos, on_pair=_drawer(figures, cfg))
+        try:
+            results = align_recording(recording, cfg, infos, on_pair=_drawer(figures, cfg))
+        except AlignmentFailedError as error:
+            # one recording without sound to align by leaves the others to be aligned
+            typer.echo(f"{recording_id}: not aligned: {error}")
+            failed.append(recording_id)
+            continue
 
         path = layout.offset_table_path(recording_id)
         if path.is_file():
@@ -85,6 +92,8 @@ def align(
                 f"  files waiting for a person hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
                 "to keep them or `macaw set-offset` to change one"
             )
+    if failed:
+        raise MacawError(f"not aligned: {', '.join(failed)}; set their offsets with `macaw set-offset` or give them a file with sound")
 
 
 @app.command("set-offset", rich_help_panel="Preparing the recordings")

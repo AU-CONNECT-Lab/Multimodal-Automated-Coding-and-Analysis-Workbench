@@ -372,7 +372,8 @@ def accept_owner(
     matched = set()
     for recording_id in resolve_recordings(resolved, recordings):
         owners = read_owner_file(layout.artifacts_dir(recording_id, PoseExtractor.name) / "owners")
-        waiting = set(waiting_cameras(resolved, recording_id, every=resolved.pose.review == "always"))
+        own = resolve_config(config, recording_id=recording_id)
+        waiting = set(waiting_cameras(own, recording_id, every=own.pose.review == "always"))
         chosen = {
             name: owner for name, owner in owners.items() if (name in wanted if wanted else name in waiting)
         }
@@ -431,6 +432,9 @@ def accept_voices(
         own = resolve_config(config, recording_id=recording_id)
         recording = build_recording(recording_id, own)
         voices = read_voices(own, recording_id)
+        if not voices and recordings is None:
+            # across the project, a recording whose people each have a microphone of their own has no voices to name
+            continue
         if not voices:
             raise MacawError(f"{recording_id}: no voices found yet; run text.diarize first")
         if nobody_else:

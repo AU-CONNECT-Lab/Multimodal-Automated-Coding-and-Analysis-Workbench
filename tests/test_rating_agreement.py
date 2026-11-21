@@ -197,6 +197,11 @@ class TestTables:
         assert result.exit_code == 0, result.output
         assert "8 scores from 1 model version(s) and 1 coder(s), 4 answers" in result.output
         assert len(pd.read_csv(tmp_path / "out_ratings" / "scores.csv")) == 8
+        # what this export holds no evidence for is not left from an earlier one into the same folder
+        for name in ("evidence.csv", "evidence_dictionary.csv", "prompts.csv"):
+            (tmp_path / "out_ratings" / name).write_text("old", encoding="utf-8")
+        assert runner.invoke(app, ["ratings", "export", str(tmp_path / "out_ratings"), "-c", str(path)]).exit_code == 0
+        assert not any((tmp_path / "out_ratings" / name).exists() for name in ("evidence.csv", "evidence_dictionary.csv", "prompts.csv"))
         result = runner.invoke(app, ["ratings", "agreement", "-c", str(path), "--cluster", "group_id", "--boot", "100", "--out", str(tmp_path / "agree")])
         assert result.exit_code == 0, result.output
         assert "warmth (parent)" in result.output and "anna" in result.output

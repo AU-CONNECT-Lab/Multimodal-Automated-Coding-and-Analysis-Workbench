@@ -43,7 +43,8 @@ def code(
     """Code speech by rule (layer A) and with a language model (layer B); uncertain codes go to the review queue."""
     resolved = resolve_config(config, cli_overrides=set_ or ())
     if codebook is not None:
-        resolved.coding.codebook = codebook
+        # absolute, as recordings with settings of their own read a relative path from the project's folder
+        resolved.coding.codebook = codebook.resolve()
     layers = [name.upper() for name in (layer or resolved.coding.layers)]
     unknown = [name for name in layers if name not in _LAYER_STEPS]
     if unknown:

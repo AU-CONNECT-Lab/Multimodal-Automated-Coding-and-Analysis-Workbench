@@ -50,6 +50,12 @@ def export(
     answers.to_csv(folder / "answers.csv", index=False)
     write_dictionary(scores_dictionary(resolved, table, config.parent), folder / "scores.csv", RATING_DICTIONARY_COLUMNS)
     write_dictionary(answers_dictionary(resolved, answers, config.parent), folder / "answers.csv", RATING_DICTIONARY_COLUMNS)
+    from macaw.project.dictionary import dictionary_paths
+
+    # an earlier export's evidence or prompts would read as belonging to these answers
+    for name in ("evidence.csv", "prompts.csv"):
+        for stale in (folder / name, *dictionary_paths(folder / name)):
+            stale.unlink(missing_ok=True)
     cited = model_evidence(resolved, chosen)
     said = ""
     if len(cited):
