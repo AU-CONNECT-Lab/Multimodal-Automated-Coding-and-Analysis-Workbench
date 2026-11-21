@@ -1345,6 +1345,22 @@ def test_segments_are_made_moved_renamed_and_removed_on_the_strip(project):
     assert segments.window_of(own.segment, 9.0) == [1.0, 5.0] and strip_config(segments.body(project, "003"))["window"] == [1.0, 5.0]
 
 
+def test_the_strip_reads_the_played_file_on_the_recording_s_clock_where_it_started_later(project, monkeypatch):
+    from macaw.interface.pages import segments
+
+    # the file played began 5 s after the one the recording's clock was set by
+    monkeypatch.setattr(segments, "played_clock", lambda config, rid: (5.0, 1.0))
+    segments.apply_edit(project, "003", {"op": "set", "name": "play", "old": None, "start": 12.0, "end": 20.0})
+    shown = strip_config(segments.body(project, "003"))
+    assert (shown["offset"], shown["scale"]) == (5.0, 1.0) and (shown["segments"][0]["a"], shown["segments"][0]["b"]) == (7.0, 15.0)
+    edited = callback(create_app(project), "..segments-table.children")
+    _, shown, _ = edited({"op": "set", "name": "late", "old": None, "start": 1.0, "end": 2.0, "n": 1}, "003")
+    late = next(segment for segment in segments.segments_of(resolve_config(project), "003") if segment.name == "late")
+    assert (late.start_s, late.end_s) == (6.0, 7.0) and {"name": "late", "a": 1.0, "b": 2.0}.items() <= next(
+        segment for segment in shown["segments"] if segment["name"] == "late"
+    ).items()
+
+
 def test_the_edits_callback_says_why_a_change_was_not_saved(project):
     from macaw.interface.pages import segments
 

@@ -39,8 +39,37 @@ def layout(config_path: Path):
 
 
 def played(config, rid: str) -> Path:
-    """The file a preview is made of: the recording's own clock, so the player's time is the recording's time."""
+    """The file a preview is made of; config is the recording's own settings."""
     return build_recording(rid, config).reference_media().path
+
+
+def played_clock(config, rid: str) -> tuple[float, float]:
+    """Where the played file's own seconds fall on the recording's clock, its offset and clock scale, once prep.media has run;
+    the file played need not be the one the clock was set by."""
+    from macaw.project.previews import timed_recording
+
+    try:
+        recording, _ = timed_recording(config, rid)
+        path = played(config, rid)
+    except (MacawError, OSError):   # without its files the strip reads the recording's clock as is
+        return 0.0, 1.0
+    item = next((item for item in recording.media if item.path == path), None)
+    return (float(item.offset_s), float(item.clock_scale)) if item is not None else (0.0, 1.0)
+
+
+def own_times(times, clock: tuple[float, float]) -> list[float]:
+    offset, scale = clock
+    return [round((float(t) - offset) / scale, 3) for t in times]
+
+
+def on_own_clock(segments: list[dict], clock: tuple[float, float]) -> list[dict]:
+    return [{**segment, **dict(zip(("a", "b"), own_times((segment["a"], segment["b"]), clock)))} for segment in segments]
+
+
+def on_recording_clock(edit: dict, clock: tuple[float, float]) -> dict:
+    """An edit made on the strip, whose times are the played file's own, with times on the recording's clock."""
+    offset, scale = clock
+    return {**edit, **{key: round(float(edit[key]) * scale + offset, 3) for key in ("start", "end") if edit.get(key) is not None}}
 
 
 def window_of(segment, length: float) -> list[float]:
@@ -50,8 +79,9 @@ def window_of(segment, length: float) -> list[float]:
 
 
 def recording_length(config, own, rid: str) -> float:
+    """The played file's length on its own clock."""
     try:
-        return probe(played(config, rid)).duration_s or 0.0
+        return probe(played(own, rid)).duration_s or 0.0
     except Exception:   # a file that cannot be read still gets a strip as long as what is marked on it
         ends = [segment.end_s for segment in segments_of(config, rid)] + [own.segment.task_end_s or 0.0, 1.0]
         return max(ends)
@@ -69,7 +99,7 @@ def body(config_path: Path, rid: str | None):
     own = resolve_config(config_path, recording_id=rid)
     preview = layout_for(config, create=False).preview_path(rid)
     try:
-        source = played(config, rid)
+        source, clock = played(own, rid), played_clock(own, rid)
     except MacawError as error:
         return ui.note(str(error), "bad")
     length = recording_length(config, own, rid)
@@ -86,8 +116,9 @@ def body(config_path: Path, rid: str | None):
              ui.button("Make a copy to play here", {"type": ACT, "action": "prepare"}, primary=True, icon_name="play")],
         )
     strip = ui.time_strip(
-        STRIP, video=PLAYER if preview.is_file() else None, length=length, window=window_of(own.segment, length), edit=True,
-        segments=strip_segments(config, rid), loudness=loud, editStore=EDITS,
+        STRIP, video=PLAYER if preview.is_file() else None, offset=clock[0], scale=clock[1], length=length,
+        window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), edit=True,
+        segments=on_own_clock(strip_segments(config, rid), clock), loudness=loud, editStore=EDITS,
     )
     listed = html.Details([html.Summary("Every segment as a table"), html.Div(_listed(config, own, rid), id=TABLE)], className="more")
     return ui.card("Segments", player, strip, listed, desc=f"{source.name}, on the recording's clock; kept in {segments_path(config).name}.")
@@ -166,7 +197,7 @@ def register(app, config_path: Path) -> None:
         if isinstance(trigger, dict) and trigger.get("action") == "prepare":
             config = resolve_config(config_path)
             try:
-                make_preview(played(config, rid), layout_for(config).preview_path(rid))
+                make_preview(played(resolve_config(config_path, recording_id=rid), rid), layout_for(config).preview_path(rid))
             except MacawError as error:
                 return no_update, ui.note(str(error), "bad")
         return body(config_path, rid), None
@@ -179,12 +210,16 @@ def register(app, config_path: Path) -> None:
     def edited(edit, rid):
         if not edit or not rid:
             return no_update, no_update, no_update
+        clock = played_clock(resolve_config(config_path, recording_id=rid), rid)
         try:
-            said, message = apply_edit(config_path, rid, edit), None
+            said, message = apply_edit(config_path, rid, on_recording_clock(edit, clock)), None
         except MacawError as error:
             said, message = "not saved", ui.note(str(error), "bad")
         config = resolve_config(config_path)
         own = resolve_config(config_path, recording_id=rid)
         length = recording_length(config, own, rid)
-        shown = {"segments": strip_segments(config, rid), "window": window_of(own.segment, length), "said": said, "op": edit["op"]}
+        shown = {
+            "segments": on_own_clock(strip_segments(config, rid), clock),
+            "window": own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), "said": said, "op": edit["op"],
+        }
         return _listed(config, own, rid), shown, message

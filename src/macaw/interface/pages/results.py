@@ -166,12 +166,14 @@ def fullest_moment(points) -> float:
 
 def strip_3d(config_path: Path, rid: str, points):
     """The recording's copy beside the 3D and its time strip under both, opening where the most points were placed."""
-    from macaw.interface.pages.segments import recording_length, window_of
+    from macaw.interface.pages.segments import own_times, played_clock, recording_length, window_of
 
     config = resolve_config(config_path)
     own = resolve_config(config_path, recording_id=rid)
     preview = layout_for(config, create=False).preview_path(rid)
-    length = max(recording_length(config, own, rid), float(points["t"].max()))
+    # the copy's own seconds, which the strip turns into the recording's, where the 3D points' times are
+    clock = played_clock(own, rid)
+    length = max(recording_length(config, own, rid), *own_times([points["t"].max()], clock))
     if preview.is_file():
         player = html.Video(src=f"{file_url(preview)}?v={int(preview.stat().st_mtime)}", id=PLAYER_3D, preload="metadata", className="player")
     else:
@@ -181,8 +183,9 @@ def strip_3d(config_path: Path, rid: str, points):
             className="three-d-copy",
         )
     strip = ui.time_strip(
-        STRIP_3D, video=PLAYER_3D if preview.is_file() else None, length=length, start=fullest_moment(points),
-        window=window_of(own.segment, length), timeStore=TIME_3D,
+        STRIP_3D, video=PLAYER_3D if preview.is_file() else None, offset=clock[0], scale=clock[1], length=length,
+        start=own_times([fullest_moment(points)], clock)[0], window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock),
+        timeStore=TIME_3D,
     )
     return [player, strip]
 
@@ -354,7 +357,7 @@ def register(app, config_path: Path) -> None:
 
             config = resolve_config(config_path)
             try:
-                make_preview(played(config, rid), layout_for(config).preview_path(rid))
+                make_preview(played(resolve_config(config_path, recording_id=rid), rid), layout_for(config).preview_path(rid))
             except MacawError as error:
                 return no_update, ui.note(str(error), "bad")
         return strip_3d(config_path, rid, points), None
