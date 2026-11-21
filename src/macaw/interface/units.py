@@ -1,6 +1,6 @@
 """A change of the project's unit converts the lengths people already typed: the scale written by hand, the board's
 square, the 3D gesture and measure thresholds, in project.yaml and in each recording's own file, the room of every setup with
-what was measured in it, and the heights table. Measurements of an object keep the unit they were typed in, so they need nothing."""
+what was measured in it, the heights table, and where the flat board's corner lay in each calibration. Measurements of an object keep the unit they were typed in, so they need nothing."""
 
 from __future__ import annotations
 
@@ -10,18 +10,20 @@ from pathlib import Path
 import yaml
 
 from macaw.interface import project_file
+from macaw.project.placing import FLOOR_FILE
 from macaw.project.room import CM_PER_UNIT
 from macaw import people_tables
 
 LENGTHS = (
     "scale.per_px", "pose3d.board.square", "pose3d.board.marker",
-    "kinematics.gestures.still_speed_3d", "kinematics.gestures.peak_prominence_3d",
+    "kinematics.gestures.still_speed_3d", "kinematics.gestures.peak_prominence_3d", "kinematics.moving.speed_3d",
 )
 BY_ROLE = ("scale.per_px_by_role",)
 
 
 def _number(value: float, factor: float):
-    converted = round(float(value) * factor, 4)
+    # significant digits, not decimals: a scale of 0.0523 cm a pixel is 0.000523 m
+    converted = float(f"{float(value) * factor:.6g}")
     return int(converted) if converted.is_integer() else converted
 
 
@@ -135,4 +137,18 @@ def convert_entered(config, project_yaml: Path, old: str, new: str) -> list[Path
     heights = Path(config.project.heights)
     if heights_table(heights, factor):
         changed.append(heights)
+    calibrations = Path(config.project.calibration_dir)
+    for path in sorted(calibrations.glob(f"*/{FLOOR_FILE}")) if calibrations.is_dir() else []:
+        if floor_corner(path, factor):
+            changed.append(path)
     return changed
+
+
+def floor_corner(path: Path, factor: float) -> bool:
+    """Where a person said the flat board's marked corner lay, converted in place; False when it says nowhere."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data.get("corner"), list):
+        return False
+    data["corner"] = [_number(value, factor) for value in data["corner"]]
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return True
