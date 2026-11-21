@@ -37,7 +37,7 @@ def calibration_board(
 def calibrate_cameras(
     setup: str = typer.Argument(..., help="Folder in project.calibration_dir holding a folder per camera with its board clip."),
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
-    until: float = typer.Option(None, "--until", help="Read the clips only up to this many seconds."),
+    until: float = typer.Option(None, "--until", help="Read the clips only up to this second, on the clock of the first clip with sound, which the others are lined up to."),
 ) -> None:
     """Find each camera's lens and where the cameras stand from a ChArUco board filmed by all of them at once;
     writes the calibration pose3d.calibration reads. Name each camera's folder as in the recordings."""
@@ -113,7 +113,7 @@ def _offsets(clips: list[Path], config) -> tuple[dict[Path, float], list[str]]:
 @app.command("calibration-floor", rich_help_panel="Cameras and the room")
 def calibration_floor(
     calibration: str = typer.Argument(..., help="Folder in project.calibration_dir holding the board clips."),
-    at: float = typer.Option(..., "--at", help="Second of the board clips, on the first camera's clock, at which the board lay flat."),
+    at: float = typer.Option(..., "--at", help="Second of the board clips at which the board lay flat, on the clock of the first clip with sound, which the others are lined up to."),
     on: str = typer.Option("floor", "--on", help="floor, or the thing of the room the board lay on, such as table."),
     corner: tuple[float, float] = typer.Option(
         None, "--corner", help="Where the board's marked corner lay, across and along in the room, in project.units; for example 1.5 1.5 with the page in the zero corner.",

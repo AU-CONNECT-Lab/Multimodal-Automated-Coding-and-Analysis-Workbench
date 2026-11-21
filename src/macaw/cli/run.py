@@ -73,7 +73,8 @@ def run(
     _echo_reporting(resolved, dag, recording_ids)
 
     if dry_run:
-        finished = runner.completed_on_disk(resolved, dag, recording_ids)
+        # as the run would: without resuming, nothing done before counts
+        finished = runner.completed_on_disk(resolved, dag, recording_ids) if resume else set()
         for task_id in runner.plan(resolved, recording_ids, wanted, finished):
             typer.echo(task_id)
         _echo_waiting(runner.check_gates(resolved, dag, recording_ids, finished)[0])

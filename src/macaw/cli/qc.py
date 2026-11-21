@@ -477,7 +477,7 @@ def line_speakers(
     recording: str = typer.Option(..., "--recordings", "-r", help="One recording whose voices were marked as mixed."),
     suggested: bool = typer.Option(False, "--suggested", help="Give every line with a sure suggestion to the person suggested."),
     apply: Path = typer.Option(None, "--apply", help="A csv with t_start and person: who speaks the line starting then."),
-    at: float = typer.Option(None, "--at", help="With --person: from the word said at this second to the end of its line, that person speaks."),
+    at: float = typer.Option(None, "--at", help="With --person: from the word said at this second on the recording's clock, as the lines are listed, to the end of its line, that person speaks."),
     person: str = typer.Option(None, "--person", help="With --at: the person who speaks from there."),
     as_they_are: bool = typer.Option(False, "--as-they-are", help="You checked the lines and nothing more needs changing."),
     clear: bool = typer.Option(False, "--clear", help="Forget every change; the lines wait for a decision again."),

@@ -101,7 +101,9 @@ def set_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
     media: str = typer.Option(..., "--device", help="Device to adjust, as its folder is named."),
-    offset: float = typer.Option(..., "--offset", help="Seconds."),
+    offset: float = typer.Option(
+        ..., "--offset", help="Seconds added to the device's own time to give the recording's: positive when it started after the reference.",
+    ),
     by: str = typer.Option(None, "--by", help="Who set it. Default: the login name."),
 ) -> None:
     """Set one offset by hand after inspecting it; a later `macaw align` keeps it, and the entry it replaces is kept in its history."""

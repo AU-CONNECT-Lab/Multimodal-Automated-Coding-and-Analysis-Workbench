@@ -70,7 +70,7 @@ def review(
     export_to: Path = typer.Option(
         None, "--export", help="Write the queue to a file (.csv to edit by hand), each unit with the model's votes and the reason it gave for each answer."
     ),
-    apply_from: Path = typer.Option(None, "--apply", help="Merge back reviewed decisions."),
+    apply_from: Path = typer.Option(None, "--apply", help="Merge back reviewed decisions, of the recordings -r names when given."),
 ) -> None:
     """Write the queue of uncertain codes to a file, or read it back: fill in decision (a code) and reviewer, then give the file to --apply."""
     if (export_to is None) == (apply_from is None):
@@ -83,7 +83,10 @@ def review(
         reasons = ", ".join(f"{count} {reason}" for reason, count in summary["by_reason"].items())
         typer.echo(f"{summary['n_items']} unit(s) to review ({reasons or 'none'}) written to {export_to}")
         return
-    counts = apply_review(resolved, read_queue(apply_from))
+    queue = read_queue(apply_from)
+    if recordings is not None:
+        queue = queue[queue["recording_id"].astype(str).isin(resolve_recordings(resolved, recordings))].reset_index(drop=True)
+    counts = apply_review(resolved, queue)
     if not counts:
         typer.echo("No decisions filled in; nothing applied.")
     for recording_id, count in counts.items():
