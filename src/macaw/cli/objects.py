@@ -35,7 +35,7 @@ def _point(text: str) -> tuple[float, float]:
     try:
         x, y = (float(value) for value in text.split(","))
     except ValueError:
-        raise MacawError("--point takes X,Y in the video's pixels, e.g. 640,360") from None
+        raise MacawError("--point takes X,Y in the pixels of the picture the Review page shows, e.g. 640,360") from None
     return x, y
 
 
@@ -49,7 +49,7 @@ def objects(
     forget: str = typer.Option(None, "--clear", help="Forget what people said about this thing on --camera."),
     camera: str = typer.Option(None, "--camera", help="The camera; with --keep, only its starts. Default for --keep: every camera."),
     at: float = typer.Option(None, "--at", help="Time of the frame in seconds, on the recording's clock."),
-    point: str = typer.Option(None, "--point", help="X,Y of a point on the thing, in the video's pixels."),
+    point: str = typer.Option(None, "--point", help="X,Y of a point on the thing, in the pixels of the picture the Review page shows (upright, square pixels)."),
     by: str = typer.Option(None, "--by", help="Who looked. Default: the login name."),
 ) -> None:
     """List where each thing in objects.names starts on each camera and what waits for a person, or keep, give or
