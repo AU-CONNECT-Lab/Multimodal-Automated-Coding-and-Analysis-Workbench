@@ -1080,6 +1080,18 @@ def test_saving_the_setup_keeps_a_camera_s_areas_to_ignore_under_a_new_name_too(
     assert resolve_config(project).setup.ignore == {}
 
 
+def test_saving_the_setup_keeps_an_area_the_review_page_marked_after_the_setup_page_was_opened(project):
+    from macaw.cli.main import app as cli
+    from macaw.interface.pages import room
+    from typer.testing import CliRunner
+
+    placed_project(project)
+    opened = room.model_of(resolve_config(project), "main")
+    assert CliRunner().invoke(cli, ["ignore-area", "-c", str(project), "--camera", "room", "--area", "0.75,0,1,0.5"]).exit_code == 0
+    room.save(project, "main", opened)
+    assert resolve_config(project).setup.ignore == {"room": [(0.75, 0.0, 1.0, 0.5)]}
+
+
 def test_adding_a_person_adds_a_role_to_the_project(project):
     from macaw.interface.pages import room
 

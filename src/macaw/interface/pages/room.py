@@ -242,7 +242,22 @@ def checked(config, name: str, model: dict) -> SetupSection:
 
 def save(config_path: Path, name: str, model: dict) -> Path:
     config = resolve_config(config_path)
-    return write_setup(Path(config.project.setups_dir) / f"{name}.yaml", checked(config, name, model))
+    path = Path(config.project.setups_dir) / f"{name}.yaml"
+    return write_setup(path, checked(config, name, with_areas_on_file(model, path)))
+
+
+def with_areas_on_file(model: dict, path: Path) -> dict:
+    """The model with each camera's areas to ignore as the file holds them now: the Review page may have marked some since
+    this page read it. A camera renamed or added here keeps those it carries."""
+    if not path.is_file():
+        return model
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    on_file, areas = set(data.get("cameras") or {}), data.get("ignore") or {}
+    out = copy.deepcopy(model)
+    for device, entry in out["cameras"].items():
+        if device in on_file:
+            entry["ignore"] = [list(area) for area in areas.get(device) or []]
+    return out
 
 
 def comparable(model: dict | None) -> dict | None:
