@@ -387,7 +387,8 @@ class Kinematics3DExtractor(Extractor):
     scale = Scale.FRAME
     group = "pose"
     phase = Phase.DERIVE
-    config_sections = ("kinematics.smoothing_s", "kinematics.measures", "pose3d.one_camera_every")
+    # thresholds below_3d are typed in the project's unit
+    config_sections = ("kinematics.smoothing_s", "kinematics.measures", "pose3d.one_camera_every", "project.units")
 
     @classmethod
     def dependencies(cls, config) -> tuple[str, ...]:

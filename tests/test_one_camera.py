@@ -206,3 +206,19 @@ def test_the_methods_say_how_size_was_set(one_camera_project):
     assert "detection threshold" not in text
     built_in = config.model_copy(update={"pose3d": config.pose3d.model_copy(update={"one_camera": "multihmr", "one_camera_threshold": 0.2})})
     assert "fitting the Anny body model [bregier2026] (detection threshold 0.2) to every person" in _placed_3d(built_in)
+
+
+def test_the_3d_points_run_again_when_the_fitted_bodies_do(one_camera_project):
+    from macaw.extractors.video.pose.one_camera import OneCameraExtractor
+
+    config, layout, recording = one_camera_project
+    stamp = layout.completion_path("003", "pose.mesh")
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("key", encoding="utf-8")
+    assert stamp in OneCameraExtractor(config).inputs_for(recording)
+
+
+def test_the_3d_measures_run_again_when_the_unit_their_thresholds_are_typed_in_changes():
+    from macaw.extractors.video.pose.triangulate import Kinematics3DExtractor
+
+    assert "project.units" in Kinematics3DExtractor.config_sections

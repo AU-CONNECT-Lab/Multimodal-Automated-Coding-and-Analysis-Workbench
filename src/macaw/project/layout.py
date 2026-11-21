@@ -62,6 +62,10 @@ class Layout:
         """The cache key a finished task was made under; resume trusts the outputs only while it still matches."""
         return self.recording_dir(recording_id) / "done" / f"{extractor}.key"
 
+    def stamps(self, recording_id: str, *extractors: str) -> list[Path]:
+        """The completion stamps of those steps that have run, as inputs: each changes whenever its step's output does."""
+        return [path for name in extractors if (path := self.completion_path(recording_id, name)).is_file()]
+
     @property
     def unfinished_dir(self) -> Path:
         return self.work_dir / "unfinished"

@@ -213,7 +213,8 @@ class DepthPrepExtractor(Extractor):
         paths = []
         for folder, lens in self._sources(recording).values():
             paths += [lens, *depth_images(folder)]
-        return [path for path in paths if path.is_file()]
+        stamps = layout_for(self.config, create=False).stamps(recording.recording_id, VideoPrepExtractor.name)
+        return [path for path in paths if path.is_file()] + stamps
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         videos = load_video_prep(self.config, recording.recording_id)
@@ -293,7 +294,8 @@ class DepthPoseExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         from macaw.extractors.video.pose.kinematics import _keypoints_file
 
-        return [_keypoints_file(self.config, recording.recording_id)]
+        layout = layout_for(self.config, create=False)
+        return [_keypoints_file(self.config, recording.recording_id), *layout.stamps(recording.recording_id, DepthPrepExtractor.name, VideoPrepExtractor.name)]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         from macaw.extractors.video.pose.kinematics import _keypoints_file

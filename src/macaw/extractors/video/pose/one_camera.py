@@ -183,7 +183,8 @@ class OneCameraExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         from macaw.extractors.video.pose.kinematics import _keypoints_file
 
-        return [_keypoints_file(self.config, recording.recording_id)]
+        layout = layout_for(self.config, create=False)
+        return [_keypoints_file(self.config, recording.recording_id), *layout.stamps(recording.recording_id, MeshExtractor.name)]
 
     def extra_key(self, recording: Recording) -> str:
         heights = read_heights(self.config)

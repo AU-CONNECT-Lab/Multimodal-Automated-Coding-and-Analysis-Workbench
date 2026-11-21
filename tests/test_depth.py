@@ -271,3 +271,13 @@ def test_a_kinect_recording_is_read_through_the_makers_library(monkeypatch, tmp_
     assert int(cv2.imread(str(tmp_path / "kinect" / "depth" / "000002.png"), -1).max()) == 902
     lens = read_lens(tmp_path / "kinect" / "depth" / LENS_FILE)
     assert len(lens.colour.distortions) == 8
+
+
+def test_the_depth_steps_run_again_when_what_they_read_from_earlier_steps_changes(depth_project):
+    config, layout, recording = depth_project
+    stamps = {name: layout.completion_path("003", name) for name in ("prep.video", "prep.depth")}
+    for path in stamps.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("key", encoding="utf-8")
+    assert stamps["prep.video"] in DepthPrepExtractor(config).inputs_for(recording)
+    assert set(stamps.values()) <= set(DepthPoseExtractor(config).inputs_for(recording))
