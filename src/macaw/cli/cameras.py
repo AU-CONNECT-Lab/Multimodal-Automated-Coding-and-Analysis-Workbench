@@ -154,6 +154,9 @@ def calibration_floor(
 def place_cameras_command(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     setup: str = typer.Option(None, "--setup", help="Which setup. Default: setup.name."),
+    calibration: str = typer.Option(
+        None, "--calibration", help="The calibration of that setup's cameras. Default: pose3d.calibration; needed with another --setup.",
+    ),
 ) -> None:
     """Fill each calibrated camera's place, height, facing, tilt and lens angle in a setup's room from pose3d.calibration,
     tied to the room by what it already gives and the board lying flat; writes setups/<setup>.yaml."""
@@ -172,7 +175,10 @@ def place_cameras_command(
     path = Path(resolved.project.setups_dir) / f"{name}.yaml"
     if not path.is_file():
         raise MacawError(f"setup {name} is not saved yet ({path})")
-    calibration = resolved.pose3d.calibration
+    if calibration is None and name != resolved.setup.name:
+        # the project's calibration is of its own setup's room, so another setup's has to be named
+        raise MacawError(f"setup {name} is not the project's setup ({resolved.setup.name}): give the calibration of its cameras with --calibration")
+    calibration = calibration or resolved.pose3d.calibration
     if not calibration:
         raise MacawError("no calibration is chosen: set pose3d.calibration, or press Use for this project on the Setup page")
     source = calibration_path(resolved, calibration)

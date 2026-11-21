@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -325,6 +326,12 @@ def test_the_commands_take_the_floor_and_place_the_cameras(calibrated_project):
     assert room["left"]["facing"] == pytest.approx(LEFT_FACING, abs=0.5) and room["left"]["tilt"] == pytest.approx(LEFT_TILT, abs=0.5)
     assert room["left"]["lens"] == pytest.approx(np.degrees(2 * np.arctan(320 / 600)), abs=0.1) and room["left"]["calibration"] == "lab"
     assert (calibrated_project.parent / "setups" / "main_placing.csv").is_file()
+    # another setup's room is not placed from this setup's calibration unless named
+    shutil.copy(calibrated_project.parent / "setups" / "main.yaml", calibrated_project.parent / "setups" / "other.yaml")
+    other = runner.invoke(app, ["place-cameras", "-c", str(calibrated_project), "--setup", "other"])
+    assert other.exit_code != 0 and "give the calibration of its cameras with --calibration" in str(other.exception)
+    other = runner.invoke(app, ["place-cameras", "-c", str(calibrated_project), "--setup", "other", "--calibration", "lab"])
+    assert other.exit_code == 0, other.output + str(other.exception)
 
 
 def test_where_the_board_lay_is_enough_to_place_the_cameras(calibrated_project):
