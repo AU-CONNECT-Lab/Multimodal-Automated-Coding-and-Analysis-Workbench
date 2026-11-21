@@ -11,6 +11,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.project.recording import build_recording
+from macaw import people_tables
 
 app = typer.Typer(help="Have the language model propose a clearer codebook, or draft a first one, for you to read and edit.")
 
@@ -58,6 +59,9 @@ def refine(
         backend, codebook, evidence, seed=cfg.seed, per_kind=per_kind, notes=cfg.notes, takes_seed=backend.takes_seed,
         concurrency=cfg.concurrency,
     )
+    kept = people_tables.set_aside(out)
+    if kept is not None:
+        typer.echo(f"the earlier {out.name} kept as {kept.name}")
     write_codebook(refined, out)
     changes = changes_path(out)
     changes.write_text(changes_text(source, evidence, revisions, backend.model_version()), encoding="utf-8")
@@ -107,6 +111,9 @@ def draft(
     )
     if not made.codebook.codes:
         raise MacawError(f"{backend.model_version()} gave no codes; try again with another --seed or a larger model")
+    kept = people_tables.set_aside(out)
+    if kept is not None:
+        typer.echo(f"the earlier {out.name} kept as {kept.name}")
     write_codebook(made.codebook, out)
     note = out.with_name(f"{out.stem}.draft.md")
     note.write_text(draft_text(made, aim, backend.model_version(), len(lines)), encoding="utf-8")

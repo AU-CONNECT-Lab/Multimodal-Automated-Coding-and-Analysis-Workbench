@@ -150,3 +150,18 @@ def test_the_methods_count_recordings_whose_last_run_read_a_correction(project):
     assert transcripts_corrected(project.resolved) == (0, 1)
     path.write_text(json.dumps([{"check": CORRECTED_CHECK}]), encoding="utf-8")
     assert transcripts_corrected(project.resolved) == (1, 1)
+
+
+def test_exporting_again_keeps_the_file_a_person_may_have_corrected(project, tmp_path):
+    layout = layout_for(project.resolved)
+    directory = layout.artifacts_dir("003", ASRExtractor.name)
+    directory.mkdir(parents=True)
+    write_transcript(TRANSCRIPT, directory / TRANSCRIPT_NAME)
+    out = tmp_path / "t.eaf"
+    runner = CliRunner()
+    assert runner.invoke(app, ["transcript", "export", "-c", str(project.config), "-r", "003", "--out", str(out)]).exit_code == 0
+    out.write_text(out.read_text(encoding="utf-8").replace("doggy", "a doggy"), encoding="utf-8")
+    again = runner.invoke(app, ["transcript", "export", "-c", str(project.config), "-r", "003", "--out", str(out)])
+    kept = [path for path in tmp_path.glob("t.*.eaf")]
+    assert again.exit_code == 0 and len(kept) == 1 and "a doggy" in kept[0].read_text(encoding="utf-8")
+    assert f"the earlier one kept as {kept[0].name}" in again.output

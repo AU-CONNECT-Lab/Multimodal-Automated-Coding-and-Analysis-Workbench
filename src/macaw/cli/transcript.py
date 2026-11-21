@@ -19,6 +19,7 @@ from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.qc.transcript_check import KINDS, read_check, still_there
 from macaw.store import _io
+from macaw import people_tables
 
 app = typer.Typer(help="Correct a transcript by hand in ELAN, have a model mark doubtful lines, or go back to the recognised transcript.")
 
@@ -44,9 +45,11 @@ def export(
     out = out or layout.output_dir / "exports" / f"{recording}_transcript.eaf"
     doubts, _ = still_there(read_check(layout.transcript_check_path(recording)), transcript)
     media = apply_offset_table(build_recording(recording, resolved), layout.offset_table_path(recording))
+    # it may hold corrections a person made in ELAN and has not imported yet
+    kept = people_tables.set_aside(out)
     export_transcript_eaf(transcript, dropped, media, out, doubts=doubts)
     typer.echo(
-        f"{out}\ncorrect the transcript tiers in ELAN (move an annotation from a dropped tier to put it back; why it was dropped is on the tier below it), "
+        f"{out}{people_tables.said_aside(kept)}\ncorrect the transcript tiers in ELAN (move an annotation from a dropped tier to put it back; why it was dropped is on the tier below it), "
         f"save, then `macaw transcript import -r {recording} {out}`"
     )
     if not doubts.empty:

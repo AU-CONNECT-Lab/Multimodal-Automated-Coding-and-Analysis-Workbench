@@ -31,6 +31,7 @@ from macaw.store.sequence import (
     to_state_sequence,
 )
 from macaw.store.wide import to_wide, with_segment
+from macaw import people_tables
 
 app = typer.Typer()
 logger = get_logger("export")
@@ -237,13 +238,15 @@ def _export_eaf(config_path: Path, resolved, layout, recording_ids: list[str], o
     directory.mkdir(parents=True, exist_ok=True)
     for recording_id, frame in found:
         target = directory / f"{recording_id}.eaf"
+        # it may hold coding a person typed into it in ELAN
+        kept = people_tables.set_aside(target)
         export_eaf(
             frame,
             apply_offset_table(build_recording(recording_id, resolve_config(config_path, recording_id=recording_id)), layout.offset_table_path(recording_id)),
             target,
             controlled_vocabulary=vocabulary,
         )
-        typer.echo(str(target))
+        typer.echo(f"{target}{people_tables.said_aside(kept)}")
 
 
 def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None:

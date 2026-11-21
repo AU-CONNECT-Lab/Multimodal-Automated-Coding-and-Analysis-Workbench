@@ -78,10 +78,11 @@ def review(
     resolved = resolve_config(config)
     if export_to is not None:
         queue = with_model_answers(resolved, export_review(resolved, resolve_recordings(resolved, recordings)))
+        kept = people_tables.set_aside(export_to)
         write_queue(queue, export_to)
         summary = queue_summary(queue)
         reasons = ", ".join(f"{count} {reason}" for reason, count in summary["by_reason"].items())
-        typer.echo(f"{summary['n_items']} unit(s) to review ({reasons or 'none'}) written to {export_to}")
+        typer.echo(f"{summary['n_items']} unit(s) to review ({reasons or 'none'}) written to {export_to}{people_tables.said_aside(kept)}")
         return
     queue = read_queue(apply_from)
     if recordings is not None:
@@ -213,6 +214,7 @@ def draw_examples_command(
             typer.echo(f"{rid}: no transcript to take the words from, left out ({error})")
     table, report = draw_examples(coded, lines, codebook, per_code=per_code, seed=seed)
     out.parent.mkdir(parents=True, exist_ok=True)
+    kept = people_tables.set_aside(out)
     people_tables.write_csv(table[list(COLUMNS)], out)
     for code, (drawn, available) in report.counts.items():
         typer.echo(f"{code}: {drawn} of {available}")
@@ -220,7 +222,7 @@ def draw_examples_command(
         typer.echo(f"{report.no_words} unit(s) left out: no words of that person inside them")
     for label, count in sorted(report.not_in_codebook.items()):
         typer.echo(f"{count} unit(s) coded {label}, which the codebook does not have, left out")
-    typer.echo(f"{len(table)} examples written to {out}")
+    typer.echo(f"{len(table)} examples written to {out}{people_tables.said_aside(kept)}")
 
 
 def _recording_of(path: Path, recordings: list[str]) -> str | None:
