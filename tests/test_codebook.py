@@ -187,3 +187,16 @@ class TestLookup:
     def test_an_unknown_code_names_the_ones_that_exist(self, codebook_file):
         with pytest.raises(CodebookError, match="praise, directive"):
             read_codebook(codebook_file(GOOD)).get("nonsense")
+
+
+def test_yes_no_on_and_off_stay_words(codebook_file):
+    book = read_codebook(codebook_file(
+        "codes:\n  - code: yes\n    positive_examples: [yes, yeah, on]\n  - code: no\n    description: off the point\n"
+    ))
+    assert book.labels() == ["yes", "no"] and book.get("yes").positive_examples == ["yes", "yeah", "on"]
+
+
+def test_mutually_exclusive_is_true_or_false(codebook_file):
+    with pytest.raises(CodebookError, match="true or false"):
+        read_codebook(codebook_file('mutually_exclusive: "false"\ncodes:\n  - code: a\n'))
+    assert read_codebook(codebook_file("mutually_exclusive: false\ncodes:\n  - code: a\n")).mutually_exclusive is False

@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from macaw import plain_yaml
 from macaw.exceptions import CodebookError, InputNotFoundError
 
 # rates everyone in the recording together
@@ -91,7 +92,7 @@ def read_scales(path: Path) -> ScaleSet:
     if not path.is_file():
         raise InputNotFoundError(f"Rating scales not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = plain_yaml.load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise CodebookError(f"{path}: not readable as YAML ({error})") from None
     if not isinstance(data, dict):
@@ -154,7 +155,7 @@ def read_examples(path: Path, scales: ScaleSet, speakers: list[str]) -> dict[str
     if not path.is_file():
         raise InputNotFoundError(f"Rating examples not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = plain_yaml.load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise CodebookError(f"{path}: not readable as YAML ({error})") from None
     given = data.get("examples") if isinstance(data, dict) else None

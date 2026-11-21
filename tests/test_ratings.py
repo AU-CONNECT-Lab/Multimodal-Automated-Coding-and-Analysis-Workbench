@@ -1019,6 +1019,15 @@ class TestExamples:
             with pytest.raises(CodebookError, match=message):
                 read_examples(write_yaml(tmp_path / "bad.yaml", {"examples": entry}), scales, ["parent", "child", "other"])
 
+    def test_a_line_of_yes_or_no_stays_a_word(self, tmp_path):
+        from macaw.coding.scales import read_examples
+
+        path = tmp_path / "e.yaml"
+        lines = ["examples:", "  warmth:", "    - score: 4", "      lines:", "        - parent: Ready?", "        - child: yes", "        - parent: no"]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        found = read_examples(path, read_scales_from(SCALES), ["parent", "child"])
+        assert found["warmth"][0].lines == [("parent", "Ready?"), ("child", "yes"), ("parent", "no")]
+
     def test_examples_follow_the_scale_and_the_transcript_still_comes_first(self, tmp_path):
         from macaw.coding.scales import read_examples
 

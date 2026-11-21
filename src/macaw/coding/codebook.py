@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from macaw import plain_yaml
 from macaw.exceptions import CodebookError, InputNotFoundError
 
 UNITS = ("utterance", "turn", "window")
@@ -90,12 +91,14 @@ def read_codebook(path: Path) -> Codebook:
     if not path.is_file():
         raise InputNotFoundError(f"Codebook not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = plain_yaml.load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise CodebookError(f"{path}: not readable as YAML ({error})") from None
 
     if not isinstance(data, dict):
         raise CodebookError(f"{path}: expected a mapping at the top level")
+    if not isinstance(data.get("mutually_exclusive", True), bool):
+        raise CodebookError(f"{path}: mutually_exclusive is true or false, got {data['mutually_exclusive']!r}")
     codes = data.get("codes") or []
     if not isinstance(codes, list):
         raise CodebookError(f"{path}: 'codes' must be a list")
@@ -103,7 +106,7 @@ def read_codebook(path: Path) -> Codebook:
     return Codebook(
         name=str(data.get("name") or path.stem),
         unit=str(data.get("unit") or "turn"),
-        mutually_exclusive=bool(data.get("mutually_exclusive", True)),
+        mutually_exclusive=data.get("mutually_exclusive", True),
         codes=[_definition_from(entry, path) for entry in codes],
     )
 
