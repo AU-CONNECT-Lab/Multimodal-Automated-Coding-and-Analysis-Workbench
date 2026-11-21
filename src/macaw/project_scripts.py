@@ -16,6 +16,8 @@ MODULE_PREFIX = "macaw_project_scripts"
 
 _loaded: dict[Path, ModuleType] = {}
 _failed: dict[Path, str] = {}
+# when each file was read, so one edited while the interface is open is read again
+_read_at: dict[Path, int] = {}
 
 
 def load_project_scripts(directory: Path | None) -> None:
@@ -28,8 +30,12 @@ def load_project_scripts(directory: Path | None) -> None:
     load_builtin_extractors()
     for path in sorted(directory.glob("*.py")):
         path = path.resolve()
-        if path in _loaded or path in _failed:
+        changed = path.stat().st_mtime_ns
+        if (path in _loaded or path in _failed) and _read_at.get(path) == changed:
             continue
+        _loaded.pop(path, None)
+        _failed.pop(path, None)
+        _read_at[path] = changed
         name = f"{MODULE_PREFIX}.{path.stem}"
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)

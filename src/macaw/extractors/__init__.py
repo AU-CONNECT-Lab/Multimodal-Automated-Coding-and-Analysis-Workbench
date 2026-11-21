@@ -55,11 +55,18 @@ STEP_NAME = re.compile(r"[A-Za-z0-9._-]+")
 _builtins_loaded = False
 
 
+def _read_again(existing: type, cls: type) -> bool:
+    """A project script read again after an edit replaces what it registered before."""
+    from macaw.project_scripts import MODULE_PREFIX
+
+    return existing.__module__ == cls.__module__ and cls.__module__.startswith(f"{MODULE_PREFIX}.")
+
+
 def register_extractor(cls: Type[Extractor]) -> Type[Extractor]:
     if not STEP_NAME.fullmatch(cls.name):
         raise ValueError(f"Extractor name '{cls.name}' may hold only letters, digits, dots, dashes and underscores")
     existing = _REGISTRY.get(cls.name)
-    if existing is not None and existing is not cls:
+    if existing is not None and existing is not cls and not _read_again(existing, cls):
         raise ValueError(f"Extractor name '{cls.name}' is already taken by {existing.__module__}")
     _REGISTRY[cls.name] = cls
     return cls
@@ -68,7 +75,7 @@ def register_extractor(cls: Type[Extractor]) -> Type[Extractor]:
 def register_backend(group: str) -> Callable[[Type[Backend]], Type[Backend]]:
     def decorator(cls: Type[Backend]) -> Type[Backend]:
         existing = _BACKENDS.get(group, {}).get(cls.name)
-        if existing is not None and existing is not cls:
+        if existing is not None and existing is not cls and not _read_again(existing, cls):
             raise ValueError(f"{group} backend name '{cls.name}' is already taken by {existing.__module__}")
         _BACKENDS.setdefault(group, {})[cls.name] = cls
         return cls

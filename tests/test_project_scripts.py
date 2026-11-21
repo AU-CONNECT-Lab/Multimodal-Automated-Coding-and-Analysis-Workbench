@@ -34,6 +34,7 @@ class Scripted(Extractor):
 def fresh(monkeypatch):
     monkeypatch.setattr(project_scripts, "_loaded", {})
     monkeypatch.setattr(project_scripts, "_failed", {})
+    monkeypatch.setattr(project_scripts, "_read_at", {})
     extractors.load_builtin_extractors()
     monkeypatch.setattr(extractors, "_REGISTRY", dict(extractors._REGISTRY))
 
@@ -216,3 +217,21 @@ def test_an_llm_backend_keys_without_asking_its_server(monkeypatch):
 
     monkeypatch.setattr(OllamaBackend, "_served_version", lambda self: (_ for _ in ()).throw(AssertionError("asked")))
     assert OllamaBackend(LLMSection(provider="ollama", model="qwen3:8b")).key_version() == ""
+
+
+def test_a_script_edited_while_the_interface_is_open_is_read_again(tmp_path):
+    import os
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    measure = scripts / "lab.py"
+    measure.write_text("def reach(:\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="failed to load"):
+        script_function(scripts, "lab.reach")
+    measure.write_text(EXTRACTOR + "\n\ndef reach(table):\n    return 1\n", encoding="utf-8")
+    os.utime(measure, ns=(measure.stat().st_atime_ns, measure.stat().st_mtime_ns + 10**9))
+    assert script_function(scripts, "lab.reach")(None) == 1
+    first = extractors.get_extractor("lab.scripted")
+    measure.write_text(EXTRACTOR + "\n\ndef reach(table):\n    return 2\n", encoding="utf-8")
+    os.utime(measure, ns=(measure.stat().st_atime_ns, measure.stat().st_mtime_ns + 2 * 10**9))
+    assert script_function(scripts, "lab.reach")(None) == 2 and extractors.get_extractor("lab.scripted") is not first
