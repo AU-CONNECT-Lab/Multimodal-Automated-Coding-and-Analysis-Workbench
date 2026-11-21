@@ -19,7 +19,7 @@ from macaw.coding.llm import backends as backends_module
 from macaw.coding.llm import judge as module
 from macaw.coding.llm.backends import AnthropicBackend, OllamaBackend, OpenAIBackend, VLLMBackend
 from macaw.coding.llm.judge import JudgementExtractor, aggregate_samples, coding_units, sample_labels
-from macaw.coding.llm.parsing import parse_annotation_response, repair_json
+from macaw.coding.llm.parsing import parse_annotation_response, parse_rating, repair_json
 from macaw.coding.llm.prompts import ABSTAIN, build_annotation_prompt
 from macaw.coding.review_queue import apply_review, export_review, read_queue
 from macaw.config.hashing import hash_extractor_config
@@ -166,6 +166,13 @@ class TestRepair:
     def test_thinking_before_the_answer_is_dropped(self):
         text = '<think>maybe {"labels": []} or not</think>\n{"labels": [{"id": "u0", "label": "inform"}]}'
         assert json.loads(repair_json(text))["labels"] == [{"id": "u0", "label": "inform"}]
+
+    def test_brackets_in_the_prose_before_the_answer_are_passed_over(self):
+        text = 'Labels for the units [u0 to u1]:\n[{"id": "u0", "label": "inform"}]'
+        assert json.loads(repair_json(text)) == [{"id": "u0", "label": "inform"}]
+        assert parse_rating('Based on [line 12] and [line 14]: {"evidence": [], "score": 4}', 1, 5)[0] == 4
+        cut = 'See [line 3]. {"labels": [{"id": "u0", "label": "inform"}, {"id": "u1", "lab'
+        assert json.loads(repair_json(cut)) == {"labels": [{"id": "u0", "label": "inform"}]}
 
     def test_braces_inside_strings_do_not_count(self):
         assert json.loads(repair_json('{"id": "u}0", "label": "a{b"} trailing')) == {"id": "u}0", "label": "a{b"}

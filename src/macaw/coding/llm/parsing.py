@@ -101,20 +101,37 @@ def repair_json(text: str) -> str:
     fenced = _FENCE.search(text)
     if fenced:
         text = fenced.group(1)
-    starts = [index for index in (text.find("{"), text.find("[")) if index >= 0]
+    starts = [index for index, char in enumerate(text) if char in _CLOSERS]
     if not starts:
         return text.strip()
-    text = text[min(starts):]
-
-    end, _, in_string = _scan(text)
-    if end is not None:
-        return text[: end + 1]
+    first = None
+    for start in starts:
+        end, _, in_string = _scan(text[start:])
+        if end is None:
+            # the first value that never closes is a cut-off answer
+            text = text[start:]
+            break
+        value = text[start: start + end + 1]
+        if _answer_shaped(value):
+            return value
+        first = first or value
+    else:
+        # bracketed prose before the answer, such as "[line 12]", is passed over
+        return first
     if in_string:
         text += '"'
     # a truncated last item is dropped rather than half kept
     text = re.sub(r",\s*\{[^{}]*$", "", text.rstrip())
     text = re.sub(r",\s*$", "", text)
     return text + "".join(reversed(_scan(text)[1]))
+
+
+def _answer_shaped(text: str) -> bool:
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(value, dict) or (isinstance(value, list) and any(isinstance(item, dict) for item in value))
 
 
 def _scan(text: str) -> tuple[int | None, list[str], bool]:

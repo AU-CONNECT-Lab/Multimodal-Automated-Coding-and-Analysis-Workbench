@@ -85,7 +85,7 @@ def project_recordings(config) -> set[str]:
 @register_extractor
 class JudgementExtractor(Extractor):
     name = "coding.judge"
-    version = "0.6.0"
+    version = "0.7.0"
     scale = Scale.EVENT
     group = "coding"
     # turns: the turn table it codes when the unit is a turn. Where the model answers (base_url,
