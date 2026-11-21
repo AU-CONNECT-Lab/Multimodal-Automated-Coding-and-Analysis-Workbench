@@ -21,17 +21,22 @@ from macaw.project.tables import DICTIONARY_COLUMNS
 SPEECH_ACTS = "speech acts"
 
 
+def _settings(config):
+    """The settings from the project's file, or as a run resolved them with its own output folder and --set."""
+    return resolve_config(config) if isinstance(config, (str, Path)) else config
+
+
 def steps() -> list[str]:
     return [name for name in list_extractors() if not issubclass(get_extractor(name), Gate)]
 
-def failed_last_time(config_path: Path) -> set[str]:
-    database = JobDB(layout_for(resolve_config(config_path), create=False).job_db_path)
+def failed_last_time(config_path) -> set[str]:
+    database = JobDB(layout_for(_settings(config_path), create=False).job_db_path)
     known = database.executions()
     return {record.task_id for record in database.failed(known[-1])} if known else set()
 
-def task_grid(config_path: Path, recordings: list[str]) -> tuple[list[str], list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
+def task_grid(config_path, recordings: list[str]) -> tuple[list[str], list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
     """Every step in run order, the ones this project runs, the state of each (recording, step), and what each step needs."""
-    config = resolve_config(config_path)
+    config = _settings(config_path)
     everything = build_dag(config, steps())
     project = set(build_dag(config).topological_order())
     states = task_states(config, everything, recordings)
@@ -69,7 +74,7 @@ def people_waiting(config) -> tuple[dict[str, list[tuple[str, str]]], int]:
         units = 0
     return gates, units
 
-def check_states(config_path: Path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
+def check_states(config_path, recordings: list[str], grid: dict, gates: dict) -> tuple[list[str], dict[tuple[str, str], str], dict[str, list[str]]]:
     """The project's steps with its checks by a person among them, per recording whether each check waits, who
     decided it, or that it has not been reached, and what each column needs."""
     from macaw.coding.review_queue import export_review
@@ -79,7 +84,9 @@ def check_states(config_path: Path, recordings: list[str], grid: dict, gates: di
     from macaw.project.layout import layout_for
     from macaw.project.recording import build_recording
 
-    config = resolve_config(config_path)
+    from macaw.execution.runner import recording_configs
+
+    config = _settings(config_path)
     dag = build_dag(config)
     columns = list(dag.topological_order())
     names = [name for name in columns if issubclass(get_extractor(name), Gate)]
@@ -93,10 +100,11 @@ def check_states(config_path: Path, recordings: list[str], grid: dict, gates: di
         queue = None
     waiting_units = set(queue["recording_id"].astype(str)) if queue is not None and not queue.empty else set()
     layout = layout_for(config, create=False)
+    configs = recording_configs(config, recordings)
     for rid in recordings:
         held = {gate for gate, _ in gates.get(rid, [])}
         try:
-            own = resolve_config(config_path, recording_id=rid)
+            own = configs[rid]
             recording = build_recording(rid, own)
         except MacawError:
             recording = None
@@ -120,13 +128,13 @@ def check_states(config_path: Path, recordings: list[str], grid: dict, gates: di
     return shown, states, needs
 
 
-def write_status(config_path: Path, path: Path) -> Path:
+def write_status(config_path, path: Path) -> Path:
     """The Overview's grid as a table: a row per recording, a column per step and per check by a person."""
-    config = resolve_config(config_path)
+    config = _settings(config_path)
     recordings = resolve_recordings(config, None)
-    _, steps_run, grid, _ = task_grid(config_path, recordings)
+    _, steps_run, grid, _ = task_grid(config, recordings)
     gates, _ = people_waiting(config)
-    columns, checks, _ = check_states(config_path, recordings, grid, gates)
+    columns, checks, _ = check_states(config, recordings, grid, gates)
     rows = [
         {"recording_id": rid, **{name: checks.get((rid, name), grid.get((rid, name))) for name in columns}}
         for rid in recordings

@@ -109,7 +109,8 @@ def write_status_table(config: Path, resolved) -> None:
 
     # the run's results stand whether or not the table could be written
     try:
-        typer.echo(f"status {write_status(config, layout_for(resolved, create=False).status_path())}")
+        # the run's own settings, with the output folder and --set it was given
+        typer.echo(f"status {write_status(resolved, layout_for(resolved, create=False).status_path())}")
     except Exception as error:
         typer.echo(f"note: no status table written ({type(error).__name__}: {error})", err=True)
 

@@ -372,6 +372,13 @@ def test_the_overview_grid_is_written_as_a_table(project, tmp_path):
     assert said.loc["align.review", "meaning"].startswith("Where the check by a person") and "failed" in said.loc["prep.media", "meaning"]
 
 
+def test_the_status_table_of_a_run_into_another_folder_tells_that_folder(project, tmp_path, monkeypatch):
+    elsewhere, seen, real = resolve_config(project, output_dir=tmp_path / "out2"), [], status.task_states
+    monkeypatch.setattr(status, "task_states", lambda config, dag, recordings: seen.append(config.project.output_dir) or real(config, dag, recordings))
+    status.write_status(elsewhere, tmp_path / "status.csv")
+    assert [Path(found) for found in seen] == [tmp_path / "out2"]
+
+
 def test_a_failed_step_shows_on_its_own_tile_and_row(project, monkeypatch):
     monkeypatch.setattr(status, "failed_last_time", lambda config_path: {task_id_for("003", "prep.media")})
     found = overview.standing(project)
