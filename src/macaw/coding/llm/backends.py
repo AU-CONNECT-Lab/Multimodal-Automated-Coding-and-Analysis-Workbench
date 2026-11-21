@@ -280,6 +280,7 @@ class OpenAICompatibleBackend(LLMBackend):
     """The chat completions protocol that Ollama, vLLM, llama.cpp and OpenAI all speak."""
 
     api_key_variable: str | None = None
+    max_tokens_field = "max_tokens"
 
     def _headers(self) -> dict[str, str]:
         key = os.environ.get(self.api_key_variable or "", "")
@@ -322,7 +323,7 @@ class OpenAICompatibleBackend(LLMBackend):
             "model": self.cfg.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "temperature": self.cfg.temperature,
-            "max_tokens": self.cfg.max_tokens,
+            self.max_tokens_field: self.cfg.max_tokens,
             "response_format": {"type": "json_object"},
         }
         if seed is not None:
@@ -458,11 +459,23 @@ class OpenAIBackend(OpenAICompatibleBackend):
     is_local = False
     default_base_url = "https://api.openai.com/v1"
     api_key_variable = "OPENAI_API_KEY"
+    # its models that reason first refuse max_tokens; every model takes this
+    max_tokens_field = "max_completion_tokens"
     reporting = (
         "coding.llm.provider openai: the transcript text, speaker letters and times are sent to "
         "OpenAI's servers. Whether that is allowed is for your ethics approval to say."
     )
     at_once = _RATE_LIMITS
+
+    def _post(self, url: str, body: dict, headers: dict[str, str]) -> dict:
+        try:
+            return super()._post(url, body, headers)
+        except LLMBackendError as error:
+            if "temperature" not in str(error):
+                raise
+            raise LLMBackendError(
+                f"{error}\nA model that reasons before it answers takes only its own temperature: set {self.settings}.temperature to 1."
+            ) from None
 
 
 @register_backend(BACKEND_GROUP)

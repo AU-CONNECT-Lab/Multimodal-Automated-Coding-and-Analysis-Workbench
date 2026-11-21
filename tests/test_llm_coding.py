@@ -52,6 +52,7 @@ class Stub:
         self.gets: list[str] = []
         self.fail_first = 0
         self.refused = None  # (code, headers) a failing request is answered with
+        self.error = {"error": "busy"}
         self.cut = None  # "all": stopped at max_tokens before any code; "part": after the first one
         self.reason = None  # text -> the reason given with its code
         stub = self
@@ -85,7 +86,7 @@ class Stub:
                 if stub.fail_first:
                     stub.fail_first -= 1
                     code, headers = stub.refused or (503, {})
-                    self._send(code, {"error": "busy"}, headers)
+                    self._send(code, stub.error, headers)
                     return
                 user = text_of(body["messages"][-1]["content"])
                 labels = [
@@ -361,6 +362,17 @@ class TestBackends:
         backend.complete("s", "u")
         assert stub.requests[0]["headers"]["authorization"] == "Bearer sk-test"
         assert backend.model_version() == "tiny"
+
+    def test_openai_is_sent_the_cap_its_reasoning_models_take_and_told_of_their_temperature(self, monkeypatch, stub):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        OpenAIBackend(LLMSection(provider="openai", model="x", base_url=f"{stub.url}/v1")).complete("s", "u")
+        assert stub.requests[0]["body"]["max_completion_tokens"] == 8192 and "max_tokens" not in stub.requests[0]["body"]
+        VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/v1")).complete("s", "u")
+        assert stub.requests[1]["body"]["max_tokens"] == 8192
+        stub.fail_first, stub.refused = 1, (400, {})
+        stub.error = {"error": {"message": "Unsupported value: 'temperature' does not support 0.3 with this model."}}
+        with pytest.raises(LLMBackendError, match="set coding.llm.temperature to 1"):
+            OpenAIBackend(LLMSection(provider="openai", model="x", base_url=f"{stub.url}/v1")).complete("s", "u")
 
     def test_a_hosted_model_s_answers_are_kept_under_the_name_asked_for_not_the_one_it_answers_with(self, monkeypatch, stub):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
