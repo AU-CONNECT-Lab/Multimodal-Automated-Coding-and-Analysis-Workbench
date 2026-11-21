@@ -30,7 +30,7 @@ def export(
     out: Path = typer.Option(None, "--out", help="Default: <output_dir>/exports/<recording>_transcript.eaf"),
 ) -> None:
     """Write the transcript as an ELAN file, one tier per person, with what was left out on tiers of its own."""
-    resolved = resolve_config(config)
+    resolved = resolve_config(config, recording_id=recording)
     layout = layout_for(resolved, create=False)
     directory = layout.artifacts_dir(recording, ASRExtractor.name)
     if not (directory / TRANSCRIPT_NAME).is_file():
@@ -63,7 +63,7 @@ def import_(
     """Keep a corrected transcript; text.asr and everything after it use it from the next run."""
     from macaw.coding.llm.rate import keep_recognised
 
-    resolved = resolve_config(config)
+    resolved = resolve_config(config, recording_id=recording)
     layout = layout_for(resolved, create=False)
     corrected = read_transcript_eaf(eaf, turn_takers(resolved, build_recording(recording, resolved)))
     target = layout.corrected_transcript_path(recording)
@@ -91,7 +91,7 @@ def check(
     from macaw.coding.llm.backends import resolve_llm_backend
     from macaw.qc.transcript_check import check_transcript, describe
 
-    resolved = resolve_config(config)
+    resolved = resolve_config(config, recording_id=recording)
     layout = layout_for(resolved, create=False)
     path = layout.artifacts_dir(recording, ASRExtractor.name) / TRANSCRIPT_NAME
     if not path.is_file():

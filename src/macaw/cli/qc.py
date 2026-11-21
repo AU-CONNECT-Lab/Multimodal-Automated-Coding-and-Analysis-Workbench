@@ -428,12 +428,13 @@ def accept_voices(
     if rename is not None and len(recording_ids) != 1:
         raise MacawError("--rename names the voices of one recording: give one -r")
     for recording_id in recording_ids:
-        recording = build_recording(recording_id, resolved)
-        voices = read_voices(resolved, recording_id)
+        own = resolve_config(config, recording_id=recording_id)
+        recording = build_recording(recording_id, own)
+        voices = read_voices(own, recording_id)
         if not voices:
             raise MacawError(f"{recording_id}: no voices found yet; run text.diarize first")
         if nobody_else:
-            found = read_further_voice(resolved, recording_id)
+            found = read_further_voice(own, recording_id)
             if not found:
                 raise MacawError(f"{recording_id}: no further voice was found")
             _write_json(layout.further_voice_path(recording_id), {"found": further_voice_id(found), "by": stamp})
@@ -442,11 +443,11 @@ def accept_voices(
         if rename is not None:
             people = _named_voices(voices, rename, recording)
             try:
-                suggestion = offered_suggestion(resolved, recording)
+                suggestion = offered_suggestion(own, recording)
             except Exception:   # the names stand without it; only the record of what was suggested is lost
                 suggestion = None
         else:
-            suggestion = offered_suggestion(resolved, recording)
+            suggestion = offered_suggestion(own, recording)
             if suggestion is None:
                 raise MacawError(
                     f"{recording_id}: no suggestion can be made (nobody has a mic of their own or "
@@ -459,7 +460,7 @@ def accept_voices(
                     f"{recording_id}: the suggestion leaves {', '.join(undecided)} undecided between "
                     f"{', '.join(suggestion['unheard'])}; listen to the clips and name all voices with --rename"
                 )
-        decided = {"people": people, "by": stamp, "diarization": diarization_fingerprint(resolved, recording_id), **({"mixed": True} if mixed else {})}
+        decided = {"people": people, "by": stamp, "diarization": diarization_fingerprint(own, recording_id), **({"mixed": True} if mixed else {})}
         _write_json(layout.voice_owners_path(recording_id), {**decided, "suggested": suggestion_record(suggestion)})
         named = "; ".join(f"{label} is {who}" for label, who in sorted(people.items()))
         then = f"say who speaks each line with `macaw line-speakers -r {recording_id}`" if mixed else f"apply it with `macaw run -r {recording_id}`"

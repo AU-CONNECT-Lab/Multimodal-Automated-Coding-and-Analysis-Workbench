@@ -58,7 +58,9 @@ def align(
 
     layout = layout_for(resolved)
     for recording_id in resolve_recordings(resolved, recordings):
-        recording = build_recording(recording_id, resolved)
+        # the recording's own settings, which may choose another setup and its devices
+        own = resolve_config(config, recording_id=recording_id, cli_overrides=overrides)
+        recording, cfg = build_recording(recording_id, own), own.align
         infos = _probe_all(recording)
         figures = layout.renders_dir(recording_id) / "align"
         results = align_recording(recording, cfg, infos, on_pair=_drawer(figures, cfg))
@@ -77,7 +79,7 @@ def align(
         typer.echo(f"  table {path}")
         if any(figures.glob("*.png")):
             typer.echo(f"  figures {figures}")
-        _clip(recording, results, infos, clip_path(layout, recording_id), resolved.video.encoder)
+        _clip(recording, results, infos, clip_path(layout, recording_id), own.video.encoder)
         if cfg.review != "skip" and any(needs_person(result, cfg) for result in results):
             typer.echo(
                 f"  files waiting for a person hold the run back: look at them, then `macaw accept-offset -r {recording_id}` "
@@ -94,7 +96,7 @@ def set_offset(
     by: str = typer.Option(None, "--by", help="Who set it. Default: the login name."),
 ) -> None:
     """Set one offset by hand after inspecting it; a later `macaw align` keeps it, and the entry it replaces is kept in its history."""
-    resolved = resolve_config(config)
+    resolved = resolve_config(config, recording_id=recording)
     layout = layout_for(resolved)
     built = build_recording(recording, resolved)
     names = [item.name for item in built.media]

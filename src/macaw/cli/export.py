@@ -77,7 +77,7 @@ def export(
     recording_ids = resolve_recordings(resolved, recordings)
 
     if format_ == "eaf":
-        _export_eaf(resolved, layout, recording_ids, out)
+        _export_eaf(config, resolved, layout, recording_ids, out)
         return
     if format_ in TABLES:
         _export_tables(resolved, layout, recording_ids, format_, out)
@@ -88,7 +88,7 @@ def export(
         _export_skeleton(layout, recording_ids, out)
         return
     if format_ == "video":
-        _export_video(resolved, layout, recording_ids, hide, sound, out)
+        _export_video(config, resolved, layout, recording_ids, hide, sound, out)
         return
     if format_ == "sequence":
         if of not in SEQUENCES:
@@ -96,7 +96,7 @@ def export(
         if of == "annotations":
             _export_sequence(layout, recording_ids, step, out)
         else:
-            _export_talk_sequence(resolved, layout, recording_ids, of, step, out)
+            _export_talk_sequence(config, layout, recording_ids, of, step, out)
         return
 
     frames = []
@@ -219,7 +219,7 @@ def _annotation_frames(layout, recording_ids: list[str]) -> list[tuple[str, pd.D
     return found
 
 
-def _export_eaf(resolved, layout, recording_ids: list[str], out: Path | None) -> None:
+def _export_eaf(config_path: Path, resolved, layout, recording_ids: list[str], out: Path | None) -> None:
     """One .eaf per recording: ELAN opens a file against one set of media, not a corpus."""
     found = _annotation_frames(layout, recording_ids)
     if not found:
@@ -239,7 +239,7 @@ def _export_eaf(resolved, layout, recording_ids: list[str], out: Path | None) ->
         target = directory / f"{recording_id}.eaf"
         export_eaf(
             frame,
-            apply_offset_table(build_recording(recording_id, resolved), layout.offset_table_path(recording_id)),
+            apply_offset_table(build_recording(recording_id, resolve_config(config_path, recording_id=recording_id)), layout.offset_table_path(recording_id)),
             target,
             controlled_vocabulary=vocabulary,
         )
@@ -280,7 +280,7 @@ def _export_skeleton(layout, recording_ids: list[str], out: Path | None) -> None
         raise MacawError(f"No body points under {layout.recordings_dir}. Run the pose steps (macaw run) before exporting.")
 
 
-def _export_video(resolved, layout, recording_ids: list[str], hide: str, sound: bool, out: Path | None) -> None:
+def _export_video(config_path: Path, resolved, layout, recording_ids: list[str], hide: str, sound: bool, out: Path | None) -> None:
     """A copy of each camera's video with the people hidden, and beside it the stretches in which a head was not."""
     from macaw.extractors.video.pose.keypoints import PoseExtractor
     from macaw.media.hide import HIDE, write_hidden
@@ -297,7 +297,7 @@ def _export_video(resolved, layout, recording_ids: list[str], hide: str, sound: 
             logger.info("no body points yet for %s", recording_id)
             continue
         keypoints = read_keypoints(path, recording_id=recording_id)
-        recording = build_recording(recording_id, resolved)
+        recording = build_recording(recording_id, resolve_config(config_path, recording_id=recording_id))
         subjects = [subject.subject_id for subject in recording.subjects]
         for camera in recording.cameras():
             people = keypoints[keypoints["video"] == camera.name]
@@ -363,7 +363,7 @@ def _export_sequence(layout, recording_ids: list[str], step: float, out: Path | 
     typer.echo(str(out))
 
 
-def _export_talk_sequence(config, layout, recording_ids: list[str], of: str, step: float, out: Path | None) -> None:
+def _export_talk_sequence(config_path: Path, layout, recording_ids: list[str], of: str, step: float, out: Path | None) -> None:
     """Talk resampled over the whole task window, so silence before the first word counts too."""
     from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, read_transcript
     from macaw.extractors.prep import load_prep
@@ -375,6 +375,8 @@ def _export_talk_sequence(config, layout, recording_ids: list[str], of: str, ste
     )
     pieces = []
     for recording_id in recording_ids:
+        # each recording's talk by its own settings: its setup, segment and text
+        config = resolve_config(config_path, recording_id=recording_id)
         path = layout.artifacts_dir(recording_id, source) / name
         if not path.is_file():
             logger.warning("%s: no %s output, left out", recording_id, source)
