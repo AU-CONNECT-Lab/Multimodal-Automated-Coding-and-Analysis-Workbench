@@ -47,3 +47,17 @@ def test_a_file_swapped_in_waits_for_whoever_is_reading_the_one_it_replaces(tmp_
     _io.swap_in(staging, target)
     reader.join()
     assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_a_frame_number_with_a_fraction_is_refused_and_a_whole_number_id_read_as_a_number_keeps_its_text():
+    import pandas as pd
+    import pytest
+
+    from macaw.exceptions import SchemaViolationError
+    from macaw.store.schema import coerce_frame
+
+    schema = {"frame": "int64", "subject_id": "string"}
+    out = coerce_frame(pd.DataFrame({"frame": [2.0, 3.0], "subject_id": [1.0, None]}), schema, "rows")
+    assert list(out["frame"]) == [2, 3] and out["subject_id"].iloc[0] == "1" and out["subject_id"].isna().iloc[1]
+    with pytest.raises(SchemaViolationError, match="2.9999"):
+        coerce_frame(pd.DataFrame({"frame": [2.9999, 3.0], "subject_id": ["a", "b"]}), schema, "rows")

@@ -185,8 +185,22 @@ def coerce_frame(df, schema: dict[str, str], name: str):
     for column, spec in schema.items():
         target = _PANDAS_DTYPES[spec]
         if out[column].dtype != pd.api.types.pandas_dtype(target):
-            out[column] = out[column].astype(target)
+            out[column] = _cast(out[column], spec, f"{name}: {column}")
     return out.reset_index(drop=True)
+
+
+def _cast(values, spec: str, name: str):
+    target = _PANDAS_DTYPES[spec]
+    if not pd.api.types.is_float_dtype(values) or spec not in ("int64", "int64_nullable", "string"):
+        return values.astype(target)
+    known = values.dropna()
+    whole = bool((known == known.round()).all())
+    if spec == "string":
+        # 1.0 read from a number column is the id 1, not the text "1.0"
+        return values.astype("Int64").astype(target) if whole else values.astype(target)
+    if not whole:
+        raise SchemaViolationError(f"{name} holds fractions where whole numbers belong, such as {known[known != known.round()].iloc[0]}")
+    return values.astype(target)
 
 
 def empty_frame(schema: dict[str, str]):
