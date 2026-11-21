@@ -421,3 +421,33 @@ def test_the_reports_decision_names_the_projects_unit(project):
     rows = _decisions(config, layout, RecordingResults(layout, "003"), "003", [], [], [], [], [])
     row = next(row for row in rows if row["what"].startswith("Pixels to"))
     assert row["what"] == "Pixels to inches" and "in per pixel 0.5" in row["decided"] and "exports add inches beside pixels" in row["decided"]
+
+
+def test_a_camera_a_person_kept_does_not_make_another_camera_s_suggestion_theirs(project):
+    from macaw.qc.checks import RecordingResults
+    from macaw.qc.report import _decisions
+
+    config = resolve_config(project)
+    layout = layout_for(config)
+    cameras = [
+        {"accepted": True, "doubt": "", "people": [{"chosen_by": "clicked"}]},
+        {"accepted": False, "doubt": "", "people": [{"chosen_by": "suggested by most in view"}]},
+    ]
+    rows = _decisions(config, layout, RecordingResults(layout, "003"), "003", [], cameras, [], [], [])
+    assert next(row for row in rows if row["what"] == "Who is on each camera")["by"] == "software"
+
+
+def test_the_same_words_for_the_whole_recording_and_each_segment_stay_separate_warnings(project):
+    import json
+
+    from macaw.extractors.base import QCWarning
+    from macaw.qc.checks import RecordingResults
+    from macaw.qc.report import _warnings
+
+    config = resolve_config(project)
+    layout = layout_for(config)
+    said = [QCWarning("motion.mea", "003", "child", "warn", "nothing moved", details=extra) for extra in ({}, {"segment": "a"}, {"segment": "b"})]
+    path = layout.warnings_path("003", "motion.mea")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([warning.__dict__ for warning in said]), encoding="utf-8")
+    assert len(_warnings(layout, RecordingResults(layout, "003"), "003")) == 3

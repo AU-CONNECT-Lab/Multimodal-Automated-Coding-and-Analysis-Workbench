@@ -418,7 +418,11 @@ def _decisions(
         rows.append({
             "what": "Who is on each camera",
             "decided": f"{len(cameras)} camera(s): " + ", ".join(parts),
-            "by": "software" if suggested > kept else "person", "href": "#Camera",
+            # camera by camera: one a person kept does not make another's suggestion theirs
+            "by": "software" if any(
+                not camera["accepted"] and any(person["chosen_by"].startswith("suggested") for person in camera["people"]) for camera in cameras
+            ) else "person",
+            "href": "#Camera",
         })
     swaps = results.artifact("pose.keypoints", "swaps.json")
     if swaps is not None:
@@ -813,7 +817,8 @@ def _warnings(layout, results: RecordingResults, recording_id: str) -> list[QCWa
     qc_file = layout.qc_dir(recording_id) / "warnings.json"
     if qc_file.is_file():
         found += [QCWarning(**item) for item in json.loads(qc_file.read_text(encoding="utf-8"))]
-    unique = {(w.check, w.subject_id, w.severity, w.message): w for w in found}
+    # the same words for the whole recording and for each segment, or at other times, are separate warnings
+    unique = {(w.check, w.subject_id, w.severity, w.message, (w.details or {}).get("segment"), w.t_start, w.t_end): w for w in found}
     return sorted(unique.values(), key=lambda w: (SEVERITY_ORDER.get(w.severity, 3), w.check, w.subject_id or ""))
 
 
