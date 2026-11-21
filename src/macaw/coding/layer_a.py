@@ -10,8 +10,9 @@ import pandas as pd
 
 from macaw.config.schema import CodingSection, TurnsSection
 from macaw.extractors import register_extractor
-from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript
+from macaw.extractors.audio.content.asr import TRANSCRIPT_NAME, ASRExtractor, load_transcript
 from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording
 from macaw.store.annotations import build_annotations
@@ -186,7 +187,7 @@ _MISSING = {
 @register_extractor
 class LayerACodingExtractor(Extractor):
     name = "coding.layer_a"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.EVENT
     group = "coding"
     # only the coding keys it reads, so a language model setting leaves it alone
@@ -197,7 +198,9 @@ class LayerACodingExtractor(Extractor):
         return None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return TransitionExtractor(self.config).inputs_for(recording)
+        # the pauses inside a turn come from its lines' times, which the turn table does not hold
+        heard = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, ASRExtractor.name) / TRANSCRIPT_NAME
+        return [*TransitionExtractor(self.config).inputs_for(recording), heard]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         turns = load_turns(self.config, recording.recording_id, others=True)

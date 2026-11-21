@@ -20,7 +20,7 @@ from macaw.store.schema import (
     LONG_TABLE_SCHEMA,
     validate_frame,
 )
-from macaw.turns.transitions import classify_overlaps, detect_transitions
+from macaw.turns.transitions import TransitionExtractor, classify_overlaps, detect_transitions
 
 UTTERANCES = [
     ("parent", 10.0, 12.0, "so what happened next"),
@@ -175,3 +175,12 @@ class TestWarnings:
 
     def test_a_working_lexicon_is_quiet(self, extractor, scene, coded):
         assert extractor._warnings(scene.recording, scene.turns, coded) == []
+
+
+def test_the_lines_times_inside_a_turn_are_in_the_key(monkeypatch, tmp_path):
+    from macaw.coding.layer_a import LayerACodingExtractor
+
+    monkeypatch.setattr(TransitionExtractor, "inputs_for", lambda self, recording: [])
+    config = SimpleNamespace(project=SimpleNamespace(output_dir=tmp_path / "out", work_dir=tmp_path / "work"))
+    found = LayerACodingExtractor(config).inputs_for(SimpleNamespace(recording_id="r1"))
+    assert [path.name for path in found] == ["transcript.parquet"] and "text.asr" in str(found[0])
