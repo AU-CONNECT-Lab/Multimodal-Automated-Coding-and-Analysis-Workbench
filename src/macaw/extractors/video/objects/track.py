@@ -101,7 +101,8 @@ class GroundingDinoFinder(ObjectFinder):
     default_model = "IDEA-Research/grounding-dino-tiny"
     # the original authors' cut for keeping a word found in a box
     text_threshold = 0.25
-    batch_size = 8
+    # memory grows with each frame read at once while two already read as fast as eight (3 GB against 11 GB at 720p)
+    batch_size = 2
 
     @property
     def version(self) -> str:
