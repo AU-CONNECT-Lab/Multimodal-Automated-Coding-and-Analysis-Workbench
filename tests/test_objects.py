@@ -353,6 +353,11 @@ class TestFinders:
         assert [[index for index, _ in batch] for batch in batches] == [[4, 9], [14, 19]]
         assert all(abs(int(np.asarray(image).mean()) - index * 8) <= 2 for batch in batches for index, image in batch)
 
+    def test_grounding_dino_s_words_are_taken_back_to_the_names_given(self):
+        names = ["Ball", "teddy-bear", "toy car"]
+        given = [track_module._given_name(label, names) for label in ("ball", "teddy - bear", "toy car", "toy", "cup")]
+        assert given == ["Ball", "teddy-bear", "toy car", None, None]
+
     def test_both_finders_are_there_by_name(self):
         from macaw.extractors import get_backend
 

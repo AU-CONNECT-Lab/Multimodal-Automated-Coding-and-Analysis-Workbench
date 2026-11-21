@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,9 +138,16 @@ class GroundingDinoFinder(ObjectFinder):
             )
             for (frame, _), result in zip(batch, results):
                 for box, score, label in zip(result["boxes"].tolist(), result["scores"].tolist(), result["text_labels"]):
-                    if label in names:
-                        rows.append({"frame": frame, "label": label, "x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3], "score": score})
+                    name = _given_name(label, names)
+                    if name is not None:
+                        rows.append({"frame": frame, "label": name, "x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3], "score": score})
         return pd.DataFrame(rows, columns=list(FOUND_COLUMNS))
+
+
+def _given_name(label: str, names) -> str | None:
+    """The name a detected label stands for: the model gives words in lower case with spaces around marks, as teddy - bear."""
+    plain = re.sub(r"[^0-9a-z]+", "", str(label).lower())
+    return next((name for name in names if re.sub(r"[^0-9a-z]+", "", name.lower()) == plain), None)
 
 
 @register_backend(FINDERS)
