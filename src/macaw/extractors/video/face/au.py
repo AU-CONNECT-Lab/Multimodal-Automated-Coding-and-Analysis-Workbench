@@ -91,7 +91,7 @@ def _au_scale(backend: str, model: str) -> str:
 @register_extractor
 class FaceExtractor(Extractor):
     name = "face.au"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.FRAME
     group = "face"
     config_sections = (
@@ -381,8 +381,16 @@ def name_faces(faces: pd.DataFrame, keypoints: pd.DataFrame, subjects: list[str]
     )
     # two heads in one box: the one nearer its centre gets the face
     joined = joined.sort_values(["face_score", "off_centre"], ascending=[False, True], kind="stable")
-    # one face per person and one person per face, most confident first
-    joined = joined.drop_duplicates(["frame", "subject_id"]).drop_duplicates("face")
+    # one face per person and one person per face, most confident first; a person whose head also lies in a face
+    # taken by someone else still gets their own
+    taken_faces, taken_people, kept = set(), set(), []
+    for row, face, frame, subject in zip(range(len(joined)), joined["face"], joined["frame"], joined["subject_id"]):
+        if face in taken_faces or (frame, subject) in taken_people:
+            continue
+        taken_faces.add(face)
+        taken_people.add((frame, subject))
+        kept.append(row)
+    joined = joined.iloc[kept]
     out = faces.loc[joined["face"].to_numpy()].copy()
     out["subject_id"] = joined["subject_id"].astype(str).to_numpy()
     return out.sort_values(["subject_id", "frame"]).reset_index(drop=True)

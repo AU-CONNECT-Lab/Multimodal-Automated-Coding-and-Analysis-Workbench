@@ -53,6 +53,11 @@ class TestNameFaces:
         named = name_faces(faces([(80, 80, 40, 40, 0.6), (85, 85, 30, 30, 0.95)]), heads({"parent": (100, 100)}), ["parent"])
         assert named["face_score"].unique().tolist() == [0.95] and len(named) == 10
 
+    def test_a_head_that_also_lies_in_someone_elses_face_keeps_its_own(self):
+        # the child's face box reaches over the parent's nose; the parent's own box holds only the parent
+        named = name_faces(faces([(0, 0, 100, 100, 0.9), (80, 0, 80, 100, 0.8)]), heads({"child": (50, 50), "parent": (90, 50)}), ["parent", "child"])
+        assert named.groupby("subject_id")["face_x"].unique().map(list).to_dict() == {"child": [0], "parent": [80]}
+
     @pytest.mark.parametrize("order", [["parent", "child"], ["child", "parent"]])
     def test_two_heads_in_one_box_give_it_to_the_one_nearer_its_centre(self, order):
         people = {"parent": (100, 100), "child": (82, 82)}
