@@ -81,6 +81,8 @@ class SyntaxExtractor(Extractor):
         if not (spacy.util.is_package(model) or Path(model).is_dir()):
             raise BackendNotAvailableError(_INSTALL.format(model=model))
 
+    packages = ("spacy",)
+
     def backend_info(self) -> tuple[str | None, str | None]:
         import spacy
 

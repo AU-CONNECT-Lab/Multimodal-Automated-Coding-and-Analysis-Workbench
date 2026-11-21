@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import math
 from pathlib import Path
@@ -154,10 +155,18 @@ class ASRBackend(Backend):
 
     def __init__(self, model: str, *, device: str = "auto", compute_type: str = "float16"):
         self.model = model
-        self.device = resolve_device(device)
-        self.compute_type = resolve_compute_type(compute_type, self.device)
+        self._device, self._compute_type = device, compute_type
         self._model = None
         self._aligners: dict = {}
+
+    # resolved when first used, so making a backend to key its step loads no library
+    @functools.cached_property
+    def device(self) -> str:
+        return resolve_device(self._device)
+
+    @functools.cached_property
+    def compute_type(self) -> str:
+        return resolve_compute_type(self._compute_type, self.device)
 
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
@@ -440,17 +449,25 @@ class ASRExtractor(Extractor):
 
     def backend(self) -> ASRBackend:
         if self._backend is None:
-            from macaw.extractors import get_backend
-
-            cfg = self.config.text
             # no fallback chain: there is no offline stand-in for a speech recogniser, and a
             # silent switch would change word timings without changing the numbers' name
-            backend = get_backend(BACKEND_GROUP, cfg.asr_backend)(
-                cfg.asr_model, device=cfg.device, compute_type=cfg.compute_type
-            )
+            backend = self._named_backend()
             backend.check_available()
             self._backend = backend
         return self._backend
+
+    def _named_backend(self) -> ASRBackend:
+        from macaw.extractors import get_backend
+
+        cfg = self.config.text
+        return get_backend(BACKEND_GROUP, cfg.asr_backend)(cfg.asr_model, device=cfg.device, compute_type=cfg.compute_type)
+
+    def backends(self) -> list[Backend]:
+        from macaw.extractors import get_backend
+
+        # each track's crosstalk is judged by the diarization backend when every voice has its own
+        shared = self._shared()
+        return [self._named_backend(), *([] if shared else [get_backend(DIARIZATION_GROUP, self.config.text.diarization)()])]
 
     def check_available(self) -> None:
         from macaw.extractors import get_backend
@@ -988,6 +1005,9 @@ class SharedASRExtractor(Extractor):
 
     def backend_info(self) -> tuple[str | None, str | None]:
         return ASRExtractor(self.config).backend_info() if self._shared() else (None, None)
+
+    def backends(self) -> list[Backend]:
+        return ASRExtractor(self.config).backends()[:1] if self._shared() else []
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         if not self._shared():

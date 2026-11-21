@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from macaw.extractors import prep as prep_module
@@ -81,3 +82,29 @@ def test_applying_the_timing_twice_does_not_add_the_start_twice(prepared, monkey
     for _ in range(2):
         apply_prep_timing(None, SimpleNamespace(recording_id="r1", media=[room]))
     assert room.offset_s == pytest.approx(1.7)
+
+
+def copy_entry(**changes):
+    entry = {
+        "file": "room.mp4.mp4", "fps": 30.0, "source_fps": 60.0, "first_picture_s": 0.0, "size": [200, 100],
+        "rotation": None, "prepared_size": [400, 200],
+    }
+    return {**entry, **changes}
+
+
+def test_the_original_behind_a_copy_puts_its_points_on_the_copys_frames_and_pixels():
+    from macaw.extractors.prep import SourceVideo
+
+    source = SourceVideo.of(copy_entry(fps=20.0, first_picture_s=0.1), Path("raw/room.mp4"))
+    table = pd.DataFrame({"frame": [0, 1, 2, 3], "track_id": 1, "joint": "nose", "x": 10.0, "y": 20.0})
+    moved = source.to_copy(table)
+    # 0.1 s in at 20 fps is copy frame 2; of the original frames on one copy frame the nearest stays
+    assert moved["frame"].tolist() == [2, 3] and moved["x"].tolist() == [20.0] * 2 and moved["y"].tolist() == [40.0] * 2
+
+
+def test_a_turned_original_is_measured_upright_and_none_is_given_without_a_copy():
+    from macaw.extractors.prep import SourceVideo
+
+    assert SourceVideo.of(copy_entry(rotation=-90), Path("room.mp4")).size == (100, 200)
+    assert SourceVideo.of(copy_entry(file=None), Path("room.mp4")) is None
+    assert SourceVideo.of(None, Path("room.mp4")) is None

@@ -14,7 +14,7 @@ from macaw.extractors.audio.prosody.backends import (
     load_audio,
     resolve_backend,
 )
-from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -129,6 +129,10 @@ class FrameProsodyExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = self.backend()
         return (backend.name, str(backend.version))
+
+    def backends(self) -> list[Backend]:
+        # the first of the chain installed here, as the run would take
+        return [self.backend()]
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         return voice_inputs(self.config, recording, load_prep(self.config, recording.recording_id))

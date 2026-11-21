@@ -9,9 +9,9 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ConfigError, UnreadableMediaError
 from macaw.extractors import get_backend, register_extractor
-from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
-from macaw.extractors.video.face.backends import BACKEND_GROUP, resolve_backend
+from macaw.extractors.video.face.backends import BACKEND_GROUP, named_backend, resolve_backend
 from macaw.extractors.video.pose.keypoints import PoseExtractor, PoseReviewGate
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -107,6 +107,9 @@ class FaceExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = self.backend()
         return (backend.name, backend.version)
+
+    def backends(self) -> list[Backend]:
+        return [named_backend(self.config.face.backend)]
 
     def check_available(self) -> None:
         backend = self.backend()

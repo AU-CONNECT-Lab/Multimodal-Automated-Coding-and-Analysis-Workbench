@@ -11,10 +11,10 @@ import pandas as pd
 
 from macaw.exceptions import ConfigError, UnreadableMediaError
 from macaw.extractors import get_backend, register_extractor
-from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import apply_prep_timing
 from macaw.extractors.video.gaze import angles
-from macaw.extractors.video.gaze.backends import BACKEND_GROUP, PEAK, SHARE, TARGET_COLUMNS, resolve_backend
+from macaw.extractors.video.gaze.backends import BACKEND_GROUP, PEAK, SHARE, TARGET_COLUMNS, named_backend, resolve_backend
 from macaw.extractors.video.gaze.heads import head_boxes
 from macaw.extractors.video.objects.outline import inside
 from macaw.extractors.video.objects.review import ObjectReviewGate
@@ -234,6 +234,9 @@ class GazeTargetExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = self.backend()
         return (backend.name, backend.version)
+
+    def backends(self) -> list[Backend]:
+        return [named_backend(self.config.gaze.backend)]
 
     def check_available(self) -> None:
         backend = self.backend()

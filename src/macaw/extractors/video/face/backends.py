@@ -7,7 +7,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors import register_backend
-from macaw.extractors.base import Backend
+from macaw.extractors.base import Backend, distribution_version
 
 BACKEND_GROUP = "face"
 # what every face backend returns per face and frame, besides its action units and landmarks; angles in degrees
@@ -54,9 +54,7 @@ class PyFeatBackend(FaceBackend):
 
     @property
     def version(self) -> str:
-        import feat
-
-        return str(getattr(feat, "__version__", "unknown"))
+        return distribution_version("py-feat")
 
     def check_available(self) -> None:
         try:
@@ -284,9 +282,7 @@ class MediaPipeFaceBackend(FaceBackend):
 
     @property
     def version(self) -> str:
-        import mediapipe
-
-        return getattr(mediapipe, "__version__", "unknown")
+        return distribution_version("mediapipe")
 
     def check_available(self) -> None:
         try:
@@ -381,8 +377,12 @@ def _rows(found: pd.DataFrame, offset: int, landmarks: bool, gaze: bool = False)
 
 
 def resolve_backend(name: str) -> FaceBackend:
-    from macaw.extractors import get_backend
-
-    backend = get_backend(BACKEND_GROUP, name)()
+    backend = named_backend(name)
     backend.check_available()
     return backend
+
+
+def named_backend(name: str) -> FaceBackend:
+    from macaw.extractors import get_backend
+
+    return get_backend(BACKEND_GROUP, name)()

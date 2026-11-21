@@ -72,8 +72,8 @@ class FakeBackend:
     def check_available(self):
         return None
 
-    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None):
-        self.calls.append({"path": video_path, "max_people": max_people, "frames": frames})
+    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None, source=None):
+        self.calls.append({"path": video_path, "max_people": max_people, "frames": frames, "source": source})
         return PoseFrames(keypoints=self.frames)
 
 
@@ -120,7 +120,7 @@ class AnyVideo(dict):
     """prep.video's record of every fake video: frames from its first picture, at PICTURE size."""
 
     def get(self, key, default=None):
-        return {"first_picture_s": 0.0, "frames_start_s": 0.0, "prepared_size": list(PICTURE), "size": list(PICTURE)}
+        return {"file": None, "first_picture_s": 0.0, "frames_start_s": 0.0, "prepared_size": list(PICTURE), "size": list(PICTURE)}
 
 
 @pytest.fixture

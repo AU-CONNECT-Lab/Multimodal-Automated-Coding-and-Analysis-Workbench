@@ -44,23 +44,18 @@ and choose it in project.yaml:
     pose:
       backend: $name
 
-The example reads keypoints that something else already produced: next to each video
-`clip.mp4` it expects `clip.keypoints.csv` with the columns frame, track_id, joint, x, y,
-confidence (frame counted from 0 in the video file, x and y in pixels, joint a COCO-17 name such
-as left_wrist). Replace the body of `infer` in `src/$module/backend.py` with your own model and
-keep what it returns: one row per frame, person and joint, in the columns of
-BACKEND_KEYPOINT_SCHEMA, under the four rules in the docstring of `PoseBackend.infer`.
+The example reads keypoints that something else already produced: next to each video `clip.mp4` it expects `clip.keypoints.csv` with the columns frame, track_id, joint, x, y, confidence (frame counted from 0 in the video file, x and y in pixels of the picture as a player shows it, joint a COCO-17 name such as left_wrist). macaw reads video from the copy prep.video makes, which may start later, run at another rate and have square pixels; `infer` is handed the original as `source`, and `source.to_copy` moves the points onto the copy. A variable-rate original is taken to run at a constant rate there. Replace the body of `infer` in `src/$module/backend.py` with your own model and keep what it returns: one row per frame, person and joint of the file it is given, in the columns of BACKEND_KEYPOINT_SCHEMA, under the rules in the docstring of `PoseBackend.infer`.
 
-To change one of the backends that ship with macaw rather than start from nothing, subclass it
-and override only what you need, for example:
+Editing `backend.py`, or a keypoints file it lists in `inputs_for`, runs pose.detect again. Editing another file it imports does not: raise `version` then.
+
+To change one of the backends that ship with macaw rather than start from nothing, subclass it and override only what you need, for example:
 
     from macaw.extractors.video.pose.backends import YOLOPoseBackend
 
     class MyYolo(YOLOPoseBackend):
         name = "$name"
 
-Keep the `register_backend` decorator and give the class its own name; a name already taken by
-an installed backend is refused.
+Keep the `register_backend` decorator and give the class its own name; a name already taken by an installed backend is refused.
 ''')
 
 POSE_BACKEND = Template('''\
@@ -91,9 +86,12 @@ def keypoint_file(video_path: Path) -> Path:
     return Path(video_path).with_suffix(SUFFIX)
 
 
-def read_keypoints(path: Path, *, frames: tuple[int, int] | None) -> pd.DataFrame:
+def read_keypoints(path: Path, *, frames: tuple[int, int] | None, source=None) -> pd.DataFrame:
     """Every point with its confidence; macaw leaves out the unsure ones itself, at pose.min_confidence."""
     table = pd.read_csv(path)
+    if source is not None:
+        # counted on the original; frames asked for and returned are the copy's
+        table = source.to_copy(table)
     if frames is not None:
         table = table[(table["frame"] >= frames[0]) & (table["frame"] < frames[1])]
     if table.empty:
@@ -127,14 +125,18 @@ class $cls(PoseBackend):
         # raise BackendNotAvailableError here when a model or a package is missing
         return None
 
-    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None):
-        path = keypoint_file(video_path)
+    def inputs_for(self, recording):
+        return [path for path in (keypoint_file(item.path) for item in recording.cameras()) if path.is_file()]
+
+    def infer(self, video_path, *, device, model=None, max_people=1, frames=None, input_size=None, source=None):
+        original = source.path if source is not None else Path(video_path)
+        path = keypoint_file(original)
         if not path.is_file():
-            raise BackendNotAvailableError(f"no keypoints file {path.name} next to {Path(video_path).name}")
+            raise BackendNotAvailableError(f"no keypoints file {path.name} next to {original}")
         stream = next(iter(probe(video_path).video_streams()), None)
         size = (stream.width, stream.height) if stream is not None and stream.width else None
         return PoseFrames(
-            keypoints=read_keypoints(path, frames=frames),
+            keypoints=read_keypoints(path, frames=frames, source=source),
             frame_size=size,
         )
 ''')
@@ -142,6 +144,7 @@ class $cls(PoseBackend):
 POSE_TEST = Template('''\
 import pandas as pd
 
+from macaw.extractors.prep import SourceVideo
 from $module.backend import read_keypoints
 
 
@@ -165,6 +168,13 @@ def test_only_the_frames_asked_for(tmp_path):
 def test_a_joint_of_its_own_is_kept_apart_from_the_standard_ones(tmp_path):
     path = write(tmp_path, [(0, 1, "chin", 10.0, 20.0, 0.9)])
     assert read_keypoints(path, frames=None)["joint"].tolist() != ["chin"]
+
+
+def test_points_counted_on_the_original_move_onto_the_copy(tmp_path):
+    path = write(tmp_path, [(0, 1, "nose", 10.0, 20.0, 0.9)])
+    source = SourceVideo(path=tmp_path / "clip.mp4", fps=30.0, first_picture_s=0.5, size=(100, 50), copy_fps=30.0, copy_size=(200, 100))
+    table = read_keypoints(path, frames=None, source=source)
+    assert table["frame"].tolist() == [15] and table["x"].tolist() == [20.0]
 ''')
 
 
@@ -181,13 +191,9 @@ and choose it in project.yaml:
       asr_backend: $name
       asr_model: D:/transcripts      # the folder this example reads from
 
-The example reads transcripts something else already produced, for instance by hand or by a
-service: `<asr_model>/<recording_id>/<subject_id>.csv` with the columns t_start, t_end, text
-and optionally confidence, times in seconds from the start of the prepared track (the start of
-the task window). Replace the body of `transcribe` in `src/$module/backend.py` with your own
-recogniser and keep what it returns: utterances with utterance_index, t_start, t_end, text,
-confidence, language, and words (empty unless word timestamps are asked for). Word counts, the
-long table rows and the quality warnings come from macaw.
+The example reads transcripts something else already produced, for instance by hand or by a service: `<asr_model>/<recording_id>/<subject_id>.csv` with the columns t_start, t_end, text and optionally confidence, times in seconds from the start of the prepared track (the start of the task window). Replace the body of `transcribe` in `src/$module/backend.py` with your own recogniser and keep what it returns: utterances with utterance_index, t_start, t_end, text, confidence, language, and words (empty unless word timestamps are asked for). Word counts, the long table rows and the quality warnings come from macaw.
+
+Editing `backend.py`, or a transcript it lists in `inputs_for`, runs text.asr again. Editing another file it imports does not: raise `version` then.
 
 To change one of the recognisers that ship with macaw, subclass it and give it its own name:
 
@@ -246,6 +252,9 @@ class $cls(ASRBackend):
         if not Path(self.model).is_dir():
             raise BackendNotAvailableError(f"text.asr_model should name the folder of transcripts, not {self.model}")
 
+    def inputs_for(self, recording):
+        return sorted((Path(self.model) / recording.recording_id).glob("*.csv"))
+
     def transcribe(self, audio_path, *, language, word_timestamps):
         path = transcript_file(Path(self.model), audio_path)
         if not path.is_file():
@@ -286,11 +295,7 @@ and choose it in project.yaml:
     prosody:
       backend: $name
 
-The example is a short autocorrelation pitch tracker with an RMS intensity, written to be
-replaced. Each method gets one prepared track as samples and returns one value per frame on
-the grid `frame_times(len(audio), sr, step_s)`, NaN where there is nothing to measure (an
-unvoiced frame has no pitch). Say which quantities it gives in `capabilities`; prosody.frame
-asks only for those.
+The example is a short autocorrelation pitch tracker with an RMS intensity, written to be replaced. Each method gets one prepared track as samples and returns one value per frame on the grid `frame_times(len(audio), sr, step_s)`, NaN where there is nothing to measure (an unvoiced frame has no pitch). Say which quantities it gives in `capabilities`; prosody.frame asks only for those. Editing `backend.py` runs prosody.frame again; editing another file it imports does not: raise `version` then.
 
 To change one of the backends that ship with macaw, subclass it and give it its own name:
 

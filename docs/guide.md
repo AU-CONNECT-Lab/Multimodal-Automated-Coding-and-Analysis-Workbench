@@ -244,7 +244,7 @@ The status of each step is shown as follows:
 |---|---|
 | {bdg-success}`up to date` | Completed with the current settings. It is not run again. |
 | {bdg-info}`not run yet` | Runs the next time **Run** is pressed. |
-| {bdg-warning}`to run again` | A setting or an input file it depends on has changed since it ran. |
+| {bdg-warning}`to run again` | A setting or an input file it depends on has changed since it ran, or the model or program behind it: another backend, another installed version of it, or an edit to a backend of the project's own. Results made in another environment are therefore run again in this one. |
 | {bdg-warning}`waiting for a person` | Paused at a check. See {ref}`step 6 <review>`. |
 | {bdg-danger}`failed last time` | The output at the bottom of the page gives the reason. |
 

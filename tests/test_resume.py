@@ -31,7 +31,7 @@ def line(tmp_path, monkeypatch):
             "ordered_after": classmethod(lambda cls, config: cls.runs_after), "brings_along": classmethod(lambda cls, config: ()),
             "__init__": lambda self, config: None,
             "inputs_for": lambda self, recording: [source],
-            "extra_key": lambda self, recording: "",
+            "extra_key": lambda self, recording: "", "backends": lambda self: [], "packages": (),
         })
 
     registry = {"first": step("first", (), Phase.PREP), "second": step("second", ("first",), Phase.EXTRACT)}

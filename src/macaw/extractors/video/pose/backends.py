@@ -9,12 +9,13 @@ import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError
 from macaw.extractors import register_backend
-from macaw.extractors.base import Backend
+from macaw.extractors.base import Backend, distribution_version
 from macaw.media.ffmpeg import SEEK_MARGIN_S, run_ffmpeg
 from macaw.media.probe import frame_rate, jumps_exactly, probe
 from macaw.telemetry import quiet_environment
@@ -31,6 +32,9 @@ from macaw.store.schema import (
     coerce_frame,
     empty_frame,
 )
+
+if TYPE_CHECKING:
+    from macaw.extractors.prep import SourceVideo
 
 BACKEND_GROUP = "pose"
 
@@ -122,10 +126,13 @@ class PoseBackend(Backend):
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
         input_size: int | None = None,
+        source: SourceVideo | None = None,
     ) -> PoseFrames:
         """One file in, that file's own tracks out. frames is a half-open range of the file's
         own frame numbers, None for all of it; frame numbers stay file-absolute either way.
-        input_size is the side frames are scaled to for a backend that takes one. Every point
+        input_size is the side frames are scaled to for a backend that takes one. source is the
+        original file when video_path is prep.video's copy of it, for a backend that reads
+        something made from the original; frames and pixels returned are video_path's. Every point
         comes back with its confidence and where the model put it, however unsure: the cut at
         pose.min_confidence and outside the picture is made when the detections are read.
         Four rules hold for every backend:
@@ -242,9 +249,7 @@ class MediaPipeBackend(PoseBackend):
 
     @property
     def version(self) -> str:
-        import mediapipe
-
-        return getattr(mediapipe, "__version__", "unknown")
+        return distribution_version("mediapipe")
 
     def check_available(self) -> None:
         try:
@@ -284,6 +289,7 @@ class MediaPipeBackend(PoseBackend):
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
         input_size: int | None = None,
+        source: SourceVideo | None = None,
     ) -> PoseFrames:
         import cv2
         import mediapipe as mp
@@ -488,6 +494,7 @@ class YOLOPoseBackend(PoseBackend):
         max_people: int = 1,
         frames: tuple[int, int] | None = None,
         input_size: int | None = None,
+        source: SourceVideo | None = None,
     ) -> PoseFrames:
         """Everyone in the frame comes back with the tracker's ids; picking max_people is left to assignment."""
         if model is None or not Path(model).is_file():
@@ -588,10 +595,15 @@ NO_BACKEND_MESSAGE = (
 def resolve_backend(name: str | None) -> PoseBackend:
     """Exactly the named backend, no fallback chain. Prosody has one because it has a pure
     python last resort; here a silent downgrade would change the joint set under the user."""
+    backend = named_backend(name)
+    backend.check_available()
+    return backend
+
+
+def named_backend(name: str | None) -> PoseBackend:
+    """The named backend, made without checking it can run."""
     from macaw.extractors import get_backend
 
     if name is None:
         raise BackendNotAvailableError(NO_BACKEND_MESSAGE)
-    backend = get_backend(BACKEND_GROUP, name)()
-    backend.check_available()
-    return backend
+    return get_backend(BACKEND_GROUP, name)()

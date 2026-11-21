@@ -134,6 +134,8 @@ class VoiceReportExtractor(Extractor):
         except ImportError as error:
             raise BackendNotAvailableError(_INSTALL) from error
 
+    packages = ("praat-parselmouth",)
+
     def backend_info(self) -> tuple[str | None, str | None]:
         import parselmouth
 

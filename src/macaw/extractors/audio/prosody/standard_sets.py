@@ -68,6 +68,7 @@ class StandardSetExtractor(Extractor):
     group = "prosody"
     config_sections = ("prosody.standard_sets", "turns", "segment", "text.diarization")
     requires = ("turns.structure", MediaPrepExtractor.name)
+    packages = ("opensmile",)
 
     def check_available(self) -> None:
         try:

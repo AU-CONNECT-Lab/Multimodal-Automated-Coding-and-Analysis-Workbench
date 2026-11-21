@@ -138,6 +138,10 @@ class TextFeatureExtractor(Extractor):
         # a bare name is one of sentence-transformers' own models
         check_hub_model(name if "/" in name or Path(name).expanduser().is_dir() else f"sentence-transformers/{name}", "text.embedding_model")
 
+    @property
+    def packages(self) -> tuple[str, ...]:
+        return () if self.config.text.embedding_model is None else ("sentence-transformers",)
+
     def backend_info(self) -> tuple[str | None, str | None]:
         if self.config.text.embedding_model is None:
             return (None, None)

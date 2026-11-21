@@ -64,6 +64,7 @@ class Extractor(ABC):
     runs_after: tuple[str, ...] = ()                # ordered after these when they run too, never pulled in by it
     resource_profile: str = "standard"              # tier name defined in hpc.yaml
     cached: bool = True                             # whether the result cache keeps a copy to replay
+    packages: tuple[str, ...] = ()                  # installed distributions whose versions decide the output
 
     def __init__(self, config: MacawConfig):
         self.config = config
@@ -125,6 +126,10 @@ class Extractor(ABC):
         """(backend name, backend version) recorded in the manifest for reproducibility."""
         return (None, None)
 
+    def backends(self) -> list[Backend]:
+        """The backends this step runs, made without loading their libraries: each one's name, version, code and files join the cache key."""
+        return []
+
 
 PERSON, SOFTWARE = "person", "software"
 
@@ -169,3 +174,21 @@ class Backend(ABC):
 
     @abstractmethod
     def check_available(self) -> None: ...
+
+    def key_version(self) -> str:
+        """The version the cache key holds, told without asking a server."""
+        return str(self.version)
+
+    def inputs_for(self, recording: Recording) -> list[Path]:
+        """Files this backend reads besides its step's own inputs, so changing one reruns the step."""
+        return []
+
+
+def distribution_version(name: str) -> str:
+    """An installed distribution's version, read without importing it."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "not installed"

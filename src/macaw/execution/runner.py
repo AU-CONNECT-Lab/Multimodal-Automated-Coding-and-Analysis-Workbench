@@ -14,7 +14,7 @@ from pathlib import Path
 
 from macaw.config.hashing import hash_extractor_config, hash_value
 from macaw.config.schema import MacawConfig
-from macaw.exceptions import ConfigError, MacawError
+from macaw.exceptions import BackendNotAvailableError, ConfigError, MacawError
 from macaw.execution.backends.base import JobSpec
 from macaw.execution.backends.local import LocalBackend, visible_cards
 from macaw.execution.dag import build_dag
@@ -23,13 +23,13 @@ from macaw.execution import models
 from macaw.execution.lock import run_lock
 from macaw.execution.output_checker import completed_tasks, load_rules
 from macaw.extractors import get_extractor
-from macaw.extractors.base import Phase, QCWarning
+from macaw.extractors.base import Phase, QCWarning, distribution_version
 from macaw.project.layout import layout_for, new_execution_id
 from macaw.project.manifest import FeatureManifest, merge_manifests, write_manifest
 from macaw.project.recording import build_recording, detect_recordings, parse_recordings_input, recording_entities
 from macaw.project.segments import SUMMARY_STEP
 from macaw.project.segments import check_recordings as check_segment_recordings
-from macaw.project_scripts import script_file_of
+from macaw.project_scripts import code_file_of
 from macaw.store import annotations as annotations_store
 from macaw.store import body_model as body_model_store
 from macaw.store import cache as cache_store
@@ -302,16 +302,32 @@ def task_key(config: MacawConfig, extractor_name: str, recording) -> str:
 
 
 def _make_key(config, cls, extractor, recording, config_hash):
-    script = script_file_of(cls)
     extra = extractor.extra_key(recording)
+    used, files = _backends_used(extractor, recording)
+    script = code_file_of(cls)
     return cache_store.make_key(
         extractor=cls.name,
         extractor_version=cls.version,
-        inputs=[*extractor.inputs_for(recording), *([script] if script else [])],
+        inputs=[*extractor.inputs_for(recording), *([script] if script else []), *files],
         # the rows carry the recording's id, so two recordings with the same files must not share an entry;
         # who takes part decides what many steps look for (how many voices, whose rows) without being a section of theirs
-        config_hash=hash_value([config_hash, recording.recording_id, [subject.subject_id for subject in recording.subjects], extra]),
+        config_hash=hash_value(
+            [config_hash, recording.recording_id, [subject.subject_id for subject in recording.subjects], extra, used]
+        ),
     )
+
+
+def _backends_used(extractor, recording) -> tuple[list, list[Path]]:
+    """The backends and package versions a step's output comes from, with the files those backends read and are written in."""
+    try:
+        backends = extractor.backends()
+        used = [[backend.name, backend.key_version()] for backend in backends]
+        files = [path for backend in backends for path in backend.inputs_for(recording)]
+    except BackendNotAvailableError:
+        # keyed as missing, so installing the backend reruns the step
+        return ["unavailable"], []
+    code = [path for path in dict.fromkeys(code_file_of(type(backend)) for backend in backends) if path]
+    return used + [[name, distribution_version(name)] for name in extractor.packages], files + code
 
 
 def _cache_root(config: MacawConfig, layout) -> Path:

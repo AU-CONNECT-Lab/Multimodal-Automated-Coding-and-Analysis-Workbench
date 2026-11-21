@@ -76,9 +76,10 @@ def script_function(directory: Path, reference: str) -> Callable:
     return function
 
 
-def script_file_of(cls: type) -> Path | None:
-    """The file an extractor defined in a project script comes from, so editing it reruns the step."""
-    if not cls.__module__.startswith(f"{MODULE_PREFIX}."):
+def code_file_of(cls: type) -> Path | None:
+    """The file a step or backend from outside pymacaw (a project script or an installed plugin) is defined in, so editing it reruns the step."""
+    if cls.__module__ == "macaw" or cls.__module__.startswith("macaw."):
         return None
     module = sys.modules.get(cls.__module__)
-    return Path(module.__file__) if module is not None and module.__file__ else None
+    path = getattr(module, "__file__", None)
+    return Path(path) if path and Path(path).is_file() else None

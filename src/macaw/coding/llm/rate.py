@@ -31,7 +31,7 @@ from macaw.extractors.audio.content.asr import (
 )
 from macaw.extractors.audio.content.diarization import OTHER, SHARED_MODE
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
-from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
@@ -192,6 +192,9 @@ class RatingExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
         return backend.name, backend.model_version()
+
+    def backends(self) -> list[Backend]:
+        return [resolve_llm_backend(self.settings(self.config)[1])]
 
     def summarise(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame | None:
         # a segment is rated only when a version names it, since each asks the model again

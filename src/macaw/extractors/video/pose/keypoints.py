@@ -10,9 +10,9 @@ import pandas as pd
 
 from macaw.exceptions import ConfigError, InputNotFoundError, MacawError, UnreadableMediaError
 from macaw.extractors import get_backend, register_extractor
-from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, QCWarning
-from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
-from macaw.extractors.video.pose.backends import BACKEND_GROUP, BACKEND_KEYPOINT_SCHEMA, resolve_backend
+from macaw.extractors.base import PERSON, SOFTWARE, Backend, Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.prep import MediaPrepExtractor, SourceVideo, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep
+from macaw.extractors.video.pose.backends import BACKEND_GROUP, BACKEND_KEYPOINT_SCHEMA, named_backend, resolve_backend
 from macaw.extractors.video.pose.look_names import answer_key, named_by_look
 from macaw.extractors.video.pose.track_repair import (
     Click,
@@ -244,6 +244,9 @@ class PoseDetectExtractor(Extractor):
         backend = self.backend()
         return (backend.name, backend.version)
 
+    def backends(self) -> list[Backend]:
+        return [named_backend(self.config.pose.backend)]
+
     def check_available(self) -> None:
         backend = self.backend()
         backend.check_available()
@@ -262,6 +265,7 @@ class PoseDetectExtractor(Extractor):
 
         backend = self.backend()
         prep = apply_prep_timing(self.config, recording)
+        copies = load_video_prep(self.config, recording.recording_id)
         start, end = prep.t_origin_s, prep.t_origin_s + prep.duration_s
         warnings: list[QCWarning] = []
         sources = recording.cameras()
@@ -289,6 +293,7 @@ class PoseDetectExtractor(Extractor):
                 max_people=expected,
                 frames=(first, stop),
                 input_size=cfg.input_size,
+                source=SourceVideo.of(copies.get(item.name), item.path),
             )
             piece = frames.keypoints
             if frames.frame_size is not None:

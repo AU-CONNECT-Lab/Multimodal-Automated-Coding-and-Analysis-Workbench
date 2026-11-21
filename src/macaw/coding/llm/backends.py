@@ -65,6 +65,10 @@ class LLMBackend(Backend):
     def version(self) -> str:
         return self.model_version()
 
+    def key_version(self) -> str:
+        # the model is named in the settings; what a server holds under that name is asked only when it answers
+        return ""
+
     def check_available(self) -> None:
         if not self.cfg.model:
             raise BackendNotAvailableError(

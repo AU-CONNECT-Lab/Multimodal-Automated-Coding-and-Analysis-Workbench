@@ -14,7 +14,7 @@ import pandas as pd
 
 from macaw.exceptions import BackendNotAvailableError, ExternalToolError, UnreadableMediaError
 from macaw.extractors import register_backend, register_extractor
-from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning, distribution_version
 from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
 from macaw.extractors.video.objects.decisions import ABSENT, STARTS, read_decisions, tracking_key
@@ -103,9 +103,7 @@ class GroundingDinoFinder(ObjectFinder):
 
     @property
     def version(self) -> str:
-        import transformers
-
-        return transformers.__version__
+        return distribution_version("transformers")
 
     def check_available(self) -> None:
         _torch_and_transformers("objects.finder", self.name)
@@ -155,9 +153,7 @@ class Sam3Finder(ObjectFinder):
 
     @property
     def version(self) -> str:
-        import transformers
-
-        return transformers.__version__
+        return distribution_version("transformers")
 
     def check_available(self) -> None:
         _torch_and_transformers("objects.finder", self.name)
@@ -255,9 +251,7 @@ class _SamTracker(ObjectTracker):
 
     @property
     def version(self) -> str:
-        import transformers
-
-        return transformers.__version__
+        return distribution_version("transformers")
 
     def check_available(self) -> None:
         _torch_and_transformers("objects.tracker", self.name)
@@ -587,6 +581,12 @@ class ObjectTrackExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         tracker = self.tracker()
         return (tracker.name, tracker.version)
+
+    def backends(self) -> list[Backend]:
+        from macaw.extractors import get_backend
+
+        models = self.models()
+        return [get_backend(FINDERS, models.finder)(), get_backend(TRACKERS, models.tracker)()]
 
     def check_available(self) -> None:
         models = self.models()

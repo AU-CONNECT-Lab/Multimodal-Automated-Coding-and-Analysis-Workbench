@@ -27,7 +27,7 @@ from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigErro
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import ASRExtractor, load_transcript, load_words
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
-from macaw.extractors.base import Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing
 from macaw.media.ffmpeg import extract_frame
 from macaw.project.layout import layout_for
@@ -166,6 +166,9 @@ class JudgementExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
         return backend.name, backend.model_version()
+
+    def backends(self) -> list[Backend]:
+        return [resolve_llm_backend(self.settings(self.config)[1])]
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         _, cfg = self.settings(self.config)

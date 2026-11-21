@@ -7,7 +7,7 @@ import numpy as np
 
 from macaw.exceptions import BackendNotAvailableError
 from macaw.extractors import register_backend
-from macaw.extractors.base import Backend
+from macaw.extractors.base import Backend, distribution_version
 
 BACKEND_GROUP = "prosody"
 
@@ -107,9 +107,7 @@ class ParselmouthBackend(ProsodyBackend):
 
     @property
     def version(self) -> str:
-        import parselmouth
-
-        return getattr(parselmouth, "VERSION", "unknown")
+        return distribution_version("praat-parselmouth")
 
     def check_available(self) -> None:
         try:
@@ -167,9 +165,7 @@ class LibrosaBackend(ProsodyBackend):
 
     @property
     def version(self) -> str:
-        import librosa
-
-        return librosa.__version__
+        return distribution_version("librosa")
 
     def check_available(self) -> None:
         try:

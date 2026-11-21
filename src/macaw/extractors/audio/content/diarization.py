@@ -319,13 +319,17 @@ def resolve_diarization(recording: Recording, mode: str) -> DiarizationBackend:
 
 
 def resolve_diarizer(config) -> DiarizationBackend:
+    backend = named_diarizer(config)
+    backend.check_available()
+    return backend
+
+
+def named_diarizer(config) -> DiarizationBackend:
     from macaw.extractors import get_backend
 
     cfg = config.text
     cls = get_backend(BACKEND_GROUP, cfg.diarization)
-    backend = cls(cfg.diarization_model, device=cfg.device) if cfg.diarization == SHARED_MODE else cls()
-    backend.check_available()
-    return backend
+    return cls(cfg.diarization_model, device=cfg.device) if cfg.diarization == SHARED_MODE else cls()
 
 
 def shared_track(prep, recording_id: str) -> str:
@@ -367,6 +371,9 @@ class DiarizationExtractor(Extractor):
         if self.config.text.diarization != SHARED_MODE:
             return (None, None)
         return (SHARED_MODE, resolve_diarizer(self.config).version)
+
+    def backends(self) -> list[Backend]:
+        return [named_diarizer(self.config)] if self.config.text.diarization == SHARED_MODE else []
 
     def inputs_for(self, recording: Recording) -> list[Path]:
         prep = load_prep(self.config, recording.recording_id)

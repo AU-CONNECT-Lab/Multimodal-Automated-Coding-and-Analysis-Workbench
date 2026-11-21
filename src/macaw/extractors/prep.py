@@ -110,6 +110,47 @@ def load_video_prep(config, recording_id: str) -> dict[str, dict]:
     }
 
 
+@dataclass(frozen=True)
+class SourceVideo:
+    """The original file behind prep.video's copy, with what places its frames and pixels on the copy's."""
+
+    path: Path
+    fps: float
+    first_picture_s: float          # where the original's first frame falls on the copy's clock
+    size: tuple[int, int]           # the original's picture upright, in its own pixels
+    copy_fps: float
+    copy_size: tuple[int, int]
+
+    @classmethod
+    def of(cls, entry: dict | None, path: Path) -> SourceVideo | None:
+        """None where the video steps read the original itself."""
+        if entry is None or not entry["file"]:
+            return None
+        width, height = entry["size"]
+        if (entry["rotation"] or 0) % 180 == 90:
+            width, height = height, width
+        return cls(
+            path=Path(path), fps=float(entry["source_fps"]), first_picture_s=float(entry["first_picture_s"]),
+            size=(int(width), int(height)), copy_fps=float(entry["fps"]), copy_size=tuple(int(side) for side in entry["prepared_size"]),
+        )
+
+    def to_copy(self, table: pd.DataFrame) -> pd.DataFrame:
+        """Rows with frame, x and y on the original moved onto the copy; where several frames fall on one, the nearest is kept."""
+        place = (self.first_picture_s + table["frame"].to_numpy(dtype=float) / self.fps) * self.copy_fps
+        frame = np.rint(place)
+        out = table.assign(
+            frame=frame.astype(int),
+            x=table["x"] * (self.copy_size[0] / self.size[0]),
+            y=table["y"] * (self.copy_size[1] / self.size[1]),
+            _off=np.abs(place - frame),
+        )
+        out = out[out["frame"] >= 0]
+        keys = [column for column in ("frame", "track_id", "joint") if column in out]
+        nearest = out.groupby("frame")["_off"].transform("min")
+        out = out[np.isclose(out["_off"], nearest)].drop_duplicates(keys)
+        return out.drop(columns="_off").reset_index(drop=True)
+
+
 def apply_prep_timing(config, recording: Recording) -> PrepInfo:
     """Give each media file the frame rate and offset prep.media found for it, so a later
     process reads the same clock without probing again. Video starts here the way audio starts

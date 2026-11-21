@@ -91,6 +91,15 @@ class TestScaffold:
         validate_frame(table, BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
 
 
+    def test_its_keypoints_files_are_inputs_of_its_step(self, package, tmp_path):
+        video = tmp_path / "clip.mp4"
+        (tmp_path / "clip.keypoints.csv").write_text("frame\n", encoding="utf-8")
+        load_module()
+        backend = registry.get_backend(BACKEND_GROUP, NAME)()
+        recording = SimpleNamespace(cameras=lambda: [SimpleNamespace(path=video), SimpleNamespace(path=tmp_path / "other.mp4")])
+        assert backend.inputs_for(recording) == [tmp_path / "clip.keypoints.csv"]
+
+
 class TestEntryPoints:
     def test_an_installed_backend_registers(self, package, monkeypatch):
         entry = SimpleNamespace(name=NAME, load=load_module)

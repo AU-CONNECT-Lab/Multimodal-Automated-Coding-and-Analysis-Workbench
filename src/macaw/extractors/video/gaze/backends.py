@@ -204,8 +204,12 @@ class AnglesBackend(GazeBackend):
 
 
 def resolve_backend(name: str) -> GazeBackend:
-    from macaw.extractors import get_backend
-
-    backend = get_backend(BACKEND_GROUP, name)()
+    backend = named_backend(name)
     backend.check_available()
     return backend
+
+
+def named_backend(name: str) -> GazeBackend:
+    from macaw.extractors import get_backend
+
+    return get_backend(BACKEND_GROUP, name)()
