@@ -34,7 +34,7 @@ from macaw.project.manifest import FeatureSpec
 from macaw.project.names import read_names
 from macaw.project.recording import MediaFile, Recording, build_recording
 from macaw.store.keypoints import read_keypoints
-from macaw.store.longtable import build_long_rows, concat_long_tables
+from macaw.store.longtable import build_long_rows, concat_long_tables, read_long_table
 from macaw.store.schema import BODY_MODEL_SCHEMA, KEYPOINT_SCHEMA, Scale, coerce_frame, empty_frame
 
 # A track this broken is worth telling the user about rather than quietly averaging over.
@@ -133,6 +133,41 @@ def measured_views(keypoints: pd.DataFrame, recording: Recording) -> dict[str, s
     for (subject, video), _ in sorted(named.groupby(["subject_id", "video"], observed=True), key=lambda entry: order.index(entry[0][1]) if entry[0][1] in order else len(order)):
         views.setdefault(str(subject), str(video))
     return views
+
+
+BOX_SCORE = "box_score"
+# name: (description, scale, missing); written only for a backend that scores its boxes
+_BOX_SPECS = {
+    BOX_SCORE: (
+        "How sure the pose backend was that the box it drew around subject_id holds a person, 0 to 1, on the camera their body "
+        "is measured from.",
+        Scale.FRAME,
+        "Empty in frames where subject_id was not detected on the camera their body is measured from.",
+    ),
+    "mean_box_score": (
+        "Mean of box_score over the frames subject_id was detected in on the camera their body is measured from.",
+        Scale.RECORDING,
+        "Empty for a person never detected on the camera their body is measured from.",
+    ),
+}
+_BOX_COLUMNS = ["subject_id", "video", "t", BOX_SCORE]
+
+
+def person_boxes(detections_path: Path, keypoints: pd.DataFrame, recording: Recording) -> pd.DataFrame:
+    """Each named person's box score frame by frame on the camera their body is measured on, the surer box where two were joined."""
+    raw = pd.read_parquet(detections_path, columns=["video", "frame", "track_id", BOX_SCORE])
+    raw = raw.dropna(subset=["track_id", BOX_SCORE]).drop_duplicates(["video", "frame", "track_id"])
+    named = keypoints.dropna(subset=["subject_id", "track_id"])
+    if raw.empty or named.empty:
+        return pd.DataFrame(columns=_BOX_COLUMNS)
+    views = measured_views(keypoints, recording)
+    named = named[["subject_id", "video", "frame", "track_id", "t"]].drop_duplicates(["subject_id", "video", "frame", "track_id"])
+    named = named[named["video"].astype(str) == named["subject_id"].astype(str).map(views)]
+    raw = raw.astype({"video": str, "frame": "int64", "track_id": "int64"})
+    named = named.astype({"subject_id": str, "video": str, "frame": "int64", "track_id": "int64"})
+    joined = named.merge(raw, on=["video", "frame", "track_id"])
+    boxes = joined.groupby(["subject_id", "video", "frame"], sort=True).agg(t=("t", "first"), box_score=(BOX_SCORE, "max"))
+    return boxes.reset_index()[_BOX_COLUMNS]
 
 
 def _frames_between(item, start: float, end: float) -> int:
@@ -380,7 +415,7 @@ class PoseExtractor(Extractor):
     needs no click while it never sees two people at once."""
 
     name = "pose.keypoints"
-    version = "0.12.0"
+    version = "0.13.0"
     scale = Scale.FRAME
     group = "pose"
     config_sections = ("pose", "setup.cameras", "setup.ignore")
@@ -488,10 +523,12 @@ class PoseExtractor(Extractor):
         artifacts = {**self._write_swaps(workspace, swaps_by_file), **self._write_looks(workspace), **self._write_ignored(workspace, ignored)}
         if owners:
             artifacts["owners"] = self._write_json(workspace, "owners.json", owners)
-        rows = self._rows(recording, keypoints, swaps_by_file, warnings)
+        detections_path = layout_for(self.config, create=False).artifacts_dir(recording.recording_id, PoseDetectExtractor.name) / DETECTIONS_NAME
+        boxes = person_boxes(detections_path, keypoints, recording)
+        rows = concat_long_tables([self._rows(recording, keypoints, swaps_by_file, warnings, boxes), self._box_rows(recording, boxes)])
         return ExtractorResult(
             rows=rows,
-            specs=self._specs(backend),
+            specs=self._specs(backend, boxed=not boxes.empty),
             keypoints=keypoints,
             body_model=self._named_bodies(recording, keypoints),
             artifacts=artifacts,
@@ -682,7 +719,24 @@ class PoseExtractor(Extractor):
         saved = layout.artifacts_dir(recording.recording_id, self.name) / SWAPS_NAME
         events = json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else {}
         swaps = {name: [event for event in found if start_s <= event["t"] < end_s] for name, found in events.items()}
-        return self._rows(recording, keypoints, swaps, [])
+        return self._rows(recording, keypoints, swaps, [], self._saved_boxes(recording, start_s, end_s))
+
+    def _saved_boxes(self, recording: Recording, start_s: float, end_s: float) -> pd.DataFrame:
+        path = layout_for(self.config, create=False).long_table_path(recording.recording_id) / f"{self.name}.parquet"
+        if not path.is_file():
+            return pd.DataFrame(columns=_BOX_COLUMNS)
+        saved = read_long_table(path)
+        saved = saved[(saved["feature"].astype(str) == BOX_SCORE) & (saved["t_start"] >= start_s) & (saved["t_start"] < end_s)]
+        return pd.DataFrame({"subject_id": saved["subject_id"].astype(str), "video": saved["camera"].astype(str),
+                             "t": saved["t_start"].to_numpy(dtype=float), BOX_SCORE: saved["value"].to_numpy(dtype=float)})
+
+    def _box_rows(self, recording: Recording, boxes: pd.DataFrame) -> pd.DataFrame:
+        common = dict(recording_id=recording.recording_id, source=self.name, entities=recording.entities(), scale=Scale.FRAME)
+        return concat_long_tables([
+            build_long_rows(values=pd.DataFrame({"t_start": own["t"].to_numpy(dtype=float), BOX_SCORE: own[BOX_SCORE].to_numpy(dtype=float)}),
+                            subject_id=str(subject_id), camera=str(video), **common)
+            for (subject_id, video), own in boxes.groupby(["subject_id", "video"], sort=True)
+        ])
 
     def segment_warnings(self, recording: Recording, segment) -> list[QCWarning]:
         path = layout_for(self.config, create=False).keypoints_path(recording.recording_id) / f"{self.name}.parquet"
@@ -743,6 +797,7 @@ class PoseExtractor(Extractor):
         keypoints: pd.DataFrame,
         swaps_by_file: dict[str, list],
         warnings: list[QCWarning],
+        boxes: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         entities = recording.entities()
         common = dict(recording_id=recording.recording_id, source=self.name, entities=entities)
@@ -751,6 +806,9 @@ class PoseExtractor(Extractor):
 
         frames = []
         for subject_id, detection_rate, quality in self._people(recording, keypoints):
+            own_boxes = {} if boxes is None or boxes.empty else {
+                "mean_box_score": [float(boxes.loc[boxes["subject_id"] == subject_id, BOX_SCORE].mean())]
+            }
             frames.append(
                 build_long_rows(
                     values=pd.DataFrame(
@@ -761,6 +819,7 @@ class PoseExtractor(Extractor):
                             "mean_confidence": [float(quality["mean_confidence"].mean())],
                             "missing_fraction": [float(quality["missing_fraction"].mean())],
                             "track_continuity": [float(quality["continuity"].min())],
+                            **own_boxes,
                         }
                     ),
                     scale=Scale.RECORDING,
@@ -820,28 +879,29 @@ class PoseExtractor(Extractor):
     def _warning(self, recording: Recording, subject_id, severity: str, message: str) -> QCWarning:
         return _warning(self.name, recording, subject_id, severity, message)
 
-    def _specs(self, backend) -> list[FeatureSpec]:
-        return [
-            FeatureSpec(
-                name=name,
-                description=description,
-                unit=unit,
-                scale=Scale.RECORDING,
-                group=self.group,
-                extractor=self.name,
-                extractor_version=self.version,
-                backend=backend["name"],
-                backend_version=backend["version"],
-                params={
-                    "joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence,
-                    **({"min_confidence_by_role": self.config.pose.min_confidence_by_role} if self.config.pose.min_confidence_by_role else {}),
-                },
-                aggregation="mean",
-                missing=_MISSING.get(name, _MISSING["person"]),
-                comparable_across_backends=False,
-            )
+    def _specs(self, backend, boxed: bool = False) -> list[FeatureSpec]:
+        common = dict(
+            group=self.group,
+            extractor=self.name,
+            extractor_version=self.version,
+            backend=backend["name"],
+            backend_version=backend["version"],
+            params={
+                "joint_set": backend["joint_set"], "min_confidence": self.config.pose.min_confidence,
+                **({"min_confidence_by_role": self.config.pose.min_confidence_by_role} if self.config.pose.min_confidence_by_role else {}),
+            },
+            aggregation="mean",
+            comparable_across_backends=False,
+        )
+        specs = [
+            FeatureSpec(name=name, description=description, unit=unit, scale=Scale.RECORDING, missing=_MISSING.get(name, _MISSING["person"]), **common)
             for name, (description, unit) in _SPECS.items()
         ]
+        return specs + [
+            FeatureSpec(name=name, description=description, unit=None, scale=scale, missing=missing,
+                        interpolation="none" if scale == Scale.FRAME else None, **common)
+            for name, (description, scale, missing) in _BOX_SPECS.items()
+        ] * boxed
 
 
 def waiting_cameras(config, recording_id: str, *, every: bool) -> list[str]:

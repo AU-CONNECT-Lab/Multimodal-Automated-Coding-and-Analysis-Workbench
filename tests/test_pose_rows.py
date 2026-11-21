@@ -278,6 +278,26 @@ class TestSharedCamera:
         assert owners["room.mp4"]["people"] == {} and "nobody has said who is who on room.mp4" in owners["room.mp4"]["doubt"]
 
 
+class TestBoxScores:
+    def test_each_person_has_the_score_of_their_own_box_through_the_crossover(self, extractor, recording, tmp_path):
+        frame = backend_frame([100.0, 500.0], swap_at=SWAP_AT)
+        frame["box_score"] = frame["track_id"].map({0: 0.8, 1: 0.4}).astype(float)
+        clicks(tmp_path, "room.mp4", 0.2, parent=(100.0, 200.0), child=(500.0, 200.0))
+        result = extractor(FakeBackend(frame)).run(recording([media()]), tmp_path)
+        validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
+        assert {spec.name for spec in result.specs} == set(result.rows.feature)
+        rows = result.rows
+        for person, before, after in (("parent", 0.8, 0.4), ("child", 0.4, 0.8)):
+            own = rows[(rows.feature == "box_score") & (rows.subject_id == person)].sort_values("t_start")
+            assert own.value.tolist() == [before] * SWAP_AT + [after] * (N_FRAMES - SWAP_AT)
+            assert set(own.camera) == {"room.mp4"} and own.t_start.iloc[-1] == pytest.approx((N_FRAMES - 1) / FPS)
+            mean = rows[(rows.feature == "mean_box_score") & (rows.subject_id == person)]
+            assert mean.value.item() == pytest.approx(0.6)
+
+    def test_a_backend_that_scores_no_boxes_writes_no_box_scores(self, shared):
+        assert not {"box_score", "mean_box_score"} & ({spec.name for spec in shared[1].specs} | set(shared[1].rows.feature))
+
+
 class TestOwnCuts:
     WRISTS = ("left_wrist", "right_wrist")
 

@@ -179,6 +179,16 @@ def test_tracking_is_summarised_over_the_frames_inside(project):
     part = values(step.summarise(p.recording, 0.0, 5.0))
     assert part[("n_track_swaps", None, None)] == 1
     assert part[("detection_rate", "parent", None)] == pytest.approx(40 / 50)
+    assert ("mean_box_score", "parent", None) not in part
+
+    times = np.arange(100) / 10.0
+    boxes = build_long_rows(
+        values=pd.DataFrame({"t_start": times, "box_score": np.where(times < 5.0, 0.9, 0.5)}), recording_id=RID,
+        source=PoseExtractor.name, scale=Scale.FRAME, subject_id="parent", camera="room.mp4",
+    )
+    write_long_table(boxes, p.layout.long_table_path(RID))
+    assert values(step.summarise(p.recording, 0.0, 5.0))[("mean_box_score", "parent", None)] == pytest.approx(0.9)
+    assert values(step.summarise(p.recording, 4.0, 6.0))[("mean_box_score", "parent", None)] == pytest.approx(0.7)
 
 
 def test_a_person_lost_within_a_segment_is_warned_about(project):
