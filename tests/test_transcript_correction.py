@@ -56,8 +56,28 @@ def test_words_no_voice_took_have_a_dropped_tier_of_nobody(project, tmp_path):
     nobody = pd.concat([DROPPED, pd.DataFrame({"subject_id": [None], "t_start": [5.0], "t_end": [5.5], "text": ["hm"], "reason": ["no voice"], "detail": ["in none of the voices"]})])
     path = export_transcript_eaf(TRANSCRIPT, nobody, project.recording, tmp_path / "t.eaf")
     eaf = _elan()(str(path))
-    assert [value for _, _, value, *_ in eaf.get_annotation_data_for_tier("dropped")] == ["hm [no voice: in none of the voices]"]
+    assert [value for _, _, value, *_ in eaf.get_annotation_data_for_tier("dropped")] == ["hm"]
+    assert [value for _, _, value, *_ in eaf.get_annotation_data_for_tier("why dropped")] == ["no voice: in none of the voices"]
     assert len(read_transcript_eaf(path, ["parent", "child"])) == 2
+
+
+def test_words_moved_back_from_a_dropped_tier_come_in_as_they_were_said(project, tmp_path):
+    from macaw.interop.eaf import _elan
+
+    path = export_transcript_eaf(TRANSCRIPT, DROPPED, project.recording, tmp_path / "t.eaf")
+    eaf = _elan()(str(path))
+    (start, end, words, *_), = eaf.get_annotation_data_for_tier("child_dropped")
+    eaf.remove_annotation("child_dropped", start)
+    eaf.add_annotation("child_transcript", start, end, words)
+    eaf.to_file(str(path))
+    back = read_transcript_eaf(path, ["parent", "child"])
+    assert back[back["subject_id"] == "child"]["text"].tolist() == ["look at that", "doggy"]
+
+
+def test_a_line_of_no_length_goes_out_and_comes_back(project, tmp_path):
+    point = TRANSCRIPT.assign(t_end=[2.5, 3.0])
+    back = read_transcript_eaf(export_transcript_eaf(point, DROPPED.iloc[0:0], project.recording, tmp_path / "t.eaf"), ["parent", "child"])
+    assert back["text"].tolist() == ["look at that", "doggy"] and back["t_end"].tolist() == [2.5, 3.001]
 
 
 def test_a_tier_of_someone_who_is_not_a_subject_is_refused(project, tmp_path):

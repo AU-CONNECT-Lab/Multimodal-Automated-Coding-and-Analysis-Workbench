@@ -46,7 +46,7 @@ def export(
     media = apply_offset_table(build_recording(recording, resolved), layout.offset_table_path(recording))
     export_transcript_eaf(transcript, dropped, media, out, doubts=doubts)
     typer.echo(
-        f"{out}\ncorrect the transcript tiers in ELAN (move an annotation from a dropped tier to put it back), "
+        f"{out}\ncorrect the transcript tiers in ELAN (move an annotation from a dropped tier to put it back; why it was dropped is on the tier below it), "
         f"save, then `macaw transcript import -r {recording} {out.name}`"
     )
     if not doubts.empty:

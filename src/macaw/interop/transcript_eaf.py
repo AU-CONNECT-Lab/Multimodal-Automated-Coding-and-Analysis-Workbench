@@ -14,6 +14,8 @@ from macaw.qc.transcript_check import KINDS
 TRANSCRIPT_TYPE = "macaw-transcript"
 # what the software left out; moving an annotation from here to a transcript tier puts it back
 DROPPED_TYPE = "macaw-dropped"
+# why each was left out, on a tier of its own so that the words moved back carry nothing else; never read back
+WHY_TYPE = "macaw-dropped-why"
 # lines a model marked as possibly misheard or cut off, for the person correcting; never read back
 DOUBT_TYPE = "macaw-doubt"
 CORRECTED_COLUMNS = ("subject_id", "t_start", "t_end", "text")
@@ -28,15 +30,19 @@ def export_transcript_eaf(
     if "default" in eaf.get_tier_names():
         eaf.remove_tier("default")
     doubts = doubts if doubts is not None else pd.DataFrame(columns=["subject_id", "t_start", "t_end", "text", "kind", "why"])
-    for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE, *([DOUBT_TYPE] if not doubts.empty else [])):
+    for kind in (TRANSCRIPT_TYPE, DROPPED_TYPE, WHY_TYPE, *([DOUBT_TYPE] if not doubts.empty else [])):
         eaf.add_linguistic_type(kind)
     _link_media(eaf, recording, out_path)
     subjects = [subject.subject_id for subject in recording.subjects]
     # a further speaker the transcript holds, such as other, keeps a tier of its own
     subjects += sorted(set(transcript["subject_id"].dropna().astype(str)) - set(subjects))
-    for kind, frame, name in ((TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped"), (DOUBT_TYPE, doubts, "doubtful")):
+    tiers = (
+        (TRANSCRIPT_TYPE, transcript, "transcript"), (DROPPED_TYPE, dropped, "dropped"), (WHY_TYPE, dropped, "why dropped"),
+        (DOUBT_TYPE, doubts, "doubtful"),
+    )
+    for kind, frame, name in tiers:
         # words no voice took belong to nobody yet, on a tier without a participant
-        nobody = [""] if kind == DROPPED_TYPE else []
+        nobody = [""] if kind in (DROPPED_TYPE, WHY_TYPE) else []
         for subject_id in [*subjects, *nobody]:
             rows = frame[frame["subject_id"].astype("string").fillna("") == subject_id]
             if kind != TRANSCRIPT_TYPE and rows.empty:
@@ -44,13 +50,14 @@ def export_transcript_eaf(
             tier = tier_for_subject(subject_id, name)
             eaf.add_tier(tier, ling=kind, part=subject_id)
             for row in rows.itertuples(index=False):
-                start, end = _ms(row.t_start), _ms(row.t_end)
-                if end > start:
-                    text = (
-                        _text(row.text) if kind == TRANSCRIPT_TYPE else f"{KINDS[row.kind]}: {_text(row.why)}" if kind == DOUBT_TYPE
-                        else f"{_text(row.text)} [{row.reason}: {_text(row.detail)}]"
-                    )
-                    eaf.add_annotation(tier, start, end, text)
+                start = _ms(row.t_start)
+                # a line of no length still goes out, or a corrected transcript read back would lose it
+                end = max(_ms(row.t_end), start + 1)
+                text = (
+                    _text(row.text) if kind in (TRANSCRIPT_TYPE, DROPPED_TYPE) else f"{KINDS[row.kind]}: {_text(row.why)}" if kind == DOUBT_TYPE
+                    else f"{row.reason}: {_text(row.detail)}"
+                )
+                eaf.add_annotation(tier, start, end, text)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     eaf.to_file(str(out_path))
     return out_path
