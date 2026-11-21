@@ -373,7 +373,7 @@ def unfinished_in_tmp(monkeypatch, tmp_path):
 
     def layout(config, create=True):
         if not hasattr(getattr(config, "project", None), "output_dir"):
-            return SimpleNamespace(unfinished_path=lambda rid, step: tmp_path / "unfinished" / rid / step)
+            return SimpleNamespace(answers_path=lambda rid, step: tmp_path / "answers" / rid / f"{step}.jsonl")
         return real(config, create=create)
 
     monkeypatch.setattr(module, "layout_for", layout)
@@ -402,6 +402,13 @@ class TestJudge:
         validate_frame(result.rows, LONG_TABLE_SCHEMA, "long table")
         counts = result.rows.set_index(["subject_id", "feature"])["value"]
         assert counts[("mother", "n_units_judged")] == 2 and counts[("child", "share_needs_review")] == 0
+
+    def test_a_setting_that_only_counts_the_votes_asks_the_model_nothing_again(self, monkeypatch, tmp_path, stub):
+        run_judge(monkeypatch, tmp_path, stub, n_samples=3, batch_size=2)
+        asked = len(stub.requests)
+        result = run_judge(monkeypatch, tmp_path, stub, n_samples=3, batch_size=2, review_threshold=0.9)
+        assert len(stub.requests) == asked
+        assert any(warning.message.startswith(f"{asked} of {asked} answers were kept") for warning in result.warnings)
 
     def test_only_the_coded_roles_are_coded_and_the_rest_is_context(self, monkeypatch, tmp_path, stub):
         result = run_judge(monkeypatch, tmp_path, stub, talk=WITH_OTHER, n_samples=1, batch_size=10, coded_roles=["mother"])

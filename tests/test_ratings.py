@@ -329,9 +329,13 @@ class TestRun:
         # a server that sends the reasoning back without counting it: the generated tokens are shared out by length
         server.usage = {"prompt_tokens": 900, "completion_tokens": 400}
         server.reasoning = "x" * 30
+        # the same questions again, so the answers kept from the last run are dropped to ask them anew
+        forget = lambda: shutil.rmtree(layout_for(config).cache_dir / "answers", ignore_errors=True)  # noqa: E731
+        forget()
         answers = pd.read_parquet(rate(monkeypatch, config, "full").artifacts["answers.parquet"])
         assert answers["reasoning_tokens"].tolist() == [round(400 * 30 / (30 + len('{"score": 3}')))] * 3
         server.usage, server.reasoning = {}, None
+        forget()
         answers = pd.read_parquet(rate(monkeypatch, config, "full").artifacts["answers.parquet"])
         assert answers[["prompt_tokens", "completion_tokens", "reasoning_tokens"]].isna().all().all()
 
@@ -675,11 +679,11 @@ class TestKeptAnswers:
             module.ask(scale_prompts(), CountingBackend(score_by_prompt_and_seed, context=64), self.CFG, kept)
         assert not kept.exists()
 
-    def test_a_rating_says_how_many_answers_it_kept_and_a_finished_one_keeps_none(self, monkeypatch, tmp_path, server):
+    def test_a_rating_says_how_many_answers_it_kept_and_a_rerun_asks_nothing_already_answered(self, monkeypatch, tmp_path, server):
         llm = {"model": "tiny", "provider": "vllm", "base_url": f"{server.url}/v1", "n_samples": 2}
         config = transcribed(project(tmp_path, {"full": {"scales": "names.yaml"}}, llm=llm))
         layout = layout_for(config)
-        kept = layout.unfinished_path("r1", "coding.rate.full") / "answers.jsonl"
+        kept = layout.answers_path("r1", "coding.rate.full")
         assert layout.work_dir in kept.parents and layout.recording_dir("r1") not in kept.parents
 
         def falls_over(scale, sample):
@@ -697,7 +701,9 @@ class TestKeptAnswers:
         assert len(server.requests) == 3
         said = {warning.check: warning.message for warning in result.warnings}
         assert said["rating_resumed"].startswith("3 of 6 answers were kept")
-        assert "rating_resumed" not in {warning.check for warning in rate(monkeypatch, config, "full").warnings}
+        server.requests.clear()
+        again = {warning.check: warning.message for warning in rate(monkeypatch, config, "full").warnings}
+        assert not server.requests and again["rating_resumed"].startswith("6 of 6 answers were kept")
 
     def test_the_runner_drops_what_a_task_kept_once_it_has_finished(self, tmp_path):
         from macaw.execution.runner import _finished

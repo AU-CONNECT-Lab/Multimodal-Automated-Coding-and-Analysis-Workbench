@@ -49,7 +49,6 @@ SAMPLES_NAME = "samples.parquet"
 ANSWERS_NAME = "answers.parquet"
 # how an answer that gave a unit no code shows where answers are counted
 NO_USABLE_ANSWER = "no usable answer"
-KEPT_NAME = "answers.jsonl"
 _FRAME_FEATURES = {"pitch": "f0_semitone", "loudness": "intensity_db"}
 # px; enough for faces at a table in a full frame without the picture costing thousands of tokens more
 FRAME_LONG_SIDE = 960
@@ -187,7 +186,7 @@ class JudgementExtractor(Extractor):
         # an example from the conversation being coded would hand the model the answer
         own = examples["recording_id"] == recording.recording_id
         frames = unit_frames(self.config, recording, units, workspace / "frames") if FRAMES in cfg.show else None
-        kept_at = layout_for(self.config, create=False).unfinished_path(recording.recording_id, self.name) / KEPT_NAME
+        kept_at = layout_for(self.config, create=False).answers_path(recording.recording_id, self.name)
         samples = sample_labels(
             lines, codebook, backend, cfg, examples=examples[~own], frames=frames, notes=self.prompt_note(recording), kept_at=kept_at,
         )
@@ -318,7 +317,7 @@ class JudgementExtractor(Extractor):
         if sampled.get("kept"):
             note(
                 "llm_resumed", "info",
-                f"{sampled['kept']} of {sampled['requests']} answers were kept from a run of this coding that stopped before its end, "
+                f"{sampled['kept']} of {sampled['requests']} answers were kept from an earlier run that asked the same of the same model, "
                 "and were not asked for again.",
             )
         if cfg.n_samples == 1:

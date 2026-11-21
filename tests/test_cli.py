@@ -331,11 +331,15 @@ class TestClean:
         assert result.exit_code == 0
         assert "removed 0" in result.output
 
-    def test_what_unfinished_tasks_kept_goes_with_the_cache_of_the_step_named_or_of_all(self, project):
+    @pytest.mark.parametrize("where", ["unfinished", "answers"])
+    def test_what_tasks_kept_goes_with_the_cache_of_the_step_named_or_of_all(self, project, where):
         layout = layout_for(resolve_config(project.config), create=False)
-        kept = {step: layout.unfinished_path("003", step) / "answers.jsonl" for step in ("coding.rate.a", "coding.rate.b")}
+        place = (lambda step: layout.unfinished_path("003", step) / "answers.jsonl") if where == "unfinished" else (
+            lambda step: layout.answers_path("003", step)
+        )
+        kept = {step: place(step) for step in ("coding.rate.a", "coding.rate.b")}
         for path in kept.values():
-            path.parent.mkdir(parents=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{}", encoding="utf-8")
         assert invoke("clean", "-c", str(project.config), "-e", "coding.rate.a").exit_code == 0
         assert not kept["coding.rate.a"].exists() and kept["coding.rate.b"].exists()

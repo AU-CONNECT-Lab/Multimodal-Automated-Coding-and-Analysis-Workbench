@@ -62,7 +62,6 @@ ANSWER_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
     "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "evidence_problem",
 ]
-KEPT_NAME = "answers.jsonl"
 _COUNTS = ("prompt_tokens", "completion_tokens", "reasoning_tokens")
 PROMPT_COLUMNS = ["recording_id", "segment", "scale", "rater", "system", "user"]
 _MISSING = (
@@ -261,7 +260,7 @@ class RatingExtractor(Extractor):
                         f"the excerpts table marks no stretch with a line in it for {', '.join(unmarked)} in this recording, so "
                         f"{'that scale was' if len(unmarked) == 1 else 'those scales were'} not rated",
                     )
-        kept = layout_for(self.config, create=False).unfinished_path(rid, self.name) / KEPT_NAME
+        kept = layout_for(self.config, create=False).answers_path(rid, self.name)
         answers = ask(prompts, backend, cfg, kept, room=_EVIDENCE_ROOM if own.evidence else 0)
         answers.insert(0, "recording_id", rid)
         answers.insert(3, "rater", self.rating)
@@ -583,7 +582,7 @@ def answer_warnings(answers: pd.DataFrame, ratings: pd.DataFrame, cfg: LLMSectio
     if "kept" in answers and answers["kept"].any():
         note(
             "rating_resumed", "info",
-            f"{int(answers['kept'].sum())} of {len(answers)} answers were kept from a run of this rating that stopped before its end, "
+            f"{int(answers['kept'].sum())} of {len(answers)} answers were kept from an earlier run that asked the same of the same model, "
             "and were not asked for again.",
         )
     return found

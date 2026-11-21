@@ -70,6 +70,10 @@ class Layout:
     def unfinished_dir(self) -> Path:
         return self.work_dir / "unfinished"
 
+    def answers_path(self, recording_id: str, extractor: str) -> Path:
+        """A language model's answers for a step, kept past its end, so a rerun that asks the same questions asks none."""
+        return self.cache_dir / "answers" / recording_id / f"{extractor}.jsonl"
+
     def unfinished_path(self, recording_id: str, extractor: str) -> Path:
         """What a task that has not finished keeps for its next try; gone once it finishes."""
         return self.unfinished_dir / recording_id / extractor

@@ -318,6 +318,8 @@ def clean(
     # what unfinished tasks kept for their next try goes too, or that try would pick it up again
     for kept in layout.unfinished_dir.glob(f"*/{extractor or '*'}"):
         shutil.rmtree(kept, ignore_errors=True)
+    for answers in layout.cache_dir.glob(f"answers/*/{extractor or '*'}.jsonl"):
+        answers.unlink(missing_ok=True)
     if cache_only:
         return
 
