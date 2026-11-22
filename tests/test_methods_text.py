@@ -161,6 +161,13 @@ def test_nemotron_is_described_as_counting_the_voices_itself():
     assert "and up to 1 more were kept" in text and "one further speaker" in text
 
 
+def test_qwen3_is_described_with_its_pieces_and_aligner():
+    own = manifest(spec("text.asr", "n_words", "qwen3", "5.21.0", asr_model="Qwen/Qwen3-ASR-1.7B-hf"))
+    text, used = render(describe(own, config()), load_references())
+    assert "Qwen3-ASR (Shi et al., 2026) with the Qwen/Qwen3-ASR-1.7B-hf model through transformers 5.21.0" in text
+    assert "pieces of at most 30 s" in text and "Qwen3-ForcedAligner" in text and "shi2026" in used
+
+
 def test_voices_besides_the_participants_are_described_as_one_further_speaker():
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m", extra_voices=1))
     text, _ = render(describe(shared, config(text={"diarization": "shared"})), load_references())

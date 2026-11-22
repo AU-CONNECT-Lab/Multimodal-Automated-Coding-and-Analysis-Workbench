@@ -70,6 +70,12 @@ medennikov2026:
   title: "Nemotron 3 Diarization: Advancing the accuracy-efficiency frontier in streaming speaker diarization"
   howpublished: arXiv:2611.12246
   year: 2026
+shi2026:
+  type: misc
+  author: "Shi, Xian and Wang, Xiong and Guo, Zhifang and Wang, Yongqi and Zhang, Pei and Zhang, Xinyu and Guo, Zishan and Hao, Hongkun and Xi, Yu and Yang, Baosong and Xu, Jin and Zhou, Jingren and Lin, Junyang"
+  title: "Qwen3-ASR technical report"
+  howpublished: arXiv:2601.21337
+  year: 2026
 bredin2023:
   type: inproceedings
   author: "Bredin, Hervé"

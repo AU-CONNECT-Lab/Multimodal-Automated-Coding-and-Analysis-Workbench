@@ -7,7 +7,7 @@ This page describes the standard procedure, from organising the recordings to ex
 ### Requirements
 
 - Audio or video recordings of the interaction, or both. A separate microphone per participant is preferable; a single camera with its built-in microphone is also supported.
-- A computer with an NVIDIA graphics card for more than a handful of recordings. Without one, every step still runs, but considerably more slowly.
+- A computer with an NVIDIA graphics card for more than a handful of recordings; the default transcription uses about 10 GB of its memory. Without one, every step still runs, but considerably more slowly.
 - Free disk space roughly equal to the size of the videos, since MACAW stores one normalised copy of each video.
 
 ### Scope
@@ -23,14 +23,14 @@ This page describes the standard procedure, from organising the recordings to ex
 MACAW is installed once per computer, usually by whoever maintains it.
 
 1. Install Python 3.10, 3.11 or 3.12, git and ffmpeg.
-2. Install PyTorch for the computer's graphics card, following the instructions at [pytorch.org](https://pytorch.org/get-started/locally/), in the release that the speech recognition component (whisperx) requires: PyTorch 2.8 for whisperx 3.8, found under the previous versions on that site. Installing it first ensures that the graphics card is used: step 3 replaces any other release with one from the general package index, which on Windows runs on the processor only.
+2. Install PyTorch 2.8 or later for the computer's graphics card, following the instructions at [pytorch.org](https://pytorch.org/get-started/locally/). Installing it first ensures that the graphics card is used: step 3 would otherwise install a release from the general package index, which on Windows runs on the processor only.
 3. Install MACAW with all its components:
 
    ```bash
    pip install "pymacaw[audio,asr,text,vision,gui,report] @ git+https://github.com/AU-CONNECT-Lab/Multimodal-Automated-Coding-and-Analysis-Workbench.git"
    ```
 
-Three tools are not bundled because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (standard acoustic feature sets). They need to be installed only if they are selected in the settings. Separating voices on a shared microphone uses a model hosted on Hugging Face: accept its terms once on the Hugging Face website and log in to Hugging Face on the computer. Following objects in the video uses SAM 3 in the same way; where it cannot be had, objects are followed with open models instead and the run says so ({ref}`objects`).
+Three tools are not bundled because of their licences: YOLO (body pose), OpenFace (face) and openSMILE (standard acoustic feature sets). They need to be installed only if they are selected in the settings. The models for speech (Qwen3-ASR for transcription, Nemotron 3 Diarization for separating voices on a shared microphone) are fetched from Hugging Face on first use. Two alternatives need their terms accepted once on the Hugging Face website and a Hugging Face login on the computer: pyannote for separating voices, and SAM 3, which follows objects in the video by default; where SAM 3 cannot be had, objects are followed with open models instead and the run says so ({ref}`objects`). The speech recogniser WhisperX (*Transcription*: `whisperx`) can still be chosen, but it needs a Python environment of its own, installed with `pymacaw[audio,whisperx,text,vision,gui,report]` after the PyTorch release WhisperX requires, because it holds back the libraries the default models need; in that environment voices are separated with pyannote, and objects are followed with the open models.
 
 Once MACAW is installed, the *This computer* panel on its settings page reports whether ffmpeg and the optional programs are found.
 

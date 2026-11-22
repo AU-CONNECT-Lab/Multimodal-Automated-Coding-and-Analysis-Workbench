@@ -319,8 +319,7 @@ def refuse_older(package: str, minimum: tuple[int, ...], why: str) -> None:
     if tuple(int(part) for part in re.findall(r"\d+", installed)[: len(minimum)]) < minimum:
         raise BackendNotAvailableError(
             f"{package} {installed} is installed; MACAW needs {'.'.join(map(str, minimum))} or later, {why}. "
-            "Install the PyTorch release that whisperx requires, for your CUDA version, then "
-            '`pip install --upgrade "pymacaw[asr]"`.'
+            f"Install PyTorch for your CUDA version first, then `pip install --upgrade {package}`."
         )
 
 

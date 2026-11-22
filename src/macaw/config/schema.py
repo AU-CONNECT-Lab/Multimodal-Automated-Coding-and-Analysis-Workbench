@@ -303,8 +303,8 @@ class ProsodySection(_Section):
 
 
 class TextSection(_Section):
-    asr_backend: str = "whisperx"
-    asr_model: str = "large-v3"
+    asr_backend: str = "qwen3"
+    asr_model: str | None = None
     language: str | None = None
     device: str = "auto"
     compute_type: str = "float16"

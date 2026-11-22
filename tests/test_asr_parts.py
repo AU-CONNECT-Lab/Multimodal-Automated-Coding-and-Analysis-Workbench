@@ -151,7 +151,7 @@ class TestLongTableRows:
         validate_frame(rows, LONG_TABLE_SCHEMA, "long table")
 
     def test_manifest_and_rows_agree(self, extractor, rows):
-        backend = SimpleNamespace(name="fake", version="0")
+        backend = SimpleNamespace(name="fake", version="0", model="m")
         assert {spec.name for spec in extractor._specs(backend)} == set(rows.feature)
 
     def test_utterance_rate(self, rows):

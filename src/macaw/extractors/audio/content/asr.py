@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +29,7 @@ from macaw.extractors.audio.content.diarization import (
     voice_inputs,
 )
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
+from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning, distribution_version
 from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -152,9 +153,11 @@ class ASRBackend(Backend):
     # mean confidence below which a transcript is unlikely to be usable, on this backend's own
     # scale; None where nobody has measured one, since the scales are not comparable
     low_confidence: float | None = None
+    # the model an empty text.asr_model stands for
+    default_model = ""
 
-    def __init__(self, model: str, *, device: str = "auto", compute_type: str = "float16"):
-        self.model = model
+    def __init__(self, model: str | None, *, device: str = "auto", compute_type: str = "float16"):
+        self.model = model or self.default_model
         self._device, self._compute_type = device, compute_type
         self._model = None
         self._aligners: dict = {}
@@ -197,6 +200,7 @@ def whisper_repo(model: str) -> str:
 @register_backend(BACKEND_GROUP)
 class WhisperXBackend(ASRBackend):
     name = "whisperx"
+    default_model = "large-v3"
 
     @property
     def version(self) -> str:
@@ -208,8 +212,8 @@ class WhisperXBackend(ASRBackend):
             import whisperx  # noqa: F401
         except ImportError:
             raise BackendNotAvailableError(
-                "whisperx is not installed. Install PyTorch for your CUDA version first, "
-                'then `pip install "pymacaw[asr]"`.'
+                "whisperx is not installed. It needs an environment of its own: install the PyTorch release it requires for "
+                'your CUDA version first, then `pip install "pymacaw[whisperx]"`.'
             ) from None
         check_hub_model(whisper_repo(self.model), "text.asr_model")
 
@@ -306,6 +310,7 @@ class WhisperXBackend(ASRBackend):
 @register_backend(BACKEND_GROUP)
 class FasterWhisperBackend(ASRBackend):
     name = "faster_whisper"
+    default_model = "large-v3"
     low_confidence = 0.5
 
     @property
@@ -428,6 +433,182 @@ _MISSING = {
     "words_per_minute": f"Empty where their utterances have no length, and where {_UNTRANSCRIBED}.",
     "summary": f"Empty, not 0, where {_UNTRANSCRIBED}.",
 }
+
+
+# Qwen3-ASR reads speech in pieces of at most this length, as Whisper does
+_PIECE_S = 30.0
+# pieces recognised and aligned at once, fixed because the batch nudges the words recognised; about 10 GB of
+# graphics memory with both models loaded
+_QWEN_BATCH = 16
+_SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
+
+
+def speech_pieces(samples: np.ndarray, sample_rate: int = WHISPER_SAMPLE_RATE) -> list[tuple[float, float]]:
+    """Silero's speech stretches, as faster-whisper finds them, joined into pieces of the recording."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    found = get_speech_timestamps(samples, VadOptions(max_speech_duration_s=_PIECE_S, min_silence_duration_ms=160), sampling_rate=sample_rate)
+    return joined_stretches([(stretch["start"] / sample_rate, stretch["end"] / sample_rate) for stretch in found])
+
+
+def joined_stretches(stretches: list[tuple[float, float]], longest_s: float = _PIECE_S) -> list[tuple[float, float]]:
+    """Speech stretches joined, silences between them included, into unbroken pieces no longer than longest_s."""
+    pieces: list[list[float]] = []
+    for start, end in stretches:
+        if pieces and end - pieces[-1][0] <= longest_s:
+            pieces[-1][1] = end
+        else:
+            pieces.append([start, end])
+    return [(start, end) for start, end in pieces]
+
+
+def sentences_of(text: str, words: list[dict], count) -> list[tuple[str, list[dict]]]:
+    """A piece's text cut after each full stop, question or exclamation mark, each sentence with its aligned words;
+    the whole piece as one where the words cannot be shared out."""
+    sentences = [part for part in _SENTENCE_END.split(text.strip()) if part]
+    sizes = [count(sentence) for sentence in sentences]
+    if len(sentences) < 2 or sum(sizes) != len(words):
+        return [(text.strip(), words)]
+    edges = np.cumsum([0, *sizes])
+    return [(sentence, words[a:b]) for sentence, a, b in zip(sentences, edges[:-1], edges[1:]) if b > a]
+
+
+@register_backend(BACKEND_GROUP)
+class Qwen3ASRBackend(ASRBackend):
+    """Qwen3-ASR through transformers, with word times from Qwen3-ForcedAligner; Apache-2.0 code and weights."""
+
+    name = "qwen3"
+    default_model = "Qwen/Qwen3-ASR-1.7B-hf"
+    aligner_model = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
+
+    def __init__(self, model: str | None, *, device: str = "auto", compute_type: str = "float16"):
+        super().__init__(model, device=device, compute_type=compute_type)
+        self._aligner = None
+
+    @property
+    def version(self) -> str:
+        return distribution_version("transformers")
+
+    def check_available(self) -> None:
+        try:
+            import faster_whisper  # noqa: F401
+            import torch  # noqa: F401
+            import transformers
+        except ImportError:
+            raise BackendNotAvailableError(
+                "text.asr_backend qwen3 needs PyTorch, transformers and faster-whisper (for its speech detector): install "
+                'PyTorch for your GPU first, then `pip install "pymacaw[asr]"`.'
+            ) from None
+        if not hasattr(transformers, "Qwen3ASRForTokenClassification"):
+            raise BackendNotAvailableError(
+                f"transformers {transformers.__version__} has no Qwen3-ASR: pip install -U transformers, in an environment without whisperx."
+            )
+        check_hub_model(self.model, "text.asr_model")
+        check_hub_model(self.aligner_model, "the Qwen3-ForcedAligner word timing")
+
+    def _parts(self, name: str):
+        import torch
+        from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration, Qwen3ASRForTokenClassification
+
+        kind = Qwen3ASRForConditionalGeneration if name == self.model else Qwen3ASRForTokenClassification
+        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
+        return AutoProcessor.from_pretrained(name), kind.from_pretrained(name, dtype=dtype).to(self.device).eval()
+
+    def _load(self):
+        if self._model is None:
+            self._model = self._parts(self.model)
+        return self._model
+
+    def _load_aligner(self):
+        if self._aligner is None:
+            self._aligner = self._parts(self.aligner_model)
+        return self._aligner
+
+    def prefetch(self, *, language: str, align: bool) -> None:
+        self._load()
+        if align:
+            self._load_aligner()
+
+    def transcribe(
+        self, audio_path: Path, *, language: str | None, word_timestamps: bool
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        samples, _ = load_audio(Path(audio_path), sample_rate=WHISPER_SAMPLE_RATE)
+        samples = samples.astype(np.float32)
+        pieces = speech_pieces(samples)
+        if not pieces:
+            return _empty_parts()
+        heard = self._recognise(samples, pieces, language)
+        aligned = self._align(samples, pieces, heard, Path(audio_path).name) if word_timestamps else [[] for _ in pieces]
+        rows, words = [], []
+        processor = self._load_aligner()[0] if word_timestamps else None
+        for (start, end), (text, spoken), timed in zip(pieces, heard, aligned):
+            if not text.strip():
+                continue
+            count = (lambda part: len(processor.split_words_for_alignment(part, spoken))) if processor else (lambda part: 0)
+            for sentence, own in sentences_of(text, timed, count) if timed else [(text.strip(), [])]:
+                index = len(rows)
+                rows.append({
+                    "utterance_index": index,
+                    "t_start": own[0]["t_start"] if own else start,
+                    "t_end": own[-1]["t_end"] if own else end,
+                    "text": sentence, "confidence": np.nan, "avg_logprob": np.nan, "no_speech_prob": np.nan, "language": spoken,
+                })
+                words += [{"utterance_index": index, **word, "score": np.nan} for word in own]
+        empty_rows, empty_words = _empty_parts()
+        return (pd.DataFrame(rows, columns=empty_rows.columns) if rows else empty_rows,
+                pd.DataFrame(words, columns=empty_words.columns) if words else empty_words)
+
+    def _recognise(self, samples: np.ndarray, pieces: list[tuple[float, float]], language: str | None) -> list[tuple[str, str | None]]:
+        """Each piece's text and the language heard in it, as an ISO code where the model names one it knows."""
+        import torch
+        from transformers.models.qwen3_asr.processing_qwen3_asr import LANGUAGE_CODE_TO_NAME
+
+        codes = {name: code for code, name in LANGUAGE_CODE_TO_NAME.items()}
+        processor, model = self._load()
+        heard: list[tuple[str, str | None]] = [("", language)] * len(pieces)
+        # pieces of like length go together, so a batch is padded little
+        order = sorted(range(len(pieces)), key=lambda i: pieces[i][1] - pieces[i][0])
+        for first in range(0, len(order), _QWEN_BATCH):
+            batch = order[first:first + _QWEN_BATCH]
+            audio = [samples[int(pieces[i][0] * WHISPER_SAMPLE_RATE):int(pieces[i][1] * WHISPER_SAMPLE_RATE)] for i in batch]
+            inputs = processor.apply_transcription_request(audio, language=language).to(model.device, dtype=model.dtype)
+            with torch.inference_mode():
+                generated = model.generate(**inputs, max_new_tokens=448, do_sample=False)
+            parsed = processor.decode(generated[:, inputs["input_ids"].shape[1]:], return_format="parsed")
+            for i, said in zip(batch, [parsed] if isinstance(parsed, dict) else parsed):
+                named = said.get("language")
+                heard[i] = (said.get("transcription") or "", language or codes.get(named, named))
+        return heard
+
+    def _align(self, samples: np.ndarray, pieces, heard, track: str) -> list[list[dict]]:
+        import torch
+        from transformers.models.qwen3_asr.processing_qwen3_asr import FORCED_ALIGNER_LANGUAGES, LANGUAGE_CODE_TO_NAME
+
+        processor, model = self._load_aligner()
+        aligned: list[list[dict]] = [[] for _ in pieces]
+        todo = [i for i, (text, _) in enumerate(heard) if text.strip()]
+        for i in todo:
+            spoken = heard[i][1]
+            if LANGUAGE_CODE_TO_NAME.get(spoken, spoken) not in FORCED_ALIGNER_LANGUAGES:
+                raise BackendNotAvailableError(
+                    f"{track}: Qwen3-ForcedAligner gives word times in {', '.join(sorted(FORCED_ALIGNER_LANGUAGES))}, and "
+                    f"{spoken} was heard; set text.asr_backend: faster_whisper, or text.word_timestamps: false"
+                )
+        todo.sort(key=lambda i: pieces[i][1] - pieces[i][0])
+        for first in range(0, len(todo), _QWEN_BATCH):
+            batch = todo[first:first + _QWEN_BATCH]
+            audio = [samples[int(pieces[i][0] * WHISPER_SAMPLE_RATE):int(pieces[i][1] * WHISPER_SAMPLE_RATE)] for i in batch]
+            inputs, word_lists = processor.prepare_forced_aligner_inputs(
+                audio, [heard[i][0] for i in batch], language=[heard[i][1] for i in batch]
+            )
+            inputs = inputs.to(model.device, dtype=model.dtype)
+            with torch.inference_mode():
+                logits = model(**inputs).logits
+            found = processor.decode_forced_alignment(logits, inputs["input_ids"], word_lists, model.config.timestamp_token_id)
+            for i, items in zip(batch, found):
+                start = pieces[i][0]
+                aligned[i] = [{"t_start": start + w["start_time"], "t_end": start + w["end_time"], "word": w["text"]} for w in items]
+        return aligned
 
 
 @register_extractor
@@ -911,7 +1092,7 @@ class ASRExtractor(Extractor):
         return concat_long_tables(frames)
 
     def _specs(self, backend: ASRBackend) -> list[FeatureSpec]:
-        params = {"asr_model": self.config.text.asr_model, "language": self.config.text.language}
+        params = {"asr_model": backend.model, "language": self.config.text.language}
         specs = [
             FeatureSpec(
                 name=feature,

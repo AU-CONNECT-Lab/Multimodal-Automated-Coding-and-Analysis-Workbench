@@ -36,12 +36,19 @@ audio = [
   "soundfile>=0.12",
 ]
 
-# Install the PyTorch release whisperx pins, from the index matching your CUDA version, *before*
-# this group; letting pip resolve it lands a CPU-only build on Windows.
+# Install PyTorch from the index matching your CUDA version *before* this group; letting pip
+# resolve it lands a CPU-only build on Windows.
 asr = [
-  "whisperx>=3.8",          # the first built on pyannote.audio 4; older ones break under torchaudio 2.9
-  "faster-whisper>=1.0",
+  "transformers>=5.18",     # the first with Nemotron-3-Diarization; Qwen3-ASR came earlier
+  "faster-whisper>=1.0",    # its own recogniser, and the speech detector Qwen3-ASR is given pieces by
   "pyannote.audio>=4.0",
+  "librosa>=0.10",
+]
+
+# whisperx holds huggingface-hub below 1.0, so transformers below 5, without Nemotron, Qwen3-ASR or
+# SAM 3; it goes in an environment of its own, with the PyTorch release it pins installed first
+whisperx = [
+  "whisperx>=3.8",          # the first built on pyannote.audio 4; older ones break under torchaudio 2.9
 ]
 
 text = [

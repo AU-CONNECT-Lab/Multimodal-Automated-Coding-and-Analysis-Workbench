@@ -67,8 +67,8 @@ prosody:
   min_voiced_fraction: 0.1           # 0-1; a person voiced for less of the task window (of their words, on their own microphone) gets a QC warning
 
 text:
-  asr_backend: whisperx              # whisperx | faster_whisper
-  asr_model: large-v3                # smaller models are much faster and much worse on children
+  asr_backend: qwen3                 # qwen3 | faster_whisper | whisperx (needs an environment of its own)
+  asr_model: null                    # null = the backend's own: Qwen/Qwen3-ASR-1.7B-hf, or Whisper large-v3
   language: null                     # ISO code; null = detected on each track by itself
   device: auto                       # auto | cuda | cpu; auto uses a GPU when one is seen
   compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback

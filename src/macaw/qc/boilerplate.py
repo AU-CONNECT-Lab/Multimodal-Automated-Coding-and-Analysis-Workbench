@@ -505,12 +505,17 @@ def _standard_sets(config, spec, names) -> str:
 _ASR = {
     "whisperx": "WhisperX {version} [bain2023] with the Whisper {model} model [radford2023]",
     "faster_whisper": "faster-whisper {version}, a reimplementation of Whisper [radford2023], with the {model} model",
+    "qwen3": (
+        "Qwen3-ASR [shi2026] with the {model} model through transformers {version}, given the speech the Silero voice activity "
+        "detector found joined into unbroken pieces of at most 30 s, and with word times from Qwen3-ForcedAligner "
+        "(Qwen/Qwen3-ForcedAligner-0.6B-hf); each piece was cut into utterances after every full stop, question mark or exclamation mark"
+    ),
 }
 
 
 _DIARIZER = {
     "pyannote": "pyannote.audio {version} [bredin2023] using the {model} pipeline",
-    "nemotron": "Nemotron 3 Diarization [medennikov2026] ({model}, through transformers {version})",
+    "nemotron": "Nemotron 3 Diarization [medennikov2026] with the {model} model through transformers {version}",
 }
 
 
@@ -650,7 +655,7 @@ def _asr(config, spec, names) -> str:
     language = f" in {text_cfg.language}" if text_cfg.language else ""
     if text_cfg.diarization == SHARED_MODE:
         return (
-            f"The shared microphone was transcribed{language} with {_backend(_ASR, spec, model=text_cfg.asr_model)}. "
+            f"The shared microphone was transcribed{language} with {_backend(_ASR, spec, model=spec.params.get('asr_model') or text_cfg.asr_model)}. "
             "Each word was given to the voice whose diarized turn it overlapped most, and consecutive words of one "
             "participant within a recogniser segment formed an utterance. A participant with a microphone of their own "
             "was transcribed from it instead, and an utterance on it lying mostly in the voice of a participant heard "
@@ -658,7 +663,7 @@ def _asr(config, spec, names) -> str:
         )
     return (
         f"Speech on each participant's own track was transcribed{language} with "
-        f"{_backend(_ASR, spec, model=text_cfg.asr_model)}. After each microphone was normalised to its own level, the "
+        f"{_backend(_ASR, spec, model=spec.params.get('asr_model') or text_cfg.asr_model)}. After each microphone was normalised to its own level, the "
         "99th percentile of its 20-ms frame power where it was at least 6 dB louder than every other microphone (over the "
         "whole track where that held for less than 0.5 s), an "
         f"utterance more than {text_cfg.crosstalk_margin_db:g} dB louder on another participant's microphone was "
