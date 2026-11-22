@@ -8,7 +8,7 @@ import pytest
 
 from macaw.config.schema import TextSection
 from macaw.extractors.audio.content import asr as asr_module
-from macaw.extractors.audio.content.asr import ASRExtractor, Qwen3ASRBackend, joined_stretches, sentences_of
+from macaw.extractors.audio.content.asr import ASRExtractor, Qwen3ASRBackend, joined_stretches, sentences_of, track_language
 
 
 class TestPieces:
@@ -74,6 +74,47 @@ class TestTranscribe:
         monkeypatch.setattr(asr_module, "speech_pieces", lambda samples: [])
         lines, words = Qwen3ASRBackend(None, device="cpu").transcribe(track, language="en", word_timestamps=True)
         assert lines.empty and words.empty and "utterance_index" in lines.columns
+
+
+class TestTrackLanguage:
+    @pytest.fixture
+    def backend(self, monkeypatch):
+        backend = Qwen3ASRBackend(None, device="cpu")
+        monkeypatch.setattr(backend, "_known_languages", lambda: {"en", "hi", "nl"})
+        return backend
+
+    def test_the_language_of_most_speech_wins(self):
+        pieces = [(0.0, 20.0), (20.0, 45.0), (50.0, 60.0)]
+        assert track_language(pieces, [("a", "en"), ("b", "nl"), ("c", "en")]) == "en"
+        assert track_language(pieces, [("a", "en"), ("", "nl"), ("c", "nl")]) == "en"
+        assert track_language(pieces, [("", "en")] * 3) is None
+
+    def test_pieces_heard_as_another_language_are_heard_again_in_the_tracks(self, backend, monkeypatch):
+        calls = []
+
+        def heard(samples, pieces, indices, language):
+            calls.append((indices, language))
+            return [("Hello. Morning.", "en"), ("जी।", "hi"), ("", "nl"), ("Fine.", "en")] if language is None else [("Yes.", "en")]
+
+        monkeypatch.setattr(backend, "_heard", heard)
+        pieces = [(0.0, 20.0), (21.0, 22.0), (23.0, 24.0), (30.0, 40.0)]
+        assert backend._recognise(None, pieces, None) == [("Hello. Morning.", "en"), ("Yes.", "en"), ("", "en"), ("Fine.", "en")]
+        assert calls == [([0, 1, 2, 3], None), ([1], "en")]
+
+    def test_a_given_language_is_heard_once(self, backend, monkeypatch):
+        calls = []
+        monkeypatch.setattr(backend, "_heard", lambda samples, pieces, indices, language: calls.append(language) or [("Hi.", "en")])
+        assert backend._recognise(None, [(0.0, 5.0)], "en") == [("Hi.", "en")] and calls == ["en"]
+
+    def test_a_language_the_model_cannot_be_told_is_not_asked_for(self, backend, monkeypatch):
+        calls = []
+
+        def heard(samples, pieces, indices, language):
+            calls.append(language)
+            return [("iyog", "Tagalog"), ("ok", "en")]
+
+        monkeypatch.setattr(backend, "_heard", heard)
+        assert backend._recognise(None, [(0.0, 9.0), (10.0, 11.0)], None) == [("iyog", "Tagalog"), ("ok", "Tagalog")] and calls == [None]
 
 
 class TestWhichModel:

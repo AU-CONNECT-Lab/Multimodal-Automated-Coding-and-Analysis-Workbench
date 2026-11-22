@@ -474,6 +474,15 @@ def sentences_of(text: str, words: list[dict], count) -> list[tuple[str, list[di
     return [(sentence, words[a:b]) for sentence, a, b in zip(sentences, edges[:-1], edges[1:]) if b > a]
 
 
+def track_language(pieces: list[tuple[float, float]], heard: list[tuple[str, str | None]]) -> str | None:
+    """The language heard over the most speech, counting pieces with any text."""
+    spoken: dict[str | None, float] = {}
+    for (start, end), (text, said) in zip(pieces, heard):
+        if text.strip():
+            spoken[said] = spoken.get(said, 0.0) + end - start
+    return max(spoken, key=spoken.get) if spoken else None
+
+
 @register_backend(BACKEND_GROUP)
 class Qwen3ASRBackend(ASRBackend):
     """Qwen3-ASR through transformers, with word times from Qwen3-ForcedAligner; Apache-2.0 code and weights."""
@@ -565,15 +574,35 @@ class Qwen3ASRBackend(ASRBackend):
                 pd.DataFrame(words, columns=empty_words.columns) if words else empty_words)
 
     def _recognise(self, samples: np.ndarray, pieces: list[tuple[float, float]], language: str | None) -> list[tuple[str, str | None]]:
-        """Each piece's text and the language heard in it, as an ISO code where the model names one it knows."""
+        """Each piece's text and language; with none given, the track's language is the one heard over most of its speech,
+        as Whisper takes one per file, and pieces heard as another are recognised again in it."""
+        heard = self._heard(samples, pieces, list(range(len(pieces))), language)
+        if language is not None:
+            return heard
+        spoken = track_language(pieces, heard)
+        # a language the model cannot be told is left for the aligner check to name
+        again = [i for i, (text, said) in enumerate(heard) if said != spoken and text.strip()] if spoken in self._known_languages() else []
+        heard = [(text, spoken) for text, _ in heard]
+        for i, said in zip(again, self._heard(samples, pieces, again, spoken) if again else []):
+            heard[i] = said
+        return heard
+
+    @staticmethod
+    def _known_languages() -> set[str]:
+        from transformers.models.qwen3_asr.processing_qwen3_asr import LANGUAGE_CODE_TO_NAME
+
+        return set(LANGUAGE_CODE_TO_NAME)
+
+    def _heard(self, samples: np.ndarray, pieces, indices: list[int], language: str | None) -> list[tuple[str, str | None]]:
+        """The text and language, as an ISO code where the model names one it knows, of the pieces at indices, in that order."""
         import torch
         from transformers.models.qwen3_asr.processing_qwen3_asr import LANGUAGE_CODE_TO_NAME
 
         codes = {name: code for code, name in LANGUAGE_CODE_TO_NAME.items()}
         processor, model = self._load()
-        heard: list[tuple[str, str | None]] = [("", language)] * len(pieces)
+        heard: dict[int, tuple[str, str | None]] = {}
         # pieces of like length go together, so a batch is padded little
-        order = sorted(range(len(pieces)), key=lambda i: pieces[i][1] - pieces[i][0])
+        order = sorted(indices, key=lambda i: pieces[i][1] - pieces[i][0])
         for first in range(0, len(order), _QWEN_BATCH):
             batch = order[first:first + _QWEN_BATCH]
             audio = [samples[int(pieces[i][0] * WHISPER_SAMPLE_RATE):int(pieces[i][1] * WHISPER_SAMPLE_RATE)] for i in batch]
@@ -584,7 +613,7 @@ class Qwen3ASRBackend(ASRBackend):
             for i, said in zip(batch, [parsed] if isinstance(parsed, dict) else parsed):
                 named = said.get("language")
                 heard[i] = (said.get("transcription") or "", language or codes.get(named, named))
-        return heard
+        return [heard[i] for i in indices]
 
     def _align(self, samples: np.ndarray, pieces, heard, track: str) -> list[list[dict]]:
         import torch
@@ -620,7 +649,7 @@ class Qwen3ASRBackend(ASRBackend):
 @register_extractor
 class ASRExtractor(Extractor):
     name = "text.asr"
-    version = "0.12.0"
+    version = "0.13.0"
     scale = Scale.EVENT
     group = "text"
     config_sections = (
@@ -1172,7 +1201,7 @@ class SharedASRExtractor(Extractor):
     """Speech on a shared microphone recognised before anyone names the voices, so naming can read what each voice says."""
 
     name = SHARED_ASR
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.RECORDING
     group = "text"
     config_sections = (
