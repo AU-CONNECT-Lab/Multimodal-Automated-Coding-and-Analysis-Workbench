@@ -437,8 +437,7 @@ _MISSING = {
 
 # Qwen3-ASR reads speech in pieces of at most this length, as Whisper does
 _PIECE_S = 30.0
-# pieces recognised and aligned at once, fixed because the batch nudges the words recognised; about 10 GB of
-# graphics memory with both models loaded
+# pieces recognised and aligned at once, fixed because the batch nudges the words recognised
 _QWEN_BATCH = 16
 _SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
 

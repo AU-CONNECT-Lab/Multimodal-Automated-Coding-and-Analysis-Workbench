@@ -626,7 +626,7 @@ class ViTPoseBackend(PoseBackend):
 
             detector = RTDetrForObjectDetection.from_pretrained(VITPOSE_DETECTOR).to(device).eval()
             person = next(index for index, label in detector.config.id2label.items() if label.lower() == "person")
-            # the torchvision processors, about twice as fast as the PIL ones
+            # the torchvision processors, quicker than the PIL ones
             self._parts[key] = (
                 AutoImageProcessor.from_pretrained(VITPOSE_DETECTOR, use_fast=True), detector, person,
                 AutoImageProcessor.from_pretrained(key[0], use_fast=True), VitPoseForPoseEstimation.from_pretrained(key[0]).to(device).eval(),
