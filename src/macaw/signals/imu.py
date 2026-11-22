@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from scipy.signal import correlate, correlation_lags
+from scipy.signal import correlate, correlation_lags, savgol_filter
 
 from macaw.media.align import sharpness
 from macaw.media.drift import MIN_SEGMENTS, estimate_drift
@@ -20,6 +20,8 @@ EXCLUSION_S = 5.0
 MIN_OVERLAP_S = 30.0
 # frames of the per-frame angles a median is taken over before differencing, against one-frame jumps
 ANGLE_MEDIAN_FRAMES = 5
+# s; the head's speed is the slope of its angles over this long, as a frame-to-frame slope is mostly the tracker's jitter
+SLOPE_S = 0.4
 # speeds above this percentile are clipped to it, so a tracking glitch or a knock does not decide the match
 CLIP_PERCENTILE = 99.0
 # s; how far a stretch's own match may lie from the whole file's and still be looked for
@@ -69,11 +71,30 @@ def head_speed(frames: pd.DataFrame, angles: tuple[str, ...]) -> tuple[np.ndarra
     times = wide.index.to_numpy(dtype=float)
     if times.size < 3:
         return None
-    squared = np.zeros(times.size)
+    period = float(np.median(np.diff(times)))
+    if period <= 0:
+        return None
+    grid = times[0] + period * np.arange(int(round((times[-1] - times[0]) / period)) + 1)
+    right = np.clip(np.searchsorted(times, grid), 0, times.size - 1)
+    left = np.clip(right - 1, 0, times.size - 1)
+    # a grid point with no frame within half a period lies in a gap
+    seen = np.minimum(np.abs(times[right] - grid), np.abs(times[left] - grid)) <= 0.5 * period
+    length = min(max(int(round(SLOPE_S / period)) | 1, 5), grid.size - (grid.size % 2 == 0))
+    if length < 3:
+        return None
+    squared = np.zeros(grid.size)
     for name in wide.columns:
-        angle = wide[name].rolling(ANGLE_MEDIAN_FRAMES, center=True, min_periods=1).median().to_numpy(dtype=float)
-        squared += np.gradient(angle, times) ** 2
-    return times, np.sqrt(squared)
+        values = wide[name].to_numpy(dtype=float)
+        finite = np.isfinite(values)
+        if finite.sum() < 2:
+            continue
+        seen &= np.interp(grid, times, finite.astype(float)) > 0.5
+        angle = np.interp(grid, times[finite], values[finite])
+        angle = pd.Series(angle).rolling(ANGLE_MEDIAN_FRAMES, center=True, min_periods=1).median().to_numpy()
+        squared += savgol_filter(angle, length, min(2, length - 1), deriv=1, delta=period) ** 2
+    speed = np.sqrt(squared)
+    speed[~seen] = np.nan
+    return grid, speed
 
 
 def on_grid(times: np.ndarray, values: np.ndarray, start: float, count: int) -> np.ndarray:

@@ -18,11 +18,11 @@ def turning(times: np.ndarray, turns: list[tuple[float, float, float]]) -> np.nd
     return yaw
 
 
-def synthetic(*, offset=TRUE_OFFSET, scale=1.0, video_s=300.0, imu_s=1500.0, seed=1):
+def synthetic(*, offset=TRUE_OFFSET, scale=1.0, video_s=300.0, imu_s=1500.0, seed=1, turn_deg=30.0):
     """Face yaw rows of a video on the recording clock, and the IMU of a cap that turns with the head on its own clock."""
     rng = np.random.default_rng(seed)
     starts = np.sort(rng.uniform(-400.0, 1600.0, 500))
-    turns = [(start, rng.uniform(0.3, 1.5), rng.normal(0.0, 30.0)) for start in starts]
+    turns = [(start, rng.uniform(0.3, 1.5), rng.normal(0.0, turn_deg)) for start in starts]
     frames = np.arange(0.0, video_s, 1 / 25)
     yaw = turning(frames, turns) + rng.normal(0.0, 0.5, frames.size)
     yaw[(frames > 100) & (frames < 120)] = np.nan   # the face lost for a while
@@ -51,6 +51,18 @@ def test_the_cap_imu_finds_where_its_file_sits_on_the_recording_clock():
     near = match(*head_speed(rows, FACE_ANGLES), *gyro_speed(aux, "gyro"), hint_s=TRUE_OFFSET + 4.0, window_s=10.0)
     assert near.offset_s == pytest.approx(TRUE_OFFSET, abs=0.1)
     assert gyro_speed(aux, "no such sensor") is None
+
+
+def test_a_face_tracker_jittering_by_degrees_each_frame_still_finds_the_offset():
+    from macaw.signals.imu import FACE_ANGLES, gyro_speed, head_speed, match
+
+    # turns of a few degrees, smaller than a frame-to-frame slope of the jitter
+    rows, aux = synthetic(seed=4, turn_deg=8.0)
+    rows["value"] += np.random.default_rng(5).normal(0.0, 3.0, len(rows))
+    found = match(*head_speed(rows, FACE_ANGLES), *gyro_speed(aux, "gyro"))
+    assert found.offset_s == pytest.approx(TRUE_OFFSET, abs=0.2)
+    times, speed = head_speed(rows, FACE_ANGLES)
+    assert np.isnan(speed[(times > 101) & (times < 119)]).all() and np.isfinite(speed[times < 99]).all()
 
 
 def test_a_clock_running_fast_is_fitted_and_maps_the_file_onto_the_recording():

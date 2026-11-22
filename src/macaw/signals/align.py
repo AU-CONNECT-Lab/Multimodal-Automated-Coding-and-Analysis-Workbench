@@ -160,7 +160,7 @@ def video_started(recording: Recording) -> tuple[str | None, float]:
 @register_extractor
 class SignalAlignExtractor(Extractor):
     name = "signals.align"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.DERIVE
