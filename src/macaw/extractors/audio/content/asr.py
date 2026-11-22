@@ -325,6 +325,9 @@ class FasterWhisperBackend(ASRBackend):
         if self._model is None:
             from faster_whisper import WhisperModel
 
+            if self.device == "cuda":
+                # on Windows ctranslate2 finds cuBLAS only among the CUDA libraries torch has loaded
+                import torch  # noqa: F401
             self._model = WhisperModel(
                 self.model, device=self.device, compute_type=self.compute_type
             )
