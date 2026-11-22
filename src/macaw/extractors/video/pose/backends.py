@@ -561,6 +561,159 @@ class YOLOPoseBackend(PoseBackend):
         return out_path / "run" / "labels"
 
 
+VITPOSE_DETECTOR = "PekingU/rtdetr_r50vd_coco_o365"
+# people the detector is less sure of than this are not looked at for points
+VITPOSE_PERSON_SCORE = 0.3
+# frames looked at together
+_VITPOSE_BATCH = 8
+
+
+def vitpose_rows(people: list[dict], scores: list[float], *, frame_index: int) -> list[dict]:
+    """One frame's people, as ViTPose's processor gives them, to BACKEND_KEYPOINT_SCHEMA rows."""
+    rows: list[dict] = []
+    for slot, (person, box_score) in enumerate(zip(people, scores)):
+        points, confidences = person["keypoints"], person["scores"]
+        for index, joint in enumerate(COCO_KEYPOINT_ORDER):
+            rows.append({
+                "frame": frame_index, "joint": joint, "x": float(points[index][0]), "y": float(points[index][1]), "z": float("nan"),
+                "confidence": float(confidences[index]), "track_id": slot, "units": UNITS_PIXEL, "metric_scale_valid": None,
+                "box_score": float(box_score),
+            })
+    return rows
+
+
+@register_backend(BACKEND_GROUP)
+class ViTPoseBackend(PoseBackend):
+    """ViTPose+ through transformers on the people RT-DETR finds; Apache-2.0 code and weights, the 17 COCO points, offline.
+
+    track_id is the person's place among those found in the frame, not a track, so pose.track_repair says who is who.
+    """
+
+    name = "vitpose"
+    tracks = False
+    default_model = "usyd-community/vitpose-plus-base"
+
+    def __init__(self) -> None:
+        self._parts: dict = {}
+
+    @property
+    def version(self) -> str:
+        return distribution_version("transformers")
+
+    def check_available(self) -> None:
+        try:
+            import cv2  # noqa: F401
+            import torch  # noqa: F401
+            import transformers
+        except ImportError as error:
+            raise BackendNotAvailableError(
+                "The 'vitpose' backend needs PyTorch, transformers and opencv: install PyTorch for your GPU first, then "
+                'pip install "pymacaw[vision,asr]"'
+            ) from error
+        if not all(hasattr(transformers, name) for name in ("VitPoseForPoseEstimation", "RTDetrForObjectDetection")):
+            raise BackendNotAvailableError(f"transformers {transformers.__version__} has no ViTPose or RT-DETR: pip install -U transformers")
+
+    def check_model(self, model: str | Path | None) -> None:
+        from macaw.extractors.hub import check_hub_model
+
+        check_hub_model(str(model or self.default_model), "pose.model")
+        check_hub_model(VITPOSE_DETECTOR, "the RT-DETR person detector of the vitpose backend")
+
+    def _load(self, model: str | Path | None, device: str):
+        key = (str(model or self.default_model), device)
+        if key not in self._parts:
+            from transformers import AutoImageProcessor, RTDetrForObjectDetection, VitPoseForPoseEstimation
+
+            detector = RTDetrForObjectDetection.from_pretrained(VITPOSE_DETECTOR).to(device).eval()
+            person = next(index for index, label in detector.config.id2label.items() if label.lower() == "person")
+            # the torchvision processors, about twice as fast as the PIL ones
+            self._parts[key] = (
+                AutoImageProcessor.from_pretrained(VITPOSE_DETECTOR, use_fast=True), detector, person,
+                AutoImageProcessor.from_pretrained(key[0], use_fast=True), VitPoseForPoseEstimation.from_pretrained(key[0]).to(device).eval(),
+            )
+        return self._parts[key]
+
+    def infer(
+        self,
+        video_path: Path,
+        *,
+        device: str,
+        model: str | Path | None = None,
+        max_people: int = 1,
+        frames: tuple[int, int] | None = None,
+        input_size: int | None = None,
+        source: SourceVideo | None = None,
+    ) -> PoseFrames:
+        """Everyone the detector finds comes back; picking max_people is left to assignment."""
+        import cv2
+
+        from macaw.extractors.audio.content.asr import resolve_device
+
+        device = resolve_device(str(device or "auto"))
+        parts = self._load(model, device)
+        capture = cv2.VideoCapture(str(video_path))
+        if not capture.isOpened():
+            raise ExternalToolError(f"could not open video: {video_path}")
+        rows: list[dict] = []
+        try:
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            first, stop = frames if frames is not None else (0, None)
+            frame_index = _seek(capture, cv2, max(int(first), 0), Path(video_path))
+            batch: list[tuple[int, object]] = []
+            while stop is None or frame_index < stop:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                batch.append((frame_index, cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+                frame_index += 1
+                if len(batch) == _VITPOSE_BATCH:
+                    rows += self._look(batch, parts, device)
+                    batch = []
+            if batch:
+                rows += self._look(batch, parts, device)
+        finally:
+            capture.release()
+        if not rows:
+            return PoseFrames(keypoints=empty_frame(BACKEND_KEYPOINT_SCHEMA))
+        frame = coerce_frame(pd.DataFrame(rows), BACKEND_KEYPOINT_SCHEMA, "backend keypoints")
+        return PoseFrames(keypoints=frame, provides=self.provides, frame_size=(width, height))
+
+    def _look(self, batch: list[tuple[int, object]], parts, device: str) -> list[dict]:
+        import torch
+
+        detect_processor, detector, person, pose_processor, pose = parts
+        images = [image for _, image in batch]
+        # resized on the card for the detector; the crops for the points are quicker cut on the processor
+        on_card = [torch.from_numpy(image).permute(2, 0, 1).to(device) for image in images]
+        inputs = detect_processor(images=on_card, return_tensors="pt", device=device)
+        with torch.inference_mode():
+            found = detect_processor.post_process_object_detection(
+                detector(**inputs), target_sizes=torch.tensor([image.shape[:2] for image in images]), threshold=VITPOSE_PERSON_SCORE
+            )
+        seen, boxes, scores = [], [], []
+        for (index, image), result in zip(batch, found):
+            keep = (result["labels"] == person).cpu().numpy()
+            if keep.any():
+                xyxy = result["boxes"].cpu().numpy()[keep]
+                seen.append((index, image))
+                boxes.append([[a, b, c - a, d - b] for a, b, c, d in xyxy.tolist()])
+                scores.append(result["scores"].cpu().numpy()[keep].tolist())
+        if not seen:
+            return []
+        inputs = pose_processor([image for _, image in seen], boxes=boxes, return_tensors="pt").to(device)
+        with torch.inference_mode():
+            heatmaps = pose(**inputs, dataset_index=torch.zeros(sum(map(len, boxes)), dtype=torch.long, device=device))
+        people = pose_processor.post_process_pose_estimation(heatmaps, boxes=boxes)
+        rows: list[dict] = []
+        for (index, _), frame_people, frame_scores in zip(seen, people, scores):
+            rows += vitpose_rows(
+                [{"keypoints": p["keypoints"].cpu().numpy(), "scores": p["scores"].cpu().numpy()} for p in frame_people],
+                frame_scores, frame_index=index,
+            )
+        return rows
+
+
 def _window_clip(video_path: Path, first: int, stop: int | None, scratch: Path) -> Path:
     """Frames [first, stop) as a clip of their own, chosen by time on the file's own clock after a jump close to them."""
     info = probe(video_path)

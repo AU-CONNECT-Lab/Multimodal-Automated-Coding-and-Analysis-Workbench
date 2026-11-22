@@ -448,6 +448,13 @@ def test_the_input_size_is_named_only_for_a_backend_that_takes_it(backend, sized
     assert ("at an input size of 1280 px" in text) is sized
 
 
+def test_vitpose_names_its_model_and_person_detector():
+    specs = manifest(spec("pose.detect", "n_videos_read", "vitpose", "5.21.0"))
+    text, used = render(describe(specs, config(pose={"backend": "vitpose"})), load_references())
+    assert "ViTPose+ (vitpose-plus-base) (Xu et al., 2022) through transformers 5.21.0" in text
+    assert "RT-DETR detector" in text and {"xu2022", "zhao2023"} <= set(used)
+
+
 def test_the_preparation_says_how_sound_was_kept_and_aligns_only_several_devices():
     shared = boilerplate._prep(config(text={"diarization": "shared"}), None, [])
     assert "the shared microphone's sound" in shared and "aligned" not in shared

@@ -8,7 +8,7 @@ MACAW itself sends nothing anywhere. Two choices in the settings can:
 - A cloud language model (OpenAI or Anthropic) receives the transcript lines it codes, and the video frames when these are selected ({ref}`coding`).
 - The MediaPipe tools, one of the options for body pose and for the face, send usage statistics to Google while they run. They do not send the video, but this cannot be switched off.
 
-When no data may leave the computer, select YOLO for body pose and a language model running on the lab's own computer or server. A run first downloads any model that is missing, before processing starts; models already on the computer are used as they are, and the processing steps themselves never go online.
+When no data may leave the computer, select YOLO or ViTPose for body pose and a language model running on the lab's own computer or server. A run first downloads any model that is missing, before processing starts; models already on the computer are used as they are, and the processing steps themselves never go online.
 
 ## What happens when a setting is changed?
 

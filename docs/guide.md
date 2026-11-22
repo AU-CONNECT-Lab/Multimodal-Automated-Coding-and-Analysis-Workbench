@@ -192,7 +192,7 @@ Steps
 : Which measures a run produces, and how many recordings are processed in parallel.
 
 Tools
-: The program used for each kind of measurement, the spoken language, and whether each participant has a microphone or the participants share one. **Body pose has no default**: select MediaPipe or YOLO explicitly (see {ref}`privacy`).
+: The program used for each kind of measurement, the spoken language, and whether each participant has a microphone or the participants share one. **Body pose has no default**: select MediaPipe, YOLO or ViTPose explicitly (see {ref}`privacy`). ViTPose runs offline under an open licence (Apache-2.0) and finds the 17 body points of the other two; it is slower than YOLO, which needs a separate installation and is licensed under the AGPL.
 
 Checks by a person
 : For each check described in {ref}`step 6 <review>`, whether MACAW always waits for the researcher, waits only when uncertain, or never waits.

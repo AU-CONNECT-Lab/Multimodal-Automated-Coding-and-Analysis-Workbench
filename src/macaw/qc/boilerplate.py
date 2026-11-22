@@ -954,6 +954,10 @@ def _setting(value) -> str:
 _POSE = {
     "mediapipe": "MediaPipe Pose Landmarker {version}{model} [bazarevsky2020; lugaresi2019]",
     "yolo": "Ultralytics YOLO{model} [jocher_ultralytics] with ByteTrack tracking [zhang2022]",
+    "vitpose": (
+        "ViTPose+{model} [xu2022] through transformers {version}, on the people the RT-DETR detector "
+        "(rtdetr_r50vd_coco_o365) found [zhao2023]"
+    ),
 }
 
 
@@ -962,7 +966,8 @@ def _detect(config, spec, names) -> str:
     from macaw.extractors.video.pose.backends import BACKEND_GROUP
 
     pose = config.pose
-    model = f" ({Path(pose.model).name})" if pose.model else ""
+    chosen = pose.model or (getattr(get_backend(BACKEND_GROUP, spec.backend), "default_model", None) if spec.backend else None)
+    model = f" ({Path(chosen).name})" if chosen else ""
     sized = f" at an input size of {pose.input_size} px" if spec.backend and get_backend(BACKEND_GROUP, spec.backend).takes_input_size else ""
     return (
         f"Body keypoints were detected in every video frame of the task window with {_backend(_POSE, spec, model=model)}"

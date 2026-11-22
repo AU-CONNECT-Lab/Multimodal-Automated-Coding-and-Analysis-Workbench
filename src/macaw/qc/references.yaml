@@ -76,6 +76,18 @@ shi2026:
   title: "Qwen3-ASR technical report"
   howpublished: arXiv:2601.21337
   year: 2026
+xu2022:
+  type: misc
+  author: "Xu, Yufei and Zhang, Jing and Zhang, Qiming and Tao, Dacheng"
+  title: "ViTPose: Simple vision transformer baselines for human pose estimation"
+  howpublished: arXiv:2204.12484
+  year: 2022
+zhao2023:
+  type: misc
+  author: "Zhao, Yian and Lv, Wenyu and Xu, Shangliang and Wei, Jinman and Wang, Guanzhong and Dang, Qingqing and Liu, Yi and Chen, Jie"
+  title: "DETRs beat YOLOs on real-time object detection"
+  howpublished: arXiv:2304.08069
+  year: 2023
 bredin2023:
   type: inproceedings
   author: "Bredin, Hervé"
