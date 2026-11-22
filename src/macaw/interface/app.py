@@ -17,11 +17,11 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import ui
 from macaw.interface.files import PREFIX, path_from_url
-from macaw.interface.pages import agreement, cameras, overview, results, review, run, segments, settings, setup
+from macaw.interface.pages import agreement, cameras, overview, results, review, run, segments, settings, setup, signals
 
-PAGES = (overview, setup, cameras, run, review, agreement, segments, results, settings)
-# the tabs along the top; settings is reached by the gear, and 3D shows only where a project can use it
-TABS = (overview, setup, cameras, run, review, agreement, segments, results)
+PAGES = (overview, setup, cameras, run, review, agreement, segments, signals, results, settings)
+# the tabs along the top; settings is reached by the gear, 3D and Signals show only where a project can use them
+TABS = (overview, setup, cameras, run, review, agreement, segments, signals, results)
 # module scripts load only when served as JavaScript, which some Windows registries do not say of .js
 mimetypes.add_type("text/javascript", ".js")
 
@@ -143,7 +143,7 @@ def build_layout(config_path: Path, *, local: bool = True):
 
 
 def shown_tabs(config) -> tuple:
-    return tuple(page for page in TABS if page is not cameras or cameras.wanted(config))
+    return tuple(page for page in TABS if not hasattr(page, "wanted") or page.wanted(config))
 
 
 def page_for(pathname: str | None) -> str:

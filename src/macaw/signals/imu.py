@@ -109,7 +109,7 @@ def on_grid(times: np.ndarray, values: np.ndarray, start: float, count: int) -> 
     return out
 
 
-def _standardised(values: np.ndarray) -> np.ndarray:
+def standardised(values: np.ndarray) -> np.ndarray:
     """Clipped at the top percentile, then centred and scaled; all NaN when there is nothing to scale."""
     if np.isfinite(values).sum() < 3:
         return np.full(values.shape, np.nan)
@@ -154,6 +154,22 @@ def _peak(lags, r, n, start_gap_s: float, allowed: np.ndarray) -> tuple[float, f
     return float(offset), float(confidence), float(r[best]), float(n[best] / GRID_HZ)
 
 
+def _on_grids(video_times, video_speed, imu_times, imu_speed) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Both speeds standardised on GRID_HZ grids from their own first times, the video's start, and the gap between the starts."""
+    video_start, imu_start = float(np.min(video_times)), float(np.min(imu_times))
+    video = standardised(on_grid(video_times, video_speed, video_start, int((np.max(video_times) - video_start) * GRID_HZ) + 1))
+    imu = standardised(on_grid(imu_times, imu_speed, imu_start, int((np.max(imu_times) - imu_start) * GRID_HZ) + 1))
+    return video, imu, video_start, video_start - imu_start
+
+
+def correlation_curve(video_times, video_speed, imu_times, imu_speed) -> tuple[np.ndarray, np.ndarray]:
+    """(offset_s, r) at every offset that rests on enough overlap, as match() weighs them."""
+    video, imu, _, gap = _on_grids(video_times, video_speed, imu_times, imu_speed)
+    lags, r, n = masked_pearson(video, imu)
+    allowed = n >= min(MIN_OVERLAP_S, 0.5 * video.size / GRID_HZ) * GRID_HZ
+    return gap + lags[allowed] / GRID_HZ, r[allowed]
+
+
 def match(
     video_times: np.ndarray,
     video_speed: np.ndarray,
@@ -166,13 +182,10 @@ def match(
     min_confidence: float = 0.3,
 ) -> Match | None:
     """The offset (recording time minus own time) at which the IMU's speed best follows the head's on the video."""
-    video_start, imu_start = float(np.min(video_times)), float(np.min(imu_times))
-    video = _standardised(on_grid(video_times, video_speed, video_start, int((np.max(video_times) - video_start) * GRID_HZ) + 1))
-    imu = _standardised(on_grid(imu_times, imu_speed, imu_start, int((np.max(imu_times) - imu_start) * GRID_HZ) + 1))
+    video, imu, video_start, gap = _on_grids(video_times, video_speed, imu_times, imu_speed)
     if not np.isfinite(video).any() or not np.isfinite(imu).any():
         return None
     lags, r, n = masked_pearson(video, imu)
-    gap = video_start - imu_start
     offsets = gap + lags / GRID_HZ
     allowed = n >= min(MIN_OVERLAP_S, 0.5 * video.size / GRID_HZ) * GRID_HZ
     if hint_s is not None and window_s is not None:

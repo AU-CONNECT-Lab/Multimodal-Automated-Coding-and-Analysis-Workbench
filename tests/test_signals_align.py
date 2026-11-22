@@ -121,12 +121,13 @@ def aligned_project(tmp_path):
     rows, aux = synthetic()
     folder = tmp_path / "nirs"
     folder.mkdir()
-    write_snirf(folder / "child.snirf", aux)
-    write_snirf(folder / "child_preproc.snirf", None)
-    write_snirf(folder / "parent.snirf", aux[aux["aux"].str.startswith("ACCEL")])
+    write_snirf(folder / "sub-c003_task-play_nirs.snirf", aux)
+    write_snirf(folder / "sub-c003_task-play_desc-preproc_nirs.snirf", None)
+    write_snirf(folder / "sub-p003_task-play_run-1_nirs.snirf", aux[aux["aux"].str.startswith("ACCEL")])
     (tmp_path / "signals.csv").write_text(
-        "recording,person,stage,file\n003,child,raw,nirs/child.snirf\n003,child,preproc,nirs/child_preproc.snirf\n"
-        "003,parent,raw,nirs/parent.snirf\n", encoding="utf-8",
+        "recording,person,stage,file\n003,child,raw,nirs/sub-c003_task-play_nirs.snirf\n"
+        "003,child,preproc,nirs/sub-c003_task-play_desc-preproc_nirs.snirf\n003,parent,raw,nirs/sub-p003_task-play_run-1_nirs.snirf\n",
+        encoding="utf-8",
     )
     config = resolve_config(project)
     layout = layout_for(config)

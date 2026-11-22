@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.exceptions import MacawError
+from macaw.exceptions import BackendNotAvailableError, MacawError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, Phase, QCWarning
 from macaw.media.align import MANUAL, UNALIGNED, AlignResult, read_offset_table, write_offset_table
@@ -26,6 +26,8 @@ IMU = "imu"
 # what every signal file's offset is measured against
 RECORDING_CLOCK = "recording"
 COMPUTED_NAME = "offsets.json"
+# each person's figure of the match, beside the table
+FIGURE_SUFFIX = "_imu.png"
 # the least head movement on the video, in s of frames with angles, worth matching against
 MIN_HEAD_S = 10.0
 # s; markers further apart than this in two files of one person say the files do not share a clock
@@ -157,10 +159,28 @@ def video_started(recording: Recording) -> tuple[str | None, float]:
     return None, 0.0
 
 
+def head_turning(config, recording_id: str, person: str) -> tuple[np.ndarray, np.ndarray, str] | None:
+    """(recording times, deg/s, what the angles are) of the person's head on the video, from the first step that has
+    enough of it; None when neither has."""
+    features = layout_for(config, create=False).long_table_path(recording_id)
+    for step, angles, said in HEAD_SOURCES:
+        path = features / f"{step}.parquet"
+        if not path.is_file():
+            continue
+        rows = read_long_table(path, subject_id=person, scale=Scale.FRAME, features=list(angles))
+        speed = head_speed(rows, angles) if not rows.empty else None
+        if speed is None:
+            continue
+        period = float(np.median(np.diff(speed[0]))) if speed[0].size > 1 else 0.0
+        if np.isfinite(speed[1]).sum() * period >= MIN_HEAD_S:
+            return speed[0], speed[1], said
+    return None
+
+
 @register_extractor
 class SignalAlignExtractor(Extractor):
     name = "signals.align"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.DERIVE
@@ -193,16 +213,18 @@ class SignalAlignExtractor(Extractor):
         for item in signal_files(self.config, rid):
             people.setdefault(item.person, []).append(item)
         results, warnings = [], []
+        artifacts = {}
         for person, items in people.items():
-            found, more = self._person(rid, person, items, started, video_offset)
+            found, more = self._person(rid, person, items, started, video_offset, workspace)
             results.extend(found)
             warnings.extend(more)
+        artifacts.update({figure.name: figure for figure in workspace.glob(f"*{FIGURE_SUFFIX}")})
         path = workspace / COMPUTED_NAME
         write_offset_table(results, path)
         warnings.extend(self._notes(rid, results))
-        return ExtractorResult(rows=pd.DataFrame(), artifacts={COMPUTED_NAME: path}, warnings=warnings)
+        return ExtractorResult(rows=pd.DataFrame(), artifacts={COMPUTED_NAME: path, **artifacts}, warnings=warnings)
 
-    def _person(self, rid, person, items, started, video_offset) -> tuple[list[AlignResult], list[QCWarning]]:
+    def _person(self, rid, person, items, started, video_offset, workspace: Path) -> tuple[list[AlignResult], list[QCWarning]]:
         cfg = self.config.signals
 
         def unaligned(note: str) -> list[AlignResult]:
@@ -220,7 +242,7 @@ class SignalAlignExtractor(Extractor):
                 break
         if anchor is None:
             return unaligned(f"no channel named like {cfg.gyro!r} in {person}'s files; set the offset by hand"), []
-        head = self._head(rid, person)
+        head = head_turning(self.config, rid, person)
         if head is None:
             return unaligned(f"no head angles on the video for {person}: run face.au or pose.kinematics, or set the offset by hand"), []
         info = load_info(self.config, rid, anchor)
@@ -243,22 +265,13 @@ class SignalAlignExtractor(Extractor):
                     message=f"{item.key} has its markers at other times than {anchor.key}, so it may not share its clock "
                             "(a cut copy?); set its offset by hand if so",
                 ))
-        return results, warnings
+        try:
+            from macaw.qc.figures import imu_figure
 
-    def _head(self, rid: str, person: str) -> tuple[np.ndarray, np.ndarray, str] | None:
-        features = layout_for(self.config, create=False).long_table_path(rid)
-        for step, angles, said in HEAD_SOURCES:
-            path = features / f"{step}.parquet"
-            if not path.is_file():
-                continue
-            rows = read_long_table(path, subject_id=person, scale=Scale.FRAME, features=list(angles))
-            speed = head_speed(rows, angles) if not rows.empty else None
-            if speed is None:
-                continue
-            period = float(np.median(np.diff(speed[0]))) if speed[0].size > 1 else 0.0
-            if np.isfinite(speed[1]).sum() * period >= MIN_HEAD_S:
-                return speed[0], speed[1], said
-        return None
+            imu_figure(head[:2], imu, results[items.index(anchor)], workspace / f"{person}{FIGURE_SUFFIX}")
+        except BackendNotAvailableError:   # without matplotlib the table and the page still show the match
+            pass
+        return results, warnings
 
     def _notes(self, rid: str, results: list[AlignResult]) -> list[QCWarning]:
         out = []
@@ -322,8 +335,8 @@ class SignalReviewGate(Gate):
         if not waiting:
             return None
         return (
-            f"{len(waiting)} signal file(s) to look at: {'; '.join(waiting)}. See them with `macaw signal-offsets -r {rid}`, "
-            f"then keep them with `macaw accept-signal-offset -r {rid}` or set one with `macaw set-signal-offset`"
+            f"{len(waiting)} signal file(s) to look at: {'; '.join(waiting)}. Look at them on the Signals page and keep or set "
+            f"each offset there, or with `macaw signal-offsets -r {rid}` and `macaw accept-signal-offset -r {rid}`"
         )
 
     def decided_by(self, recording: Recording) -> str | None:

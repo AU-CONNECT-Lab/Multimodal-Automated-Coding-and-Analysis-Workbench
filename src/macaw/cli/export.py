@@ -37,7 +37,9 @@ from macaw import people_tables
 app = typer.Typer()
 logger = get_logger("export")
 
-FORMATS = ("csv", "parquet", "eaf", "sequence", "skeleton", "video", "transcript", "turns", "voices", "judge", "warnings")
+FORMATS = (
+    "csv", "parquet", "eaf", "sequence", "skeleton", "video", "signals", "nirspipe", "transcript", "turns", "voices", "judge", "warnings",
+)
 SEQUENCES = ("speech", "floor", "annotations")
 
 
@@ -47,7 +49,8 @@ def export(
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     format_: str = typer.Option(
         "csv", "--format", "-f",
-        help="csv | parquet | eaf | sequence | skeleton | video, or a folder of tables: transcript (utterances, words, what was "
+        help="csv | parquet | eaf | sequence | skeleton | video | signals (each signal file's samples with the measures beside them) | "
+        "nirspipe (events and bad spans for nirspipe), or a folder of tables: transcript (utterances, words, what was "
         "left out and sentence embeddings), turns (turns, transitions and stretches of talk), voices (the voices heard on a shared microphone), judge "
         "(the language model's answers per unit) or warnings (the quality checks' warnings and moments to look at).",
     ),
@@ -91,6 +94,12 @@ def export(
         return
     if format_ == "video":
         _export_video(config, resolved, layout, recording_ids, hide, sound, out)
+        return
+    if format_ == "signals":
+        _export_signals(config, resolved, layout, recording_ids, out)
+        return
+    if format_ == "nirspipe":
+        _export_nirspipe(config, resolved, layout, recording_ids, out)
         return
     if format_ == "sequence":
         if of not in SEQUENCES:
@@ -325,6 +334,143 @@ def _export_video(config_path: Path, resolved, layout, recording_ids: list[str],
             "Heads are blurred only where a body was found. Watch each copy before sharing it; the _not_hidden.csv beside it "
             "lists when a named person had no blur, in or out of the picture, in seconds of the copy. Bodies, clothes and the room stay visible."
         )
+
+
+def _export_signals(config_path: Path, resolved, layout, recording_ids: list[str], out: Path | None) -> None:
+    """One table per signal file: its own samples, their time on the recording's clock, its channels, and every frame
+    measure averaged over the frames nearest each sample."""
+    from macaw.signals.export import measures_on_samples, ready_clock, recording_times, signal_table
+    from macaw.signals.read import load_info, load_samples
+    from macaw.signals.table import signal_files
+
+    directory = out or (layout.output_dir / "exports" / "signals")
+    units, written = resolved.project.units, []
+    for recording_id in recording_ids:
+        files = signal_files(resolved, recording_id)
+        if not files:
+            continue
+        own = resolve_config(config_path, recording_id=recording_id)
+        path = layout.long_table_path(recording_id)
+        rows = read_long_table(path, scale=Scale.FRAME) if path.exists() else concat_long_tables([])
+        specs = {recording_id: recording_specs(layout, recording_id)}
+        if not rows.empty:
+            rows = _in_project_units(config_path, units, layout, rows, directory, specs)
+        for item in files:
+            clock = ready_clock(own, recording_id, item)
+            try:
+                samples, info = load_samples(own, recording_id, item), load_info(own, recording_id, item)
+            except FileNotFoundError:
+                raise MacawError(f"{recording_id}: {item.key} has not been read yet; run signals.read") from None
+            table = signal_table(samples, clock, measures_on_samples(rows, recording_times(samples["time"], clock)))
+            target = directory / f"{recording_id}_{item.key}.csv"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            table.to_csv(target, index=False, encoding="utf-8")
+            write_dictionary(_signal_dictionary(table, rows, specs, units, info, clock), target)
+            written.append(target)
+            typer.echo(str(target))
+    if not written:
+        raise MacawError(f"No signal files for these recordings; list them in {resolved.project.signals}")
+
+
+def _signal_dictionary(table: pd.DataFrame, rows: pd.DataFrame, specs: dict, units: str, info: dict, clock: tuple[float, float]) -> list[dict]:
+    from macaw.project.dictionary import NEVER, PACKAGE
+    from macaw.signals.export import measure_column
+
+    offset, scale = clock
+    name = Path(info["file"]).name
+    kinds = {channel["name"]: channel["kind"] for channel in info["channels"]}
+    entries = [
+        {"column": "time", "meaning": f"The sample's time on {name}'s own clock.", "unit": "s", "missing": NEVER, "step": PACKAGE},
+        {"column": "recording_time", "meaning": (
+            f"The sample's time on the recording's clock: {offset:+.3f} s + time x {scale:.7f}, from the offset signals.align "
+            "found or a person set."), "unit": "s", "missing": NEVER, "step": PACKAGE},
+    ]
+    entries += [
+        {"column": column, "meaning": f"Channel {column} ({kinds[column]}) as {name} holds it.", "missing": "Empty where the file has no number.",
+         "step": "signals.read"}
+        for column in table.columns if column in kinds
+    ]
+    measured = [column for column in table.columns if column not in kinds and column not in ("time", "recording_time")]
+    if not measured:
+        return entries
+    features = rows[["subject_id", "subject_id_b", "feature"]].drop_duplicates()
+    named = {measure_column(row): str(row.feature) for row in features.itertuples(index=False)}
+    base = {entry["column"]: entry for entry in feature_dictionary(with_segment(rows), sorted(set(named.values())), specs, units)}
+    for column in measured:
+        entry = dict(base.get(named.get(column, column), {"meaning": None}))
+        entry.update({
+            "column": column, "who": column.rsplit(".", 1)[0] if "." in column else "recording", "rows": "one sample of the signal file",
+            "aggregation": "mean of the video frames nearer this sample than its neighbours, over every camera that measured it",
+            "missing": "Empty where no video frame falls within the sample's span, as before and after the video.",
+        })
+        entries.append(entry)
+    return entries
+
+
+def _export_nirspipe(config_path: Path, resolved, layout, recording_ids: list[str], out: Path | None) -> None:
+    """An _events.tsv per run on its file's own clock from what signals.events names, as nirspipe --events-path reads them,
+    and a --bad-spans table of the marks signals.bad_marks names."""
+    from macaw.project.segments import segments_of
+    from macaw.signals.export import (
+        bad_span_rows, bids_entities, event_spans, events_name, events_template, on_file, ready_clock, write_tsv,
+    )
+    from macaw.signals.marks import marks_of
+    from macaw.signals.read import load_info
+    from macaw.signals.table import signal_files
+
+    if not resolved.signals.events and not resolved.signals.bad_marks:
+        raise MacawError("signals.events and signals.bad_marks are both empty; list in the project's settings the tiers, marks "
+                         "or segments to write as events, and the marks to write as bad spans")
+    directory = out or (layout.output_dir / "exports" / "nirspipe")
+    events: dict[str, pd.DataFrame] = {}
+    bad, templates, outside, files_seen = [], set(), 0, 0
+    for recording_id in recording_ids:
+        files = signal_files(resolved, recording_id)
+        if not files:
+            continue
+        own = resolve_config(config_path, recording_id=recording_id)
+        coded = layout.annotations_path(recording_id)
+        marks = marks_of(own, recording_id)
+        annotations = read_annotations(coded) if coded.exists() else pd.DataFrame()
+        spans, absent = event_spans(own, recording_id, annotations, marks, segments_of(own, recording_id))
+        if absent:
+            logger.warning("%s: no tier, mark or segment named %s", recording_id, ", ".join(absent))
+        wanted = set(own.signals.bad_marks)
+        left_out = pd.DataFrame(
+            [(mark.start_s, mark.end_s, mark.name) for mark in marks if mark.name in wanted], columns=["start_s", "end_s", "trial_type"],
+        )
+        for item in files:
+            files_seen += 1
+            entities, clock = bids_entities(item.path), ready_clock(own, recording_id, item)
+            info = load_info(own, recording_id, item)
+            if own.signals.events:
+                found, cut = on_file(spans, clock, info["start_s"], info["end_s"])
+                outside += cut
+                name = events_name(entities)
+                if name in events and not events[name].equals(found):
+                    raise MacawError(
+                        f"{name}: {item.path.name} gets other events than another file of the same run; they do not share "
+                        "a clock (a cut copy, or offsets set apart by hand)"
+                    )
+                events[name] = found
+                templates.add(events_template(entities))
+            if not left_out.empty:
+                bad.append(bad_span_rows(on_file(left_out, clock, info["start_s"], info["end_s"])[0], entities))
+    if not files_seen:
+        raise MacawError(f"No signal files for these recordings; list them in {resolved.project.signals}")
+    for name, found in sorted(events.items()):
+        mixed = found.groupby("trial_type")["duration"].apply(lambda d: bool((d == 0).any() and (d > 0).any()))
+        if mixed.any():
+            logger.warning("%s: %s mix instants with spans; nirspipe fits one kind per condition", name, ", ".join(mixed[mixed].index))
+        typer.echo(str(write_tsv(found, directory / "events" / name)))
+    if outside:
+        logger.info("%d events fell outside their signal file and were left out", outside)
+    flags = [f"--events-path {directory / 'events' / template}" for template in sorted(templates)]
+    if resolved.signals.bad_marks:
+        table = pd.concat(bad, ignore_index=True).drop_duplicates() if bad else bad_span_rows(pd.DataFrame(columns=["onset", "duration"]), {})
+        typer.echo(str(write_tsv(table, directory / "bad_spans.tsv")))
+        flags.append(f"--bad-spans {directory / 'bad_spans.tsv'}")
+    typer.echo("for nirspipe: " + " ".join(flags))
 
 
 def _export_tables(resolved, layout, recording_ids: list[str], kind: str, out: Path | None) -> None:

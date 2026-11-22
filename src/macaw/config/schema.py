@@ -43,6 +43,8 @@ class ProjectSection(_Section):
     ratings: Path = Path("ratings.csv")
     # other signals recorded alongside, such as fNIRS, one file per row; no file, no signals
     signals: Path = added(default=Path("signals.csv"))
+    # spans a person marked on the recording's clock on the Signals page; no file, no marks
+    marks: Path = added(default=Path("marks.csv"))
     excluded_recordings: list[str] = Field(default_factory=list)
     n_subjects: int = 2
     roles: list[str] = Field(default_factory=lambda: ["subject_1", "subject_2"])
@@ -833,6 +835,10 @@ class SignalsSection(_Section):
     min_agreement: float = added(default=0.5, ge=0, le=1)
     segment_s: float = added(default=60.0, gt=0)
     review: Literal["always", "flagged", "skip"] = added(default="always")
+    # coding tiers (tier, or tier/coder when several coded it), marks and segments written as events for nirspipe
+    events: list[str] = added(default_factory=list)
+    # marks written as stretches nirspipe leaves out
+    bad_marks: list[str] = added(default_factory=list)
 
 
 class PipelineSection(_Section):

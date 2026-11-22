@@ -14,6 +14,7 @@ project:
   heights: heights.csv               # table of people's standing heights (recording, person, height) for 3D from one camera
   ratings: ratings.csv               # table of people's scores on the rating scales (recording, segment, scale, coder, score)
   signals: signals.csv               # table of other signals recorded alongside, such as fNIRS (recording, person, stage, file); needs pymacaw[signals]
+  marks: marks.csv                   # table of spans marked on the Signals page (recording, mark, start_s, end_s, note)
   n_subjects: 2                      # people per recording; tested with 2
   roles: [subject_1, subject_2]      # what each person is called, e.g. [parent, child]; one per person
   units: cm                          # cm | m | in, for every length entered or shown
@@ -182,6 +183,8 @@ signals:
   min_agreement: 0.5                 # 0-1; a blunt match is flagged when fewer stretches than this find the same offset
   segment_s: 60.0                    # s; stretch length for the cross-check and the drift fit
   review: always                     # always: a person looks at every match | flagged: only those in doubt | skip
+  events: []                         # tiers (tier, or tier/coder), marks and segments that macaw export -f nirspipe writes as events
+  bad_marks: []                      # marks that macaw export -f nirspipe writes as stretches for nirspipe to leave out
 
 motion:
   rois: {}                           # subject_id -> [x, y, w, h] in pixels of their own camera's picture as a player shows it, else of the first shared one; required by motion.mea

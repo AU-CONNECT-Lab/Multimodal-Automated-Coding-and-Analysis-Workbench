@@ -1,6 +1,6 @@
 # Using MACAW
 
-This page describes the standard procedure, from organising the recordings to exporting the data set. Optional analyses are described in the chapters that follow: {doc}`coding`, {doc}`review_aids`, {doc}`measures`, {doc}`three_d`, and {doc}`projects`.
+This page describes the standard procedure, from organising the recordings to exporting the data set. Optional analyses are described in the chapters that follow: {doc}`coding`, {doc}`review_aids`, {doc}`measures`, {doc}`three_d`, {doc}`signals`, and {doc}`projects`.
 
 ## Before you start
 
@@ -399,6 +399,9 @@ Run one of the following commands in the project folder. Each reports where it s
 : The warnings of the quality checks for every recording, each value a warning gives in a column of its own, and the moments the checks point to.
 
 Each of these five writes a folder of tables, each table across all recordings with a data dictionary beside it.
+
+`macaw export -f signals` and `macaw export -f nirspipe`
+: Signals recorded alongside, such as fNIRS, with the measures on each file's own samples, and events and stretches to leave out for nirspipe ({ref}`signals`).
 
 `macaw methods`
 : A Methods section describing the steps that were actually run, with references.

@@ -69,6 +69,28 @@
 {% endif %}
 {% endif %}
 
+{% if signals %}
+<h2 id="Signals">Signals</h2>
+<p class="desc">Each signal file's start on the recording's clock. A person's files share the clock of the one whose IMU was matched to the head on the video; a file waiting holds the run back at signals.review until a person keeps it or sets it on the Signals page.</p>
+<table class="flat">
+  <thead><tr><th>File</th><th></th><th>Found</th><th>Status</th></tr></thead>
+  <tbody>
+  {%- for row in signals %}
+  <tr><td>{{ row.target }}</td><td>{{ row.file }}</td><td>{{ row.found }}</td>
+    <td>{% if row.flag %}<span class="warn">{{ row.flag }}</span>{% else %}<span class="ok">ok</span>{% endif %}{% if row.accepted %} <span class="hint">kept by {{ row.accepted }}</span>{% endif %}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{% if signal_figures %}
+<details>
+  <summary>Signal figures <span class="hint">the correlation at each offset, the two turning speeds where they move most, and the offset of each stretch</span></summary>
+  <div class="details-body figures">
+    {%- for figure in signal_figures %}<a href="{{ figure.href }}"><img src="{{ figure.href }}" alt="{{ figure.name }}" loading="lazy"/></a>{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endif %}
+
 {% if cameras or tracks %}
 <h2 id="Camera">Who is on camera</h2>
 {% endif %}

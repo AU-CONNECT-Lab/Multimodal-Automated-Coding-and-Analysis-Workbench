@@ -181,6 +181,64 @@ def _segments(axes, result: AlignResult, cfg: AlignSection) -> None:
     _legend(axes)
 
 
+def imu_figure(head: tuple[np.ndarray, np.ndarray], imu: tuple[np.ndarray, np.ndarray], result: AlignResult, path: Path) -> Path:
+    """What a person needs to keep or reject a signal file's offset: the correlation at every offset, the head's and the
+    cap's turning speed where they move most at the one found, and whether each stretch finds the same."""
+    Figure = require_matplotlib()
+    from matplotlib import rc_context
+
+    with rc_context(EITHER_THEME):
+        return _imu_figure(Figure, head, imu, result, path)
+
+
+def _imu_figure(Figure, head, imu, result: AlignResult, path) -> Path:
+    from macaw.signals.imu import AGREEMENT_S, GRID_HZ, standardised, correlation_curve, on_grid
+
+    figure = Figure(figsize=(10, 9), layout="constrained")
+    curve, speeds, stretches = figure.subplots(3, 1)
+    figure.suptitle(f"{result.target}: offset {result.offset_s:+.2f} s, confidence {_format(result.confidence)}")
+    offsets, r = correlation_curve(*head, *imu)
+    curve.plot(offsets, r, lw=0.5, color=EITHER_INK, zorder=2)
+    curve.axvline(result.offset_s, color="C3", lw=1, alpha=0.6, zorder=1, label=f"found {result.offset_s:+.2f} s")
+    if result.metadata_offset_s is not None:
+        curve.axvline(result.metadata_offset_s, color="C0", lw=1, ls="--", alpha=0.6, zorder=1,
+                      label=f"start times say {result.metadata_offset_s:+.1f} s")
+    curve.set(xlabel="offset (s): recording time minus the file's own time", ylabel="correlation",
+              title="how well the cap's turning follows the head's at each offset")
+    _legend(curve)
+
+    start = float(np.min(head[0]))
+    count = int((float(np.max(head[0])) - start) * GRID_HZ) + 1
+    video = standardised(on_grid(head[0], head[1], start, count))
+    cap = standardised(on_grid(imu[0] + result.offset_s, imu[1], start, count))
+    width = min(int(60 * GRID_HZ), count)
+    scores = [np.nanvar(cap[i : i + width]) * np.isfinite(video[i : i + width]).mean() if np.isfinite(cap[i : i + width]).any() else -1
+              for i in range(0, max(count - width, 1), int(GRID_HZ))]
+    first = int(GRID_HZ) * int(np.argmax(scores))
+    t = start + (first + np.arange(width)) / GRID_HZ
+    speeds.plot(t, video[first : first + width], lw=0.8, color="C0", label="head on the video")
+    speeds.plot(t, cap[first : first + width], lw=0.8, color="C1", label="cap gyroscope, at the offset found")
+    speeds.set(xlabel="recording time (s)", ylabel="turning speed (z)", title="where they move most: the two should rise together")
+    _legend(speeds)
+
+    if result.segment_offsets:
+        at, found, confidence = np.array(result.segment_offsets, dtype=float).T
+        same = (confidence > 0) & (np.abs(found - result.offset_s) <= AGREEMENT_S)
+        stretches.axhspan(-AGREEMENT_S, AGREEMENT_S, color="C2", alpha=0.15, lw=0, label=f"within {AGREEMENT_S:g} s")
+        if same.any():
+            stretches.plot(at[same], (found - result.offset_s)[same], "o", ms=5, color="C0", label="same offset")
+        if not same.all():
+            stretches.plot(at[~same], (found - result.offset_s)[~same], "o", ms=5, color="C3", mfc="none", label="another offset")
+        stretches.set(xlabel="recording time (s)", ylabel="stretch offset less the found (s)", title="each stretch matched on its own")
+        _legend(stretches)
+    else:
+        _empty(stretches, "too short for stretches to be matched on their own")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=DPI)
+    return path
+
+
 def _legend(axes) -> None:
     # outside the panel, so it never covers a peak or a point
     axes.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, frameon=False)

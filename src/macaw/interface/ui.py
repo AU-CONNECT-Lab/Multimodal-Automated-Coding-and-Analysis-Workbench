@@ -100,7 +100,7 @@ def command_text(argv: list[str]) -> str:
 
 # the recording the one-recording pages show, picked in the header
 RECORDING, PREVIOUS, NEXT = "recording", "recording-previous", "recording-next"
-ONE_RECORDING_PAGES = ("setup", "review", "segments", "results")
+ONE_RECORDING_PAGES = ("setup", "review", "segments", "signals", "results")
 # the recording each of those pages was last drawn for
 SHOWN = {page: f"{page}-recording-shown" for page in ONE_RECORDING_PAGES}
 

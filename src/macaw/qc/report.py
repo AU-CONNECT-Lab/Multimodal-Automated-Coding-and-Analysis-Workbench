@@ -20,7 +20,7 @@ from macaw.media.align import describe_drift, drift_flagged, read_offset_table, 
 from macaw.project.layout import layout_for
 from macaw.project.recording import build_recording
 from macaw.project.review_notes import note_tags, read_notes
-from macaw.exceptions import BackendNotAvailableError
+from macaw.exceptions import BackendNotAvailableError, MacawError
 from macaw.qc.look import RIGHT, WRONG, read_checks, read_look, describe as describe_look, summary as look_summary, verdict as look_verdict
 from macaw.qc.transcript_check import describe as describe_check, read_check
 from macaw.qc.checks import RecordingResults, read_candidates
@@ -141,6 +141,31 @@ def _alignment(config: MacawConfig, layout, recording_id: str, page: Path) -> tu
             }
         )
     figures = sorted((layout.renders_dir(recording_id) / "align").glob("*.png"))
+    return rows, [{"name": figure.name, "href": _href(figure, page)} for figure in figures]
+
+
+def _signals(config: MacawConfig, recording_id: str, page: Path) -> tuple[list[dict], list[dict]]:
+    """Each signal file's offset on the recording's clock and how it was found, and each person's figure of the match."""
+    from macaw.signals.align import FIGURE_SUFFIX, computed_path, describe, needs_person, signal_offsets
+    from macaw.signals.table import signal_files
+
+    try:
+        files = signal_files(config, recording_id)
+    except MacawError:   # a table with a mistake is reported by the step that reads it
+        return [], []
+    if not files:
+        return [], []
+    found = signal_offsets(config, recording_id)
+    rows = []
+    for item in files:
+        result = found.get(item.key)
+        rows.append({
+            "target": item.key, "file": item.path.name, "method": result.method if result else "-",
+            "found": describe(result) if result else "signals.align has not run",
+            "flag": "not aligned yet" if result is None else needs_person(result, config.signals),
+            "accepted": result.accepted if result else None,
+        })
+    figures = sorted(computed_path(config, recording_id).parent.glob(f"*{FIGURE_SUFFIX}"))
     return rows, [{"name": figure.name, "href": _href(figure, page)} for figure in figures]
 
 
@@ -374,7 +399,7 @@ def _who_and_when(stamp: str | None) -> str:
 def _decisions(
     config: MacawConfig, layout, results: RecordingResults, recording_id: str,
     alignment: list[dict], cameras: list[dict], voices: list[dict], dropped: list[dict], frames: list[dict],
-    tracks: dict | None = None,
+    tracks: dict | None = None, signals: list[dict] | None = None,
 ) -> list[dict]:
     """What the software decided by itself for this recording, beside what a person decided, with where to check it."""
     from macaw.extractors.audio.content.diarization import AUTOMATIC, voice_owners
@@ -394,6 +419,15 @@ def _decisions(
             "what": "Offsets between files",
             "decided": f"{len(alignment)} file(s): {kept} kept by a person, {manual} set by hand, {automatic} automatic",
             "by": "person" if not automatic else "software", "href": "#Alignment",
+        })
+    if signals:
+        kept = sum(1 for row in signals if row["accepted"])
+        manual = sum(1 for row in signals if row["method"] == "manual")
+        automatic = len(signals) - kept - manual
+        rows.append({
+            "what": "Where each signal file sits",
+            "decided": f"{len(signals)} file(s): {kept} kept by a person, {manual} set by hand, {automatic} not looked at",
+            "by": "person" if not automatic else "software", "href": "#Signals",
         })
     video = _prepared_video(config, recording_id)
     if video is not None:
@@ -845,6 +879,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
 
     notes, versions = _feature_notes(layout, recording_id)
     alignment, alignment_figures = _alignment(config, layout, recording_id, page)
+    signals, signal_figures = _signals(config, recording_id, page)
     cameras = _cameras(layout, results, recording_id)
     tracks = _tracks(config, layout, results, recording, page)
     voices = _voices(config, layout, recording, page)
@@ -863,7 +898,9 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
         "alignment": alignment,
         "alignment_figures": alignment_figures,
         "alignment_clip": _alignment_clip(layout, recording_id, page),
-        "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames, tracks),
+        "signals": signals,
+        "signal_figures": signal_figures,
+        "decisions": _decisions(config, layout, results, recording_id, alignment, cameras, voices, dropped, frames, tracks, signals),
         "cameras": cameras,
         "tracks": tracks,
         "voices": voices,
@@ -880,6 +917,7 @@ def write_recording_report(config: MacawConfig, recording_id: str) -> tuple[Path
     }
     sections = [("Summary", "Summary"), ("Decisions", "Decisions")]
     sections += [("Alignment", "Alignment")] if alignment else []
+    sections += [("Signals", "Signals")] if signals else []
     sections += [("Camera", "On camera")] if cameras or tracks else []
     sections += [("Voices", "Voices")] if voices else []
     sections += [("Dropped", "Speech left out")] if dropped else []

@@ -39,7 +39,7 @@ def _read_frame(path: Path) -> pd.DataFrame:
     return frame[(frame != "").any(axis=1)].reset_index(drop=True)
 
 
-def _seconds(text: str, path: Path, line: int, column: str) -> float:
+def seconds_cell(text: str, path: Path, line: int, column: str) -> float:
     try:
         value = float(text)
     except ValueError:
@@ -60,8 +60,8 @@ def read_segments(config) -> dict[str, list[Segment]]:
         recording, name = row["recording"], row["segment"]
         if not recording or not name:
             raise ConfigError(f"{path} line {line}: a segment needs both a recording and a name")
-        start = _seconds(row["start_s"], path, line, "start_s")
-        end = _seconds(row["end_s"], path, line, "end_s")
+        start = seconds_cell(row["start_s"], path, line, "start_s")
+        end = seconds_cell(row["end_s"], path, line, "end_s")
         if start < 0 or end <= start:
             raise ConfigError(f"{path} line {line}: {name} has to end after it starts, at 0 s or later ({start:g} to {end:g} s)")
         if any(segment.name == name for segment in found.get(recording, [])):

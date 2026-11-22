@@ -49,6 +49,9 @@ LABELS = {
     "coding.layer_a": "Talk coding",
     "coding.judge": "Speech acts by the model",
     "segments.summary": "Segment summaries",
+    "signals.read": "Other signals",
+    "signals.align": "Signals on the clock",
+    "signals.review": "Check: where each signal file sits",
 }
 # a version under coding.judges or coding.ratings is named after its version
 PREFIXES = {"coding.judge.": "Speech acts, ", "coding.rate.": "Ratings, "}
@@ -66,6 +69,7 @@ SHORT = {
     "turns.structure": "Turns", "turns.transitions": "Gaps", "turns.entropy": "Balance",
     "prosody.frame": "Pitch", "prosody.voice_report": "Quality", "prosody.standard_sets": "Standard sets", "prosody.turn_pairs": "Across turns",
     "coding.layer_a": "Talk coding", "coding.judge": "Speech acts", "segments.summary": "Summaries",
+    "signals.read": "Signals", "signals.align": "On the clock", "signals.review": "Signal offsets",
 }
 SHORT_PREFIXES = {"coding.judge.": "Acts, ", "coding.rate.": "Ratings, "}
 

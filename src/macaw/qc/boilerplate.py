@@ -167,6 +167,9 @@ def describe(
     found = read_segments(config)
     if found and sections:
         sections.setdefault("Segments", []).append(_segments(found))
+    placed = signals_placed(config)
+    if placed["files"]:
+        sections.setdefault("Other signals", []).append(_signals(placed))
     if own and sections:
         sections.setdefault("Settings of individual recordings", []).append(own)
     if looked:
@@ -208,6 +211,54 @@ def _segments(found: dict) -> str:
         "separation of voices, the tracking of people and the decisions about who was who were made once over the whole "
         "recording and held in every segment."
     )
+
+
+def signals_placed(config) -> dict[str, int]:
+    """How the files of the signals table came onto the recordings' clocks, counted over the project."""
+    from macaw.exceptions import MacawError
+    from macaw.media.align import MANUAL, UNALIGNED
+    from macaw.signals.align import IMU, signal_offsets
+    from macaw.signals.table import read_signals
+
+    counts = {"files": 0, "imu": 0, "kept": 0, "manual": 0, "unaligned": 0}
+    try:
+        listed = read_signals(config)
+    except MacawError:   # a table with a mistake is reported by the step that reads it
+        return counts
+    for recording_id in sorted(set(listed) & set(_recordings(config))):
+        found = signal_offsets(config, recording_id)
+        for item in listed[recording_id]:
+            result = found.get(item.key)
+            counts["files"] += 1
+            if result is None or result.method == UNALIGNED:
+                counts["unaligned"] += 1
+            elif result.method == MANUAL:
+                counts["manual"] += 1
+            elif result.method == IMU:
+                counts["imu"] += 1
+                counts["kept"] += bool(result.accepted)
+    return counts
+
+
+def _signals(placed: dict[str, int]) -> str:
+    from macaw.signals.imu import GRID_HZ, SLOPE_S
+
+    text = (
+        f"Signals recorded alongside, such as fNIRS, were placed on each recording's clock and not otherwise processed. "
+        f"For {'each' if placed['imu'] == placed['files'] else _count(placed['imu'])} of the {_count(placed['files'])} signal files, "
+        "the turning speed of the participant's head on "
+        f"the video, the slope of the face's angles (or of the head's tilt from the body points) over {SLOPE_S:g} s, was "
+        f"cross-correlated at {GRID_HZ:g} Hz with the turning speed from the gyroscope worn on the head, and the file was "
+        f"placed at the correlation peak, refined between grid steps; the match was repeated in stretches of the recording "
+        f"to check that they found the same offset. A participant's other files took the same clock."
+    )
+    if placed["kept"]:
+        text += f" A person checked and kept {_count(placed['kept'])} of these offsets."
+    if placed["manual"]:
+        text += f" {_count(placed['manual']).capitalize()} offsets were set by hand on the video."
+    if placed["unaligned"]:
+        text += f" {_count(placed['unaligned']).capitalize()} files were not placed and were left out."
+    return text
 
 
 def _corrected(corrected: int, transcribed: int) -> str:

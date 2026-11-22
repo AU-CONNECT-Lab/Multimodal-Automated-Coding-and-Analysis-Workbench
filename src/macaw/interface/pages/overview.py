@@ -13,7 +13,7 @@ from macaw.config.loader import resolve_config
 from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.interface import cli_bridge, ui
-from macaw.interface.pages import results, review, run, setup
+from macaw.interface.pages import results, review, run, setup, signals
 from macaw.interface.step_labels import label, short
 from macaw.project.setup import setup_path
 from macaw.project.status import SPEECH_ACTS, check_states, people_waiting, task_grid
@@ -23,6 +23,8 @@ FLOW = "overview-flow"
 FLOW_DATA = "overview-flow-data"
 PATH = "/overview"
 REVIEW_PATH = f"/{review.LABEL.lower()}"
+# checks a person makes on another page than Review
+CHECK_PAGES = {"signals.review": signals}
 # the grid's key, in the order a project moves through
 LEGEND = ("current", "stale", "new", "held", "failed")
 # a check by a person has a round square of its own beside the steps
@@ -205,12 +207,18 @@ def workflow_data(found: Standing) -> dict:
             nodes.append({
                 "id": name, "label": column_label(name), "lane": lane, "depth": level[name], "check": is_check, "state": worst,
                 "issue": [stuck, "failed" if counts["failed"] else "waiting"] if stuck else None,
-                "href": REVIEW_PATH if is_check else f"{run.PATH}?{urlencode({'step': name})}",
+                "href": check_page(name)[0] if is_check else f"{run.PATH}?{urlencode({'step': name})}",
                 "tip": f"{column_label(name)} ({name})\n" + "\n".join(
                     f"{count} {(CHECK_TEXT if is_check else run.STATE_TEXT)[state]}" for state, count in counts.most_common()),
             })
     edges = [[need, name] for name, needs in direct_needs(columns, found.needs).items() for need in needs]
     return {"lanes": [lane for lane, _ in grouped], "nodes": nodes, "edges": edges}
+
+
+def check_page(step: str) -> tuple[str, str]:
+    """The path and name of the page a person makes this check on."""
+    page = CHECK_PAGES.get(step, review)
+    return f"/{page.LABEL.lower()}", page.LABEL
 
 
 def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
@@ -225,7 +233,8 @@ def cell_link(rid: str, step: str, state: str) -> tuple[str, str]:
 def _cell(found: Standing, rid: str, name: str):
     state = _state(found, rid, name)
     if _is_check(found, name):
-        href, page, text, kind = f"{REVIEW_PATH}?{urlencode({'recording': rid})}", review.LABEL, CHECK_TEXT[state], f"cell check {state}"
+        path, page = check_page(name)
+        href, text, kind = f"{path}?{urlencode({'recording': rid})}", CHECK_TEXT[state], f"cell check {state}"
     else:
         (href, page), text, kind = cell_link(rid, name, state), run.STATE_TEXT[state], f"cell {state}"
     return html.Td(dcc.Link(html.Span(className=kind), href=href), className="c",

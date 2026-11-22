@@ -1,7 +1,10 @@
-// The time strip under a player: play, the time, speed, zoom, and lanes for the analysed part, segments and listed moments.
+// The time strip under a player: play, the time, speed, zoom, and lanes for the analysed part, segments or marks, listed
+// moments, and lanes a page adds (carpets, lines and coded spans).
 (function () {
   const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
   const strips = new Map();
+  // each strip's zoom by its id, so one drawn again for new settings keeps where it was
+  const views = new Map();
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -26,17 +29,34 @@
     const video = cfg.video ? document.getElementById(cfg.video) : null;
     const length = Math.max(cfg.length || (video && video.duration) || 1, 0.1);
     const long = (cfg.offset || 0) + length * (cfg.scale || 1) >= 3600;
+    const noun = cfg.noun || 'segment', editWindow = cfg.editWindow === undefined ? cfg.edit : cfg.editWindow;
+    const kept = root.id && views.get(root.id);
     const S = {
-      own: cfg.start || 0, view: [0, length], segs: (cfg.segments || []).map((s) => ({ ...s })), sel: null,
-      win: cfg.window ? [...cfg.window] : null, oldWin: null, said: '', drag: null, ticks: [], n: 0, raf: 0, tell: 0,
+      own: cfg.start || 0, view: kept && kept[1] <= length ? [...kept] : [0, length], segs: (cfg.segments || []).map((s) => ({ ...s })), sel: null,
+      win: cfg.window ? [...cfg.window] : null, oldWin: null, said: '', drag: null, ticks: [], n: 0, raf: 0, tell: 0, drawn: '', last: null,
+    };
+    const extraLane = (lane, k) => {
+      const name = `<span class="strip-name" title="${esc(lane.title || lane.name)}">${esc(lane.name)}</span>`;
+      if (lane.kind === 'carpet') {
+        return `<div class="strip-lane">${name}<div class="strip-track strip-carpet" data-x="${k}" style="height:${clamp(lane.rows.length * 2, 24, 96)}px">`
+          + `<img alt="" draggable="false" src="${lane.image}"></div></div>`;
+      }
+      if (lane.kind === 'lines') {
+        const legend = lane.series.length > 1 || lane.scaled ? lane.series.map((s) => `<b style="color:${s.colour}">${esc(s.name)}</b>`).join(' ') : '';
+        const range = lane.scaled ? '' : `<span class="strip-range"><i>${+lane.high.toPrecision(3)}${esc(lane.unit || '')}</i><i>${+lane.low.toPrecision(3)}${esc(lane.unit || '')}</i></span>`;
+        return `<div class="strip-lane">${name}<div class="strip-track strip-lines" data-x="${k}"><svg preserveAspectRatio="none" viewBox="0 0 100 100">`
+          + lane.series.map((s) => `<path stroke="${s.colour}"/>`).join('') + `</svg>${range}<span class="strip-legend">${legend}</span></div></div>`;
+      }
+      return `<div class="strip-lane">${name}<div class="strip-track thin strip-bars" data-x="${k}"></div></div>`;
     };
     const rec = (own) => own * (cfg.scale || 1) + (cfg.offset || 0);
     const ownOf = (t) => (t - (cfg.offset || 0)) / (cfg.scale || 1);
     const lanes = [
       `<div class="strip-lane"><span></span><div class="strip-ruler"><b class="strip-hover"></b></div></div>`,
       `<div class="strip-lane"><span class="strip-name">Analysed</span><div class="strip-track thin" data-lane="win"></div></div>`,
-      cfg.edit ? `<div class="strip-lane"><span class="strip-name">Segments</span><div class="strip-track" data-lane="segs"><svg class="strip-wave" preserveAspectRatio="none"><path/></svg></div></div>` : '',
+      cfg.edit ? `<div class="strip-lane"><span class="strip-name">${esc(cfg.editName || 'Segments')}</span><div class="strip-track" data-lane="segs"><svg class="strip-wave" preserveAspectRatio="none"><path/></svg></div></div>` : '',
       cfg.ticks ? `<div class="strip-lane strip-ticks-lane" hidden><span class="strip-name">On this page</span><div class="strip-track thin" data-lane="ticks"></div></div>` : '',
+      ...(cfg.lanes || []).map(extraLane),
     ];
     root.innerHTML = `
       <div class="strip-bar">
@@ -54,6 +74,7 @@
     const ruler = $('.strip-ruler'), hover = $('.strip-hover'), head = $('.strip-head'), timeBox = $('.strip-time');
     const winTrack = $('[data-lane=win]'), segTrack = $('[data-lane=segs]'), tickTrack = $('[data-lane=ticks]');
     const chosen = $('.strip-chosen'), lanesBox = $('.strip-lanes');
+    const extraTracks = [...root.querySelectorAll('[data-x]')];
 
     const span = () => S.view[1] - S.view[0];
     const pct = (own) => `${((own - S.view[0]) / span()) * 100}%`;
@@ -138,7 +159,7 @@
       const [a, b] = S.win;
       winTrack.innerHTML = `<i class="strip-out" style="left:0;width:${pct(a)}"></i><i class="strip-out" style="left:${pct(b)};right:0"></i>`
         + `<i class="strip-window" style="left:${pct(a)};width:${width(a, b)}"></i>`
-        + (cfg.edit ? `<i class="strip-handle" data-h="0" style="left:${pct(a)}"></i><i class="strip-handle" data-h="1" style="left:${pct(b)}"></i>` : '');
+        + (editWindow ? `<i class="strip-handle" data-h="0" style="left:${pct(a)}"></i><i class="strip-handle" data-h="1" style="left:${pct(b)}"></i>` : '');
     }
 
     function drawSegments() {
@@ -157,18 +178,53 @@
         .map(([t, what]) => `<i class="strip-tick" style="left:${pct(t)}" data-t="${t}" title="${esc(clock(rec(t), long, 1))}: ${esc(what)}"></i>`).join('');
     }
 
+    function drawExtra() {
+      const key = `${S.view[0]},${S.view[1]},${ruler.clientWidth}`;
+      if (key === S.drawn) return;
+      S.drawn = key;
+      extraTracks.forEach((track) => {
+        const lane = cfg.lanes[+track.dataset.x];
+        if (lane.kind === 'carpet') {
+          const img = track.firstElementChild;
+          img.style.left = pct(0);
+          img.style.width = width(0, length);
+        } else if (lane.kind === 'lines') {
+          const size = lane.series[0].values.length, low = lane.low, high = lane.high;
+          const first = Math.max(0, Math.floor(S.view[0] / lane.step) - 1), last = Math.min(size - 1, Math.ceil(S.view[1] / lane.step) + 1);
+          track.querySelectorAll('path').forEach((path, i) => {
+            const values = lane.series[i].values;
+            let d = '', pen = false;
+            for (let j = first; j <= last; j++) {
+              const v = values[j];
+              if (v === null) { pen = false; continue; }
+              const x = (((j + 0.5) * lane.step - S.view[0]) / span()) * 100;
+              const y = 96 - ((clamp(v, low, high) - low) / (high - low)) * 92;
+              d += `${pen ? 'L' : 'M'}${x.toFixed(3)} ${y.toFixed(2)}`;
+              pen = true;
+            }
+            path.setAttribute('d', d);
+          });
+        } else {
+          track.innerHTML = lane.spans.filter((b) => b.b >= S.view[0] && b.a <= S.view[1]).map((b) =>
+            `<i class="strip-code" data-t="${b.a}" style="left:${pct(b.a)};width:${width(b.a, b.b)}" title="${esc(b.label)}: ${clock(rec(b.a), long, 1)} to ${clock(rec(b.b), long, 1)}">${esc(b.label)}</i>`).join('');
+        }
+      });
+    }
+
     function drawChosen() {
       if (!chosen || (document.activeElement && chosen.contains(document.activeElement))) return;
       const s = S.sel;
       if (!s) {
-        chosen.innerHTML = `<span class="strip-said">${esc(S.said || 'Drag on an empty stretch to make a segment.')}</span>`
+        chosen.innerHTML = `<span class="strip-said">${esc(S.said || `Drag on an empty stretch to make a ${noun}.`)}</span>`
           + (S.oldWin ? ' <button type="button" class="link" data-act="undo-window">Undo</button>' : '');
         return;
       }
       const box = (label, key, value, type) => `<label class="field"><span class="field-label">${label}</span><input data-k="${key}" value="${esc(value)}"${type ? ` type="${type}" step="0.01" min="0"` : ''}></label>`;
+      const said = S.said || (cfg.notes ? '' : s.done ? 'summarised' : 'summarised after the next run');
       chosen.innerHTML = `${box('Name', 'name', s.name)}${box('From (s)', 'a', s.a.toFixed(2), 'number')}<button type="button" class="button small" data-act="a">Start here</button>`
         + `${box('To (s)', 'b', s.b.toFixed(2), 'number')}<button type="button" class="button small" data-act="b">End here</button>`
-        + `<span class="strip-said">${esc(S.said || (s.done ? 'summarised' : 'summarised after the next run'))}</span>`
+        + (cfg.notes ? box('Note', 'note', s.note || '') : '')
+        + `<span class="strip-said">${esc(said)}</span>`
         + `<button type="button" class="button small" data-act="play">Play it</button><button type="button" class="button small" data-act="remove">Remove</button>`;
     }
 
@@ -184,7 +240,8 @@
       const x = ((t - S.view[0]) / span()) * r.width;
       head.style.left = `${r.left - box.left + x}px`;
       head.hidden = x < 0 || x > r.width;
-      drawRuler(); drawWindow(); drawSegments(); drawTicks(); drawWave(); drawChosen();
+      drawRuler(); drawWindow(); drawSegments(); drawTicks(); drawWave(); drawExtra(); drawChosen();
+      if (root.id) views.set(root.id, [...S.view]);
     }
 
     function loop() {
@@ -199,6 +256,10 @@
       S.n += 1;
       send(cfg.editStore, { ...op, n: S.n });
     }
+
+    // what a person changed and what it was before, so a mark among several of one name is found again
+    const setOp = (s, was) => ({ op: 'set', name: s.name, old: was ? was.name : null, start: s.a, end: s.b, note: s.note || '', was });
+    const before = (s) => ({ name: s.name, a: s.a, b: s.b, note: s.note || '' });
 
     function readTicks() {
       if (!cfg.ticks) return;
@@ -255,7 +316,13 @@
 
     const move = (e) => {
       const t = ownAt(e.clientX);
-      hover.textContent = clock(rec(t), long, 1);
+      const track = e.currentTarget, lane = track.dataset && track.dataset.x !== undefined ? cfg.lanes[+track.dataset.x] : null;
+      let row = '';
+      if (lane && lane.kind === 'carpet') {
+        const r = track.getBoundingClientRect();
+        row = lane.rows[clamp(Math.floor(((e.clientY - r.top) / r.height) * lane.rows.length), 0, lane.rows.length - 1)];
+      }
+      hover.textContent = clock(rec(t), long, 1) + (row ? ` · ${row}` : '');
       hover.style.left = pct(t);
       hover.style.opacity = 1;
       const d = S.drag;
@@ -280,11 +347,11 @@
       if (d.scrub) { if (!video || !video.readyState) tell(); }
       else if (d.win !== undefined && d.moved) { save({ op: 'window', start: S.win[0], end: S.win[1] }); }
       else if (d.s && d.fresh && d.s.b - d.s.a < 0.5) { S.segs.splice(S.segs.indexOf(d.s), 1); S.sel = null; }
-      else if (d.s && d.moved) { S.said = 'saving'; save({ op: 'set', name: d.s.name, old: d.fresh ? null : d.s.name, start: d.s.a, end: d.s.b }); }
+      else if (d.s && d.moved) { S.said = 'saving'; save(setOp(d.s, d.fresh ? null : d.was)); }
       draw();
     };
     ruler.addEventListener('pointerdown', (e) => { S.drag = { scrub: true }; ruler.setPointerCapture(e.pointerId); move(e); });
-    if (cfg.edit) {
+    if (editWindow) {
       winTrack.addEventListener('pointerdown', (e) => {
         const h = e.target.closest('.strip-handle');
         if (!h) return;
@@ -292,18 +359,22 @@
         S.drag = { win: +h.dataset.h };
         winTrack.setPointerCapture(e.pointerId);
       });
+    }
+    if (cfg.edit) {
       segTrack.addEventListener('pointerdown', (e) => {
         const t = ownAt(e.clientX), block = e.target.closest('.strip-block');
         S.said = '';
         if (block) {
           const s = S.segs[+block.dataset.i];
           S.sel = s;
+          S.last = s.name;
           const part = e.target.classList.contains('l') ? 'a' : e.target.classList.contains('r') ? 'b' : 'move';
-          S.drag = { s, part, t0: t, a0: s.a, b0: s.b };
+          S.drag = { s, part, t0: t, a0: s.a, b0: s.b, was: before(s) };
         } else {
           let k = S.segs.length + 1;
-          while (S.segs.some((s) => s.name === `segment_${k}`)) k += 1;
-          const s = { name: `segment_${k}`, a: snap(t), b: snap(t), done: false };
+          while (S.segs.some((s) => s.name === `${noun}_${k}`)) k += 1;
+          // marks may share a name, so a new one takes the last one's, to mark the same thing again quickly
+          const s = { name: cfg.notes && S.last ? S.last : `${noun}_${k}`, a: snap(t), b: snap(t), done: false, note: '' };
           S.segs.push(s); S.sel = s;
           S.drag = { s, part: 'b', t0: t, a0: s.a, b0: s.b, fresh: true };
         }
@@ -313,25 +384,36 @@
       chosen.addEventListener('change', (e) => {
         const s = S.sel, key = e.target.dataset.k;
         if (!s || !key) return;
-        const old = s.name;
-        if (key === 'name') s.name = e.target.value.trim() || old;
+        const was = before(s);
+        if (key === 'name') s.name = e.target.value.trim() || was.name;
+        else if (key === 'note') s.note = e.target.value.trim();
         else s[key] = parseFloat(e.target.value);
+        S.last = s.name;
         e.target.blur();
         S.said = 'saving';
-        save({ op: 'set', name: s.name, old, start: s.a, end: s.b });
+        save(setOp(s, was));
         draw();
       });
       chosen.addEventListener('click', (e) => {
         const act = e.target.dataset.act, s = S.sel;
         if (act === 'undo-window' && S.oldWin) { S.win = S.oldWin; S.oldWin = null; save({ op: 'window', start: S.win[0], end: S.win[1] }); }
         if (!s) return draw();
-        if (act === 'a' || act === 'b') { s[act] = Math.round(now() * 100) / 100; S.said = 'saving'; save({ op: 'set', name: s.name, old: s.name, start: s.a, end: s.b }); }
+        if (act === 'a' || act === 'b') { const was = before(s); s[act] = Math.round(now() * 100) / 100; S.said = 'saving'; save(setOp(s, was)); }
         if (act === 'play') seek(s.a, true);
-        if (act === 'remove') { S.segs.splice(S.segs.indexOf(s), 1); S.sel = null; save({ op: 'remove', name: s.name }); }
+        if (act === 'remove') { S.segs.splice(S.segs.indexOf(s), 1); S.sel = null; save({ op: 'remove', name: s.name, start: s.a, end: s.b }); }
         draw();
       });
     }
-    for (const track of [ruler, winTrack, segTrack, tickTrack].filter(Boolean)) {
+    for (const track of extraTracks) {
+      track.addEventListener('pointerdown', (e) => {
+        const bar = e.target.closest('.strip-code');
+        if (bar) { seek(+bar.dataset.t, true); return; }
+        S.drag = { scrub: true };
+        track.setPointerCapture(e.pointerId);
+        move(e);
+      });
+    }
+    for (const track of [ruler, winTrack, segTrack, tickTrack, ...extraTracks].filter(Boolean)) {
       track.addEventListener('pointermove', move);
       track.addEventListener('pointerup', up);
       track.addEventListener('pointerleave', () => { hover.style.opacity = 0; });
@@ -343,9 +425,9 @@
       seekRecording: (t, play) => seek(ownOf(t), play),
       random: () => { const [a, b] = S.win || [0, length]; seek(a + Math.random() * (b - a)); },
       shown: (data) => {
-        const name = S.sel && S.sel.name;
+        const was = S.sel && before(S.sel);
         S.segs = (data.segments || []).map((s) => ({ ...s }));
-        S.sel = S.segs.find((s) => s.name === name) || null;
+        S.sel = was ? S.segs.find((s) => s.name === was.name && (!cfg.notes || Math.abs(s.a - was.a) < 0.01)) || null : null;
         if (data.window !== undefined) S.win = data.window;
         S.said = data.said || '';
         if (data.op !== 'window') S.oldWin = null;

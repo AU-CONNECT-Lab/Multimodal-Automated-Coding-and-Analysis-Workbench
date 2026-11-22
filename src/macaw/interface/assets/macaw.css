@@ -644,6 +644,15 @@ table.standing .cell { width: var(--cell); height: var(--cell); border-radius: c
 .strip-block .grip.l { left: 0; } .strip-block .grip.r { right: 0; }
 .strip-tick { position: absolute; top: 50%; width: 9px; height: 9px; transform: translate(-50%, -50%) rotate(45deg); background: var(--state-waiting); border-radius: 2px; cursor: pointer; }
 .strip-tick:hover { outline: 2px solid var(--ink); }
+.strip-carpet, .strip-lines { cursor: crosshair; }
+.strip-carpet img { position: absolute; top: 0; height: 100%; image-rendering: pixelated; pointer-events: none; }
+.strip-lines svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.strip-lines path { fill: none; stroke-width: 1.3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.strip-range { position: absolute; left: 0.3rem; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+.strip-range i, .strip-legend { font-style: normal; font-size: 0.68rem; color: var(--muted); line-height: 1.1; }
+.strip-legend { position: absolute; right: 0.4rem; top: 0.1rem; pointer-events: none; }
+.strip-legend b { font-weight: 600; margin-left: 0.4rem; }
+.strip-code { position: absolute; top: 2px; bottom: 2px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); font-size: 0.7rem; font-style: normal; line-height: 1; padding: 0 0.3rem; display: flex; align-items: center; overflow: hidden; white-space: nowrap; cursor: pointer; }
 .strip-head { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--state-failed); pointer-events: none; z-index: 3; }
 .strip-chosen { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.6rem; margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid var(--rule); min-height: 2.6rem; }
 .strip-chosen .field { width: 9rem; padding-top: 0.25rem; padding-bottom: 0.2rem; }
