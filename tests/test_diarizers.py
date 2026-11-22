@@ -97,6 +97,16 @@ class TestWhichDiarizer:
         monkeypatch.setattr(diarization_module, "nemotron_missing", lambda: "No Nemotron here.")
         assert extractor.extra_key(None) == "pyannote"
 
+    def test_the_features_name_the_diarizer_that_ran(self, monkeypatch):
+        from macaw.extractors.audio.content.diarization import DiarizationExtractor
+
+        values = {"n_voices_found": 2.0}
+        spec = DiarizationExtractor(self.config())._specs(values)[0]
+        assert spec.backend == "nemotron" and spec.params["model"] == "nvidia/Nemotron-3-Diarization" and spec.backend_version
+        monkeypatch.setattr(diarization_module, "nemotron_missing", lambda: "No Nemotron here.")
+        spec = DiarizationExtractor(self.config())._specs(values)[0]
+        assert spec.backend == "pyannote" and spec.params["diarizer"] == "pyannote"
+
 
 class TestNemotronAsksOnce:
     def test_the_further_voice_trial_reuses_the_first_pass(self, tmp_path):

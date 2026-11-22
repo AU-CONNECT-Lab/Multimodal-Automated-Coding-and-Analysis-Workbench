@@ -608,6 +608,7 @@ class DiarizationExtractor(Extractor):
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
                 extractor=self.name, extractor_version=self.version, params=params, missing=_MISSING[name], validation="synthetic",
+                backend=used.name if used else None, backend_version=str(used.version) if used else None,
             )
             for name, (description, unit) in _DIARIZATION_SPECS.items()
             if name in values
