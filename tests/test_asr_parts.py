@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import wave
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 from macaw.extractors.audio.content.asr import (
     ASRExtractor,
     BLEED_SCHEMA,
+    FasterWhisperBackend,
     TRANSCRIPT_SCHEMA,
     WORD_SCHEMA,
     _concat,
@@ -105,6 +107,26 @@ class TestOtherRecognisers:
         out = _concat([from_csv], TRANSCRIPT_SCHEMA, drop={"n_words"})
         assert list(out.columns) == [name for name in TRANSCRIPT_SCHEMA if name != "n_words"]
         assert out[["avg_logprob", "no_speech_prob"]].isna().all().all()
+
+    def test_faster_whisper_is_handed_samples_not_a_path(self, tmp_path):
+        """Its own decoder fails on newer PyAV, so the track is read here."""
+        path = tmp_path / "track.wav"
+        with wave.open(str(path), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(16000)
+            out.writeframes(np.zeros(16000, dtype="<i2").tobytes())
+        seen = {}
+
+        class Model:
+            def transcribe(self, audio, **kwargs):
+                seen["audio"] = audio
+                return iter([]), SimpleNamespace(language="en")
+
+        backend = FasterWhisperBackend("tiny", device="cpu")
+        backend._model = Model()
+        backend.transcribe(path, language="en", word_timestamps=True)
+        assert isinstance(seen["audio"], np.ndarray) and seen["audio"].dtype == np.float32 and seen["audio"].size == 16000
 
 
 class TestLongTableRows:

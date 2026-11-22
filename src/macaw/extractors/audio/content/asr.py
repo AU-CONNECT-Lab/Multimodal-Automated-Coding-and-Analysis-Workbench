@@ -336,10 +336,12 @@ class FasterWhisperBackend(ASRBackend):
     def transcribe(
         self, audio_path: Path, *, language: str | None, word_timestamps: bool
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        # faster-whisper's own decoder breaks on PyAV releases newer than it was written for
+        samples, _ = load_audio(Path(audio_path), sample_rate=WHISPER_SAMPLE_RATE)
         # prepared tracks are padded to a common length, and Whisper invents text on long
         # silences, so the built-in VAD gate stays on
         segments, info = self._load().transcribe(
-            str(audio_path),
+            samples.astype(np.float32),
             language=language,
             word_timestamps=word_timestamps,
             vad_filter=True,
