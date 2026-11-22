@@ -437,6 +437,8 @@ _MISSING = {
 
 # Qwen3-ASR reads speech in pieces of at most this length, as Whisper does
 _PIECE_S = 30.0
+_WHISPER_NAMES = frozenset({"tiny", "base", "small", "medium", "large", "large-v1", "large-v2", "large-v3", "large-v3-turbo", "turbo",
+                            "tiny.en", "base.en", "small.en", "medium.en", "distil-large-v2", "distil-large-v3"})
 # pieces recognised and aligned at once, fixed because the batch nudges the words recognised
 _QWEN_BATCH = 16
 _SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
@@ -489,6 +491,11 @@ class Qwen3ASRBackend(ASRBackend):
         return distribution_version("transformers")
 
     def check_available(self) -> None:
+        if self.model in _WHISPER_NAMES:
+            raise BackendNotAvailableError(
+                f"text.asr_model {self.model} is a Whisper model; with text.asr_backend qwen3 leave text.asr_model empty, or name a "
+                "Qwen3-ASR model such as Qwen/Qwen3-ASR-0.6B-hf"
+            )
         try:
             import faster_whisper  # noqa: F401
             import torch  # noqa: F401

@@ -89,3 +89,15 @@ class TestWhichModel:
 
     def test_a_named_model_is_used(self):
         assert self.backend(asr_model="Qwen/Qwen3-ASR-0.6B-hf").model == "Qwen/Qwen3-ASR-0.6B-hf"
+
+
+def test_a_whisper_model_name_is_refused_with_what_to_write():
+    from macaw.exceptions import BackendNotAvailableError
+
+    with pytest.raises(BackendNotAvailableError, match="large-v3 is a Whisper model; with text.asr_backend qwen3 leave text.asr_model empty"):
+        Qwen3ASRBackend("large-v3").check_available()
+
+
+def test_the_old_shared_microphone_value_says_what_to_write():
+    with pytest.raises(ValueError, match="write text.diarization: shared, and text.diarizer: pyannote"):
+        TextSection(diarization="pyannote")

@@ -324,6 +324,16 @@ class TextSection(_Section):
     # name -> a file of words or phrases; each gives the sentences holding one per minute
     word_lists: dict[str, Path] = Field(default_factory=dict)
 
+    @field_validator("diarization")
+    @classmethod
+    def _microphones(cls, value: str) -> str:
+        if value in ("pyannote", "nemotron"):
+            raise ValueError(
+                f"text.diarization says how the voices reach the microphones (per_track, shared, none); for one shared microphone "
+                f"write text.diarization: shared, and text.diarizer: {value} for the model that tells the voices apart"
+            )
+        return value
+
     @field_validator("word_lists")
     @classmethod
     def _list_names(cls, value: dict[str, Path]) -> dict[str, Path]:
