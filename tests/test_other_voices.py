@@ -37,7 +37,7 @@ def project(tmp_path):
     config = tmp_path / "project.yaml"
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
-    data.setdefault("text", {}).update(diarization="pyannote", extra_voices=1)
+    data.setdefault("text", {}).update(diarization="shared", extra_voices=1)
     config.write_text(yaml.safe_dump(data), encoding="utf-8")
     return SimpleNamespace(config=config, resolved=lambda *overrides: resolve_config(config, cli_overrides=list(overrides)))
 
@@ -119,7 +119,7 @@ def test_the_peoples_measures_never_see_other(project, make_transcript):
 
 def test_other_is_a_state_of_its_own_in_transitions_and_entropy(make_turns, make_recording, make_prep):
     cfg = TurnsSection()
-    config = SimpleNamespace(turns=cfg, text=TextSection(diarization="pyannote", extra_voices=1))
+    config = SimpleNamespace(turns=cfg, text=TextSection(diarization="shared", extra_voices=1))
     turns = make_turns([(who, start, end) for who, start, end, _ in TRANSCRIPT])
     transitions = classify_overlaps(detect_transitions(turns), interruption_s=cfg.interruption_overlap_s)
     transitions["recording_id"] = "sub-003_ses-12mo"

@@ -14,7 +14,7 @@ from macaw.turns.segmentation import mark_within, talk_to_turns, utterances_to_t
 from macaw.turns.talk import said_units, talk_spans, voice_gaps
 from macaw.turns.transitions import transitions_from
 
-SHARED = SimpleNamespace(text=TextSection(diarization="pyannote"), turns=TurnsSection())
+SHARED = SimpleNamespace(text=TextSection(diarization="shared"), turns=TurnsSection())
 
 
 def words(rows):

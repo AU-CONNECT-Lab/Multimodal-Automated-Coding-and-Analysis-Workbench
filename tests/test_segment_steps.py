@@ -101,7 +101,7 @@ def _annotation_schema():
 
 
 def test_voices_and_their_overlap_are_counted_inside(project):
-    p = project("text.diarization=pyannote")
+    p = project("text.diarization=shared")
     turns = pd.DataFrame({
         "track": "shared_room.wav", "label": ["S0", "S1", "S0", "S1"],
         "t_start": [0.0, 5.0, 0.0, 3.5], "t_end": [3.5, 9.0, 4.0, 9.0], "exclusive": [True, True, False, False],

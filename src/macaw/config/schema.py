@@ -309,7 +309,8 @@ class TextSection(_Section):
     device: str = "auto"
     compute_type: str = "float16"
     diarization: str = "per_track"
-    diarization_model: str = "pyannote/speaker-diarization-community-1"
+    diarizer: str = "nemotron"
+    diarization_model: str | None = None
     extra_voices: int = Field(default=0, ge=0)
     voice_review: Literal["always", "flagged", "skip"] = "always"
     crosstalk_margin_db: float = 6.0

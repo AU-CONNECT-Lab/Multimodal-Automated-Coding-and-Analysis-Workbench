@@ -143,16 +143,27 @@ def test_a_shared_microphone_is_described_only_when_one_was_diarized():
         spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="pyannote/speaker-diarization-community-1"),
         spec("text.asr", "n_words", "whisperx", "3.8"),
     )
-    text, used = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    text, used = render(describe(shared, config(text={"diarization": "shared"})), load_references())
     assert "pyannote.audio 4.0.7 (Bredin, 2023)" in text and "community-1 pipeline" in text
     assert "The shared microphone was transcribed" in text and "cross-talk" not in text
     assert "bredin2023" in used
     assert "set to the number of participants" in text
 
 
+def test_nemotron_is_described_as_counting_the_voices_itself():
+    shared = manifest(spec("text.diarize", "n_voices_found", "nemotron", "5.21.0", model="nvidia/Nemotron-3-Diarization"))
+    text, used = render(describe(shared, config(text={"diarization": "shared"})), load_references())
+    assert "Nemotron 3 Diarization (Medennikov et al., 2026)" in text and "transformers 5.21.0" in text
+    assert "counts the voices itself; as many voices as there were participants were kept" in text
+    assert "medennikov2026" in used and "bredin2023" not in used
+    extra = manifest(spec("text.diarize", "n_voices_found", "nemotron", "5.21.0", model="m", extra_voices=1))
+    text, _ = render(describe(extra, config(text={"diarization": "shared", "extra_voices": 1})), load_references())
+    assert "and up to 1 more were kept" in text and "one further speaker" in text
+
+
 def test_voices_besides_the_participants_are_described_as_one_further_speaker():
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m", extra_voices=1))
-    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    text, _ = render(describe(shared, config(text={"diarization": "shared"})), load_references())
     assert "allowing up to 1 voice besides the participants'" in text and "one further speaker" in text
     assert "set to the number of participants" not in text
 
@@ -186,7 +197,7 @@ def test_coding_only_some_people_and_other_voices_as_context_is_said():
         "coding.judge", "n_units_judged", "ollama", "qwen3:14b@abc", codebook="acts", codebook_unit="utterance",
         provider="ollama", n_samples=1, context_units=5, coded_roles=["child"],
     ))
-    shared = config(text={"diarization": "pyannote", "extra_voices": 1})
+    shared = config(text={"diarization": "shared", "extra_voices": 1})
     text, _ = render(describe(judged, shared), load_references())
     assert "Only the units of the child were coded" in text
     assert "Lines in other voices were shown in place as context" in text
@@ -278,13 +289,13 @@ def test_voice_hints_are_said_to_feed_the_suggestion_only_when_set():
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
     hinted = config(
         project={"name": "t", "raw_dir": "raw", "output_dir": "out", "roles": ["mother", "child"]},
-        text={"diarization": "pyannote"},
+        text={"diarization": "shared"},
         identity={"voice_hints": [{"says": "mommy,", "role": "child"}], "pitch_order": ["mother", "child"]},
     )
     text, _ = render(describe(shared, hinted), load_references())
     assert "phrases set for this study as marking a speaker's role and on the expected order" in text
     assert "at least 40 Hz" in text
-    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    text, _ = render(describe(shared, config(text={"diarization": "shared"})), load_references())
     assert "phrases set for this study" not in text
 
 
@@ -366,7 +377,7 @@ def test_scoring_the_faces_speaking_is_described_with_its_model_and_its_data():
 def test_voices_are_said_to_be_named_by_the_faces_speaking_where_that_ran(monkeypatch):
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
     monkeypatch.setattr(boilerplate, "_naming_signal", lambda config: "how much their face was the one speaking")
-    text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+    text, _ = render(describe(shared, config(text={"diarization": "shared"})), load_references())
     assert "own microphones or how much their face was the one speaking" in text and "mouth movement" not in text
 
 
@@ -376,7 +387,7 @@ def test_lines_changed_without_listening_are_described_by_what_they_went_on(monk
     shared = manifest(spec("text.diarize", "n_voices_found", "pyannote", "4.0.7", model="m"))
     for kinds, said, unsaid in (({FACES}, "from the faces, lines in which", "from mouth movement"), ({MOUTH, FACES}, "from mouth movement", "x" * 9)):
         monkeypatch.setattr(boilerplate, "lines_reassigned", lambda config, kinds=kinds: (1, 5, 3, kinds))
-        text, _ = render(describe(shared, config(text={"diarization": "pyannote"})), load_references())
+        text, _ = render(describe(shared, config(text={"diarization": "shared"})), load_references())
         assert "3 of them without listening" in text and said in text and unsaid not in text
 
 
@@ -431,7 +442,7 @@ def test_the_input_size_is_named_only_for_a_backend_that_takes_it(backend, sized
 
 
 def test_the_preparation_says_how_sound_was_kept_and_aligns_only_several_devices():
-    shared = boilerplate._prep(config(text={"diarization": "pyannote"}), None, [])
+    shared = boilerplate._prep(config(text={"diarization": "shared"}), None, [])
     assert "the shared microphone's sound" in shared and "aligned" not in shared
     own = boilerplate._prep(config(setup={"name": "main", "microphones": {"a": {"hears": ["parent"]}, "b": {"hears": ["child"]}}}), None, [])
     assert "each participant's audio" in own and "Devices were aligned" in own

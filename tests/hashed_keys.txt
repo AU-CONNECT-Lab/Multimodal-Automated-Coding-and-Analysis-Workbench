@@ -262,6 +262,7 @@ TextSection.crosstalk_margin_db
 TextSection.device
 TextSection.diarization
 TextSection.diarization_model
+TextSection.diarizer
 TextSection.embedding_model
 TextSection.exclude_words
 TextSection.extra_voices

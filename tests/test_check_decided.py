@@ -36,7 +36,7 @@ def test_who_is_who_was_decided_by_a_click_or_left_to_the_software(tmp_path):
 
 
 def test_voices_named_by_the_suggestion_or_by_a_person(tmp_path, monkeypatch):
-    config = _config(tmp_path, text={"diarization": "pyannote"})
+    config = _config(tmp_path, text={"diarization": "shared"})
     monkeypatch.setattr(diarization, "read_voices", lambda config, rid: {"S0": {}})
     gate, path = SpeakerReviewGate(config), layout_for(config).voice_owners_path("r1")
     assert gate.decided_by(RECORDING) is None

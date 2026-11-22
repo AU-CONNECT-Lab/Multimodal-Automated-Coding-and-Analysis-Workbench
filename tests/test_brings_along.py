@@ -2,7 +2,7 @@ from macaw.config.schema import MacawConfig
 from macaw.execution.dag import build_dag
 
 
-def _config(diarization="pyannote", voice_review="flagged"):
+def _config(diarization="shared", voice_review="flagged"):
     return MacawConfig.model_validate({
         "project": {"name": "t", "raw_dir": "raw", "output_dir": "out", "n_subjects": 2, "roles": ["parent", "child"]},
         "text": {"diarization": diarization, "voice_review": voice_review},

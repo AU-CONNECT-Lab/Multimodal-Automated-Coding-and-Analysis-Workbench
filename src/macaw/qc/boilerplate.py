@@ -11,7 +11,7 @@ import yaml
 
 from macaw import __version__
 from macaw.extractors.audio.content.asr import CORRECTED_CHECK, ASRExtractor
-from macaw.extractors.audio.content.diarization import others_take_turns
+from macaw.extractors.audio.content.diarization import SHARED_MODE, others_take_turns
 from macaw.extractors.prep import PREP_SAMPLE_RATE
 from macaw.extractors.video.pose.kinematics import BODY_SIZE_QUANTILE
 from macaw.project.manifest import FeatureManifest, FeatureSpec
@@ -446,7 +446,7 @@ def _frame(config, spec, names) -> str:
 
 
 def _shared(config) -> bool:
-    return config.text.diarization == "pyannote"
+    return config.text.diarization == SHARED_MODE
 
 
 _OWN_WORDS = (
@@ -508,19 +508,31 @@ _ASR = {
 }
 
 
+_DIARIZER = {
+    "pyannote": "pyannote.audio {version} [bredin2023] using the {model} pipeline",
+    "nemotron": "Nemotron 3 Diarization [medennikov2026] ({model}, through transformers {version})",
+}
+
+
 def _diarize(config, spec, names) -> str:
     if "n_voices_found" not in names:
         return ""
     extra = spec.params.get("extra_voices", 0)
-    speakers = (
-        f"allowing up to {extra} voice{'s' if extra > 1 else ''} besides the participants'. Speech in any other voice "
-        "was transcribed as one further speaker, who took turns and was a state of its own in the turn-taking "
-        "measures, but was left out of the participants' language and voice measures. "
-        if extra else "with the number of speakers set to the number of participants. "
+    others = (
+        "Speech in any other voice was transcribed as one further speaker, who took turns and was a state of its own in "
+        "the turn-taking measures, but was left out of the participants' language and voice measures. "
     )
+    if spec.backend == "pyannote":
+        speakers = (
+            f"allowing up to {extra} voice{'s' if extra > 1 else ''} besides the participants'. " + others
+            if extra else "with the number of speakers set to the number of participants. "
+        )
+    else:
+        kept = f"as many voices as there were participants and up to {extra} more" if extra else "as many voices as there were participants"
+        speakers = f"which counts the voices itself; {kept} were kept, those that spoke longest. " + (others if extra else "")
     return (
-        f"The shared microphone was diarized with pyannote.audio {spec.backend_version} [bredin2023] using the "
-        f"{spec.params.get('model')} pipeline, " + speakers + _VOICE_NAMING[config.text.voice_review].format(faces=_naming_signal(config))
+        f"The shared microphone was diarized with {_backend(_DIARIZER, spec, model=spec.params.get('model'))}, "
+        + speakers + _VOICE_NAMING[config.text.voice_review].format(faces=_naming_signal(config))
         + _voice_hints(config)
         + ("" if extra else _further_voice(config)) + _mixed_voices(config)
     )
@@ -636,7 +648,7 @@ _VOICE_NAMING = {
 def _asr(config, spec, names) -> str:
     text_cfg = config.text
     language = f" in {text_cfg.language}" if text_cfg.language else ""
-    if text_cfg.diarization == "pyannote":
+    if text_cfg.diarization == SHARED_MODE:
         return (
             f"The shared microphone was transcribed{language} with {_backend(_ASR, spec, model=text_cfg.asr_model)}. "
             "Each word was given to the voice whose diarized turn it overlapped most, and consecutive words of one "

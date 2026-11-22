@@ -73,7 +73,7 @@ class TestSlurmValues:
 
 
 def test_steps_on_the_same_kind_of_node_share_a_job(project):
-    config = project.resolved("text.diarization=pyannote")
+    config = project.resolved("text.diarization=shared")
     dag = build_dag(config, ["turns.entropy", "prosody.frame"])
     steps = [name for name in dag.topological_order() if name not in dag.interactive_gates()]
     found = slurm.segments(config, project.hpc(), dag, steps)
@@ -88,7 +88,7 @@ def test_diarizing_asks_for_a_gpu_only_on_a_shared_microphone(project):
     from macaw.extractors.audio.content.diarization import DiarizationExtractor
 
     assert DiarizationExtractor.resources(project.resolved()) == "standard"
-    assert DiarizationExtractor.resources(project.resolved("text.diarization=pyannote")) == "gpu_standard"
+    assert DiarizationExtractor.resources(project.resolved("text.diarization=shared")) == "gpu_standard"
 
 
 def states_where(new: set[str], held: set[str] = frozenset()):
@@ -130,7 +130,7 @@ class TestScripts:
     def written(self, project, monkeypatch):
         monkeypatch.setattr(runner_module, "task_states", states_where({"003:prep.media", "004:prep.media", "004:coding.judge"}))
         hpc = project.hpc().model_copy(update={"llm_server": ["ollama serve > ollama.log 2>&1 &"]})
-        config = project.resolved("text.diarization=pyannote", "coding.layers=[A, B]", "coding.llm.model=qwen")
+        config = project.resolved("text.diarization=shared", "coding.layers=[A, B]", "coding.llm.model=qwen")
         jobs = slurm.generate(config, hpc, ["003", "004"], ["prep.media", "coding.judge"])
         return SimpleNamespace(jobs=jobs, text={path.name: path.read_bytes().decode() for path in jobs.directory.glob("*.sh")})
 

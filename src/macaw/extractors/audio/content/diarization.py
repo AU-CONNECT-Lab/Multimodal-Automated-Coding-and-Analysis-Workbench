@@ -3,6 +3,7 @@ off, but only after the partner's bleed has been taken back out."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import wave
@@ -14,7 +15,7 @@ import pandas as pd
 from macaw.exceptions import BackendNotAvailableError, InputNotFoundError
 from macaw.extractors import register_backend, register_extractor
 from macaw.extractors.audio.prosody.backends import load_audio
-from macaw.extractors.base import PERSON, SOFTWARE, Backend, Extractor, ExtractorResult, Gate, QCWarning
+from macaw.extractors.base import PERSON, SOFTWARE, Backend, Extractor, ExtractorResult, Gate, QCWarning, distribution_version
 from macaw.extractors.hub import check_hub_model
 from macaw.extractors.prep import MediaPrepExtractor, load_prep
 from macaw.project.layout import layout_for
@@ -27,8 +28,10 @@ from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
 
 BACKEND_GROUP = "diarization"
+# the models that tell the voices on a shared microphone apart
+DIARIZER_GROUP = "diarizer"
 # the one mode that reads voices off a shared microphone; the others attribute by track
-SHARED_MODE = "pyannote"
+SHARED_MODE = "shared"
 
 DIARIZATION_NAME = "diarization.parquet"
 VOICES_NAME = "voices.json"
@@ -57,6 +60,8 @@ _MIN_VOICE_S = 5.0
 _FURTHER_MIN_S = 5.0
 _CLIPS_PER_VOICE = 3
 _CLIP_S = 5.0
+# a voice slot speaks in a frame where its probability is above this
+_ACTIVE = 0.5
 
 _SILENCE_FLOOR_DB = -120.0
 # a mic's own loud level: its owner's speech, whatever the gain it was recorded at
@@ -72,12 +77,6 @@ _MIN_OWNED_S = 0.5
 class DiarizationBackend(Backend):
     version = "0.1.0"
 
-    def diarize(self, audio_path: Path, *, n_speakers: int | None = None, extra_speakers: int = 0) -> pd.DataFrame:
-        """Speaker turns in one mixed recording: t_start, t_end, label, and exclusive, true on the
-        copy where overlapping speech is given to one speaker only. Up to extra_speakers voices
-        beyond n_speakers may be found."""
-        raise NotImplementedError
-
     def attribute(
         self, segments: pd.DataFrame, tracks: dict[str, Path], *, margin_db: float
     ) -> pd.DataFrame:
@@ -85,13 +84,158 @@ class DiarizationBackend(Backend):
         raise NotImplementedError
 
 
-@register_backend(BACKEND_GROUP)
-class PyannoteBackend(DiarizationBackend):
-    name = SHARED_MODE
+class DiarizerBackend(Backend):
+    """Tells the voices on one shared microphone apart."""
 
-    def __init__(self, model: str = "pyannote/speaker-diarization-community-1", *, device: str = "auto"):
-        self.model = model
+    version = "0.1.0"
+    default_model = ""
+
+    def __init__(self, model: str | None = None, *, device: str = "auto"):
+        self.model = model or self.default_model
         self.device = device
+
+    def diarize(self, audio_path: Path, *, n_speakers: int | None = None, extra_speakers: int = 0) -> pd.DataFrame:
+        """Speaker turns in one mixed recording: t_start, t_end, label, and exclusive, true on the
+        copy where overlapping speech is given to one speaker only. Up to extra_speakers voices
+        beyond n_speakers may be found."""
+        raise NotImplementedError
+
+    def _load(self):
+        """Load the weights, fetching them if needed."""
+        raise NotImplementedError
+
+
+@register_backend(DIARIZER_GROUP)
+class NemotronBackend(DiarizerBackend):
+    """NVIDIA's Nemotron 3 Diarization through transformers; it counts the voices itself, up to eight."""
+
+    name = "nemotron"
+    default_model = "nvidia/Nemotron-3-Diarization"
+
+    def __init__(self, model: str | None = None, *, device: str = "auto"):
+        super().__init__(model, device=device)
+        self._parts = None
+        self._last: tuple[tuple[str, int], np.ndarray, float] | None = None
+
+    @property
+    def version(self) -> str:
+        return distribution_version("transformers")
+
+    def check_available(self) -> None:
+        try:
+            import librosa  # noqa: F401
+            import torch  # noqa: F401
+            import transformers
+        except ImportError:
+            raise BackendNotAvailableError(
+                "text.diarizer nemotron needs PyTorch, transformers and librosa: install PyTorch for your GPU first, then "
+                '`pip install "pymacaw[asr]"`.'
+            ) from None
+        if not hasattr(transformers, "Nemotron3DiarizationForAudioFrameClassification"):
+            raise BackendNotAvailableError(f"transformers {transformers.__version__} has no Nemotron-3-Diarization: {_UPGRADE}")
+        check_hub_model(self.model, "text.diarization_model")
+
+    def _load(self):
+        if self._parts is None:
+            from transformers import AutoModelForAudioFrameClassification, AutoProcessor
+
+            from macaw.extractors.audio.content.asr import resolve_device
+
+            processor = AutoProcessor.from_pretrained(self.model)
+            model = AutoModelForAudioFrameClassification.from_pretrained(self.model).to(resolve_device(self.device)).eval()
+            self._parts = (processor, model)
+        return self._parts
+
+    def activity(self, audio_path: Path) -> tuple[np.ndarray, float]:
+        """Each voice slot's probability of speaking, frame by frame, and the frame step in seconds."""
+        import torch
+
+        path = Path(audio_path)
+        key = (str(path.resolve()), path.stat().st_mtime_ns)
+        # the further-voice trial asks again for the same track, which needs no second pass
+        if self._last is None or self._last[0] != key:
+            processor, model = self._load()
+            rate = processor.feature_extractor.sampling_rate
+            samples, _ = load_audio(path, sample_rate=rate)
+            inputs = processor(np.asarray(samples, dtype=np.float32), sampling_rate=rate).to(model.device, dtype=model.dtype)
+            with torch.inference_mode():
+                probs = model(**inputs).logits.sigmoid()[0].float().cpu().numpy()
+            self._last = (key, probs, processor.feature_extractor.hop_length / rate)
+        return self._last[1], self._last[2]
+
+    def diarize(self, audio_path: Path, *, n_speakers: int | None = None, extra_speakers: int = 0) -> pd.DataFrame:
+        probs, step_s = self.activity(audio_path)
+        return turns_from_activity(probs, step_s, None if n_speakers is None else n_speakers + extra_speakers)
+
+
+# what to do about a transformers without Nemotron; whisperx holds huggingface-hub below 1.0 and with it transformers below 5
+_UPGRADE = "pip install -U transformers, in an environment without whisperx."
+# the diarizer Nemotron gives way to where this machine cannot have it
+OPEN_DIARIZER = "pyannote"
+
+
+def nemotron_missing() -> str:
+    """Why Nemotron cannot be had here, or nothing; without transformers at all, its own check says what to install."""
+    found = importlib.util.find_spec("transformers")
+    if found is None or not found.origin:
+        return ""
+    if not (Path(found.origin).parent / "models" / "nemotron3_diarization").is_dir():
+        return f"The transformers installed here has no Nemotron-3-Diarization: {_UPGRADE}"
+    return ""
+
+
+def diarizer_used(config) -> tuple[str, str]:
+    """The diarizer that runs, and why it is not text.diarizer: Nemotron gives way to pyannote where it cannot be had."""
+    name = config.text.diarizer
+    if name == NemotronBackend.name and (missing := nemotron_missing()):
+        return OPEN_DIARIZER, missing
+    return name, ""
+
+
+def diarizer_note(config) -> str:
+    """What a person is told when Nemotron gave way, or nothing."""
+    name, why = diarizer_used(config)
+    if not why:
+        return ""
+    return (
+        f"Nemotron cannot be used here, so the voices are told apart with {name} instead. {why} Once it can, the next run "
+        f"tells them apart again with Nemotron; to keep {name}, set text.diarizer: {name}."
+    )
+
+
+def turns_from_activity(probs: np.ndarray, step_s: float, keep: int | None = None) -> pd.DataFrame:
+    """Turns from per-frame voice probabilities: each slot's speech, and the exclusive copy giving every frame to the
+    likeliest voice speaking in it. Only the keep slots that speak longest are kept."""
+    active = probs > _ACTIVE
+    talk = active.sum(axis=0)
+    ranked = [int(slot) for slot in np.argsort(-talk, kind="stable") if talk[slot] > 0]
+    slots = sorted(ranked[:keep] if keep is not None else ranked)
+    rows = []
+    for slot in slots:
+        rows += [(a * step_s, b * step_s, f"SPEAKER_{slot:02d}", False) for a, b in _runs(active[:, slot])]
+    if slots:
+        chosen = np.where(active[:, slots], probs[:, slots], -1.0)
+        owner = np.where(active[:, slots].any(axis=1), np.argmax(chosen, axis=1), -1)
+        for index, slot in enumerate(slots):
+            rows += [(a * step_s, b * step_s, f"SPEAKER_{slot:02d}", True) for a, b in _runs(owner == index)]
+    turns = pd.DataFrame(rows, columns=["t_start", "t_end", "label", "exclusive"])
+    return turns.sort_values(["exclusive", "t_start", "label"], ignore_index=True)
+
+
+def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    edges = np.diff(np.concatenate([[0], mask.astype(np.int8), [0]]))
+    return list(zip(np.flatnonzero(edges == 1).tolist(), np.flatnonzero(edges == -1).tolist()))
+
+
+@register_backend(DIARIZER_GROUP)
+class PyannoteBackend(DiarizerBackend):
+    """pyannote.audio's pipeline; it can be told how many voices to find."""
+
+    name = "pyannote"
+    default_model = "pyannote/speaker-diarization-community-1"
+
+    def __init__(self, model: str | None = None, *, device: str = "auto"):
+        super().__init__(model, device=device)
         self._pipeline = None
 
     @property
@@ -185,6 +329,16 @@ def speaker_counts(n_speakers: int | None, extra_speakers: int) -> dict[str, int
     if extra_speakers and n_speakers is not None:
         return {"min_speakers": n_speakers, "max_speakers": n_speakers + extra_speakers}
     return {"num_speakers": n_speakers}
+
+
+@register_backend(BACKEND_GROUP)
+class SharedBackend(DiarizationBackend):
+    """One microphone several people share: text.diarizer tells their voices apart."""
+
+    name = SHARED_MODE
+
+    def check_available(self) -> None:
+        return None
 
 
 @register_backend(BACKEND_GROUP)
@@ -318,18 +472,19 @@ def resolve_diarization(recording: Recording, mode: str) -> DiarizationBackend:
     return backend
 
 
-def resolve_diarizer(config) -> DiarizationBackend:
+def resolve_diarizer(config) -> DiarizerBackend:
     backend = named_diarizer(config)
     backend.check_available()
     return backend
 
 
-def named_diarizer(config) -> DiarizationBackend:
+def named_diarizer(config) -> DiarizerBackend:
+    """The model that tells the voices on the shared microphone apart: text.diarizer's, or the one it gave way to."""
     from macaw.extractors import get_backend
 
     cfg = config.text
-    cls = get_backend(BACKEND_GROUP, cfg.diarization)
-    return cls(cfg.diarization_model, device=cfg.device) if cfg.diarization == SHARED_MODE else cls()
+    name, why = diarizer_used(config)
+    return get_backend(DIARIZER_GROUP, name)(None if why else cfg.diarization_model, device=cfg.device)
 
 
 def shared_track(prep, recording_id: str) -> str:
@@ -347,10 +502,10 @@ class DiarizationExtractor(Extractor):
     """Who speaks when on a shared microphone, as anonymous voices; text.review says who they are."""
 
     name = "text.diarize"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "text"
-    config_sections = ("text.diarization", "text.diarization_model", "text.extra_voices", "text.device", "segment")
+    config_sections = ("text.diarization", "text.diarizer", "text.diarization_model", "text.extra_voices", "text.device", "segment")
     requires = (MediaPrepExtractor.name,)
     resource_profile = "gpu_standard"
 
@@ -370,7 +525,8 @@ class DiarizationExtractor(Extractor):
     def backend_info(self) -> tuple[str | None, str | None]:
         if self.config.text.diarization != SHARED_MODE:
             return (None, None)
-        return (SHARED_MODE, resolve_diarizer(self.config).version)
+        backend = resolve_diarizer(self.config)
+        return (backend.name, backend.version)
 
     def backends(self) -> list[Backend]:
         return [named_diarizer(self.config)] if self.config.text.diarization == SHARED_MODE else []
@@ -378,6 +534,11 @@ class DiarizationExtractor(Extractor):
     def inputs_for(self, recording: Recording) -> list[Path]:
         prep = load_prep(self.config, recording.recording_id)
         return [prep.shared_track_path(name) for name in sorted(prep.shared_tracks)]
+
+    def extra_key(self, recording: Recording) -> str:
+        # where Nemotron gave way, the run once it can be had is a different one
+        name, why = diarizer_used(self.config) if self.config.text.diarization == SHARED_MODE else ("", "")
+        return name if why else ""
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         prep = load_prep(self.config, recording.recording_id)
@@ -441,7 +602,8 @@ class DiarizationExtractor(Extractor):
 
     def _specs(self, values: dict[str, float]) -> list[FeatureSpec]:
         text = self.config.text
-        params = {"model": text.diarization_model, "extra_voices": text.extra_voices} if text.diarization == SHARED_MODE else {}
+        used = named_diarizer(self.config) if text.diarization == SHARED_MODE else None
+        params = {"diarizer": used.name, "model": used.model, "extra_voices": text.extra_voices} if used else {}
         return [
             FeatureSpec(
                 name=name, description=description, unit=unit, scale=Scale.RECORDING, group=self.group,
@@ -454,6 +616,8 @@ class DiarizationExtractor(Extractor):
     def _warnings(self, recording: Recording, voices: dict, track: str) -> list[QCWarning]:
         rid = recording.recording_id
         warnings = []
+        if note := diarizer_note(self.config):
+            warnings.append(QCWarning(check="diarizer_gave_way", recording_id=rid, subject_id=None, severity="warn", message=note))
         faint = [label for label, voice in voices.items() if voice["speech_s"] < _MIN_VOICE_S]
         if faint:
             warnings.append(QCWarning(
@@ -473,13 +637,13 @@ _DIARIZATION_SPECS = {
     "n_voices_found": ("Distinct voices the diarizer found on the shared track.", "count"),
     "overlapped_speech_fraction": ("Share of the time anyone speaks during which two or more voices do.", None),
 }
-_NOT_SHARED = "Empty for a recording whose text.diarization is not pyannote, as each person's voice then comes from their own track"
+_NOT_SHARED = "Empty for a recording whose text.diarization is not shared, as each person's voice then comes from their own track"
 _MISSING = {
-    "n_shared_tracks_diarized": "Never empty. 0 means text.diarization is not pyannote, so no shared track was read for voices.",
+    "n_shared_tracks_diarized": "Never empty. 0 means text.diarization is not shared, so no shared track was read for voices.",
     "n_voices_found": f"{_NOT_SHARED}. 0 means the diarizer found no voice on the shared track in the span.",
     "overlapped_speech_fraction": (
         "Empty where no voice was found on the shared track in the span, and for a recording whose text.diarization is not "
-        "pyannote. 0 means voices were found but never two at once."
+        "shared. 0 means voices were found but never two at once."
     ),
 }
 

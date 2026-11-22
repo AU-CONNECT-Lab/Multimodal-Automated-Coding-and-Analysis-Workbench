@@ -64,6 +64,12 @@ bain2023:
   booktitle: Proceedings of Interspeech 2023
   pages: 4489--4493
   year: 2023
+medennikov2026:
+  type: misc
+  author: "Medennikov, Ivan and Park, Taejin and Timofeeva, Tatiana and Huang, He and Polok, Alexander and Kostandian, Sofia and Wang, Weiqing and Gao, Dongji and Balam, Jagadeesh and Ginsburg, Boris"
+  title: "Nemotron 3 Diarization: Advancing the accuracy-efficiency frontier in streaming speaker diarization"
+  howpublished: arXiv:2611.12246
+  year: 2026
 bredin2023:
   type: inproceedings
   author: "Bredin, Hervé"

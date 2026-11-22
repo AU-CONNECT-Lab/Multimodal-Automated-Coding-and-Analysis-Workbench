@@ -176,6 +176,11 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         from macaw.extractors.video.pose.listening import body_size_notice
 
         notices.append(body_size_notice(config))
+    if "text.diarize" in dag.nodes:
+        from macaw.extractors.audio.content.diarization import SHARED_MODE, diarizer_note
+
+        shared = config.text.diarization == SHARED_MODE
+        notices.append(f"text.diarize: {note}" if shared and (note := diarizer_note(config)) else None)
     if "objects.track" in dag.nodes:
         from macaw.extractors.video.objects.track import object_models
 

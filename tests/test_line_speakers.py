@@ -46,7 +46,7 @@ def project(tmp_path, monkeypatch):
     scaffold_project_config(config, name="demo", raw_dir=tmp_path / "raw", output_dir=tmp_path / "out", roles=("parent", "child"))
     write_setup(config, microphones={"room_mic": {"hears": list(EVERYONE)}})
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
-    data.setdefault("text", {})["diarization"] = "pyannote"
+    data.setdefault("text", {})["diarization"] = "shared"
     config.write_text(yaml.safe_dump(data), encoding="utf-8")
     resolved = resolve_config(config)
     layout = layout_for(resolved)

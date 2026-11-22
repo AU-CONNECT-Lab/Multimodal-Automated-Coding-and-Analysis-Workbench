@@ -72,8 +72,9 @@ text:
   language: null                     # ISO code; null = detected on each track by itself
   device: auto                       # auto | cuda | cpu; auto uses a GPU when one is seen
   compute_type: float16              # float16 on GPU; use int8 for CPU-only fallback
-  diarization: per_track             # per_track: a mic per person | pyannote: one shared mic | none
-  diarization_model: pyannote/speaker-diarization-community-1  # HuggingFace pipeline for pyannote; accept its terms first
+  diarization: per_track             # per_track: a mic per person | shared: one shared mic | none
+  diarizer: nemotron                 # with a shared mic, what tells voices apart: nemotron | pyannote
+  diarization_model: null            # null = the diarizer's own: nvidia/Nemotron-3-Diarization or pyannote/speaker-diarization-community-1
   extra_voices: 0                    # other voices on a shared mic, e.g. 1 for a researcher
   voice_review: always               # always: a person confirms the suggestion | flagged: only when it is unsure | skip
   crosstalk_margin_db: 6.0           # an utterance this much louder on another track is bleed
@@ -162,10 +163,10 @@ gaze:
 
 objects:
   names: []                          # things to follow in the picture, in plain words, e.g. [ball, book]
-  finder: sam3                       # sam3: SAM 3 (SAM License, on request) | llmdet: LLMDet (Apache-2.0) | grounding_dino: Grounding DINO (Apache-2.0)
+  finder: sam3                       # sam3 (SAM License, on request) | llmdet (Apache-2.0) | grounding_dino (Apache-2.0)
   finder_model: null                 # sam3: facebook/sam3 | llmdet: iSEE-Laboratory/llmdet_base, _tiny or _large | grounding_dino: IDEA-Research/grounding-dino-tiny or another on the Hugging Face hub
   finder_score: 0.35                 # 0-1; lower finds more starts and more that are not the thing
-  tracker: sam3                      # sam3: SAM 3 (SAM License, on request) | sam2: SAM 2.1 (Apache-2.0), faster | edgetam: EdgeTAM (Apache-2.0), for computers without a graphics card
+  tracker: sam3                      # sam3 (SAM License, on request) | sam2 (Apache-2.0) | edgetam (Apache-2.0, also on CPU)
   tracker_model: null                # sam3: facebook/sam3 | sam2: facebook/sam2.1-hiera-base-plus, -tiny, -small or -large | edgetam: yonigozlan/EdgeTAM-hf
   device: auto                       # auto | cpu | cuda
   review: always                     # always: a person looks at every start found by name | flagged: only those in doubt | skip
