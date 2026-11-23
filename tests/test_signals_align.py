@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -51,6 +53,28 @@ def test_the_cap_imu_finds_where_its_file_sits_on_the_recording_clock():
     near = match(*head_speed(rows, FACE_ANGLES), *gyro_speed(aux, "gyro"), hint_s=TRUE_OFFSET + 4.0, window_s=10.0)
     assert near.offset_s == pytest.approx(TRUE_OFFSET, abs=0.1)
     assert gyro_speed(aux, "no such sensor") is None
+
+
+def test_a_file_with_several_gyroscopes_asks_which_one_is_on_the_head():
+    import re
+
+    from macaw.exceptions import ConfigError
+    from macaw.signals.imu import gyro_sensors, gyro_speed, sensor_pattern
+
+    own = np.arange(0.0, 10.0, 0.01)
+    rng = np.random.default_rng(2)
+    aux = pd.concat([pd.DataFrame({"aux": f"gyroscope_{k}_{axis}", "time": own, "value": rng.normal(0.0, k, own.size)})
+                     for k in (1, 2) for axis in "xyz"], ignore_index=True)
+    with pytest.raises(ConfigError, match=re.escape("'^gyroscope_2_[xyz]$'")):
+        gyro_speed(aux, "gyro")
+    _, speed = gyro_speed(aux, "^gyroscope_1_[xyz]$")
+    assert np.allclose(speed, gyro_speed(aux[aux["aux"].str.startswith("gyroscope_1")], "gyro")[1])
+    for names, count in ((["GYRO_X_1", "GYRO_Y_1", "GYRO_Z_1", "GYRO_X_2", "GYRO_Y_2", "GYRO_Z_2"], 2),
+                         (["gyro-x", "gyro-y", "gyro-z"], 1), (["GyroX", "GyroY", "GyroZ"], 1), (["gyro_1", "gyro_2", "gyro_3"], 1)):
+        sensors = gyro_sensors(names)
+        assert len(sensors) == count
+        for axes in sensors.values():
+            assert [name for name in names if re.search(sensor_pattern(axes), name, re.IGNORECASE)] == axes
 
 
 def test_a_face_tracker_jittering_by_degrees_each_frame_still_finds_the_offset():
@@ -187,3 +211,88 @@ def test_each_person_takes_the_clock_their_imu_finds_and_a_person_checks_it(alig
     assert gate.pending(recording) is None
     shown = runner.invoke(app, ["signal-offsets", "-c", str(project), "-r", "003"])
     assert shown.exit_code == 0 and "child_raw: -150." in shown.output and "parent_raw: -140.00 s, set by hand by tester" in shown.output
+
+
+def test_marked_events_pair_by_name_where_most_of_them_agree():
+    from macaw.signals.markers import match_markers
+
+    # a trigger sent every 300 s and once at 540 s, one event listed twice, names as numbers written two ways
+    markers = [("12", 320.0 + 300.0 * k) for k in range(5)] + [("2.0", 540.0), ("1.0", 20.0), ("1.0", 20.0)]
+    found = match_markers([("1", 120.1)], markers)
+    assert found.offset_s == pytest.approx(100.1) and found.pairs == [("1", 120.1, 20.0)] and not found.unpaired
+    # one 12 alone could be any of five; the 2 beside it settles which
+    found = match_markers([("12", 720.1), ("2", 640.0), ("12", 50.0), ("touched_cap", 70.0)], markers)
+    assert found.offset_s == pytest.approx(100.0, abs=0.1) and len(found.pairs) == 2 and found.unpaired == ["12"]
+    assert not found.alternatives and match_markers([("touched_cap", 70.0)], markers) is None
+    # a 12 alone fits five places; a hint such as the IMU's offset picks one, and the others are kept to say so
+    alone = match_markers([("12", 720.1)], markers, prefer=95.0)
+    assert alone.offset_s == pytest.approx(100.1) and len(alone.alternatives) == 4
+
+
+def test_a_mark_that_fits_several_places_waits_unless_a_sure_imu_settles_it():
+    from macaw.media.align import UNALIGNED, AlignResult
+    from macaw.signals.align import IMU, marker_result
+    from macaw.signals.markers import match_markers
+
+    cfg = SimpleNamespace(min_confidence=0.3, min_agreement=0.5)
+    markers = [("12", 320.0 + 300.0 * k) for k in range(5)]
+    none = AlignResult(reference="recording", target="child_raw", offset_s=0.0, confidence=None, method=UNALIGNED)
+    alone = marker_result(match_markers([("12", 720.1)], markers), "child_raw", none, cfg)
+    assert "fit 5 places as well (12 recurs in the file)" in alone.doubt
+    imu = AlignResult(reference="recording", target="child_raw", offset_s=100.05, confidence=0.6, agreement=1.0, method=IMU)
+    settled = marker_result(match_markers([("12", 720.1)], markers, prefer=imu.offset_s), "child_raw", imu, cfg)
+    assert settled.offset_s == pytest.approx(100.1) and settled.doubt is None and settled.cross_check_s == 100.05
+
+
+def test_marked_events_spread_over_the_recording_correct_a_drifting_clock():
+    from macaw.media.align import UNALIGNED, AlignResult
+    from macaw.signals.align import MARKERS, drift_corrected, marker_result, signal_clock
+    from macaw.signals.markers import match_markers
+
+    rate = 1 + 1500e-6
+    onsets = [100.0, 1100.0, 2100.0, 3100.0]
+    found = match_markers([("start", 40.0 + own * rate + jitter) for own, jitter in zip(onsets, (0.04, -0.03, 0.02, -0.04))],
+                          [("start", own) for own in onsets])
+    none = AlignResult(reference="recording", target="child_raw", offset_s=0.0, confidence=None, method=UNALIGNED)
+    result = marker_result(found, "child_raw", none, SimpleNamespace(min_confidence=0.3, min_agreement=0.5))
+    assert result.method == MARKERS and drift_corrected(result) and result.doubt is None
+    offset, scale = signal_clock(result)
+    for own in (100.0, 1600.0, 3100.0):
+        assert offset + own * scale == pytest.approx(40.0 + own * rate, abs=0.06)
+    # one mark a second off is flagged
+    found.pairs[1] = (found.pairs[1][0], found.pairs[1][1] + 1.0, found.pairs[1][2])
+    assert "disagree by up to" in marker_result(found, "child_raw", none, SimpleNamespace(min_confidence=0.3, min_agreement=0.5)).doubt
+
+
+def test_a_file_whose_events_are_marked_on_the_video_takes_their_offset_and_the_imu_checks_it(aligned_project, tmp_path):
+    from macaw.qc.boilerplate import _signals, signals_placed
+    from macaw.signals.align import IMU, MARKERS, computed_offsets, describe, needs_person
+
+    project, config, layout = aligned_project
+    _, aux = synthetic()
+    # the child's raw file and the parent's carry a trigger at 170.3 and 470.3 s, 20 and 320 s into the video
+    events = ((170.3, "1.0"), (470.3, "1.0"))
+    write_snirf(tmp_path / "nirs" / "sub-c003_task-play_nirs.snirf", aux, markers=events)
+    write_snirf(tmp_path / "nirs" / "sub-p003_task-play_run-1_nirs.snirf", aux[aux["aux"].str.startswith("ACCEL")], markers=events)
+    (tmp_path / "marks.csv").write_text("recording,mark,start_s,end_s\n003,1,20.05,21\n003,1,319.95,321\n003,touched_cap,40,42\n", encoding="utf-8")
+    run_steps(config, layout)
+    found = {entry.target: entry for entry in computed_offsets(config, "003")}
+    child, parent = found["child_raw"], found["parent_raw"]
+    assert child.method == MARKERS and child.offset_s == pytest.approx(TRUE_OFFSET, abs=0.01)
+    assert child.cross_check_s == pytest.approx(TRUE_OFFSET, abs=0.1) and child.doubt is None
+    assert "from 2 marked event(s)" in describe(child) and "the IMU finds -150.3" in describe(child)
+    assert needs_person(child, config.signals) == "not looked at yet"
+    # without a gyroscope the parent's file is placed by its events alone
+    assert parent.method == MARKERS and parent.cross_check_s is None and parent.offset_s == pytest.approx(TRUE_OFFSET, abs=0.01)
+    # the preprocessed copy carries no marked event and keeps the IMU's clock
+    assert found["child_preproc"].method == IMU
+    placed = signals_placed(config)
+    assert (placed["markers"], placed["imu"], placed["checked"]) == (2, 1, 1)
+    text = _signals(placed)
+    assert "a person marked on the video" in text and "For 1 of the three signal files, the turning speed" in text
+
+    # a mark 1.5 s off asks a person to look, and the IMU says so too
+    (tmp_path / "marks.csv").write_text("recording,mark,start_s,end_s\n003,1,21.55,22\n003,1,319.95,321\n", encoding="utf-8")
+    run_steps(config, layout)
+    child = {entry.target: entry for entry in computed_offsets(config, "003")}["child_raw"]
+    assert "disagree by up to 0.80 s" in needs_person(child, config.signals) and "s away" in child.doubt

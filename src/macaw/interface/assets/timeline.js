@@ -221,7 +221,12 @@
       }
       const box = (label, key, value, type) => `<label class="field"><span class="field-label">${label}</span><input data-k="${key}" value="${esc(value)}"${type ? ` type="${type}" step="0.01" min="0"` : ''}></label>`;
       const said = S.said || (cfg.notes ? '' : s.done ? 'summarised' : 'summarised after the next run');
-      chosen.innerHTML = `${box('Name', 'name', s.name)}${box('From (s)', 'a', s.a.toFixed(2), 'number')}<button type="button" class="button small" data-act="a">Start here</button>`
+      // names the page suggests, such as the events a signal file marked
+      const listId = `${root.id || 'strip'}-names`;
+      const nameBox = (cfg.names || []).length
+        ? box('Name', 'name', s.name).replace('data-k="name"', `data-k="name" list="${listId}"`) + `<datalist id="${listId}">${cfg.names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>`
+        : box('Name', 'name', s.name);
+      chosen.innerHTML = `${nameBox}${box('From (s)', 'a', s.a.toFixed(2), 'number')}<button type="button" class="button small" data-act="a">Start here</button>`
         + `${box('To (s)', 'b', s.b.toFixed(2), 'number')}<button type="button" class="button small" data-act="b">End here</button>`
         + (cfg.notes ? box('Note', 'note', s.note || '') : '')
         + `<span class="strip-said">${esc(said)}</span>`

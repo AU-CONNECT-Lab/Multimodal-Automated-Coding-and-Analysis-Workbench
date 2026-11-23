@@ -217,10 +217,10 @@ def signals_placed(config) -> dict[str, int]:
     """How the files of the signals table came onto the recordings' clocks, counted over the project."""
     from macaw.exceptions import MacawError
     from macaw.media.align import MANUAL, UNALIGNED
-    from macaw.signals.align import IMU, signal_offsets
+    from macaw.signals.align import IMU, MARKERS, drift_corrected, signal_offsets
     from macaw.signals.table import read_signals
 
-    counts = {"files": 0, "imu": 0, "kept": 0, "manual": 0, "unaligned": 0}
+    counts = {"files": 0, "imu": 0, "markers": 0, "drift": 0, "checked": 0, "kept": 0, "manual": 0, "unaligned": 0}
     try:
         listed = read_signals(config)
     except MacawError:   # a table with a mistake is reported by the step that reads it
@@ -234,24 +234,45 @@ def signals_placed(config) -> dict[str, int]:
                 counts["unaligned"] += 1
             elif result.method == MANUAL:
                 counts["manual"] += 1
-            elif result.method == IMU:
-                counts["imu"] += 1
+            elif result.method in (IMU, MARKERS):
+                counts["imu" if result.method == IMU else "markers"] += 1
                 counts["kept"] += bool(result.accepted)
+                counts["drift"] += result.method == MARKERS and drift_corrected(result)
+                counts["checked"] += result.cross_check_s is not None
     return counts
 
 
 def _signals(placed: dict[str, int]) -> str:
     from macaw.signals.imu import GRID_HZ, SLOPE_S
 
-    text = (
-        f"Signals recorded alongside, such as fNIRS, were placed on each recording's clock and not otherwise processed. "
-        f"For {'each' if placed['imu'] == placed['files'] else _count(placed['imu'])} of the {_count(placed['files'])} signal files, "
-        "the turning speed of the participant's head on "
-        f"the video, the slope of the face's angles (or of the head's tilt from the body points) over {SLOPE_S:g} s, was "
-        f"cross-correlated at {GRID_HZ:g} Hz with the turning speed from the gyroscope worn on the head, and the file was "
-        f"placed at the correlation peak, refined between grid steps; the match was repeated in stretches of the recording "
-        f"to check that they found the same offset. A participant's other files took the same clock."
+    def share(count: int) -> str:
+        return "each" if count == placed["files"] else _count(count)
+
+    text = "Signals recorded alongside, such as fNIRS, were placed on each recording's clock and not otherwise processed."
+    if placed["markers"]:
+        text += (
+            f" For {share(placed['markers'])} of the {_count(placed['files'])} signal files, a person marked on the video the "
+            "moments of events that the recording software had marked in the file, under the same names, and the file was "
+            "placed at the mean offset of these pairs"
+        )
+        text += (f", or, for {_count(placed['drift'])} files whose pairs showed the two clocks drifting apart, along a line "
+                 "fitted to them." if placed["drift"] else ".")
+        if placed["checked"]:
+            text += (f" For {_count(placed['checked'])} of them the offset was compared with the one found from a gyroscope "
+                     "worn on the head.")
+    speeds = (
+        f"the turning speed of the participant's head on the video, the slope of the face's angles (or of the head's tilt "
+        f"from the body points) over {SLOPE_S:g} s, was cross-correlated at {GRID_HZ:g} Hz with the turning speed from the "
+        "gyroscope worn on the head"
     )
+    if placed["imu"]:
+        text += (
+            f" For {share(placed['imu'])} of the {_count(placed['files'])} signal files, {speeds}, and the file was placed at "
+            "the correlation peak, refined between grid steps; the match was repeated in stretches of the recording to check "
+            "that they found the same offset. A participant's other files took the same clock."
+        )
+    elif placed["checked"]:
+        text += f" In that comparison {speeds}, and the correlation peak gave the offset."
     if placed["kept"]:
         text += f" A person checked and kept {_count(placed['kept'])} of these offsets."
     if placed["manual"]:

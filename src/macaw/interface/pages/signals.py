@@ -23,7 +23,7 @@ PATH = "/signals"
 PLAYER, STRIP, EDITS, SHOWN = "signals-player", "signals-strip", "signals-edits", "signals-shown"
 ACT, OFFSET, BY = "signals-act", "signals-offset", "signals-by"
 CARPET, LINES, MEASURES, CODING = "signals-carpet", "signals-lines", "signals-measures", "signals-coding"
-STRIP_BOX = "signals-strip-box"
+STRIP_BOX, OFFSETS_BOX = "signals-strip-box", "signals-offsets-box"
 # channel pairs drawn as lines at once; more would be a carpet again
 MAX_LINES = 6
 # a source-detector pair, then what the channel holds: a wavelength or hbo, hbr, hbt
@@ -145,9 +145,9 @@ def body(config_path: Path, rid: str | None):
     signals_card = ui.card(
         "Signals", player, controls, html.Div(id=STRIP_BOX),
         desc=f"{source.name}, on the recording's clock. Blood oxygen follows behaviour by a few seconds. Drag on the marks lane to "
-             "mark a stretch, such as a child touching the cap.",
+             "mark a stretch, such as a child touching the cap; a mark named as one of a file's events places the file by it.",
     )
-    return html.Div([signals_card, offsets_card(own, rid, files)])
+    return html.Div([signals_card, html.Div(offsets_card(own, rid, files), id=OFFSETS_BOX)])
 
 
 def strip(config_path: Path, rid: str, carpet_group: str | None, pairs: list[str], measures: list[str], tiers: list[str]):
@@ -166,8 +166,25 @@ def strip(config_path: Path, rid: str, carpet_group: str | None, pairs: list[str
         STRIP, video=PLAYER if preview is not None else None, offset=clock[0], scale=clock[1], length=length,
         window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), edit=True, editWindow=False,
         noun="mark", editName="Marks", notes=True, segments=strip_marks(own, rid, clock), loudness=loud, editStore=EDITS,
-        lanes=lanes(own, rid, clock, length, carpet_group, pairs or [], measures or [], tiers or []),
+        lanes=lanes(own, rid, clock, length, carpet_group, pairs or [], measures or [], tiers or []), names=event_names(own, rid),
     )
+
+
+def event_names(own, rid: str) -> list[str]:
+    """The names of the events the recording's signal files marked, offered when a mark is named."""
+    from macaw.signals.read import load_info
+    from macaw.signals.table import signal_files
+
+    found = []
+    for item in signal_files(own, rid):
+        try:
+            markers = load_info(own, rid, item).get("markers", [])
+        except FileNotFoundError:
+            continue
+        for marker in markers:
+            if str(marker["name"]) not in found:
+                found.append(str(marker["name"]))
+    return found
 
 
 def strip_marks(own, rid: str, clock: tuple[float, float]) -> list[dict]:
@@ -180,16 +197,16 @@ def strip_marks(own, rid: str, clock: tuple[float, float]) -> list[dict]:
 
 
 def lanes(own, rid: str, clock, length: float, carpet_group, pairs, measures, tiers) -> list[dict]:
-    """Per file a carpet and its chosen channels as lines, per person with a cap IMU its turning against the head's on
-    the video, then the chosen measures and coding."""
+    """Per file a carpet, its chosen channels as lines and the events it marked, per person with a cap IMU its turning
+    against the head's on the video, then the chosen measures and coding."""
     from macaw.signals.align import head_turning, signal_offsets
     from macaw.signals.imu import gyro_speed
     from macaw.signals.lanes import CARPET_Z, carpet, channel_z, lines, spans
-    from macaw.signals.read import load_aux, load_samples
+    from macaw.signals.read import load_aux, load_info, load_samples
     from macaw.signals.table import signal_files
 
     offsets = signal_offsets(own, rid)
-    out, turning_done = [], set()
+    out, turning_done, events_drawn = [], set(), set()
     for item in signal_files(own, rid):
         result = offsets.get(item.key)
         own_clock = file_clock(result)
@@ -214,8 +231,19 @@ def lanes(own, rid: str, clock, length: float, carpet_group, pairs, measures, ti
             if drawn:
                 out.append({"kind": "lines", "name": f"{item.person or 'all'} {item.stage}",
                             "title": f"{item.path.name}, {group_label(group or '')}, each channel less its trend in its own SDs, as in the carpet", **drawn})
+        events = [(float(m["onset"]), float(m["onset"]) + float(m.get("duration") or 0.0), str(m["name"]))
+                  for m in load_info(own, rid, item).get("markers", [])]
+        # a person's files that share a clock carry the same events; one lane shows them
+        if events and (item.person, tuple(events), own_clock) not in events_drawn:
+            events_drawn.add((item.person, tuple(events), own_clock))
+            out.append({"kind": "bars", "name": f"{item.person or 'all'} events",
+                        "title": f"Events {item.path.name} marked, where its offset puts them; a mark on the video named as one places the file by it",
+                        "spans": spans(events, lambda t: float(to_played([t], own_clock, clock)[0]))})
         if item.person and item.person not in turning_done:
-            imu = gyro_speed(load_aux(own, rid, item), own.signals.gyro)
+            try:
+                imu = gyro_speed(load_aux(own, rid, item), own.signals.gyro)
+            except ConfigError:   # several gyroscopes and none named: signals.align says which to write
+                imu = None
             if imu is not None:
                 turning_done.add(item.person)
                 series = []
@@ -325,6 +353,15 @@ def mark_edit(own, rid: str, edit: dict, clock: tuple[float, float]) -> str:
     return "saved"
 
 
+def names_an_event(own, rid: str, edit: dict) -> bool:
+    """Whether a mark edited, before or after, bears the name of an event a signal file marked."""
+    from macaw.signals.markers import marker_key
+
+    events = {marker_key(name) for name in event_names(own, rid)}
+    named = [edit.get("name"), (edit.get("was") or {}).get("name")]
+    return any(name and marker_key(name) in events for name in named)
+
+
 def action_command(config_path: Path, rid: str, action: str, person: str, by: str, offset: float | None = None) -> list[str]:
     by_flag = ["--by", by] if by else []
     if action == "keep":
@@ -383,18 +420,32 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output(SHOWN, "data"), Output("signals-message", "children", allow_duplicate=True),
-        Input(EDITS, "data"), State(ui.SHOWN["signals"], "data"), prevent_initial_call=True,
+        Output(OFFSETS_BOX, "children", allow_duplicate=True), Output(STRIP_BOX, "children", allow_duplicate=True),
+        Input(EDITS, "data"), State(ui.SHOWN["signals"], "data"),
+        State(CARPET, "value"), State(LINES, "value"), State(MEASURES, "value"), State(CODING, "value"), prevent_initial_call=True,
     )
-    def edited(edit, rid):
+    def edited(edit, rid, group, pairs, measures, tiers):
         if not edit or not rid:
-            return no_update, no_update
+            return no_update, no_update, no_update, no_update
         own = resolve_config(config_path, recording_id=rid)
         clock = played_clock(own, rid)
         try:
             said, message = mark_edit(own, rid, edit, clock), None
         except (MacawError, ConfigError) as error:
             said, message = "not saved", ui.note(str(error), "bad")
-        return {"segments": strip_marks(own, rid, clock), "said": said, "op": edit["op"]}, message
+        shown = {"segments": strip_marks(own, rid, clock), "said": said, "op": edit["op"]}
+        if message is not None or not names_an_event(own, rid, edit):
+            return shown, message, no_update, no_update
+        # a mark named as a file's event places that file: align again at once
+        argv = cli_bridge.build_command(["run"], config_path=config_path, recordings=[rid], extractors=["signals.align"],
+                                        extra_flags=["--no-report"])
+        code, text = cli_bridge.run_now(argv, cwd=config_path.parent)
+        message = None if code == 0 else [ui.command(argv), ui.output(code, text)]
+        own = resolve_config(config_path, recording_id=rid)
+        from macaw.signals.table import signal_files
+
+        return (shown, message, offsets_card(own, rid, signal_files(own, rid)),
+                strip(config_path, rid, group, pairs, measures, tiers))
 
 
 def _same_offset(config_path: Path, rid: str, person: str, value: float) -> bool:

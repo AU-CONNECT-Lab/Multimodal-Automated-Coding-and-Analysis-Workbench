@@ -66,6 +66,8 @@ class AlignResult:
     accepted: str | None = None      # who kept a flagged result, and when
     # earlier entries for this file that a rerun or a person replaced, oldest first, each with why and when
     replaced: list[dict] | None = None
+    doubt: str | None = None         # why a person should look, decided when the offset was found
+    cross_check_s: float | None = None  # the offset another method found for the same file
 
 
 def _correlate(a: np.ndarray, b: np.ndarray, rate: float, max_lag_s: float, *, phat: bool):

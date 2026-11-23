@@ -129,7 +129,7 @@ def test_nirspipe_gets_events_and_bad_spans_and_each_file_its_samples_with_the_m
     assert "mean of the video frames" in dictionary.set_index("column").at["child.face_yaw_deg", "aggregation"]
 
 
-def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligned_project):
+def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligned_project, monkeypatch):
     from test_gui import callback, strip_config, text_of
 
     from macaw.config.loader import resolve_config
@@ -149,16 +149,26 @@ def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligne
     assert shown["noun"] == "mark" and shown["notes"] and not shown["editWindow"]
     turning = next(lane for lane in shown["lanes"] if lane["name"] == "child turning")
     assert [series["name"] for series in turning["series"]] == ["head on the video", "cap"]
+    # each person's files share their events, so one lane shows them, where the offset puts them
+    assert [lane["name"] for lane in shown["lanes"] if lane["kind"] == "bars"] == ["child events", "parent events"]
+    assert shown["names"] == ["start"]
 
+    ran = []
+    monkeypatch.setattr(signals.cli_bridge, "run_now", lambda argv, cwd=None: (ran.append(argv), run_steps(config, layout), (0, ""))[-1])
     edited = callback(create_app(project), "..signals-shown.data")
     played = shown["offset"]
-    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003")
+    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003", None, [], [], [])
     assert [(m.name, m.start_s - played, m.note) for m in marks_of(resolve_config(project), "003")] == [("cried", 1.0, "loud")]
-    shown_after, message = edited({"op": "set", "name": "cried", "start": 1.0, "end": 4.0, "note": "loud",
-                                   "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003")
+    shown_after, message, *_ = edited({"op": "set", "name": "cried", "start": 1.0, "end": 4.0, "note": "loud",
+                                       "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003", None, [], [], [])
     assert message is None and [(s["a"], s["b"]) for s in shown_after["segments"]] == [(1.0, 4.0)]
-    shown_after, message = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003")
-    assert shown_after["segments"] == [] and marks_of(resolve_config(project), "003") == []
+    shown_after, message, *_ = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003", None, [], [], [])
+    assert shown_after["segments"] == [] and marks_of(resolve_config(project), "003") == [] and not ran
+    # a mark named as the files' event places them by it at once
+    _, message, offsets, _ = edited({"op": "set", "name": "Start", "start": 5.0, "end": 6.0, "note": "", "was": None, "n": 4},
+                                    "003", None, [], [], [])
+    assert ran and ran[0][1:2] == ["run"] and "signals.align" in ran[0] and message is None
+    assert "from 1 marked event(s)" in text_of(offsets)
     assert signals.action_command(project, "003", "keep", "child", "ann")[1:2] == ["accept-signal-offset"]
     assert signals.action_command(project, "003", "set", "parent", "ann", -140.5)[-4:] == ["--offset", "-140.5", "--by", "ann"]
 
@@ -188,3 +198,21 @@ def test_a_carpet_is_a_png_with_a_row_per_channel_and_lines_keep_their_scale():
     fixed = lines([("a", times, np.sin(times) * 9)], 20.0, bounds=(-3.0, 3.0), unit=" SD")
     assert (fixed["low"], fixed["high"], fixed["unit"]) == (-3.0, 3.0, " SD")
     assert lines([("a", times, np.full(times.size, np.nan))], 20.0) is None
+
+
+def test_a_carpet_of_a_whole_head_array_pools_its_rows_and_a_poor_channel_still_shows():
+    from macaw.signals.lanes import CARPET_ROWS, carpet
+
+    times = np.arange(0.0, 60.0, 0.1)
+    rng = np.random.default_rng(3)
+    names = [f"S{k}_D{k} 760" for k in range(1000)]
+    values = rng.normal(0.0, 1.0, (times.size, len(names)))
+    values[300, 517] = 50.0   # one channel's spike
+    samples = pd.DataFrame(values, columns=names).assign(time=times)
+    drawn = carpet(samples, names, times, 60.0)
+    image = base64.b64decode(drawn["image"].split(",", 1)[1])
+    width, height = struct.unpack(">II", image[16:24])
+    assert height == CARPET_ROWS == len(drawn["rows"]) and drawn["rows"][0] == "S0_D0 760 to S5_D5 760"
+    pixels = np.frombuffer(zlib.decompress(image[41:-12]), dtype=np.uint8).reshape(height, 1 + 2 * width)[:, 1::2]
+    row = next(i for i, group in enumerate(np.array_split(np.arange(len(names)), CARPET_ROWS)) if 517 in group)
+    assert pixels[row, 300] == 255 and (pixels == 255).mean() < 0.05

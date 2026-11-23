@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import correlate, correlation_lags, savgol_filter
 
+from macaw.exceptions import ConfigError
 from macaw.media.align import sharpness
 from macaw.media.drift import MIN_SEGMENTS, estimate_drift
 
@@ -28,6 +29,7 @@ CLIP_PERCENTILE = 99.0
 SEGMENT_SEARCH_S = 10.0
 # s; a stretch whose match lies within this of the whole file's agrees with it
 AGREEMENT_S = 0.3
+AXIS_LETTERS = ("x", "y", "z")
 FACE_ANGLES = ("face_yaw_deg", "face_pitch_deg", "face_roll_deg")
 POSE_ANGLES = ("head_roll_deg",)
 
@@ -45,11 +47,44 @@ class Match:
     drift_intercept_s: float | None = None
 
 
+def gyro_sensors(names: list[str]) -> dict[str, list[str]]:
+    """Gyroscope axes grouped by sensor: a name less its x, y or z token names the sensor."""
+    sensors: dict[str, list[str]] = {}
+    for name in sorted(names):
+        tokens = [token for token in re.split(r"[_\-\s]+", name.lower()) if token]
+        kept = [token for token in tokens if token not in AXIS_LETTERS]
+        if len(kept) == len(tokens) and len(tokens[-1]) > 1 and tokens[-1][-1] in AXIS_LETTERS:
+            kept[-1] = kept[-1][:-1]   # GyroX: the axis letter written onto the name
+        sensors.setdefault("_".join(kept), []).append(name)
+    # axes told apart only by number (gyro_1, gyro_2, gyro_3) are one sensor
+    if len(sensors) > 1 and all(len(axes) == 1 for axes in sensors.values()):
+        return {"gyro": sorted(names)}
+    return sensors
+
+
+def sensor_pattern(axes: list[str]) -> str:
+    """A signals.gyro value matching just these axes."""
+    name = axes[0].lower()
+    found = re.search(r"(?<![a-z])[xyz](?![a-z])", name) or re.search(r"[xyz]$", name)
+    if found is None or len(axes) == 1:
+        return "^(" + "|".join(_escaped(axis.lower()) for axis in axes) + ")$"
+    return "^" + _escaped(name[: found.start()]) + "[xyz]" + _escaped(name[found.end():]) + "$"
+
+
+def _escaped(text: str) -> str:
+    return re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", text)
+
+
 def gyro_speed(aux: pd.DataFrame, pattern: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """(own times, deg/s): the turning speed over every gyroscope axis, each less its median; None without a gyroscope."""
+    """(own times, deg/s): the turning speed over one gyroscope's axes, each less its median; None without a gyroscope."""
     names = sorted(str(name) for name in aux["aux"].unique() if re.search(pattern, str(name), re.IGNORECASE))
     if not names:
         return None
+    sensors = gyro_sensors(names)
+    if len(sensors) > 1:
+        choices = ", ".join(f"'{sensor_pattern(axes)}' ({', '.join(axes)})" for axes in sensors.values())
+        raise ConfigError(f"signals.gyro {pattern!r} matches {len(sensors)} gyroscopes in the file; set signals.gyro to the one "
+                          f"worn on the head, one of {choices}")
     first = aux[aux["aux"] == names[0]].sort_values("time")
     times = first["time"].to_numpy(dtype=float)
     squared = np.zeros(times.size)

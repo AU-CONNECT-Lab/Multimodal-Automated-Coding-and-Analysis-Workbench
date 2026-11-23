@@ -177,7 +177,7 @@ objects:
 # matched to that person's head turning on the video; every other file of theirs takes the same clock, and a file with
 # no IMU in its person's files waits for a person to set its offset.
 signals:
-  gyro: gyro                         # what an IMU's gyroscope channels are called in a file's aux, ignoring case
+  gyro: gyro                         # what the head's gyroscope axes are called in a file's aux, ignoring case; a file with several gyroscopes needs the one on the head named
   search_window_s: null              # s; look for the match only this far from the offset the files' start times give. null = everywhere
   min_confidence: 0.3                # 0-1; a match peak sharpness below this counts as blunt
   min_agreement: 0.5                 # 0-1; a blunt match is flagged when fewer stretches than this find the same offset

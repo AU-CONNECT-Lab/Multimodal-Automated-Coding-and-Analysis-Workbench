@@ -827,7 +827,7 @@ class ExecutionSection(_Section):
 
 
 class SignalsSection(_Section):
-    # how an IMU's gyroscope channels are named in a file's aux, matched without regard to case
+    # how the head's gyroscope axes are named in a file's aux, matched without regard to case
     gyro: str = added(default="gyro")
     # s around the offset the files' start times give; None searches everywhere the files overlap
     search_window_s: float | None = added(default=None, gt=0)

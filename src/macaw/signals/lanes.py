@@ -11,6 +11,8 @@ import pandas as pd
 
 # columns of a carpet image over the whole played copy; zooming in shows them as blocks
 CARPET_COLUMNS = 3000
+# rows of a carpet image at most, two pixels each at the lane's tallest
+CARPET_ROWS = 192
 # points of a line over the whole played copy
 LINE_POINTS = 3000
 # a channel's z-score beyond this is drawn as far as it goes, as nirspipe's carpets are
@@ -77,9 +79,22 @@ def carpet(samples: pd.DataFrame, channels: list[str], played: np.ndarray, lengt
     rows = []
     for name in channels:
         rows.append(_binned_mean(index, keep, channel_z(samples, name, played, length), count))
-    z = np.vstack(rows)
+    z, names = np.vstack(rows), list(channels)
+    if len(names) > CARPET_ROWS:
+        z, names = _pooled_rows(z, names)
     grey = np.where(np.isfinite(z), (np.clip(z, -CARPET_Z, CARPET_Z) + CARPET_Z) / (2 * CARPET_Z) * 255, 0)
-    return {"image": png(grey, np.where(np.isfinite(z), 255, 0)), "rows": list(channels)}
+    return {"image": png(grey, np.where(np.isfinite(z), 255, 0)), "rows": names}
+
+
+def _pooled_rows(z: np.ndarray, names: list[str]) -> tuple[np.ndarray, list[str]]:
+    """Neighbouring channels as one row each, keeping per column the value farthest from 0, so a poor channel still stands out."""
+    pooled, labels = [], []
+    for group in np.array_split(np.arange(len(names)), CARPET_ROWS):
+        block = z[group]
+        farthest = np.argmax(np.where(np.isfinite(block), np.abs(block), -1.0), axis=0)
+        pooled.append(block[farthest, np.arange(block.shape[1])])
+        labels.append(names[group[0]] if group.size == 1 else f"{names[group[0]]} to {names[group[-1]]}")
+    return np.vstack(pooled), labels
 
 
 def lines(series: list[tuple[str, np.ndarray, np.ndarray]], length: float, *, scaled: bool = False,

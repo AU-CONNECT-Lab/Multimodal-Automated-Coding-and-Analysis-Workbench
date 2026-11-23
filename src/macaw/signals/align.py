@@ -1,4 +1,4 @@
-"""Each signal file put on the recording's clock, by its person's IMU where there is one, and checked by a person."""
+"""Each signal file put on the recording's clock, by its events marked on the video or by its person's IMU, and checked by a person."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.exceptions import BackendNotAvailableError, MacawError
+from macaw.exceptions import BackendNotAvailableError, ConfigError, MacawError
 from macaw.extractors import register_extractor
 from macaw.extractors.base import PERSON, SOFTWARE, Extractor, ExtractorResult, Gate, Phase, QCWarning
 from macaw.media.align import MANUAL, UNALIGNED, AlignResult, read_offset_table, write_offset_table
@@ -17,12 +17,15 @@ from macaw.media.drift import drift_is_real
 from macaw.project.layout import layout_for
 from macaw.project.recording import Recording
 from macaw.signals.imu import AGREEMENT_S, FACE_ANGLES, POSE_ANGLES, gyro_speed, head_speed, match
+from macaw.signals.markers import RESIDUAL_S, MarkerMatch, match_markers
+from macaw.signals.marks import marks_of, marks_path
 from macaw.signals.read import SignalReadExtractor, aux_name, info_name, load_aux, load_info, read_dir
 from macaw.signals.table import EVERYONE, SignalFile, read_signals, signal_files
 from macaw.store.longtable import read_long_table
 from macaw.store.schema import Scale
 
 IMU = "imu"
+MARKERS = "markers"
 # what every signal file's offset is measured against
 RECORDING_CLOCK = "recording"
 COMPUTED_NAME = "offsets.json"
@@ -70,7 +73,7 @@ def same_result(a: AlignResult, b: AlignResult) -> bool:
 
 
 def drift_corrected(result: AlignResult) -> bool:
-    return result.method == IMU and result.drift_intercept_s is not None and drift_is_real(
+    return result.method in (IMU, MARKERS) and result.drift_intercept_s is not None and drift_is_real(
         result.drift_ppm, result.drift_r2, result.overlap_s, AGREEMENT_S
     )
 
@@ -89,6 +92,8 @@ def review_reason(result: AlignResult, cfg) -> str | None:
         return None
     if result.method == UNALIGNED:
         return f"not aligned: {result.note}" if result.note else "not aligned"
+    if result.doubt:
+        return result.doubt
     if result.confidence is not None and result.confidence < cfg.min_confidence and (
         result.agreement is None or result.agreement < cfg.min_agreement
     ):
@@ -112,12 +117,16 @@ def describe(result: AlignResult) -> str:
     text = f"{offset:+.2f} s"
     if result.method == MANUAL:
         return text + f", {result.note or 'set by hand'}"
+    if result.method == MARKERS:
+        text += f", from {len(result.segment_offsets or ())} marked event(s)"
     text += f", confidence {result.confidence:.2f}" if result.confidence is not None else ""
     if result.agreement is not None:
         total = len(result.segment_offsets or ())
         text += f", same offset in {round(result.agreement * total)} of {total} stretches"
     if drift_corrected(result):
         text += f", drift {result.drift_ppm:+.0f} ppm corrected"
+    if result.cross_check_s is not None:
+        text += f", the IMU finds {result.cross_check_s:+.2f} s"
     if result.metadata_offset_s is not None:
         text += f", start times say {result.metadata_offset_s:+.1f} s"
     return text + (f"; {result.note}" if result.note else "")
@@ -180,7 +189,7 @@ def head_turning(config, recording_id: str, person: str) -> tuple[np.ndarray, np
 @register_extractor
 class SignalAlignExtractor(Extractor):
     name = "signals.align"
-    version = "0.3.0"
+    version = "0.4.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.DERIVE
@@ -201,6 +210,7 @@ class SignalAlignExtractor(Extractor):
         paths = [folder / name for item in signal_files(self.config, rid) for name in (aux_name(item), info_name(item))]
         features = layout_for(self.config, create=False).long_table_path(rid)
         paths += [features / f"{step}.parquet" for step, _, _ in HEAD_SOURCES]
+        paths.append(marks_path(self.config))
         return [path for path in paths if path.is_file()]
 
     def extra_key(self, recording: Recording) -> str:
@@ -214,9 +224,19 @@ class SignalAlignExtractor(Extractor):
             people.setdefault(item.person, []).append(item)
         results, warnings = [], []
         artifacts = {}
+        marked = [(mark.name, mark.start_s) for mark in marks_of(self.config, rid)]
         for person, items in people.items():
             found, more = self._person(rid, person, items, started, video_offset, workspace)
-            results.extend(found)
+            for item, imu in zip(items, found):
+                sure = imu.method == IMU and review_reason(imu, self.config.signals) is None
+                paired = match_markers(marked, [(m["name"], float(m["onset"])) for m in load_info(self.config, rid, item).get("markers", [])],
+                                       prefer=imu.offset_s if sure else imu.metadata_offset_s)
+                if paired is None:
+                    results.append(imu)
+                    continue
+                results.append(marker_result(paired, item.key, imu, self.config.signals))
+                # a file placed by its own markers needs no shared clock
+                more = [warning for warning in more if not warning.message.startswith(f"{item.key} has its markers")]
             warnings.extend(more)
         artifacts.update({figure.name: figure for figure in workspace.glob(f"*{FIGURE_SUFFIX}")})
         path = workspace / COMPUTED_NAME
@@ -233,18 +253,21 @@ class SignalAlignExtractor(Extractor):
                                 metadata_offset_s=hint, note=note) for item in items]
 
         if person is None:
-            return unaligned("a file of the whole recording has no head to match; set its offset by hand"), []
+            return unaligned("a file of the whole recording has no head to match; mark its events on the video or set its offset by hand"), []
         anchor = imu = None
         for item in items:
-            imu = gyro_speed(load_aux(self.config, rid, item), cfg.gyro)
+            try:
+                imu = gyro_speed(load_aux(self.config, rid, item), cfg.gyro)
+            except ConfigError as error:   # several gyroscopes: the file's marked events may still place it
+                return unaligned(str(error)), []
             if imu is not None:
                 anchor = item
                 break
         if anchor is None:
-            return unaligned(f"no channel named like {cfg.gyro!r} in {person}'s files; set the offset by hand"), []
+            return unaligned(f"no channel named like {cfg.gyro!r} in {person}'s files; mark the file's events on the video or set the offset by hand"), []
         head = head_turning(self.config, rid, person)
         if head is None:
-            return unaligned(f"no head angles on the video for {person}: run face.au or pose.kinematics, or set the offset by hand"), []
+            return unaligned(f"no head angles on the video for {person}: run face.au or pose.kinematics, mark the file's events on the video, or set the offset by hand"), []
         info = load_info(self.config, rid, anchor)
         hint = timestamp_offset(info.get("started"), started, video_offset)
         found = match(head[0], head[1], imu[0], imu[1], hint_s=hint, window_s=cfg.search_window_s,
@@ -285,6 +308,36 @@ class SignalAlignExtractor(Extractor):
             out.append(QCWarning(check=self.name, recording_id=rid, subject_id=None if person == EVERYONE else person,
                                  severity=severity, message=message))
         return out
+
+
+def marker_result(paired: MarkerMatch, target: str, imu: AlignResult, cfg) -> AlignResult:
+    """The file placed by its marked events, with the IMU's offset beside it when that match is sure."""
+    result = AlignResult(
+        reference=RECORDING_CLOCK, target=target, offset_s=paired.offset_s, confidence=None, overlap_s=paired.span_s,
+        drift_ppm=paired.drift_ppm, drift_r2=paired.drift_r2, drift_intercept_s=paired.drift_intercept_s,
+        segment_offsets=[(at, at - own, 1.0) for _, at, own in paired.pairs], method=MARKERS,
+        metadata_offset_s=imu.metadata_offset_s, note="paired " + ", ".join(sorted({name for name, _, _ in paired.pairs})),
+    )
+    doubts = []
+    if paired.unpaired:
+        doubts.append(f"marked {', '.join(paired.unpaired)} found no event of that name near the others' offset")
+    fitted = (lambda at: result.drift_intercept_s + result.drift_ppm * 1e-6 * at) if drift_corrected(result) else None
+    worst = max((abs(gap) for gap in paired.residuals(fitted)), default=0.0)
+    if worst > RESIDUAL_S:
+        doubts.append(f"the marked events disagree by up to {worst:.2f} s")
+    confirmed = False
+    if imu.method == IMU and review_reason(imu, cfg) is None:
+        result.cross_check_s = imu.offset_s
+        confirmed = abs(imu.offset_s - result.offset_s) <= RESIDUAL_S
+        if not confirmed:
+            doubts.append(f"the IMU finds {imu.offset_s:+.2f} s, {abs(imu.offset_s - result.offset_s):.2f} s away")
+    elif imu.method == IMU:
+        result.note += "; the IMU's match was too unsure to check against"
+    if paired.alternatives and not confirmed:
+        doubts.append(f"the marks fit {len(paired.alternatives) + 1} places as well ({', '.join(sorted({n for n, _, _ in paired.pairs}))} "
+                      "recurs in the file); a mark of another event, or a look at the video, tells them apart")
+    result.doubt = "; ".join(doubts) or None
+    return result
 
 
 def _same_markers(first: dict, second: dict) -> bool:
