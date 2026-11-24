@@ -187,7 +187,7 @@ def test_the_signals_tab_shows_only_where_a_project_lists_signals(tmp_path):
 
 def test_each_file_stacks_its_pairs_as_rows_on_one_scale_with_its_events():
     from macaw.interface.pages.signals import DEFAULT_ROWS, HAEMOGLOBIN_COLOURS, channel_rows
-    from macaw.signals.lanes import DIFFERENCE, OWN, RELATIVE, lines, stack
+    from macaw.signals.lanes import DIFFERENCE, OWN, RELATIVE, lines, stack, unpack
 
     names = [f"S{k}_D{k} {wave}" for k in range(1, 23) for wave in (760, 850)]
     rows, mode, total = channel_rows(names, ["raw"] * len(names), [])
@@ -206,14 +206,21 @@ def test_each_file_stacks_its_pairs_as_rows_on_one_scale_with_its_events():
     drawn = stack([("S1_D1", [("760 nm", "#000", times, 0.34 * (1 + wave))]), ("S2_D1", [("760 nm", "#000", times, 0.09 * (1 + wave))])],
                   20.0, mode=RELATIVE, events=[5.0, 25.0])
     assert drawn["unit"] == "%" and drawn["events"] == [5.0] and drawn["scale"] == pytest.approx(1.0, abs=0.15)
-    first, second = (np.array(row["series"][0]["values"], dtype=float) for row in drawn["rows"])
+    first, second = (unpack(row["series"][0]["packed"]) for row in drawn["rows"])
     assert np.nanmax(np.abs(first - second)) < 1e-3
     # haemoglobin in molar units keeps its shape: values come in units of the scale
     molar = stack([("S1_D1", [("HbO", "#000", times, 3e-7 * np.sin(times))])], 20.0)
-    assert molar["scale"] == pytest.approx(3e-7, rel=0.1) and np.nanmax(np.abs(np.array(molar["rows"][0]["series"][0]["values"], dtype=float))) > 0.9
+    assert molar["scale"] == pytest.approx(3e-7, rel=0.1) and np.nanmax(np.abs(unpack(molar["rows"][0]["series"][0]["packed"]))) > 0.9
     own = stack([("ECG", [("ECG", "#000", times, 500 + 40 * np.sin(times))])], 20.0, mode=OWN)
-    assert own["own"] and np.nanmax(np.abs(np.array(own["rows"][0]["series"][0]["values"], dtype=float))) < 1.05
+    assert own["own"] and np.nanmax(np.abs(unpack(own["rows"][0]["series"][0]["packed"]))) < 1.05
     fixed = lines([("a", times, np.sin(times) * 9)], 20.0, bounds=(-3.0, 3.0), unit=" SD")
     assert (fixed["low"], fixed["high"], fixed["unit"]) == (-3.0, 3.0, " SD")
     assert lines([("a", times, np.full(times.size, np.nan))], 20.0) is None
     assert stack([("a", [("a", "#000", times, np.full(times.size, np.nan))])], 20.0) is None
+    # a series of one value a second over a 20 s lane fills every point it is drawn with, so its line is joined
+    slow = np.arange(0.0, 20.0, 1.0)
+    sparse = lines([("coherence", slow, np.full(slow.size, 0.3))], 20.0, bounds=(0.0, 1.0))
+    assert len(sparse["series"][0]["values"]) == slow.size and None not in sparse["series"][0]["values"]
+    # points travel as 16-bit integers with gaps kept, fine enough for a row a few pixels high
+    packed = unpack(stack([("a", [("a", "#000", times, np.where(times < 10, np.sin(times), np.nan))])], 20.0)["rows"][0]["series"][0]["packed"])
+    assert np.isnan(packed[-1]) and np.nanmax(np.abs(packed)) == pytest.approx(1.0, abs=0.1)

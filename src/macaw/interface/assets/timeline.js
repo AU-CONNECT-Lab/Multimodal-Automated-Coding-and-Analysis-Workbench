@@ -9,6 +9,12 @@
   const gains = new Map();
   // px per row of a stack
   const ROW_PX = 14;
+  // a stack's points come as base64 16-bit integers in these steps of its scale, the lowest a gap (lanes.py)
+  const PACK_STEP = 0.002, PACK_GAP = -32768;
+  const unpack = (text) => {
+    const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+    return Array.from(new Int16Array(bytes.buffer), (v) => (v === PACK_GAP ? null : v * PACK_STEP));
+  };
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -30,6 +36,7 @@
 
   function make(root) {
     const cfg = JSON.parse(root.dataset.strip);
+    (cfg.lanes || []).forEach((lane) => { if (lane.kind === 'stack') lane.rows.forEach((row) => row.series.forEach((s) => { s.values = unpack(s.packed); })); });
     const video = cfg.video ? document.getElementById(cfg.video) : null;
     const length = Math.max(cfg.length || (video && video.duration) || 1, 0.1);
     const long = (cfg.offset || 0) + length * (cfg.scale || 1) >= 3600;
