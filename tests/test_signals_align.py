@@ -396,7 +396,7 @@ def test_the_coherence_nirspipe_saved_follows_the_clock_of_a_member_it_was_compu
     assert SignalReviewGate(config).pending(recording) and signals_placed(config)["follows"] == 1
     assert "series of the wavelet coherence between participants" in _signals(signals_placed(config))
 
-    shown = strip_config(page.strip(project, "003", None, [], [], [], ["S2_D2"]))
+    shown = strip_config(page.strip(project, "003", [], [], [], ["S2_D2"]))
     lane = next(lane for lane in shown["lanes"] if lane["name"] == "coherence")
     assert [s["name"] for s in lane["series"]] == ["mean of all pairs", "S2_D2"] and (lane["low"], lane["high"]) == (0.0, 1.0)
     assert not [lane for lane in shown["lanes"] if lane["name"] in ("all wtc", "all events")]

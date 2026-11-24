@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import base64
-import struct
-import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -143,9 +140,12 @@ def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligne
     assert "No signal files for 004" in text_of(signals.body(project, "004"))
     page = text_of(signals.body(project, "003"))
     assert "Where each file sits" in page and "not looked at yet" in page and "not aligned" in page
-    shown = strip_config(signals.strip(project, "003", None, ["S1_D1"], [], []))
+    shown = strip_config(signals.strip(project, "003", ["S1_D1"], [], []))
     kinds = [(lane["kind"], lane["name"]) for lane in shown["lanes"]]
-    assert ("carpet", "child raw") in kinds and ("carpet", "child preproc") in kinds and ("lines", "child turning") in kinds
+    assert ("stack", "child raw") in kinds and ("stack", "child preproc") in kinds and ("lines", "child turning") in kinds
+    raw = next(lane for lane in shown["lanes"] if lane["name"] == "child raw")
+    assert [row["name"] for row in raw["rows"]] == ["S1_D1"] and raw["rows"][0]["series"][0]["colour"] == signals.HAEMOGLOBIN_COLOURS["hbo"]
+    assert "1 of 1 pairs" in raw["title"] and "events as lines" in raw["title"]
     assert shown["noun"] == "mark" and shown["notes"] and not shown["editWindow"]
     turning = next(lane for lane in shown["lanes"] if lane["name"] == "child turning")
     assert [series["name"] for series in turning["series"]] == ["head on the video", "cap"]
@@ -157,16 +157,16 @@ def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligne
     monkeypatch.setattr(signals.cli_bridge, "run_now", lambda argv, cwd=None: (ran.append(argv), run_steps(config, layout), (0, ""))[-1])
     edited = callback(create_app(project), "..signals-shown.data")
     played = shown["offset"]
-    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003", None, [], [], [], [])
+    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003", [], [], [], [])
     assert [(m.name, m.start_s - played, m.note) for m in marks_of(resolve_config(project), "003")] == [("cried", 1.0, "loud")]
     shown_after, message, *_ = edited({"op": "set", "name": "cried", "start": 1.0, "end": 4.0, "note": "loud",
-                                       "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003", None, [], [], [], [])
+                                       "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003", [], [], [], [])
     assert message is None and [(s["a"], s["b"]) for s in shown_after["segments"]] == [(1.0, 4.0)]
-    shown_after, message, *_ = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003", None, [], [], [], [])
+    shown_after, message, *_ = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003", [], [], [], [])
     assert shown_after["segments"] == [] and marks_of(resolve_config(project), "003") == [] and not ran
     # a mark named as the files' event places them by it at once
     _, message, offsets, _ = edited({"op": "set", "name": "Start", "start": 5.0, "end": 6.0, "note": "", "was": None, "n": 4},
-                                    "003", None, [], [], [], [])
+                                    "003", [], [], [], [])
     assert ran and ran[0][1:2] == ["run"] and "signals.align" in ran[0] and message is None
     assert "from 1 marked event(s)" in text_of(offsets)
     keep = signals.action_command(project, "003", "keep", "child_raw,child_preproc", "ann")
@@ -185,35 +185,35 @@ def test_the_signals_tab_shows_only_where_a_project_lists_signals(tmp_path):
     assert signals not in shown_tabs(resolve_config(project))
 
 
-def test_a_carpet_is_a_png_with_a_row_per_channel_and_lines_keep_their_scale():
-    from macaw.signals.lanes import carpet, lines
+def test_each_file_stacks_its_pairs_as_rows_on_one_scale_with_its_events():
+    from macaw.interface.pages.signals import DEFAULT_ROWS, HAEMOGLOBIN_COLOURS, channel_rows
+    from macaw.signals.lanes import DIFFERENCE, OWN, RELATIVE, lines, stack
 
+    names = [f"S{k}_D{k} {wave}" for k in range(1, 23) for wave in (760, 850)]
+    rows, mode, total = channel_rows(names, ["raw"] * len(names), [])
+    assert mode == RELATIVE and total == 22 and [row for row, _ in rows] == [f"S{k}_D{k}" for k in range(1, DEFAULT_ROWS + 1)]
+    assert [label for _, label, _ in rows[0][1]] == ["760 nm", "850 nm"]
+    assert [row for row, _ in channel_rows(names, ["raw"] * len(names), ["S9_D9", "S5_D5", "S99_D1"])[0]] == ["S5_D5", "S9_D9"]
+    assert channel_rows(names, ["od"] * len(names), [])[1] == DIFFERENCE
+    haemoglobin, mode, _ = channel_rows(["S1_D1 hbo", "S1_D1 hbr"], ["hbo", "hbr"], [])
+    assert mode == DIFFERENCE and [colour for _, _, colour in haemoglobin[0][1]] == [HAEMOGLOBIN_COLOURS["hbo"], HAEMOGLOBIN_COLOURS["hbr"]]
+    table, mode, _ = channel_rows(["ECG", "Heart rate"], ["value", "value"], [])
+    assert mode == OWN and [row for row, _ in table] == ["ECG", "Heart rate"]
+
+    # raw light whose level differs fourfold between channels fills one scale once each is a % change from its mean
     times = np.arange(0.0, 20.0, 0.1)
-    samples = pd.DataFrame({"time": times, "a": np.sin(times), "b": times * 2.0})
-    drawn = carpet(samples, ["a", "b"], times - 5.0, 10.0)
-    image = base64.b64decode(drawn["image"].split(",", 1)[1])
-    assert image[:8] == b"\x89PNG\r\n\x1a\n" and drawn["rows"] == ["a", "b"]
-    width, height = struct.unpack(">II", image[16:24])
-    assert height == 2 and width == 101
-    assert zlib.decompress(image[41:-12])[:1] == b"\x00"
+    wave = 0.01 * np.sin(times)
+    drawn = stack([("S1_D1", [("760 nm", "#000", times, 0.34 * (1 + wave))]), ("S2_D1", [("760 nm", "#000", times, 0.09 * (1 + wave))])],
+                  20.0, mode=RELATIVE, events=[5.0, 25.0])
+    assert drawn["unit"] == "%" and drawn["events"] == [5.0] and drawn["scale"] == pytest.approx(1.0, abs=0.15)
+    first, second = (np.array(row["series"][0]["values"], dtype=float) for row in drawn["rows"])
+    assert np.nanmax(np.abs(first - second)) < 1e-3
+    # haemoglobin in molar units keeps its shape: values come in units of the scale
+    molar = stack([("S1_D1", [("HbO", "#000", times, 3e-7 * np.sin(times))])], 20.0)
+    assert molar["scale"] == pytest.approx(3e-7, rel=0.1) and np.nanmax(np.abs(np.array(molar["rows"][0]["series"][0]["values"], dtype=float))) > 0.9
+    own = stack([("ECG", [("ECG", "#000", times, 500 + 40 * np.sin(times))])], 20.0, mode=OWN)
+    assert own["own"] and np.nanmax(np.abs(np.array(own["rows"][0]["series"][0]["values"], dtype=float))) < 1.05
     fixed = lines([("a", times, np.sin(times) * 9)], 20.0, bounds=(-3.0, 3.0), unit=" SD")
     assert (fixed["low"], fixed["high"], fixed["unit"]) == (-3.0, 3.0, " SD")
     assert lines([("a", times, np.full(times.size, np.nan))], 20.0) is None
-
-
-def test_a_carpet_of_a_whole_head_array_pools_its_rows_and_a_poor_channel_still_shows():
-    from macaw.signals.lanes import CARPET_ROWS, carpet
-
-    times = np.arange(0.0, 60.0, 0.1)
-    rng = np.random.default_rng(3)
-    names = [f"S{k}_D{k} 760" for k in range(1000)]
-    values = rng.normal(0.0, 1.0, (times.size, len(names)))
-    values[300, 517] = 50.0   # one channel's spike
-    samples = pd.DataFrame(values, columns=names).assign(time=times)
-    drawn = carpet(samples, names, times, 60.0)
-    image = base64.b64decode(drawn["image"].split(",", 1)[1])
-    width, height = struct.unpack(">II", image[16:24])
-    assert height == CARPET_ROWS == len(drawn["rows"]) and drawn["rows"][0] == "S0_D0 760 to S5_D5 760"
-    pixels = np.frombuffer(zlib.decompress(image[41:-12]), dtype=np.uint8).reshape(height, 1 + 2 * width)[:, 1::2]
-    row = next(i for i, group in enumerate(np.array_split(np.arange(len(names)), CARPET_ROWS)) if 517 in group)
-    assert pixels[row, 300] == 255 and (pixels == 255).mean() < 0.05
+    assert stack([("a", [("a", "#000", times, np.full(times.size, np.nan))])], 20.0) is None

@@ -1,10 +1,14 @@
 // The time strip under a player: play, the time, speed, zoom, and lanes for the analysed part, segments or marks, listed
-// moments, and lanes a page adds (carpets, lines and coded spans).
+// moments, and lanes a page adds (stacked channels, lines and coded spans).
 (function () {
   const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
   const strips = new Map();
   // each strip's zoom by its id, so one drawn again for new settings keeps where it was
   const views = new Map();
+  // each stack's gain by strip and lane, kept the same way
+  const gains = new Map();
+  // px per row of a stack
+  const ROW_PX = 14;
 
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -37,9 +41,14 @@
     };
     const extraLane = (lane, k) => {
       const name = `<span class="strip-name" title="${esc(lane.title || lane.name)}">${esc(lane.name)}</span>`;
-      if (lane.kind === 'carpet') {
-        return `<div class="strip-lane">${name}<div class="strip-track strip-carpet" data-x="${k}" style="height:${clamp(lane.rows.length * 2, 24, 96)}px">`
-          + `<img alt="" draggable="false" src="${lane.image}"></div></div>`;
+      if (lane.kind === 'stack') {
+        const n = lane.rows.length, labels = lane.rows.map((row, i) => `<i style="top:${((i + 0.5) / n) * 100}%">${esc(row.name)}</i>`).join('');
+        const series = [...new Map(lane.rows.flatMap((row) => row.series).map((s) => [s.name, s.colour])).entries()];
+        const legend = series.length > 1 ? series.map(([label, colour]) => `<b style="color:${colour}">${esc(label)}</b>`).join(' ') : '';
+        const gain = lane.own ? '' : `<span class="strip-gain"><button type="button" data-g="0.5" data-x="${k}" title="Smaller">−</button><button type="button" data-g="2" data-x="${k}" title="Larger">+</button></span>`;
+        return `<div class="strip-lane"><span class="strip-name" title="${esc(lane.title || lane.name)}">${esc(lane.name)}${gain}</span>`
+          + `<div class="strip-track strip-stack" data-x="${k}" style="height:${Math.max(n * ROW_PX, 28)}px"><svg preserveAspectRatio="none" viewBox="0 0 100 ${n * 10}"></svg>`
+          + `<span class="strip-rows">${labels}</span><span class="strip-legend">${legend} <i class="strip-scale"></i></span></div></div>`;
       }
       if (lane.kind === 'lines') {
         const legend = lane.series.length > 1 || lane.scaled ? lane.series.map((s) => `<b style="color:${s.colour}">${esc(s.name)}</b>`).join(' ') : '';
@@ -74,7 +83,7 @@
     const ruler = $('.strip-ruler'), hover = $('.strip-hover'), head = $('.strip-head'), timeBox = $('.strip-time');
     const winTrack = $('[data-lane=win]'), segTrack = $('[data-lane=segs]'), tickTrack = $('[data-lane=ticks]');
     const chosen = $('.strip-chosen'), lanesBox = $('.strip-lanes');
-    const extraTracks = [...root.querySelectorAll('[data-x]')];
+    const extraTracks = [...root.querySelectorAll('.strip-track[data-x]')];
 
     const span = () => S.view[1] - S.view[0];
     const pct = (own) => `${((own - S.view[0]) / span()) * 100}%`;
@@ -184,10 +193,8 @@
       S.drawn = key;
       extraTracks.forEach((track) => {
         const lane = cfg.lanes[+track.dataset.x];
-        if (lane.kind === 'carpet') {
-          const img = track.firstElementChild;
-          img.style.left = pct(0);
-          img.style.width = width(0, length);
+        if (lane.kind === 'stack') {
+          drawStack(track, lane, +track.dataset.x);
         } else if (lane.kind === 'lines') {
           const size = lane.series[0].values.length, low = lane.low, high = lane.high;
           const first = Math.max(0, Math.floor(S.view[0] / lane.step) - 1), last = Math.min(size - 1, Math.ceil(S.view[1] / lane.step) + 1);
@@ -209,6 +216,31 @@
             `<i class="strip-code" data-t="${b.a}" style="left:${pct(b.a)};width:${width(b.a, b.b)}" title="${esc(b.label)}: ${clock(rec(b.a), long, 1)} to ${clock(rec(b.b), long, 1)}">${esc(b.label)}</i>`).join('');
         }
       });
+    }
+
+    function drawStack(track, lane, k) {
+      const size = lane.rows[0].series[0].values.length, gain = gains.get(`${root.id}|${k}`) || 1, scale = lane.scale / gain;
+      // values come in units of lane.scale
+      const first = Math.max(0, Math.floor(S.view[0] / lane.step) - 1), last = Math.min(size - 1, Math.ceil(S.view[1] / lane.step) + 1);
+      const x = (t) => (((t - S.view[0]) / span()) * 100).toFixed(3);
+      let html = lane.events.filter((t) => t >= S.view[0] && t <= S.view[1])
+        .map((t) => `<path class="strip-event" d="M${x(t)} 0V${lane.rows.length * 10}"/>`).join('');
+      lane.rows.forEach((row, r) => {
+        const centre = r * 10 + 5;
+        row.series.forEach((s) => {
+          let d = '', pen = false;
+          for (let j = first; j <= last; j++) {
+            const v = s.values[j];
+            if (v === null) { pen = false; continue; }
+            d += `${pen ? 'L' : 'M'}${x((j + 0.5) * lane.step)} ${(centre - clamp(v * gain, -1, 1) * 4.7).toFixed(2)}`;
+            pen = true;
+          }
+          html += `<path stroke="${s.colour}" d="${d}"/>`;
+        });
+      });
+      track.querySelector('svg').innerHTML = html;
+      const said = track.querySelector('.strip-scale');
+      if (said) said.textContent = lane.own ? 'each row to its own range' : `row ±${+scale.toPrecision(2)}${lane.unit ? ` ${lane.unit}` : ''}`;
     }
 
     function drawChosen() {
@@ -323,9 +355,9 @@
       const t = ownAt(e.clientX);
       const track = e.currentTarget, lane = track.dataset && track.dataset.x !== undefined ? cfg.lanes[+track.dataset.x] : null;
       let row = '';
-      if (lane && lane.kind === 'carpet') {
+      if (lane && lane.kind === 'stack') {
         const r = track.getBoundingClientRect();
-        row = lane.rows[clamp(Math.floor(((e.clientY - r.top) / r.height) * lane.rows.length), 0, lane.rows.length - 1)];
+        row = lane.rows[clamp(Math.floor(((e.clientY - r.top) / r.height) * lane.rows.length), 0, lane.rows.length - 1)].name;
       }
       hover.textContent = clock(rec(t), long, 1) + (row ? ` · ${row}` : '');
       hover.style.left = pct(t);
@@ -409,6 +441,14 @@
         draw();
       });
     }
+    root.addEventListener('click', (e) => {
+      const button = e.target.closest('[data-g]');
+      if (!button) return;
+      const key = `${root.id}|${button.dataset.x}`;
+      gains.set(key, clamp((gains.get(key) || 1) * +button.dataset.g, 1 / 64, 64));
+      S.drawn = '';
+      draw();
+    });
     for (const track of extraTracks) {
       track.addEventListener('pointerdown', (e) => {
         const bar = e.target.closest('.strip-code');

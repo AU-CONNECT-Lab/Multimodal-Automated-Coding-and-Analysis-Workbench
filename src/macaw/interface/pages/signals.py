@@ -24,11 +24,16 @@ LABEL = "Signals"
 PATH = "/signals"
 PLAYER, STRIP, EDITS, SHOWN = "signals-player", "signals-strip", "signals-edits", "signals-shown"
 ACT, OFFSET, BY = "signals-act", "signals-offset", "signals-by"
-CARPET, LINES, MEASURES, CODING = "signals-carpet", "signals-lines", "signals-measures", "signals-coding"
+CHANNELS, MEASURES, CODING = "signals-channels", "signals-measures", "signals-coding"
 COHERENT = "signals-coherence"
 STRIP_BOX, OFFSETS_BOX = "signals-strip-box", "signals-offsets-box"
-# channel pairs drawn as lines at once; more would be a carpet again
+# coherence pairs drawn beside their mean at most
 MAX_LINES = 6
+# rows of a file shown until channels are chosen, as fNIRS acquisition software shows the first 20 of a full screen
+DEFAULT_ROWS = 10
+HAEMOGLOBIN_COLOURS = {"hbo": "#c44e52", "hbr": "#4c72b0", "hbt": "#55a868"}
+# a pair's wavelengths, shortest first
+WAVELENGTH_COLOURS = ("#dd8452", "#8172b3", "#937860")
 # a source-detector pair, then what the channel holds: a wavelength or hbo, hbr, hbt
 _CHANNEL = re.compile(r"^(?P<pair>\S+)\s+(?P<group>\S+)$")
 
@@ -88,7 +93,7 @@ def _choices(own, rid: str, files) -> dict:
     from macaw.store.longtable import read_long_table
     from macaw.store.schema import Scale
 
-    groups, pairs, coherent = [], [], []
+    pairs, coherent = [], []
     for item in files:
         try:
             info = load_info(own, rid, item)
@@ -97,10 +102,9 @@ def _choices(own, rid: str, files) -> dict:
         if info.get("format") == COHERENCE:
             coherent += [channel["name"] for channel in info["channels"] if channel["name"] != MEAN and channel["name"] not in coherent]
             continue
-        for channel in info["channels"]:
-            pair, group = group_of(channel["name"])
-            groups += [group] if group not in groups else []
-            pairs += [pair] if pair not in pairs else []
+        names = [channel["name"] for channel in info["channels"]]
+        for row in (list(dict.fromkeys(group_of(name)[0] for name in names)) if is_fnirs(names) else names):
+            pairs += [row] if row not in pairs else []
     layout = layout_for(own, create=False)
     path = layout.long_table_path(rid)
     measures = []
@@ -109,7 +113,7 @@ def _choices(own, rid: str, files) -> dict:
         measures = sorted(rows["feature"].dropna().astype(str).unique()) if not rows.empty else []
     coded = layout.annotations_path(rid)
     tiers = sorted(read_annotations(coded)["tier"].dropna().astype(str).unique()) if coded.exists() else []
-    return {"groups": groups, "pairs": pairs, "measures": measures, "tiers": tiers, "coherent": coherent}
+    return {"pairs": pairs, "measures": measures, "tiers": tiers, "coherent": coherent}
 
 
 def body(config_path: Path, rid: str | None):
@@ -143,8 +147,7 @@ def body(config_path: Path, rid: str | None):
                                             persistence_type="local", placeholder=hint))
 
     controls = html.Div([
-        picker(CARPET, "Carpet", [{"label": group_label(g), "value": g} for g in offered["groups"]], False, "each file's first"),
-        picker(LINES, "Channels as lines", offered["pairs"], True, "none"),
+        picker(CHANNELS, "Channels", offered["pairs"], True, f"each file's first {DEFAULT_ROWS}"),
         picker(MEASURES, "Measures from the video", offered["measures"], True, "none"),
         picker(CODING, "Coding", offered["tiers"], True, "none"),
         html.Div(picker(COHERENT, "Coherence pairs", offered["coherent"], True, "their mean only"),
@@ -158,8 +161,7 @@ def body(config_path: Path, rid: str | None):
     return html.Div([signals_card, html.Div(offsets_card(own, rid, files), id=OFFSETS_BOX)])
 
 
-def strip(config_path: Path, rid: str, carpet_group: str | None, pairs: list[str], measures: list[str], tiers: list[str],
-          coherent: list[str] | None = None):
+def strip(config_path: Path, rid: str, pairs: list[str], measures: list[str], tiers: list[str], coherent: list[str] | None = None):
     own = resolve_config(config_path, recording_id=rid)
     config = resolve_config(config_path)
     clock = played_clock(own, rid)
@@ -175,7 +177,7 @@ def strip(config_path: Path, rid: str, carpet_group: str | None, pairs: list[str
         STRIP, video=PLAYER if preview is not None else None, offset=clock[0], scale=clock[1], length=length,
         window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), edit=True, editWindow=False,
         noun="mark", editName="Marks", notes=True, segments=strip_marks(own, rid, clock), loudness=loud, editStore=EDITS,
-        lanes=lanes(own, rid, clock, length, carpet_group, pairs or [], measures or [], tiers or [], coherent or []),
+        lanes=lanes(own, rid, clock, length, pairs or [], measures or [], tiers or [], coherent or []),
         names=event_names(own, rid),
     )
 
@@ -206,15 +208,45 @@ def strip_marks(own, rid: str, clock: tuple[float, float]) -> list[dict]:
     ]
 
 
-def lanes(own, rid: str, clock, length: float, carpet_group, pairs, measures, tiers, coherent=()) -> list[dict]:
-    """Per file a carpet, its chosen channels as lines and the events it marked, per person with a cap IMU its turning
-    against the head's on the video, then the chosen measures and coding."""
+def is_fnirs(names: list[str]) -> bool:
+    """Whether every channel is named as fNIRS channels are, a pair and then a wavelength or a haemoglobin."""
+    return bool(names) and all(group.lower() in HAEMOGLOBIN_COLOURS or group.isdigit() for group in (group_of(name)[1] for name in names))
+
+
+def channel_rows(names: list[str], kinds: list[str], pairs: list[str]) -> tuple[list[tuple[str, list[tuple[str, str, str]]]], str, int]:
+    """(row, its (channel, series name, colour)) for the chosen pairs or channels, else the file's first; how they are shown; rows in all."""
+    from macaw.signals.lanes import COLOURS, DIFFERENCE, OWN, RELATIVE
+
+    if not is_fnirs(names):
+        rows = [(name, [(name, name, COLOURS[0])]) for name in names]
+        mode = OWN
+    else:
+        grouped: dict[str, list[str]] = {}
+        for name in names:
+            grouped.setdefault(group_of(name)[0], []).append(name)
+        waves = sorted({int(group) for group in (group_of(name)[1] for name in names) if group.isdigit()})
+
+        def colour(group: str) -> str:
+            return HAEMOGLOBIN_COLOURS.get(group.lower()) or WAVELENGTH_COLOURS[min(waves.index(int(group)), len(WAVELENGTH_COLOURS) - 1)]
+
+        rows = [(pair, [(name, group_label(group_of(name)[1]), colour(group_of(name)[1])) for name in members])
+                for pair, members in grouped.items()]
+        mode = RELATIVE if waves and not any(kind == "od" for kind in kinds) else DIFFERENCE
+    chosen = [row for row in rows if row[0] in pairs] or rows[:DEFAULT_ROWS]
+    return chosen, mode, len(rows)
+
+
+def lanes(own, rid: str, clock, length: float, pairs, measures, tiers, coherent=()) -> list[dict]:
+    """Per file its channels stacked as rows with its events, per person with a cap IMU its turning against the head's on
+    the video, then the chosen measures and coding."""
     from macaw.signals.align import head_turning, signal_offsets
     from macaw.signals.imu import gyro_speed
-    from macaw.signals.lanes import CARPET_Z, carpet, channel_z, lines, spans
+    from macaw.signals.lanes import DIFFERENCE, RELATIVE, lines, spans, stack
     from macaw.signals.read import load_aux, load_info, load_samples
     from macaw.signals.table import signal_files
 
+    shown_as = {DIFFERENCE: "change from each channel's mean, on one scale",
+                RELATIVE: "light as % change from each channel's mean, on one scale"}
     offsets = signal_offsets(own, rid)
     out, turning_done, events_drawn = [], set(), set()
     for item in signal_files(own, rid):
@@ -231,20 +263,16 @@ def lanes(own, rid: str, clock, length: float, carpet_group, pairs, measures, ti
             out += coherence_lane(info["coherence"], samples, at, length, coherent, where)
             continue
         names = [column for column in samples.columns if column != "time"]
-        groups = [group_of(name)[1] for name in names]
-        group = carpet_group if carpet_group in groups else (groups[0] if groups else None)
-        chosen = [name for name, g in zip(names, groups) if g == group]
-        drawn = carpet(samples, chosen, at, length)
+        kinds = [channel.get("kind", "") for channel in info.get("channels", [])]
+        marked = [float(to_played([float(m["onset"])], own_clock, clock)[0]) for m in info.get("markers", [])]
+        rows, mode, total = channel_rows(names, kinds, pairs)
+        drawn = stack([(row, [(label, colour, at, samples[name].to_numpy(dtype=float)) for name, label, colour in series])
+                       for row, series in rows], length, mode=mode, events=marked)
         if drawn:
-            out.append({"kind": "carpet", "name": f"{item.person or 'all'} {item.stage}",
-                        "title": f"{item.path.name}, {group_label(group or '')}, each channel less its trend in its own SDs; {where}", **drawn})
-        wanted_pairs = [name for name in chosen if group_of(name)[0] in pairs[:MAX_LINES]]
-        if wanted_pairs:
-            drawn = lines([(group_of(name)[0], at, channel_z(samples, name, at, length)) for name in wanted_pairs], length,
-                          bounds=(-CARPET_Z, CARPET_Z), unit=" SD")
-            if drawn:
-                out.append({"kind": "lines", "name": f"{item.person or 'all'} {item.stage}",
-                            "title": f"{item.path.name}, {group_label(group or '')}, each channel less its trend in its own SDs, as in the carpet", **drawn})
+            noun = "pairs" if is_fnirs(names) else "channels"
+            out.append({"kind": "stack", "name": f"{item.person or 'all'} {item.stage}", "title": (
+                f"{item.path.name}{f' ({item.stream})' if item.stream else ''}: {len(rows)} of {total} {noun}, "
+                f"{shown_as.get(mode, 'each channel scaled to its own range')}; the file's events as lines; {where}"), **drawn})
         events = [(float(m["onset"]), float(m["onset"]) + float(m.get("duration") or 0.0), str(m["name"]))
                   for m in info.get("markers", [])]
         # files that share a clock carry the same events; one lane shows them
@@ -444,14 +472,14 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output(STRIP_BOX, "children"),
-        Input(CARPET, "value"), Input(LINES, "value"), Input(MEASURES, "value"), Input(CODING, "value"), Input(COHERENT, "value"),
+        Input(CHANNELS, "value"), Input(MEASURES, "value"), Input(CODING, "value"), Input(COHERENT, "value"),
         State(ui.SHOWN["signals"], "data"),
     )
-    def drawn(group, pairs, measures, tiers, coherent, rid):
+    def drawn(pairs, measures, tiers, coherent, rid):
         if not rid:
             return no_update
         try:
-            return strip(config_path, rid, group, pairs, measures, tiers, coherent)
+            return strip(config_path, rid, pairs, measures, tiers, coherent)
         except MacawError as error:
             return ui.note(str(error), "bad")
 
@@ -459,10 +487,10 @@ def register(app, config_path: Path) -> None:
         Output(SHOWN, "data"), Output("signals-message", "children", allow_duplicate=True),
         Output(OFFSETS_BOX, "children", allow_duplicate=True), Output(STRIP_BOX, "children", allow_duplicate=True),
         Input(EDITS, "data"), State(ui.SHOWN["signals"], "data"),
-        State(CARPET, "value"), State(LINES, "value"), State(MEASURES, "value"), State(CODING, "value"), State(COHERENT, "value"),
+        State(CHANNELS, "value"), State(MEASURES, "value"), State(CODING, "value"), State(COHERENT, "value"),
         prevent_initial_call=True,
     )
-    def edited(edit, rid, group, pairs, measures, tiers, coherent):
+    def edited(edit, rid, pairs, measures, tiers, coherent):
         if not edit or not rid:
             return no_update, no_update, no_update, no_update
         own = resolve_config(config_path, recording_id=rid)
@@ -483,7 +511,7 @@ def register(app, config_path: Path) -> None:
         from macaw.signals.table import signal_files
 
         return (shown, message, offsets_card(own, rid, signal_files(own, rid)),
-                strip(config_path, rid, group, pairs, measures, tiers, coherent))
+                strip(config_path, rid, pairs, measures, tiers, coherent))
 
 
 def _same_offset(config_path: Path, rid: str, files: str, value: float) -> bool:
