@@ -180,7 +180,7 @@ def strip(config_path: Path, rid: str, pairs: list[str], measures: list[str], ti
         window=own_times(window_of(own.segment, clock[0] + length * clock[1]), clock), edit=True, editWindow=False,
         noun="mark", editName="Marks", notes=True, segments=strip_marks(own, rid, clock), loudness=loud, editStore=EDITS,
         lanes=lanes(own, rid, clock, length, pairs or [], measures or [], tiers or [], coherent or []),
-        names=event_names(own, rid),
+        names=event_names(own, rid), namesInside=True,
     )
 
 

@@ -46,34 +46,40 @@
       own: cfg.start || 0, view: kept && kept[1] <= length ? [...kept] : [0, length], segs: (cfg.segments || []).map((s) => ({ ...s })), sel: null,
       win: cfg.window ? [...cfg.window] : null, oldWin: null, said: '', drag: null, ticks: [], n: 0, raf: 0, tell: 0, drawn: '', last: null,
     };
-    const extraLane = (lane, k) => {
-      const name = `<span class="strip-name" title="${esc(lane.title || lane.name)}">${esc(lane.name)}</span>`;
-      if (lane.kind === 'stack') {
-        const n = lane.rows.length, labels = lane.rows.map((row, i) => `<i style="top:${((i + 0.5) / n) * 100}%">${esc(row.name)}</i>`).join('');
-        const series = [...new Map(lane.rows.flatMap((row) => row.series).map((s) => [s.name, s.colour])).entries()];
-        const legend = series.length > 1 ? series.map(([label, colour]) => `<b style="color:${colour}">${esc(label)}</b>`).join(' ') : '';
-        const gain = lane.own ? '' : `<span class="strip-gain"><button type="button" data-g="0.5" data-x="${k}" title="Smaller">−</button><button type="button" data-g="2" data-x="${k}" title="Larger">+</button></span>`;
-        return `<div class="strip-lane"><span class="strip-name" title="${esc(lane.title || lane.name)}">${esc(lane.name)}${gain}</span>`
-          + `<div class="strip-track strip-stack" data-x="${k}" style="height:${Math.max(n * ROW_PX, 28)}px"><svg preserveAspectRatio="none" viewBox="0 0 100 ${n * 10}"></svg>`
-          + `<span class="strip-rows">${labels}</span><span class="strip-legend">${legend} <i class="strip-scale"></i></span></div></div>`;
+    // a lane's name: a column on the left, or with namesInside in the lane's top right corner beside its legend
+    const inside = !!cfg.namesInside;
+    const lane = (name, title, track, extra = '', legend = '', cls = '') => inside
+      ? `<div class="strip-lane${cls}">${track}<span class="strip-tag" title="${esc(title || name)}"><b>${esc(name)}</b>${extra}${legend}</span></div>`
+      : `<div class="strip-lane${cls}"><span class="strip-name" title="${esc(title || name)}">${esc(name)}${extra}</span>${track}</div>`;
+    const extraLane = (spec, k) => {
+      if (spec.kind === 'stack') {
+        const n = spec.rows.length, labels = spec.rows.map((row, i) => `<i style="top:${((i + 0.5) / n) * 100}%">${esc(row.name)}</i>`).join('');
+        const series = [...new Map(spec.rows.flatMap((row) => row.series).map((s) => [s.name, s.colour])).entries()];
+        const legend = (series.length > 1 ? series.map(([label, colour]) => `<b style="color:${colour}">${esc(label)}</b>`).join(' ') : '') + ' <i class="strip-scale"></i>';
+        const gain = spec.own ? '' : `<span class="strip-gain"><button type="button" data-g="0.5" data-x="${k}" title="Smaller">−</button><button type="button" data-g="2" data-x="${k}" title="Larger">+</button></span>`;
+        const track = `<div class="strip-track strip-stack" data-x="${k}" style="height:${Math.max(n * ROW_PX, 28)}px"><svg preserveAspectRatio="none" viewBox="0 0 100 ${n * 10}"></svg>`
+          + `<span class="strip-rows">${labels}</span>${inside ? '' : `<span class="strip-legend">${legend}</span>`}</div>`;
+        return lane(spec.name, spec.title, track, gain, inside ? legend : '');
       }
-      if (lane.kind === 'lines') {
-        const legend = lane.series.length > 1 || lane.scaled ? lane.series.map((s) => `<b style="color:${s.colour}">${esc(s.name)}</b>`).join(' ') : '';
-        const range = lane.scaled ? '' : `<span class="strip-range"><i>${+lane.high.toPrecision(3)}${esc(lane.unit || '')}</i><i>${+lane.low.toPrecision(3)}${esc(lane.unit || '')}</i></span>`;
-        return `<div class="strip-lane">${name}<div class="strip-track strip-lines" data-x="${k}"><svg preserveAspectRatio="none" viewBox="0 0 100 100">`
-          + lane.series.map((s) => `<path stroke="${s.colour}"/>`).join('') + `</svg>${range}<span class="strip-legend">${legend}</span></div></div>`;
+      if (spec.kind === 'lines') {
+        const legend = spec.series.length > 1 || spec.scaled ? spec.series.map((s) => `<b style="color:${s.colour}">${esc(s.name)}</b>`).join(' ') : '';
+        const range = spec.scaled ? '' : `<span class="strip-range"><i>${+spec.high.toPrecision(3)}${esc(spec.unit || '')}</i><i>${+spec.low.toPrecision(3)}${esc(spec.unit || '')}</i></span>`;
+        const track = `<div class="strip-track strip-lines" data-x="${k}"><svg preserveAspectRatio="none" viewBox="0 0 100 100">`
+          + spec.series.map((s) => `<path stroke="${s.colour}"/>`).join('') + `</svg>${range}${inside ? '' : `<span class="strip-legend">${legend}</span>`}</div>`;
+        return lane(spec.name, spec.title, track, '', inside ? legend : '');
       }
-      return `<div class="strip-lane">${name}<div class="strip-track thin strip-bars" data-x="${k}"></div></div>`;
+      return lane(spec.name, spec.title, `<div class="strip-track thin strip-bars" data-x="${k}"></div>`, '', '', ' thin-lane');
     };
     const rec = (own) => own * (cfg.scale || 1) + (cfg.offset || 0);
     const ownOf = (t) => (t - (cfg.offset || 0)) / (cfg.scale || 1);
     const lanes = [
-      `<div class="strip-lane"><span></span><div class="strip-ruler"><b class="strip-hover"></b></div></div>`,
-      `<div class="strip-lane"><span class="strip-name">Analysed</span><div class="strip-track thin" data-lane="win"></div></div>`,
-      cfg.edit ? `<div class="strip-lane"><span class="strip-name">${esc(cfg.editName || 'Segments')}</span><div class="strip-track" data-lane="segs"><svg class="strip-wave" preserveAspectRatio="none"><path/></svg></div></div>` : '',
-      cfg.ticks ? `<div class="strip-lane strip-ticks-lane" hidden><span class="strip-name">On this page</span><div class="strip-track thin" data-lane="ticks"></div></div>` : '',
+      `<div class="strip-lane">${inside ? '' : '<span></span>'}<div class="strip-ruler"><b class="strip-hover"></b></div></div>`,
+      lane('Analysed', '', `<div class="strip-track thin" data-lane="win"></div>`, '', '', ' thin-lane'),
+      cfg.edit ? lane(cfg.editName || 'Segments', '', `<div class="strip-track" data-lane="segs"><svg class="strip-wave" preserveAspectRatio="none"><path/></svg></div>`) : '',
+      cfg.ticks ? lane('On this page', '', `<div class="strip-track thin" data-lane="ticks"></div>`, '', '', ' strip-ticks-lane thin-lane').replace('<div class="strip-lane', '<div hidden class="strip-lane') : '',
       ...(cfg.lanes || []).map(extraLane),
     ];
+    if (inside) root.classList.add('strip-inside');
     root.innerHTML = `
       <div class="strip-bar">
         ${video ? '<button type="button" class="strip-play" title="Play or pause (space)"></button>' : ''}
@@ -246,7 +252,7 @@
         });
       });
       track.querySelector('svg').innerHTML = html;
-      const said = track.querySelector('.strip-scale');
+      const said = track.closest('.strip-lane').querySelector('.strip-scale');
       if (said) said.textContent = lane.own ? 'each row to its own range' : `row ±${+scale.toPrecision(2)}${lane.unit ? ` ${lane.unit}` : ''}`;
     }
 
