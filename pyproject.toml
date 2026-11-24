@@ -77,9 +77,10 @@ report = [
   "matplotlib>=3.8",
 ]
 
-# other signals recorded alongside the video, such as fNIRS in SNIRF files
+# other signals recorded alongside the video, such as fNIRS in SNIRF files or Lab Streaming Layer recordings
 signals = [
   "h5py>=3.9",
+  "pyxdf>=1.16",
 ]
 
 # roughly 6 GB of wheels, and it resolves torch itself; prefer the groups above

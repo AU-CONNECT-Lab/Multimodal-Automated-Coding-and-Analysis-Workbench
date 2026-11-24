@@ -13,7 +13,7 @@ from macaw.execution.runner import resolve_recordings
 from macaw.media.align import MANUAL, UNALIGNED, AlignResult, replacing, write_offset_table
 from macaw.project.layout import layout_for
 from macaw.signals.align import FOLLOWS, RECORDING_CLOCK, decided_offsets, describe, needs_person, signal_offsets
-from macaw.signals.table import EVERYONE, signal_files
+from macaw.signals.table import EVERYONE, signal_files, stream_mates
 
 app = typer.Typer()
 PANEL = "Other signals"
@@ -47,15 +47,20 @@ def accept(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recordings: str = typer.Option(None, "--recordings", "-r", help="Comma-separated ids or a txt file path."),
     person: list[str] = typer.Option(None, "--person", help=f"Whose files to keep, repeatable; {EVERYONE} for a file of the whole recording. Default: every one waiting."),
+    file: list[str] = typer.Option(None, "--file", help="A file to keep, as signal-offsets names it, repeatable. Default: every one waiting."),
     by: str = typer.Option(None, "--by", help="Who looked at them. Default: the login name."),
 ) -> None:
-    """Keep signal offsets waiting for review, after looking at them, so the run goes on."""
+    """Keep signal offsets waiting for review, after looking at them, so the run goes on; the other streams of an XDF file come along."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
-    wanted = set(person or ())
+    wanted, named = set(person or ()), set(file or ())
     stamp = f"{by or getpass.getuser()} {datetime.now().isoformat(timespec='seconds')}"
     for recording_id in resolve_recordings(resolved, recordings):
-        files = [item for item in signal_files(resolved, recording_id) if not wanted or (item.person or EVERYONE) in wanted]
+        listed = signal_files(resolved, recording_id)
+        files = stream_mates(listed, [
+            item for item in listed
+            if (not wanted or (item.person or EVERYONE) in wanted) and (not named or item.key in named)
+        ])
         current = signal_offsets(resolved, recording_id)
         kept, cannot = [], []
         for item in files:
@@ -84,20 +89,25 @@ def accept(
 def set_offset(
     config: Path = typer.Option(Path("project.yaml"), "--config", "-c", help="The project's settings file."),
     recording: str = typer.Option(..., "--recording", "-r", help="The recording's id."),
-    person: str = typer.Option(..., "--person", help=f"Whose files, as project.roles names them; {EVERYONE} for a file of the whole recording."),
+    person: str = typer.Option(None, "--person", help=f"Whose files, as project.roles names them; {EVERYONE} for a file of the whole recording."),
     offset: float = typer.Option(..., "--offset", help="Seconds: recording time = the file's own time + this."),
     stage: str = typer.Option(None, "--stage", help="Only this stage of theirs. Default: every file of theirs, which share one clock."),
+    file: list[str] = typer.Option(None, "--file", help="Instead of --person: a file as signal-offsets names it, repeatable."),
     by: str = typer.Option(None, "--by", help="Who set it. Default: the login name."),
 ) -> None:
-    """Set by hand where a person's signal files start on the recording's clock; a later run keeps it."""
+    """Set by hand where signal files start on the recording's clock; the other streams of an XDF file come along, and a later run keeps it."""
     resolved = resolve_config(config)
     layout = layout_for(resolved, create=False)
-    files = [
-        item for item in signal_files(resolved, recording)
-        if (item.person or EVERYONE) == person and (stage is None or item.stage == stage)
-    ]
+    if (person is None) == (not file):
+        raise MacawError("name either --person or --file")
+    listed = signal_files(resolved, recording)
+    files = stream_mates(listed, [
+        item for item in listed
+        if (item.key in file if file else (item.person or EVERYONE) == person and (stage is None or item.stage == stage))
+    ])
     if not files:
-        raise MacawError(f"the signals table has no file of {person}{f' at stage {stage}' if stage else ''} in {recording}")
+        said = ", ".join(file) if file else f"a file of {person}{f' at stage {stage}' if stage else ''}"
+        raise MacawError(f"the signals table has no {said} in {recording}")
     stamp = datetime.now().isoformat(timespec="seconds")
     decisions = {decision.target: decision for decision in decided_offsets(resolved, recording)}
     for item in files:

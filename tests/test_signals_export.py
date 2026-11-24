@@ -169,8 +169,9 @@ def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligne
                                     "003", None, [], [], [], [])
     assert ran and ran[0][1:2] == ["run"] and "signals.align" in ran[0] and message is None
     assert "from 1 marked event(s)" in text_of(offsets)
-    assert signals.action_command(project, "003", "keep", "child", "ann")[1:2] == ["accept-signal-offset"]
-    assert signals.action_command(project, "003", "set", "parent", "ann", -140.5)[-4:] == ["--offset", "-140.5", "--by", "ann"]
+    keep = signals.action_command(project, "003", "keep", "child_raw,child_preproc", "ann")
+    assert keep[1:2] == ["accept-signal-offset"] and keep[-6:-2] == ["--file", "child_raw", "--file", "child_preproc"]
+    assert signals.action_command(project, "003", "set", "parent_raw", "ann", -140.5)[-6:] == ["--file", "parent_raw", "--offset", "-140.5", "--by", "ann"]
 
 
 def test_the_signals_tab_shows_only_where_a_project_lists_signals(tmp_path):

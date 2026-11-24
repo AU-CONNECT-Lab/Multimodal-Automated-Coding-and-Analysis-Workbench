@@ -19,7 +19,7 @@ from macaw.store.schema import Scale
 
 # a step this far from the median spacing, as a share of it, means the samples are not evenly spaced
 UNEVEN = 0.01
-SNIRF, TABLE, COHERENCE = "snirf", "table", "coherence"
+SNIRF, TABLE, COHERENCE, XDF = "snirf", "table", "coherence", "xdf"
 
 
 def samples_name(item: SignalFile) -> str:
@@ -55,7 +55,7 @@ def load_info(config, recording_id: str, item: SignalFile) -> dict:
 @register_extractor
 class SignalReadExtractor(Extractor):
     name = "signals.read"
-    version = "0.2.0"
+    version = "0.3.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.PREP
@@ -65,35 +65,46 @@ class SignalReadExtractor(Extractor):
         return bool(read_signals(config))
 
     def check_available(self) -> None:
+        from macaw.signals.xdf import is_xdf
+
         listed = [item for items in read_signals(self.config).values() for item in items]
-        if not any(item.path.suffix.lower() == ".snirf" for item in listed):
-            return
-        try:
-            import h5py  # noqa: F401
-        except ImportError:
-            raise BackendNotAvailableError("signals.read reads SNIRF files with h5py: pip install pymacaw[signals]") from None
+        for wanted, module, kind in ((lambda path: path.suffix.lower() == ".snirf", "h5py", "SNIRF"), (is_xdf, "pyxdf", "XDF")):
+            if not any(wanted(item.path) for item in listed):
+                continue
+            try:
+                __import__(module)
+            except ImportError:
+                raise BackendNotAvailableError(f"signals.read reads {kind} files with {module}: pip install pymacaw[signals]") from None
 
     def inputs_for(self, recording: Recording) -> list[Path]:
-        return [item.path for item in signal_files(self.config, recording.recording_id) if item.path.is_file()]
+        return sorted({item.path for item in signal_files(self.config, recording.recording_id) if item.path.is_file()})
 
     def extra_key(self, recording: Recording) -> str:
-        return json.dumps([[item.person, item.stage, item.path.name] for item in signal_files(self.config, recording.recording_id)])
+        return json.dumps([[item.person, item.stage, item.path.name, item.stream]
+                           for item in signal_files(self.config, recording.recording_id)])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         from macaw.signals.snirf import read_snirf
 
         from macaw.signals.coherence import is_coherence, read_coherence
         from macaw.signals.tables import is_table, read_table
+        from macaw.signals.xdf import is_xdf, load_xdf, read_xdf
 
         rid = recording.recording_id
         artifacts: dict[str, Path] = {}
         warnings: list[QCWarning] = []
+        loaded: dict[Path, tuple] = {}   # an XDF file with several streams listed is read once
         for item in signal_files(self.config, rid):
             if not item.path.is_file():
                 raise InputNotFoundError(f"{rid}: {item.path}, listed in {signals_path(self.config)}, does not exist")
             info, skipped = {}, []
             if item.path.suffix.lower() == ".snirf":
                 found = read_snirf(item.path)
+            elif is_xdf(item.path):
+                if item.path not in loaded:
+                    loaded[item.path] = load_xdf(item.path)
+                found = read_xdf(item.path, item.stream, loaded[item.path])
+                info = {"format": XDF, "stream": item.stream}
             elif is_table(item.path):
                 found, skipped = read_table(item.path)
                 info = {"format": TABLE}
@@ -105,8 +116,8 @@ class SignalReadExtractor(Extractor):
                     "masked_cone": coherence.masked_cone}}
             else:
                 raise UnreadableSignalError(
-                    f"{rid}: {item.path.name} is none of what is read: a .snirf file, a table (.csv or .tsv with a time column), "
-                    "or the coherence maps nirspipe-hyper saves (*_stat-wtc_relmat.npz)"
+                    f"{rid}: {item.path.name} is none of what is read: a .snirf file, an .xdf file, a table (.csv or .tsv with a "
+                    "time column), or the coherence maps nirspipe-hyper saves (*_stat-wtc_relmat.npz)"
                 )
             samples = pd.DataFrame(found.data, columns=found.channels)
             samples.insert(0, "time", found.times)

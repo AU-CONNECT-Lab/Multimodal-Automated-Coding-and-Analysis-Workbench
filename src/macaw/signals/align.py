@@ -21,8 +21,8 @@ from macaw.project.recording import Recording
 from macaw.signals.imu import AGREEMENT_S, FACE_ANGLES, POSE_ANGLES, gyro_speed, head_speed, match
 from macaw.signals.markers import RESIDUAL_S, MarkerMatch, match_markers
 from macaw.signals.marks import marks_of, marks_path
-from macaw.signals.read import COHERENCE, SNIRF, SignalReadExtractor, aux_name, info_name, load_aux, load_info, read_dir
-from macaw.signals.table import EVERYONE, SignalFile, read_signals, signal_files
+from macaw.signals.read import COHERENCE, SNIRF, XDF, SignalReadExtractor, aux_name, info_name, load_aux, load_info, read_dir
+from macaw.signals.table import SignalFile, read_signals, signal_files
 from macaw.store.longtable import read_long_table
 from macaw.store.schema import Scale
 
@@ -32,6 +32,12 @@ MARKERS = "markers"
 FOLLOWS = "follows"
 # what every signal file's offset is measured against
 RECORDING_CLOCK = "recording"
+TABLE_CLOCK = "table"
+# why a file of a kind the IMU does not place is not placed yet
+UNPLACED = {
+    TABLE_CLOCK: "a table keeps its own clock: mark its events on the video or set its offset by hand",
+    XDF: "an XDF file's streams share the file's clock: mark one of its events on the video or set its offset by hand",
+}
 COMPUTED_NAME = "offsets.json"
 # each person's figure of the match, beside the table
 FIGURE_SUFFIX = "_imu.png"
@@ -229,7 +235,7 @@ def head_turning(config, recording_id: str, person: str) -> tuple[np.ndarray, np
 @register_extractor
 class SignalAlignExtractor(Extractor):
     name = "signals.align"
-    version = "0.5.0"
+    version = "0.6.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.DERIVE
@@ -254,7 +260,8 @@ class SignalAlignExtractor(Extractor):
         return [path for path in paths if path.is_file()]
 
     def extra_key(self, recording: Recording) -> str:
-        return json.dumps([[item.person, item.stage, item.path.name] for item in signal_files(self.config, recording.recording_id)])
+        return json.dumps([[item.person, item.stage, item.path.name, item.stream]
+                           for item in signal_files(self.config, recording.recording_id)])
 
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         rid = recording.recording_id
@@ -279,7 +286,8 @@ class SignalAlignExtractor(Extractor):
                     continue
                 imu = by_key.get(item.key) or AlignResult(
                     reference=RECORDING_CLOCK, target=item.key, offset_s=0.0, confidence=None, method=UNALIGNED,
-                    note="a table keeps its own clock: mark its events on the video or set its offset by hand",
+                    note=UNPLACED.get(formats[item.key], UNPLACED[TABLE_CLOCK]),
+                    metadata_offset_s=timestamp_offset(load_info(self.config, rid, item).get("started"), started, video_offset),
                 )
                 sure = imu.method == IMU and review_reason(imu, self.config.signals) is None
                 paired = match_markers(marked, [(m["name"], float(m["onset"])) for m in load_info(self.config, rid, item).get("markers", [])],
@@ -295,7 +303,7 @@ class SignalAlignExtractor(Extractor):
         artifacts.update({figure.name: figure for figure in workspace.glob(f"*{FIGURE_SUFFIX}")})
         path = workspace / COMPUTED_NAME
         write_offset_table(results, path)
-        warnings.extend(self._notes(rid, results))
+        warnings.extend(self._notes(rid, results, {item.key: item.person for item in files}))
         return ExtractorResult(rows=pd.DataFrame(), artifacts={COMPUTED_NAME: path, **artifacts}, warnings=warnings)
 
     def _follower(self, rid: str, item: SignalFile, files: list[SignalFile], formats: dict[str, str]) -> AlignResult:
@@ -368,17 +376,16 @@ class SignalAlignExtractor(Extractor):
             pass
         return results, warnings
 
-    def _notes(self, rid: str, results: list[AlignResult]) -> list[QCWarning]:
+    def _notes(self, rid: str, results: list[AlignResult], whose: dict[str, str | None]) -> list[QCWarning]:
         out = []
         for result in results:
-            person = result.target.rsplit("_", 1)[0]
+            person = whose.get(result.target)
             severity = "warn" if review_reason(result, self.config.signals) else "info"
             message = f"{result.target}: {describe(result)}"
             hours = whole_hours(result.metadata_offset_s if result.method != UNALIGNED else None)
             if hours is not None and abs(result.offset_s - result.metadata_offset_s) > 1800:
                 message += f"; the start times differ by a whole {hours:+d} h more than the match, as a time zone written wrong would"
-            out.append(QCWarning(check=self.name, recording_id=rid, subject_id=None if person == EVERYONE else person,
-                                 severity=severity, message=message))
+            out.append(QCWarning(check=self.name, recording_id=rid, subject_id=person, severity=severity, message=message))
         return out
 
 

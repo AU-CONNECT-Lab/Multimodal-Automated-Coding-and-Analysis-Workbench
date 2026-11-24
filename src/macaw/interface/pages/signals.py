@@ -134,7 +134,7 @@ def body(config_path: Path, rid: str | None):
     else:
         player = html.Div([
             ui.note(f"{source.name} is made into a small copy with its sound first, once; a long recording takes a minute or two."),
-            ui.button("Make a copy to play here", {"type": ACT, "action": "prepare", "person": ""}, primary=True, icon_name="play"),
+            ui.button("Make a copy to play here", {"type": ACT, "action": "prepare", "files": ""}, primary=True, icon_name="play"),
         ])
     offered = _choices(own, rid, files)
 
@@ -247,9 +247,9 @@ def lanes(own, rid: str, clock, length: float, carpet_group, pairs, measures, ti
                             "title": f"{item.path.name}, {group_label(group or '')}, each channel less its trend in its own SDs, as in the carpet", **drawn})
         events = [(float(m["onset"]), float(m["onset"]) + float(m.get("duration") or 0.0), str(m["name"]))
                   for m in info.get("markers", [])]
-        # a person's files that share a clock carry the same events; one lane shows them
-        if events and (item.person, tuple(events), own_clock) not in events_drawn:
-            events_drawn.add((item.person, tuple(events), own_clock))
+        # files that share a clock carry the same events; one lane shows them
+        if events and (item.clock, tuple(events), own_clock) not in events_drawn:
+            events_drawn.add((item.clock, tuple(events), own_clock))
             out.append({"kind": "bars", "name": f"{item.person or 'all'} events",
                         "title": f"Events {item.path.name} marked, where its offset puts them; a mark on the video named as one places the file by it",
                         "spans": spans(events, lambda t: float(to_played([t], own_clock, clock)[0]))})
@@ -337,12 +337,14 @@ def offsets_card(own, rid: str, files):
     from macaw.signals.table import EVERYONE
 
     offsets = signal_offsets(own, rid)
-    people: dict[str, list] = {}
+    clocks: dict[str, list] = {}
     for item in files:
-        people.setdefault(item.person or EVERYONE, []).append(item)
+        clocks.setdefault(item.clock, []).append(item)
     rows = []
-    for person, items in people.items():
+    for items in clocks.values():
         result = offsets.get(items[0].key)
+        keys = ",".join(item.key for item in items)
+        people = ", ".join(dict.fromkeys(item.person or EVERYONE for item in items))
         waiting = "not aligned yet" if result is None else needs_person(result, own.signals)
         if waiting:
             state = ui.pill(waiting, "warn")
@@ -351,20 +353,24 @@ def offsets_card(own, rid: str, files):
         else:
             state = ui.pill("kept by " + result.accepted.split(" ")[0] if result.accepted else "automatic", "ok" if result.accepted else "info")
         value = round(file_clock(result)[0], 3) if result is not None and result.method != UNALIGNED else None
-        keep = (ui.button("Keep", {"type": ACT, "action": "keep", "person": person}, small=True)
+        keep = (ui.button("Keep", {"type": ACT, "action": "keep", "files": keys}, small=True)
                 if result is not None and result.method not in (MANUAL, UNALIGNED, FOLLOWS) and not result.accepted else "")
         rows.append([
-            person, ", ".join(item.stage for item in items),
-            dcc.Input(id={"type": OFFSET, "person": person}, type="number", step="any", value=value, debounce=True, placeholder="seconds", style={"width": "11rem"},
+            people, ", ".join(_file_label(item) for item in items),
+            dcc.Input(id={"type": OFFSET, "files": keys}, type="number", step="any", value=value, debounce=True, placeholder="seconds", style={"width": "11rem"},
                       className="number"),
             describe(result) if result is not None else "signals.align has not run", state, keep,
         ])
     return ui.card(
         "Where each file sits",
-        ui.table(["Person", "Files", "Offset (s)", "Found", "", ""], rows),
-        desc="Recording time = the file's own time + the offset. A person's files share one clock, so one offset sets them all; "
-             "type another to set it by hand.",
+        ui.table(["Who", "Files", "Offset (s)", "Found", "", ""], rows),
+        desc="Recording time = the file's own time + the offset. Files on one row share a clock (a person's SNIRF files, an XDF "
+             "file's streams), so one offset sets them all; type another to set it by hand.",
     )
+
+
+def _file_label(item) -> str:
+    return f"{item.stage} ({item.stream})" if item.stream else item.stage
 
 
 def mark_edit(own, rid: str, edit: dict, clock: tuple[float, float]) -> str:
@@ -392,13 +398,14 @@ def names_an_event(own, rid: str, edit: dict) -> bool:
     return any(name and marker_key(name) in events for name in named)
 
 
-def action_command(config_path: Path, rid: str, action: str, person: str, by: str, offset: float | None = None) -> list[str]:
+def action_command(config_path: Path, rid: str, action: str, files: str, by: str, offset: float | None = None) -> list[str]:
+    """The command for one row of the offsets card, whose files are its keys joined by commas."""
     by_flag = ["--by", by] if by else []
+    named = [flag for key in files.split(",") for flag in ("--file", key)]
     if action == "keep":
-        return cli_bridge.build_command(["accept-signal-offset"], config_path=config_path, recordings=[rid],
-                                        extra_flags=["--person", person, *by_flag])
+        return cli_bridge.build_command(["accept-signal-offset"], config_path=config_path, recordings=[rid], extra_flags=[*named, *by_flag])
     return cli_bridge.build_command(["set-signal-offset"], config_path=config_path, recordings=[rid],
-                                    extra_flags=["--person", person, "--offset", f"{offset:g}", *by_flag])
+                                    extra_flags=[*named, "--offset", f"{offset:g}", *by_flag])
 
 
 def register(app, config_path: Path) -> None:
@@ -410,8 +417,8 @@ def register(app, config_path: Path) -> None:
 
     @app.callback(
         Output("signals-body", "children"), Output("signals-message", "children"),
-        Input(ui.SHOWN["signals"], "data"), Input({"type": ACT, "action": ALL, "person": ALL}, "n_clicks"),
-        Input({"type": OFFSET, "person": ALL}, "value"), State(BY, "value"),
+        Input(ui.SHOWN["signals"], "data"), Input({"type": ACT, "action": ALL, "files": ALL}, "n_clicks"),
+        Input({"type": OFFSET, "files": ALL}, "value"), State(BY, "value"),
     )
     def update(rid, _acted, _offsets, by):
         trigger = ctx.triggered_id
@@ -426,12 +433,12 @@ def register(app, config_path: Path) -> None:
                 except MacawError as error:
                     return no_update, ui.note(str(error), "bad")
             else:
-                if trigger["type"] == OFFSET and (value is None or _same_offset(config_path, rid, trigger["person"], value)):
+                if trigger["type"] == OFFSET and (value is None or _same_offset(config_path, rid, trigger["files"], value)):
                     return no_update, no_update
                 if not (by or "").strip():
                     return no_update, ui.note("Type your name first; it is saved with what you decide.", "warn")
                 action = "keep" if trigger["type"] == ACT else "set"
-                argv = action_command(config_path, rid, action, trigger["person"], by.strip(), value if action == "set" else None)
+                argv = action_command(config_path, rid, action, trigger["files"], by.strip(), value if action == "set" else None)
                 message = [ui.command(argv), ui.output(*cli_bridge.run_now(argv, cwd=config_path.parent))]
         return body(config_path, rid), message
 
@@ -479,14 +486,13 @@ def register(app, config_path: Path) -> None:
                 strip(config_path, rid, group, pairs, measures, tiers, coherent))
 
 
-def _same_offset(config_path: Path, rid: str, person: str, value: float) -> bool:
-    """Whether a typed offset is the one the person's files have already, as a redrawn box reports its value again."""
+def _same_offset(config_path: Path, rid: str, files: str, value: float) -> bool:
+    """Whether a typed offset is the one the row's files have already, as a redrawn box reports its value again."""
     from macaw.signals.align import signal_offsets
-    from macaw.signals.table import EVERYONE, signal_files
 
     own = resolve_config(config_path, recording_id=rid)
     offsets = signal_offsets(own, rid)
-    for item in signal_files(own, rid):
-        if (item.person or EVERYONE) == person and item.key in offsets and offsets[item.key].method != UNALIGNED:
-            return abs(file_clock(offsets[item.key])[0] - float(value)) < 5e-4
+    for key in files.split(","):
+        if key in offsets and offsets[key].method != UNALIGNED:
+            return abs(file_clock(offsets[key])[0] - float(value)) < 5e-4
     return False

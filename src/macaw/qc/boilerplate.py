@@ -220,7 +220,7 @@ def signals_placed(config) -> dict[str, int]:
     from macaw.signals.align import FOLLOWS, IMU, MARKERS, drift_corrected, signal_offsets
     from macaw.signals.table import read_signals
 
-    counts = {"files": 0, "imu": 0, "markers": 0, "drift": 0, "checked": 0, "follows": 0, "kept": 0, "manual": 0, "unaligned": 0}
+    counts = {"files": 0, "xdf": 0, "imu": 0, "markers": 0, "drift": 0, "checked": 0, "follows": 0, "kept": 0, "manual": 0, "unaligned": 0}
     try:
         listed = read_signals(config)
     except MacawError:   # a table with a mistake is reported by the step that reads it
@@ -230,6 +230,7 @@ def signals_placed(config) -> dict[str, int]:
         for item in listed[recording_id]:
             result = found.get(item.key)
             counts["files"] += 1
+            counts["xdf"] += item.clock.startswith("xdf ")
             if result is None or result.method == UNALIGNED:
                 counts["unaligned"] += 1
             elif result.method == MANUAL:
@@ -251,6 +252,13 @@ def _signals(placed: dict[str, int]) -> str:
         return "each" if count == placed["files"] else _count(count)
 
     text = "Signals recorded alongside, such as fNIRS, were placed on each recording's clock and not otherwise processed."
+    if placed["xdf"]:
+        text += (
+            f" {_count(placed['xdf']).capitalize() if placed['xdf'] > 1 else 'One'} of the signal files "
+            f"{'were streams' if placed['xdf'] > 1 else 'was a stream'} of Lab Streaming Layer recordings (XDF), read with "
+            "pyxdf, which brings every stream onto the recording computer's clock; the streams of one recording shared that "
+            "clock and were placed together."
+        )
     if placed["markers"]:
         text += (
             f" For {share(placed['markers'])} of the {_count(placed['files'])} signal files, a person marked on the video the "
