@@ -502,6 +502,8 @@
   function pin() {
     const bar = document.getElementById('topbar');
     const top = bar ? bar.getBoundingClientRect().bottom : 0;
+    // where a video held under the tabs sticks, as the tabs' height differs between styles
+    if (bar) document.documentElement.style.setProperty('--topbar-bottom', `${bar.offsetHeight}px`);
     document.querySelectorAll('.player-slot').forEach((slot) => {
       const card = slot.firstElementChild, was = slot.classList.contains('away');
       if (!card) return;

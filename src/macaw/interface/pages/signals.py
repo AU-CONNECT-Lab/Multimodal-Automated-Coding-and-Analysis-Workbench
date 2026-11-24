@@ -134,7 +134,9 @@ def body(config_path: Path, rid: str | None):
     except MacawError as error:
         return ui.note(str(error), "bad")
     if preview is not None:
-        player = html.Video(src=f"{file_url(preview)}?v={int(preview.stat().st_mtime)}", id=PLAYER, preload="metadata", className="player")
+        # held under the tabs while the lanes scroll beneath it, so the video and the signals are seen together
+        player = html.Div(html.Video(src=f"{file_url(preview)}?v={int(preview.stat().st_mtime)}", id=PLAYER, preload="metadata",
+                                     className="player"), className="signals-stage")
     else:
         player = html.Div([
             ui.note(f"{source.name} is made into a small copy with its sound first, once; a long recording takes a minute or two."),
