@@ -440,9 +440,11 @@ def _export_nirspipe(config_path: Path, resolved, layout, recording_ids: list[st
             [(mark.start_s, mark.end_s, mark.name) for mark in marks if mark.name in wanted], columns=["start_s", "end_s", "trial_type"],
         )
         for item in files:
+            info = load_info(own, recording_id, item)
+            if info.get("format", "snirf") != "snirf":   # tables and coherence series are not what nirspipe reads
+                continue
             files_seen += 1
             entities, clock = bids_entities(item.path), ready_clock(own, recording_id, item)
-            info = load_info(own, recording_id, item)
             if own.signals.events:
                 found, cut = on_file(spans, clock, info["start_s"], info["end_s"])
                 outside += cut

@@ -266,7 +266,7 @@ def test_marked_events_spread_over_the_recording_correct_a_drifting_clock():
 
 def test_a_file_whose_events_are_marked_on_the_video_takes_their_offset_and_the_imu_checks_it(aligned_project, tmp_path):
     from macaw.qc.boilerplate import _signals, signals_placed
-    from macaw.signals.align import IMU, MARKERS, computed_offsets, describe, needs_person
+    from macaw.signals.align import MARKERS, computed_offsets, describe, needs_person
 
     project, config, layout = aligned_project
     _, aux = synthetic()
@@ -284,15 +284,120 @@ def test_a_file_whose_events_are_marked_on_the_video_takes_their_offset_and_the_
     assert needs_person(child, config.signals) == "not looked at yet"
     # without a gyroscope the parent's file is placed by its events alone
     assert parent.method == MARKERS and parent.cross_check_s is None and parent.offset_s == pytest.approx(TRUE_OFFSET, abs=0.01)
-    # the preprocessed copy carries no marked event and keeps the IMU's clock
-    assert found["child_preproc"].method == IMU
+    # the preprocessed copy carries no marked event of its own and takes the raw file's clock, as files of one device do
+    preproc = found["child_preproc"]
+    assert preproc.method == MARKERS and preproc.note.startswith("same clock as child_raw") and preproc.offset_s == child.offset_s
     placed = signals_placed(config)
-    assert (placed["markers"], placed["imu"], placed["checked"]) == (2, 1, 1)
+    assert (placed["markers"], placed["imu"], placed["checked"]) == (3, 0, 2)
     text = _signals(placed)
-    assert "a person marked on the video" in text and "For 1 of the three signal files, the turning speed" in text
+    assert "a person marked on the video" in text and "In that comparison the turning speed" in text
 
     # a mark 1.5 s off asks a person to look, and the IMU says so too
     (tmp_path / "marks.csv").write_text("recording,mark,start_s,end_s\n003,1,21.55,22\n003,1,319.95,321\n", encoding="utf-8")
     run_steps(config, layout)
     child = {entry.target: entry for entry in computed_offsets(config, "003")}["child_raw"]
     assert "disagree by up to 0.80 s" in needs_person(child, config.signals) and "s away" in child.doubt
+
+
+def test_a_table_from_another_device_keeps_its_own_clock_and_its_events_place_it(aligned_project, tmp_path):
+    from macaw.media.align import UNALIGNED
+    from macaw.signals.align import MARKERS, computed_offsets
+    from macaw.signals.read import load_info, load_samples
+    from macaw.signals.table import signal_files
+    from macaw.signals.tables import read_table
+
+    project, config, layout = aligned_project
+    own = np.arange(0.0, 400.0, 0.5)
+    events = np.where(np.isin(own, [60.0, 260.0]), "go", "")
+    pd.DataFrame({"Time": own, "ECG": np.sin(own), "Event": events, "Comment": "x"}).to_csv(tmp_path / "nirs" / "ecg.csv", index=False)
+    found, skipped = read_table(tmp_path / "nirs" / "ecg.csv")
+    assert found.channels == ["ECG"] and skipped == ["Comment"] and found.markers[["name", "onset"]].values.tolist() == [["go", 60.0], ["go", 260.0]]
+    with open(tmp_path / "signals.csv", "a", encoding="utf-8") as table:
+        table.write("003,child,ecg,nirs/ecg.csv\n")
+    run_steps(config, layout)
+    item = next(item for item in signal_files(config, "003") if item.stage == "ecg")
+    assert load_info(config, "003", item)["format"] == "table" and list(load_samples(config, "003", item).columns) == ["time", "ECG"]
+    found = {entry.target: entry for entry in computed_offsets(config, "003")}
+    # the child's cap IMU places the child's SNIRF files, not a table another device wrote
+    assert found["child_ecg"].method == UNALIGNED and "own clock" in found["child_ecg"].note
+    (tmp_path / "marks.csv").write_text("recording,mark,start_s,end_s\n003,go,10,11\n003,go,210,211\n", encoding="utf-8")
+    run_steps(config, layout)
+    found = {entry.target: entry for entry in computed_offsets(config, "003")}
+    assert found["child_ecg"].method == MARKERS and found["child_ecg"].offset_s == pytest.approx(-50.0)
+
+
+def test_coherence_is_averaged_over_the_band_outside_the_cone_as_nirspipe_does():
+    from macaw.signals.coherence import band_series
+
+    freqs = np.array([0.01, 0.03, 0.05, 0.1, 0.2])
+    cells = np.array([[0.9, 0.9, 0.9], [0.2, 0.4, 0.6], [0.4, 0.6, 0.8], [0.6, np.nan, 1.0], [0.9, 0.9, 0.9]])
+    cone = np.array([25.0, 100.0, np.inf])   # longest period free of edge effects at each time
+    # the band takes 0.03 to 0.1 Hz; at 25 s only 0.05 and 0.1 Hz lie outside the cone
+    assert band_series(cells, cone, freqs, (0.03, 0.1), True) == pytest.approx([0.5, 0.5, 0.8])
+    assert band_series(cells, cone, freqs, (0.03, 0.1), False) == pytest.approx([0.4, 0.5, 0.8])
+
+
+def write_coherence(folder, members, excluded_at=None):
+    import json
+
+    sep = "\x1f"
+    times = np.arange(0.0, 200.0, 1.0)
+    freqs = np.array([0.02, 0.05, 0.1])
+    level = 0.3 + 0.4 * (times > 100)
+    maps = {}
+    for label, shift in (("S1_D1", 0.0), ("S2_D2", 0.2)):
+        key = sep.join(("sub-c003", "sub-p003", label, ""))
+        maps["wtc" + sep + key] = np.tile(level + shift, (freqs.size, 1)).astype(np.float32)
+        maps["coi" + sep + key] = np.full(times.size, np.inf, dtype=np.float32)
+    if excluded_at is not None:
+        maps[sep.join(("excluded", "sub-c003", "sub-p003"))] = np.isin(times, excluded_at)
+    path = folder / "group-003_task-play_chromo-hbo_stat-wtc_relmat.npz"
+    np.savez_compressed(path, freqs=freqs, times=times, **maps)
+    path.with_suffix(".json").write_text(json.dumps({"step": "hyper_wtc_maps", "Sources": [], "parameters": {
+        "band_fmin": 0.02, "band_fmax": 0.1, "mask_coi": True, "aligned": True, "align_offset_s": members}}), encoding="utf-8")
+    return path
+
+
+def test_the_coherence_nirspipe_saved_follows_the_clock_of_a_member_it_was_computed_from(aligned_project, tmp_path):
+    from typer.testing import CliRunner
+
+    from macaw.cli.main import app
+    from macaw.interface.pages import signals as page
+    from macaw.qc.boilerplate import _signals, signals_placed
+    from macaw.signals.align import FOLLOWS, SignalReviewGate, describe, needs_person, signal_offsets
+    from macaw.signals.read import load_samples
+    from macaw.signals.table import signal_files
+    from test_gui import strip_config
+
+    project, config, layout = aligned_project
+    write_coherence(tmp_path / "nirs", {"sub-c003": 10.0, "sub-p003": 12.0}, excluded_at=[150.0])
+    with open(tmp_path / "signals.csv", "a", encoding="utf-8") as table:
+        table.write("003,,wtc,nirs/group-003_task-play_chromo-hbo_stat-wtc_relmat.npz\n")
+    recording, _ = run_steps(config, layout)
+    item = next(item for item in signal_files(config, "003") if item.stage == "wtc")
+    series = load_samples(config, "003", item)
+    assert list(series.columns) == ["time", "mean", "S1_D1", "S2_D2"] and np.isnan(series.loc[series["time"] == 150.0, "mean"]).all()
+    assert series.loc[series["time"] == 50.0, "mean"].iloc[0] == pytest.approx(0.4)
+    current = signal_offsets(config, "003")
+    coherence = current["all_wtc"]
+    # 10 s into the child's file, which its IMU put 150.3 s before the recording's start
+    assert coherence.method == FOLLOWS and coherence.offset_s == pytest.approx(TRUE_OFFSET + 10.0, abs=0.1)
+    assert "on child_raw's clock" in describe(coherence) and "waits: not looked at yet" in needs_person(coherence, config.signals)
+
+    runner = CliRunner()
+    said = runner.invoke(app, ["accept-signal-offset", "-c", str(project), "-r", "003", "--by", "tester"])
+    assert said.exit_code == 0 and "all_wtc follows child_raw" in said.output
+    assert needs_person(signal_offsets(config, "003")["all_wtc"], config.signals) is None
+    # the parent's offset, set by hand, checks it: 12 s into the parent's file has to be the same moment
+    runner.invoke(app, ["set-signal-offset", "-c", str(project), "-r", "003", "--person", "parent", "--offset", "-152.3", "--by", "tester"])
+    assert needs_person(signal_offsets(config, "003")["all_wtc"], config.signals) is None
+    runner.invoke(app, ["set-signal-offset", "-c", str(project), "-r", "003", "--person", "parent", "--offset", "-160", "--by", "tester"])
+    assert "parent_raw's offset puts it -7." in needs_person(signal_offsets(config, "003")["all_wtc"], config.signals)
+    assert SignalReviewGate(config).pending(recording) and signals_placed(config)["follows"] == 1
+    assert "series of the wavelet coherence between participants" in _signals(signals_placed(config))
+
+    shown = strip_config(page.strip(project, "003", None, [], [], [], ["S2_D2"]))
+    lane = next(lane for lane in shown["lanes"] if lane["name"] == "coherence")
+    assert [s["name"] for s in lane["series"]] == ["mean of all pairs", "S2_D2"] and (lane["low"], lane["high"]) == (0.0, 1.0)
+    assert not [lane for lane in shown["lanes"] if lane["name"] in ("all wtc", "all events")]
+    assert page._choices(config, "003", signal_files(config, "003"))["coherent"] == ["S1_D1", "S2_D2"]

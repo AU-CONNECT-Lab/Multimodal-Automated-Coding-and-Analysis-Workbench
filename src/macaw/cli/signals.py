@@ -12,7 +12,7 @@ from macaw.exceptions import MacawError
 from macaw.execution.runner import resolve_recordings
 from macaw.media.align import MANUAL, UNALIGNED, AlignResult, replacing, write_offset_table
 from macaw.project.layout import layout_for
-from macaw.signals.align import RECORDING_CLOCK, decided_offsets, describe, needs_person, signal_offsets
+from macaw.signals.align import FOLLOWS, RECORDING_CLOCK, decided_offsets, describe, needs_person, signal_offsets
 from macaw.signals.table import EVERYONE, signal_files
 
 app = typer.Typer()
@@ -61,6 +61,9 @@ def accept(
         for item in files:
             result = current.get(item.key)
             if result is None or needs_person(result, resolved.signals) is None:
+                continue
+            if result.method == FOLLOWS:
+                typer.echo(f"{recording_id}: {result.target} follows {result.reference}; it settles when that one does")
                 continue
             (cannot if result.method == UNALIGNED else kept).append(result)
         for result in cannot:

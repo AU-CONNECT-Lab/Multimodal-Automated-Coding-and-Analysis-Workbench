@@ -19,6 +19,7 @@ from macaw.store.schema import Scale
 
 # a step this far from the median spacing, as a share of it, means the samples are not evenly spaced
 UNEVEN = 0.01
+SNIRF, TABLE, COHERENCE = "snirf", "table", "coherence"
 
 
 def samples_name(item: SignalFile) -> str:
@@ -54,7 +55,7 @@ def load_info(config, recording_id: str, item: SignalFile) -> dict:
 @register_extractor
 class SignalReadExtractor(Extractor):
     name = "signals.read"
-    version = "0.1.0"
+    version = "0.2.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.PREP
@@ -64,6 +65,9 @@ class SignalReadExtractor(Extractor):
         return bool(read_signals(config))
 
     def check_available(self) -> None:
+        listed = [item for items in read_signals(self.config).values() for item in items]
+        if not any(item.path.suffix.lower() == ".snirf" for item in listed):
+            return
         try:
             import h5py  # noqa: F401
         except ImportError:
@@ -78,22 +82,42 @@ class SignalReadExtractor(Extractor):
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         from macaw.signals.snirf import read_snirf
 
+        from macaw.signals.coherence import is_coherence, read_coherence
+        from macaw.signals.tables import is_table, read_table
+
         rid = recording.recording_id
         artifacts: dict[str, Path] = {}
         warnings: list[QCWarning] = []
         for item in signal_files(self.config, rid):
             if not item.path.is_file():
                 raise InputNotFoundError(f"{rid}: {item.path}, listed in {signals_path(self.config)}, does not exist")
-            if item.path.suffix.lower() != ".snirf":
-                raise UnreadableSignalError(f"{rid}: {item.path.name} is not a .snirf file; only SNIRF files are read so far")
-            found = read_snirf(item.path)
+            info, skipped = {}, []
+            if item.path.suffix.lower() == ".snirf":
+                found = read_snirf(item.path)
+            elif is_table(item.path):
+                found, skipped = read_table(item.path)
+                info = {"format": TABLE}
+            elif is_coherence(item.path):
+                coherence = read_coherence(item.path)
+                found = coherence.series
+                info = {"format": COHERENCE, "coherence": {
+                    "band_hz": list(coherence.band_hz), "members": coherence.members, "sources": coherence.sources,
+                    "masked_cone": coherence.masked_cone}}
+            else:
+                raise UnreadableSignalError(
+                    f"{rid}: {item.path.name} is none of what is read: a .snirf file, a table (.csv or .tsv with a time column), "
+                    "or the coherence maps nirspipe-hyper saves (*_stat-wtc_relmat.npz)"
+                )
             samples = pd.DataFrame(found.data, columns=found.channels)
             samples.insert(0, "time", found.times)
             samples.to_parquet(workspace / samples_name(item), index=False)
             _aux_table(found).to_parquet(workspace / aux_name(item), index=False)
-            (workspace / info_name(item)).write_text(json.dumps(_info(item, found), indent=1), encoding="utf-8")
+            (workspace / info_name(item)).write_text(json.dumps({**_info(item, found), **info}, indent=1), encoding="utf-8")
             artifacts.update({name: workspace / name for name in (samples_name(item), aux_name(item), info_name(item))})
             warnings.extend(self._checks(rid, item, found))
+            if skipped:
+                warnings.append(QCWarning(check=self.name, recording_id=rid, subject_id=item.person, severity="info",
+                                          message=f"{item.path.name}: {', '.join(skipped)} hold no numbers and were left out"))
         return ExtractorResult(rows=pd.DataFrame(), artifacts=artifacts, warnings=warnings)
 
     def _checks(self, recording_id: str, item: SignalFile, found: Snirf) -> list[QCWarning]:
@@ -122,7 +146,7 @@ def _info(item: SignalFile, found: Snirf) -> dict:
         "file": str(item.path),
         "person": item.person,
         "stage": item.stage,
-        "format": "snirf",
+        "format": SNIRF,
         "started": found.started,
         "time_unit": found.time_unit,
         "rate_hz": found.rate_hz,

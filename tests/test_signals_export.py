@@ -157,16 +157,16 @@ def test_the_signals_page_draws_each_file_under_the_video_and_saves_marks(aligne
     monkeypatch.setattr(signals.cli_bridge, "run_now", lambda argv, cwd=None: (ran.append(argv), run_steps(config, layout), (0, ""))[-1])
     edited = callback(create_app(project), "..signals-shown.data")
     played = shown["offset"]
-    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003", None, [], [], [])
+    edited({"op": "set", "name": "cried", "start": 1.0, "end": 3.0, "note": "loud", "was": None, "n": 1}, "003", None, [], [], [], [])
     assert [(m.name, m.start_s - played, m.note) for m in marks_of(resolve_config(project), "003")] == [("cried", 1.0, "loud")]
     shown_after, message, *_ = edited({"op": "set", "name": "cried", "start": 1.0, "end": 4.0, "note": "loud",
-                                       "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003", None, [], [], [])
+                                       "was": {"name": "cried", "a": 1.0, "b": 3.0}, "n": 2}, "003", None, [], [], [], [])
     assert message is None and [(s["a"], s["b"]) for s in shown_after["segments"]] == [(1.0, 4.0)]
-    shown_after, message, *_ = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003", None, [], [], [])
+    shown_after, message, *_ = edited({"op": "remove", "name": "cried", "start": 1.0, "end": 4.0, "n": 3}, "003", None, [], [], [], [])
     assert shown_after["segments"] == [] and marks_of(resolve_config(project), "003") == [] and not ran
     # a mark named as the files' event places them by it at once
     _, message, offsets, _ = edited({"op": "set", "name": "Start", "start": 5.0, "end": 6.0, "note": "", "was": None, "n": 4},
-                                    "003", None, [], [], [])
+                                    "003", None, [], [], [], [])
     assert ran and ran[0][1:2] == ["run"] and "signals.align" in ran[0] and message is None
     assert "from 1 marked event(s)" in text_of(offsets)
     assert signals.action_command(project, "003", "keep", "child", "ann")[1:2] == ["accept-signal-offset"]

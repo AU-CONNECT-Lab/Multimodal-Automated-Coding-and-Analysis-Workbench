@@ -68,6 +68,8 @@ class AlignResult:
     replaced: list[dict] | None = None
     doubt: str | None = None         # why a person should look, decided when the offset was found
     cross_check_s: float | None = None  # the offset another method found for the same file
+    # (file, s into it) of each member a file computed from several members' recordings can be placed through
+    follows: list[tuple[str, float]] | None = None
 
 
 def _correlate(a: np.ndarray, b: np.ndarray, rate: float, max_lag_s: float, *, phat: bool):

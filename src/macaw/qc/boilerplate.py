@@ -217,10 +217,10 @@ def signals_placed(config) -> dict[str, int]:
     """How the files of the signals table came onto the recordings' clocks, counted over the project."""
     from macaw.exceptions import MacawError
     from macaw.media.align import MANUAL, UNALIGNED
-    from macaw.signals.align import IMU, MARKERS, drift_corrected, signal_offsets
+    from macaw.signals.align import FOLLOWS, IMU, MARKERS, drift_corrected, signal_offsets
     from macaw.signals.table import read_signals
 
-    counts = {"files": 0, "imu": 0, "markers": 0, "drift": 0, "checked": 0, "kept": 0, "manual": 0, "unaligned": 0}
+    counts = {"files": 0, "imu": 0, "markers": 0, "drift": 0, "checked": 0, "follows": 0, "kept": 0, "manual": 0, "unaligned": 0}
     try:
         listed = read_signals(config)
     except MacawError:   # a table with a mistake is reported by the step that reads it
@@ -234,6 +234,8 @@ def signals_placed(config) -> dict[str, int]:
                 counts["unaligned"] += 1
             elif result.method == MANUAL:
                 counts["manual"] += 1
+            elif result.method == FOLLOWS:
+                counts["follows"] += 1
             elif result.method in (IMU, MARKERS):
                 counts["imu" if result.method == IMU else "markers"] += 1
                 counts["kept"] += bool(result.accepted)
@@ -273,6 +275,14 @@ def _signals(placed: dict[str, int]) -> str:
         )
     elif placed["checked"]:
         text += f" In that comparison {speeds}, and the correlation peak gave the offset."
+    if placed["follows"]:
+        text += (
+            f" {_count(placed['follows']).capitalize() if placed['follows'] > 1 else 'One'} series of the wavelet coherence between "
+            "participants, computed by nirspipe, "
+            f"{'were' if placed['follows'] > 1 else 'was'} averaged at each moment over the frequency band nirspipe analysed, "
+            "leaving out the cells it leaves out (inside the cone of influence and in excluded stretches), and placed on the "
+            "clock of a participant's file it was computed from."
+        )
     if placed["kept"]:
         text += f" A person checked and kept {_count(placed['kept'])} of these offsets."
     if placed["manual"]:

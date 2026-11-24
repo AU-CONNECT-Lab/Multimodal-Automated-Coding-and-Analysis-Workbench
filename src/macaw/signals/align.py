@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -19,13 +21,15 @@ from macaw.project.recording import Recording
 from macaw.signals.imu import AGREEMENT_S, FACE_ANGLES, POSE_ANGLES, gyro_speed, head_speed, match
 from macaw.signals.markers import RESIDUAL_S, MarkerMatch, match_markers
 from macaw.signals.marks import marks_of, marks_path
-from macaw.signals.read import SignalReadExtractor, aux_name, info_name, load_aux, load_info, read_dir
+from macaw.signals.read import COHERENCE, SNIRF, SignalReadExtractor, aux_name, info_name, load_aux, load_info, read_dir
 from macaw.signals.table import EVERYONE, SignalFile, read_signals, signal_files
 from macaw.store.longtable import read_long_table
 from macaw.store.schema import Scale
 
 IMU = "imu"
 MARKERS = "markers"
+# a file computed from a member's recording, such as the coherence between two people, on that member's clock
+FOLLOWS = "follows"
 # what every signal file's offset is measured against
 RECORDING_CLOCK = "recording"
 COMPUTED_NAME = "offsets.json"
@@ -57,7 +61,8 @@ def decided_offsets(config, recording_id: str) -> list[AlignResult]:
 
 
 def signal_offsets(config, recording_id: str) -> dict[str, AlignResult]:
-    """Each file's offset as it stands: one a person set, else the one found, kept by a person while it has not changed."""
+    """Each file's offset as it stands: one a person set, else the one found, kept by a person while it has not changed;
+    a file that follows a member's takes that member's offset as it stands."""
     found = {result.target: result for result in computed_offsets(config, recording_id)}
     for decision in decided_offsets(config, recording_id):
         current = found.get(decision.target)
@@ -65,7 +70,38 @@ def signal_offsets(config, recording_id: str) -> dict[str, AlignResult]:
             found[decision.target] = decision
         elif decision.accepted and current is not None and same_result(current, decision):
             current.accepted = decision.accepted
+    for key, result in list(found.items()):
+        if result.method == FOLLOWS:
+            found[key] = _following(result, found, config.signals)
     return found
+
+
+def _following(result: AlignResult, found: dict[str, AlignResult], cfg) -> AlignResult:
+    """The file on the clock of the member it follows (reference, offset_s s into that member's file), checked against
+    the other members it could follow."""
+    member = found.get(result.reference)
+    if member is None or member.method in (UNALIGNED, FOLLOWS):
+        return AlignResult(reference=RECORDING_CLOCK, target=result.target, offset_s=0.0, confidence=None, method=UNALIGNED,
+                           note=f"follows {result.reference}, which is not placed yet")
+    offset, scale = signal_clock(member)
+    placed = offset + result.offset_s * scale
+    doubts = []
+    waiting = needs_person(member, cfg)
+    if waiting:
+        doubts.append(f"follows {result.reference}, which waits: {waiting}")
+    for other, into in result.follows or ():
+        if other == result.reference or found.get(other) is None or found[other].method in (UNALIGNED, FOLLOWS):
+            continue
+        other_offset, other_scale = signal_clock(found[other])
+        gap = other_offset + into * other_scale - placed
+        if abs(gap) > AGREEMENT_S:
+            doubts.append(f"{other}'s offset puts it {gap:+.2f} s from where {result.reference}'s does")
+    out = AlignResult(reference=result.reference, target=result.target, offset_s=placed, confidence=None, method=FOLLOWS,
+                      note=result.note, doubt="; ".join(doubts) or None)
+    if scale != 1.0:
+        out.drift_ppm, out.drift_r2, out.overlap_s = member.drift_ppm, member.drift_r2, member.overlap_s
+        out.drift_intercept_s = placed / scale
+    return out
 
 
 def same_result(a: AlignResult, b: AlignResult) -> bool:
@@ -73,7 +109,7 @@ def same_result(a: AlignResult, b: AlignResult) -> bool:
 
 
 def drift_corrected(result: AlignResult) -> bool:
-    return result.method in (IMU, MARKERS) and result.drift_intercept_s is not None and drift_is_real(
+    return result.method in (IMU, MARKERS, FOLLOWS) and result.drift_intercept_s is not None and drift_is_real(
         result.drift_ppm, result.drift_r2, result.overlap_s, AGREEMENT_S
     )
 
@@ -94,6 +130,8 @@ def review_reason(result: AlignResult, cfg) -> str | None:
         return f"not aligned: {result.note}" if result.note else "not aligned"
     if result.doubt:
         return result.doubt
+    if result.method == FOLLOWS:   # its member's offset is the one a person looks at
+        return None
     if result.confidence is not None and result.confidence < cfg.min_confidence and (
         result.agreement is None or result.agreement < cfg.min_agreement
     ):
@@ -105,7 +143,7 @@ def review_reason(result: AlignResult, cfg) -> str | None:
 
 def needs_person(result: AlignResult, cfg) -> str | None:
     reason = review_reason(result, cfg)
-    if reason is None and cfg.review == "always" and not (result.method == MANUAL or result.accepted):
+    if reason is None and cfg.review == "always" and not (result.method in (MANUAL, FOLLOWS) or result.accepted):
         return "not looked at yet"
     return reason
 
@@ -117,6 +155,8 @@ def describe(result: AlignResult) -> str:
     text = f"{offset:+.2f} s"
     if result.method == MANUAL:
         return text + f", {result.note or 'set by hand'}"
+    if result.method == FOLLOWS:
+        return text + f", on {result.reference}'s clock" + (f"; {result.note}" if result.note else "")
     if result.method == MARKERS:
         text += f", from {len(result.segment_offsets or ())} marked event(s)"
     text += f", confidence {result.confidence:.2f}" if result.confidence is not None else ""
@@ -189,7 +229,7 @@ def head_turning(config, recording_id: str, person: str) -> tuple[np.ndarray, np
 @register_extractor
 class SignalAlignExtractor(Extractor):
     name = "signals.align"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.RECORDING
     group = "signals"
     phase = Phase.DERIVE
@@ -219,30 +259,62 @@ class SignalAlignExtractor(Extractor):
     def run(self, recording: Recording, workspace: Path) -> ExtractorResult:
         rid = recording.recording_id
         started, video_offset = video_started(recording)
+        files = signal_files(self.config, rid)
+        formats = {item.key: load_info(self.config, rid, item).get("format", SNIRF) for item in files}
         people: dict[str | None, list[SignalFile]] = {}
-        for item in signal_files(self.config, rid):
+        for item in files:
             people.setdefault(item.person, []).append(item)
         results, warnings = [], []
         artifacts = {}
         marked = [(mark.name, mark.start_s) for mark in marks_of(self.config, rid)]
         for person, items in people.items():
-            found, more = self._person(rid, person, items, started, video_offset, workspace)
-            for item, imu in zip(items, found):
+            # a person's SNIRF files share one device's clock; a table from another device keeps its own
+            snirfs = [item for item in items if formats[item.key] == SNIRF]
+            found, more = self._person(rid, person, snirfs, started, video_offset, workspace) if snirfs else ([], [])
+            by_key = {result.target: result for result in found}
+            mine = []
+            for item in items:
+                if formats[item.key] == COHERENCE:
+                    mine.append(self._follower(rid, item, files, formats))
+                    continue
+                imu = by_key.get(item.key) or AlignResult(
+                    reference=RECORDING_CLOCK, target=item.key, offset_s=0.0, confidence=None, method=UNALIGNED,
+                    note="a table keeps its own clock: mark its events on the video or set its offset by hand",
+                )
                 sure = imu.method == IMU and review_reason(imu, self.config.signals) is None
                 paired = match_markers(marked, [(m["name"], float(m["onset"])) for m in load_info(self.config, rid, item).get("markers", [])],
                                        prefer=imu.offset_s if sure else imu.metadata_offset_s)
                 if paired is None:
-                    results.append(imu)
+                    mine.append(imu)
                     continue
-                results.append(marker_result(paired, item.key, imu, self.config.signals))
+                mine.append(marker_result(paired, item.key, imu, self.config.signals))
                 # a file placed by its own markers needs no shared clock
                 more = [warning for warning in more if not warning.message.startswith(f"{item.key} has its markers")]
+            results.extend(_sharing_marked_clock(mine, {item.key for item in snirfs}))
             warnings.extend(more)
         artifacts.update({figure.name: figure for figure in workspace.glob(f"*{FIGURE_SUFFIX}")})
         path = workspace / COMPUTED_NAME
         write_offset_table(results, path)
         warnings.extend(self._notes(rid, results))
         return ExtractorResult(rows=pd.DataFrame(), artifacts={COMPUTED_NAME: path, **artifacts}, warnings=warnings)
+
+    def _follower(self, rid: str, item: SignalFile, files: list[SignalFile], formats: dict[str, str]) -> AlignResult:
+        """A coherence series placed through the SNIRF file of a member it was computed from."""
+        about = load_info(self.config, rid, item)["coherence"]
+        members = []
+        for subject, into in about["members"].items():
+            label = subject.removeprefix("sub-")
+            for other in files:
+                if formats[other.key] == SNIRF and other.person and _subject(other.path) == label:
+                    members.append((other.key, float(load_info(self.config, rid, other).get("start_s") or 0.0) + float(into)))
+                    break
+        low, high = about["band_hz"]
+        said = f"the coherence of {' and '.join(about['members'])} at {low:g} to {high:g} Hz"
+        if not members:
+            return AlignResult(reference=RECORDING_CLOCK, target=item.key, offset_s=0.0, confidence=None, method=UNALIGNED,
+                               note=f"{said}: none of them has a SNIRF file in the signals table to take a clock from; list one or set its offset by hand")
+        return AlignResult(reference=members[0][0], target=item.key, offset_s=members[0][1], confidence=None, method=FOLLOWS,
+                           follows=members, note=said)
 
     def _person(self, rid, person, items, started, video_offset, workspace: Path) -> tuple[list[AlignResult], list[QCWarning]]:
         cfg = self.config.signals
@@ -338,6 +410,24 @@ def marker_result(paired: MarkerMatch, target: str, imu: AlignResult, cfg) -> Al
                       "recurs in the file); a mark of another event, or a look at the video, tells them apart")
     result.doubt = "; ".join(doubts) or None
     return result
+
+
+def _sharing_marked_clock(results: list[AlignResult], snirfs: set[str]) -> list[AlignResult]:
+    """A person's SNIRF files with no event of their own paired take the clock of the first placed by its events, as
+    files of one device share its clock; a copy whose events were renamed is the usual case."""
+    marked = next((result for result in results if result.method == MARKERS and result.target in snirfs), None)
+    if marked is None:
+        return results
+    return [
+        replace(marked, target=result.target, note=f"same clock as {marked.target}, {marked.note}")
+        if result.target in snirfs and result.method in (IMU, UNALIGNED) else result
+        for result in results
+    ]
+
+
+def _subject(path: Path) -> str | None:
+    found = re.search(r"(?:^|_)sub-([A-Za-z0-9]+)(?=_|$)", path.stem)
+    return found.group(1) if found else None
 
 
 def _same_markers(first: dict, second: dict) -> bool:
