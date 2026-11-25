@@ -71,6 +71,36 @@ class TestDeviceFolders:
         assert "the Front2 folder is not a device of setup main, so it was not read" in notes
         assert "loose.wav lies outside the device folders, so it was not read" in notes
 
+    @pytest.mark.parametrize("name", ["00001.MPG", "clip.mpeg", "00001.M2TS", "clip.ts", "clip.wmv"])
+    def test_program_and_transport_streams_are_videos(self, project, name):
+        put(project.parent / "raw", "003", "front", name)
+        write_devices(project, cameras={"front": camera()})
+        (item,) = built(project).media
+        assert item.kind == "video" and item.path.name == name
+
+    def test_a_file_of_a_kind_not_read_is_named_not_skipped_in_silence(self, project):
+        raw = project.parent / "raw"
+        put(raw, "003", "front", "clip.vob")
+        put(raw, "003", "side", "a.mp4")
+        put(raw, "003", "side", "a.mxf")
+        put(raw, "003", "side", ".hidden.dat")
+        write_devices(project, cameras={"front": camera(), "side": camera(uses=("body",))})
+        recording = built(project)
+        assert [item.name for item in recording.media] == ["side"]
+        notes = recording.metadata["setup_notes"]
+        held = next(note for note in notes if note.startswith("the front folder"))
+        assert "holds only clip.vob, which the package does not read as audio or video, so this recording has no front" in held
+        assert ".mpg" in held
+        assert "the side folder also holds a.mxf, which the package does not read as audio or video, so it was left out" in notes
+        assert not any(".hidden" in note for note in notes)
+
+    def test_the_run_plan_says_what_was_left_unread(self, project):
+        put(project.parent / "raw", "003", "front", "clip.vob")
+        put(project.parent / "raw", "003", "side", "a.mp4")
+        write_devices(project, cameras={"front": camera(), "side": camera(uses=("body",))})
+        result = CliRunner().invoke(app, ["run", "-c", str(project), "--dry-run"])
+        assert "note: in 003, the front folder holds only clip.vob" in result.output
+
     def test_a_board_clip_belongs_to_the_camera_whose_folder_holds_it(self, tmp_path):
         put(tmp_path, "lab", "left", "MVI_0001.MP4")
         put(tmp_path, "lab", "right", "MVI_0001.MP4")

@@ -262,7 +262,7 @@ class TestRunDryRun:
             "run", "-c", str(project.config), "-e", "prep.media",
             "--set", "pose.backend=mediapipe", "--dry-run",
         )
-        assert "note:" not in result.output
+        assert "note: pose.backend" not in result.output
 
 
 @needs_pydantic

@@ -16,7 +16,8 @@ MediaKind = Literal["audio", "video", "depth"]
 ENTITY_NAMES = ("group_id", "session_id", "task", "run")
 
 AUDIO_SUFFIXES = frozenset({".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus"})
-VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".mts", ".m4v"})
+# .mpg and .mpeg are MPEG-1/2 program streams, .ts, .m2ts and .mts transport streams from camcorders
+VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".mts", ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts", ".wmv"})
 
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 
@@ -254,6 +255,18 @@ def playable_files(folder: Path) -> list[Path]:
     )
 
 
+def unread_files(folder: Path) -> list[Path]:
+    """Files in folder whose kind the package does not read as audio or video, hidden ones aside."""
+    return sorted(
+        path for path in folder.rglob("*")
+        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(folder).parts) and media_kind(path) is None
+    )
+
+
+def _kinds_read() -> str:
+    return ", ".join(sorted(AUDIO_SUFFIXES | VIDEO_SUFFIXES))
+
+
 def camera_clips(folder: Path) -> dict[str, Path]:
     """camera -> its one clip, from a folder holding one folder per camera, as a recording does."""
     loose = [path.name for path in folder.iterdir() if path.is_file() and media_kind(path) == "video"] if folder.is_dir() else []
@@ -280,9 +293,13 @@ def scan_devices(root: Path, setup: SetupSection) -> tuple[list[MediaFile], list
             notes.append(f"no {device} folder, so this recording has no {device}")
             continue
         files = playable_files(folder)
+        unread = [path.relative_to(folder).as_posix() for path in unread_files(folder)]
         if not files:
-            notes.append(f"the {device} folder holds no audio or video file")
+            held = f"holds only {', '.join(unread)}, which the package does not read as audio or video" if unread else "holds no audio or video file"
+            notes.append(f"the {device} folder {held}, so this recording has no {device}" + (f"; it reads {_kinds_read()}" if unread else ""))
             continue
+        if unread:
+            notes.append(f"the {device} folder also holds {', '.join(unread)}, which the package does not read as audio or video, so it was left out")
         if len(files) > 1:
             listed = ", ".join(path.relative_to(folder).as_posix() for path in files)
             raise RecordingNotFoundError(

@@ -58,6 +58,12 @@ def sources(tmp_path_factory) -> dict[str, Path]:
     for name in ("late_pictures", "late_sound"):
         files[f"{name}_ts"] = root / f"{name}.MTS"
         run_ffmpeg(["-i", str(files[name]), "-c:v", "copy", "-c:a", "ac3", "-f", "mpegts", str(files[f"{name}_ts"])])
+    # as older cameras and DVD recorders write them: an interlaced MPEG-2 program stream whose clock starts after 0
+    files["late_pictures_mpg"] = root / "late_pictures.MPG"
+    run_ffmpeg([
+        "-i", str(late_pictures), "-c:v", "mpeg2video", "-flags", "+ilme+ildct", "-top", "1", "-q:v", "2", "-c:a", "mp2", "-f", "vob",
+        str(files["late_pictures_mpg"]),
+    ])
 
     def make(name, source, *video):
         files[name] = root / f"{name}.mp4"
@@ -97,7 +103,7 @@ class TestPreparedTrack:
         track = _extract_track(sources["late_sound"], tmp_path / "track.wav", start_s=-0.5, duration_s=3.0, sample_rate=RATE)
         assert beep_at(read_wav(track)) == pytest.approx(expected, abs=1e-3)
 
-    @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("late_sound_ts", True), ("variable", False)])
+    @pytest.mark.parametrize("which, sounding", [("late_sound", True), ("late_sound_ts", True), ("late_pictures_mpg", True), ("variable", False)])
     def test_a_lone_camera_gives_its_sound_as_the_shared_track(self, sources, tmp_path, which, sounding):
         folder = tmp_path / "raw" / "003" / "room"
         folder.mkdir(parents=True)
@@ -168,7 +174,7 @@ def checks(warnings) -> dict[str, str]:
 
 
 class TestPreparedVideo:
-    @pytest.mark.parametrize("which", ["late_pictures", "late_sound", "late_pictures_ts", "late_sound_ts"])
+    @pytest.mark.parametrize("which", ["late_pictures", "late_sound", "late_pictures_ts", "late_sound_ts", "late_pictures_mpg"])
     def test_frame_0_sits_at_the_first_sound_so_picture_and_sound_keep_their_distance(self, sources, tmp_path, which):
         """The white picture comes 0.2 s after the beep in one file and 0.2 s before it in the other."""
         entry, _, copy = prepare(sources[which], tmp_path)
@@ -213,9 +219,11 @@ class TestPreparedVideo:
         assert (stream.width, stream.height, stream.pixel_aspect) == (852, 480, 1)
         assert checks(warnings)["video_pixel_shape"] == "info"
 
-    def test_interlaced_pictures_are_deinterlaced(self, sources, tmp_path):
-        _, warnings, copy = prepare(sources["interlaced"], tmp_path)
-        assert probe(copy).video_streams()[0].field_order == "progressive"
+    @pytest.mark.parametrize("which", ["interlaced", "late_pictures_mpg"])
+    def test_interlaced_pictures_are_deinterlaced(self, sources, tmp_path, which):
+        _, warnings, copy = prepare(sources[which], tmp_path)
+        stream = probe(copy).video_streams()[0]
+        assert stream.field_order == "progressive" and stream.start_s == pytest.approx(0.0, abs=1e-3)
         assert checks(warnings)["video_interlaced"] == "info"
 
     def test_one_rate_for_all_keeps_every_other_frame(self, sources, tmp_path):

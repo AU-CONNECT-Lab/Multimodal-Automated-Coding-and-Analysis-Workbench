@@ -53,7 +53,7 @@ recordings/
     ...
 ```
 
-Each device folder holds exactly one file. A recording in which a device folder holds two files is not processed until one of them is removed; a recording that lacks a device, or holds a folder or file outside the device folders, is processed with a note in the quality-control report.
+Each device folder holds exactly one file. A recording in which a device folder holds two files is not processed until one of them is removed; a recording that lacks a device, or holds a folder or file outside the device folders, is processed with a note in the quality-control report. Video is read from `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, `.mts`, `.m2ts`, `.ts`, `.mpg`, `.mpeg` and `.wmv` files, sound from `.wav`, `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg` and `.opus` files. A file of another kind in a device folder is not read; the run plan (`macaw run --dry-run`) and the quality-control report name it. Such a file can be converted with ffmpeg first, for example `ffmpeg -i clip.vob -c copy clip.mpg`.
 
 Single camera
 : The sound is taken from the camera and the voices are separated automatically. In the setup, the camera is said to carry the voices of all participants, and *Microphones* is set to `shared` (one shared microphone) in the settings. Each voice is then assigned to a participant in step 6.

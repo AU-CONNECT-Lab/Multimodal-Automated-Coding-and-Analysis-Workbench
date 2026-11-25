@@ -77,6 +77,7 @@ def run(
         finished = runner.completed_on_disk(resolved, dag, recording_ids) if resume else set()
         for task_id in runner.plan(resolved, recording_ids, wanted, finished):
             typer.echo(task_id)
+        _echo_setup_notes(resolved, recording_ids)
         _echo_waiting(runner.check_gates(resolved, dag, recording_ids, finished)[0])
         runner.check_ready(runner.recording_configs(resolved, recording_ids), runner.pending_steps(dag, recording_ids, finished))
         return
@@ -103,6 +104,19 @@ def run(
     write_status_table(config, resolved)
     if summary.n_failed:
         raise typer.Exit(code=1)
+
+
+def _echo_setup_notes(resolved, recording_ids: list[str]) -> None:
+    """What reading each recording's folders left out or found missing, which prep.media puts in the QC report too."""
+    from macaw.project.recording import build_recording
+
+    for rid in recording_ids:
+        try:
+            notes = build_recording(rid, resolved).metadata.get("setup_notes", [])
+        except MacawError as error:
+            notes = [str(error)]
+        for note in notes:
+            typer.echo(f"note: in {rid}, {note}")
 
 
 def write_status_table(config: Path, resolved) -> None:
