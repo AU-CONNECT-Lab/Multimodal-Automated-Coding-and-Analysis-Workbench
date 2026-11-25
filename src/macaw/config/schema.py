@@ -676,6 +676,9 @@ class JudgeVersion(_Section):
 class RatingFrames(_Section):
     """Frames of the video shown between the lines of a rating's transcript."""
 
+    # written as from; the resolved settings keep from_, which reads back as well
+    model_config = ConfigDict(extra="forbid", validate_assignment=True, validate_by_name=True, validate_by_alias=True)
+
     # seconds between two frames, from the start of each part rated
     every_s: float = Field(default=1.0, gt=0)
     # pixels of a frame's longer side once cropped; none sends it as the camera filmed it, for the server to scale
@@ -685,6 +688,8 @@ class RatingFrames(_Section):
     crop: Literal["people", "whole"] | tuple[float, float, float, float] = "people"
     # share of the box's width and height added on each side
     margin: float = Field(default=0.1, ge=0)
+    # recording, from_recording: a listed recording is shown the other's frames, as a control for what the frames show
+    from_: Path | None = added(default=None, alias="from")
 
     @field_validator("crop")
     @classmethod

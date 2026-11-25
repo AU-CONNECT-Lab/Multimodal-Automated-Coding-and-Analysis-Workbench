@@ -401,10 +401,12 @@ def _rating_frames(config: MacawConfig, layout, recording_id: str) -> list[dict]
             continue
         crop = json.loads((folder / CROP_NAME).read_text(encoding="utf-8"))
         how = said.get(crop["source"], "the whole picture").format(people=", ".join(crop.get("people", [])))
-        own = Path(config.project.recording_config_dir) / f"{recording_id}.yaml"
+        lender = crop.get("from_recording")
+        own = Path(config.project.recording_config_dir) / f"{lender or recording_id}.yaml"
+        whose = f"borrowed from {lender}, as frames.from gives, from its {crop['camera']}" if lender else f"from {crop['camera']}"
         rows.append({
             "what": f"Frames shown to rating {version}",
-            "decided": f"from {crop['camera']}, {how}, box {crop['box']}; see {folder / PREVIEW_NAME}; another box goes in {own} "
+            "decided": f"{whose}, {how}, box {crop['box']}; see {folder / PREVIEW_NAME}; another box goes in {own} "
                        f"as coding.ratings.{version}.frames.crop",
             "by": "person" if crop["source"] == GIVEN else "software", "href": None,
         })

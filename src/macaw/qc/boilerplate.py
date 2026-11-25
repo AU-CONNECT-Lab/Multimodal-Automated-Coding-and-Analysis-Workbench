@@ -994,8 +994,25 @@ def _rating(config, spec, names) -> str:
             f"rated, {cut} and {size}; each frame followed a line giving "
             "its time on the recording's clock, and the lines after it started before the next frame."
         )
+        if frames.get("from"):
+            text += (
+                f" As a control for what the frames showed, each recording listed in \"{frames['from']}\" was shown instead the frames "
+                "of the other recording the table paired it with: as many, as far apart and as far from the start of the same part "
+                "of that recording, taken again from its start where that part was shorter, cut to that recording's own box, and "
+                "labelled with the rated recording's times."
+            )
     text += _prompt_extras({key: value for key, value in params.items() if key != "reasons"})
-    if params.get("evidence"):
+    if params.get("evidence") and frames:
+        text += (
+            " The lines of the transcript and the frames were numbered, and before each score the model was asked to list the "
+            "lines and frames the score rested on, each line with a few words copied from it and each frame with a few words on "
+            "what it showed, to rate only from the transcript and the frames and to cite only the lines and frames given. Each "
+            "cited line was checked to exist, to have been said by the person rated where a scale rated one person, and to hold "
+            "the copied words once case and punctuation were set aside, with words running on into the line before or after "
+            "counted apart; each cited frame was checked to have been shown and to come with words on what it showed, whoever it "
+            "showed; answers that failed a check kept their scores, and the failures were counted."
+        )
+    elif params.get("evidence"):
         text += (
             " The lines of the transcript were numbered, and before each score the model was asked to list the lines the score "
             "rested on, each with a few words copied from it, to rate only from the transcript and to cite only the lines given. "

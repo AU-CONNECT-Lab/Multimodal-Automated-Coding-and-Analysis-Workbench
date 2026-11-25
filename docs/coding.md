@@ -273,6 +273,17 @@ With `crop: people` the frames of a recording are all cut to one box: the union 
 
 Frames are sent only to a model on the user's own machine or the lab's server (Ollama, vLLM, llama.cpp); a version with frames and another provider is refused. Before the run, the step asks Ollama whether the model reads pictures. A server turns each picture into a number of tokens that depends on the model and the server, and some scale small pictures up first, so the step sends one frame on its own, counts what it took, and stops with a message giving the context the longest request needs when that exceeds what the server reads. One frame a second over a recording of several minutes amounts to hundreds of frames; where that does not fit, `every_s` is raised.
 
+With frames and `evidence: true` ({ref}`evidence <rating-evidence>`), each frame's line gives its number as well as its time (`[frame 12, t=312.0 s]`), numbered from 1 in each request in the order shown. The model is told to rate from the transcript and the frames and to cite only the numbered lines and frames; an item of its list is either a line, by its number with a few words copied from it, or a frame, by its number with a few words on what it shows (`{"frame": 12, "seen": "child turns away"}`). For a scale that rates one person, it is asked to cite lines that person said or frames showing that person, and a reason may rest on what was seen as well as on what was said, the timing or the voice. A cited frame is checked to have been shown and to come with words on what it shows; who is in it is not checked. `evidence.csv` gives a frame's number, its time as shown and, in `seen`, the model's words, and `answers.csv` counts each answer's cited lines and frames apart. Versions without frames are asked exactly as before.
+
+(rating-frames-from)=
+A version can borrow its frames as a control for what the frames show: with `frames: {every_s: 5.0, from: borrowed.csv}`, each recording the table lists is shown instead the frames of the recording it is paired with, for example another family doing the same task:
+
+| recording | from_recording |
+|---|---|
+| dyad01 | dyad07 |
+
+The rated recording's transcript, frame times and number of frames stay as they are: each frame is taken as far from the start of the same part of the other recording (its analysed part, or its segment of the same name) and labelled with the rated recording's time. Where the other recording's part is shorter, the frames past its end are taken again from its start, so that the number of frames still matches; the quality report says how many. The other recording's frames are cut to its own box, the one its own settings give or else the one found round its people's bodies; a box in the rated recording's own settings belongs to that recording's camera and is not used. The other recording's video has to be prepared first (`prep.video`). Recordings the table does not list are shown their own frames. The quality report's Decisions table, `frames.parquet` (columns `from_recording` and `from_t`) and the Methods say which frames were borrowed and from where.
+
 ### Rating parts of a recording
 
 Without further settings, a version rates the analysed part of each recording as a whole. `segments: [first_half, second_half]` rates the named segments of the segments table one by one instead (see {ref}`segments`); recordings without such a segment are left out of that version and the quality report says so.

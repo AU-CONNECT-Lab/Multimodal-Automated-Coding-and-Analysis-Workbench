@@ -10,10 +10,11 @@ import numpy as np
 import pandas as pd
 
 from macaw.config.schema import MacawConfig, RatingFrames
-from macaw.exceptions import UnreadableMediaError
+from macaw.exceptions import ConfigError, InputNotFoundError, UnreadableMediaError
 from macaw.media.ffmpeg import extract_frame
 from macaw.project.layout import layout_for
 from macaw.project.recording import MediaFile, Recording
+from macaw import people_tables
 
 FRAMES_NAME = "frames.parquet"
 CROP_NAME = "frames_crop.json"
@@ -23,7 +24,9 @@ PEOPLE, WHOLE_PICTURE, GIVEN, NO_POSE = "people", "whole", "given", "no pose"
 _OUTLIER = 2.0
 _PREVIEW_SIDE = 960
 _TIME_EPSILON = 1e-6
-FRAME_COLUMNS = ["segment", "scale", "frame", "t", "video", "video_t", "shown"]
+# number: as the prompt gave it where it asks for evidence; from_t: when the frame was taken on from_recording's clock
+FRAME_COLUMNS = ["segment", "scale", "number", "frame", "t", "from_recording", "from_t", "wrapped", "video", "video_t", "shown"]
+BORROW_COLUMNS = ("recording", "from_recording")
 
 
 @dataclass
@@ -52,6 +55,53 @@ def frame_times(start: float, end: float, every_s: float, spans: list[tuple[floa
         found += [low + index * every_s for index in range(count)]
     found.sort()
     return [moment for index, moment in enumerate(found) if index == 0 or moment - found[index - 1] > _TIME_EPSILON]
+
+
+def read_borrowed(path: Path) -> dict[str, str]:
+    """The frames.from table, checked line by line: each recording listed, by the recording whose frames it is shown."""
+    path = Path(path)
+    if not path.is_file():
+        raise InputNotFoundError(f"frames.from table not found: {path}")
+    table = people_tables.read_csv(path, dtype=str, keep_default_na=False)
+    table.columns = [str(column).strip() for column in table.columns]
+    missing = [column for column in BORROW_COLUMNS if column not in table.columns]
+    if missing:
+        raise ConfigError(f"{path} has no column {', '.join(missing)}; it needs {', '.join(BORROW_COLUMNS)}")
+    found: dict[str, str] = {}
+    for line, (recording, lender) in enumerate(zip(table["recording"].str.strip(), table["from_recording"].str.strip()), 2):
+        if not recording and not lender:
+            continue
+        if not recording or not lender:
+            raise ConfigError(f"{path} line {line}: a row gives both a recording and the recording it takes frames from")
+        if recording == lender:
+            raise ConfigError(f"{path} line {line}: {recording} would be shown its own frames; leave it out of the table for that")
+        if recording in found:
+            raise ConfigError(f"{path} line {line}: {recording} is listed twice")
+        found[recording] = lender
+    return found
+
+
+def borrowed_moment(moment: float, start: float, low: float, high: float) -> tuple[float, bool]:
+    """Where a moment of a part starting at start falls in the other recording's part low to high: as far from its start,
+    or, past its end, as far again from its start; and whether it went round."""
+    offset, length = moment - start, high - low
+    if offset < length - _TIME_EPSILON:
+        return low + offset, False
+    return low + offset % length, True
+
+
+def own_crop(config: MacawConfig, recording_id: str, rating: str):
+    """The crop a recording's own settings give a rating's frames; None where they give none."""
+    import yaml
+
+    path = Path(config.project.recording_config_dir) / f"{recording_id}.yaml"
+    if not path.is_file():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    for key in ("coding", "ratings", rating, "frames"):
+        data = data.get(key) if isinstance(data, dict) else None
+    crop = data.get("crop") if isinstance(data, dict) else None
+    return None if crop is None else RatingFrames(crop=crop).crop
 
 
 def frame_camera(recording: Recording) -> MediaFile:
@@ -128,7 +178,8 @@ def picture_size(path: Path) -> tuple[int, int]:
 def take_frames(
     camera: MediaFile, times: list[float], crop: Crop, long_side: int | None, directory: Path, length_s: float,
 ) -> dict[float, Path | None]:
-    """Each moment's frame, cropped and scaled, by moment; None where the video does not reach it."""
+    """Each moment's frame, on the clock of the recording camera belongs to, cropped and scaled, by moment; None where
+    the video does not reach it."""
     taken: dict[float, Path | None] = {}
     for index, moment in enumerate(times, 1):
         at = camera.own_time(moment)

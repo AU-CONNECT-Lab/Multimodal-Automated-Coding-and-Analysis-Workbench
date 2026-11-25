@@ -183,18 +183,30 @@ def build_rating_prompt(
         )
     if frames:
         crop = ", cropped to the people" if cropped else ""
+        label = "its number and its time" if evidence else "its time"
         system.append(
-            f"Frames of the video come between the lines, one every {every_s:g} s{crop}. Each follows a line giving its time "
+            f"Frames of the video come between the lines, one every {every_s:g} s{crop}. Each follows a line giving {label} "
             "on the recording's clock, and the lines after it started before the next frame."
         )
     if notes.strip():
         system.append(f"Notes from the researchers: {notes.strip()}")
     reason = ', "reason": "<what it rests on>"' if reasons else ""
-    if evidence:
-        # a number after the words is cited for its own line; one in front was often taken for the line below
-        source = "the transcript and the frames" if frames else "the transcript"
-        system.append(f"Each line ends with its number. Rate only from {source}, and cite only the numbered lines given.")
-        entry = '{"evidence": [{"line": <number>, "quote": "<a few words copied exactly from that line>"}], "score": <score>' + reason + "}"
+    # a number after the words is cited for its own line; one in front was often taken for the line below
+    line_entry = '{"line": <number>, "quote": "<a few words copied exactly from that line>"}'
+    if evidence and frames:
+        system.append(
+            "Each line ends with its number. Rate only from the transcript and the frames, and cite only the numbered lines and "
+            "frames given."
+        )
+        entry = f'{{"evidence": [{line_entry}, {{"frame": <number>, "seen": "<a few words on what the frame shows>"}}], "score": <score>{reason}}}'
+        system.append(
+            f"Answer with one JSON object and nothing else: {entry}. First list every line and frame the score rests on, a line by "
+            "its number with a few words copied exactly from it and a frame by its number with a few words on what it shows, or "
+            "an empty list where none bears on the scale; then the score, a whole number in the scale's range."
+        )
+    elif evidence:
+        system.append("Each line ends with its number. Rate only from the transcript, and cite only the numbered lines given.")
+        entry = f'{{"evidence": [{line_entry}], "score": <score>{reason}}}'
         system.append(
             f"Answer with one JSON object and nothing else: {entry}. First list every line the score rests on, each by its number "
             "with a few words copied exactly from it, or an empty list where no line bears on the scale; then the score, a whole "
@@ -204,7 +216,8 @@ def build_rating_prompt(
         entry = "{" + '"score": <score>' + reason + "}"
         system.append(f"Answer with one JSON object and nothing else: {entry}, the score a whole number in the scale's range.")
     if reasons:
-        system.append("The reason names in a few words what the score rests on: what was said, the timing or the voice.")
+        grounds = "what was said, the timing, the voice or what was seen" if frames else "what was said, the timing or the voice"
+        system.append(f"The reason names in a few words what the score rests on: {grounds}.")
 
     clocked = "timing" in show or bool(frames)
     span = f", {start:.1f} s to {end:.1f} s on the recording's clock" if clocked and end is not None else ""
@@ -221,7 +234,7 @@ def build_rating_prompt(
         for number, row in zip(numbers, lines.itertuples(index=False))
     ]
     if frames:
-        user += _with_frames(lines, said, frames, spans if excerpts else None)
+        user += _with_frames(lines, said, frames, spans if excerpts else None, numbered=evidence)
     else:
         for position, (text, row) in enumerate(zip(said, lines.itertuples(index=False))):
             if excerpts and position and getattr(row, "opens", False):
@@ -241,32 +254,40 @@ def build_rating_prompt(
         user.extend(f"- {rule}" for rule in scale.rules)
     user += example_lines(examples)
     if evidence and scale.person != ALL:
-        user.append(f"Cite lines said by the {scale.person}.")
+        user.append(f"Cite lines said by the {scale.person}" + (f" or frames showing the {scale.person}." if frames else "."))
     user.append("Answer with the JSON object.")
     return "\n".join(system), "\n".join(user)
 
 
 def _with_frames(
     lines: pd.DataFrame, said: list[str], frames: Sequence[tuple[float, str]], spans: Sequence[tuple[float, float]] | None,
+    *, numbered: bool = False,
 ) -> list[str]:
     """Frames and lines in time order, a frame before the lines that start at or after it; with spans, each stretch's
-    frames and lines together, ... between two stretches."""
+    frames and lines together, ... between two stretches. numbered gives the frames 1, 2, ... in the order shown."""
     starts = lines["t_start"].to_numpy(dtype=float)
     ends = lines["t_end"].to_numpy(dtype=float)
     stretches = _merged(spans) if spans else [(-math.inf, math.inf)]
-    groups: list[list[tuple[float, int, str]]] = [[] for _ in stretches]
+    groups: list[list[tuple[float, int, object]]] = [[] for _ in stretches]
     for moment, name in frames:
         place = next((index for index, (low, high) in enumerate(stretches) if low <= moment <= high), None)
         if place is not None:
-            groups[place].append((moment, 0, f"[t={moment:.1f} s]\n<frame {name}>"))
+            groups[place].append((moment, 0, name))
     for index, text in enumerate(said):
         place = next((at for at, (low, high) in enumerate(stretches) if ends[index] >= low and starts[index] <= high), len(stretches) - 1)
         groups[place].append((starts[index], 1, text))
     out: list[str] = []
+    shown = 0
     for group in (sorted(found, key=lambda item: (item[0], item[1])) for found in groups if found):
         if out:
             out.append("...")
-        out += [text for _, _, text in group]
+        for moment, kind, item in group:
+            if kind == 1:
+                out.append(item)
+                continue
+            shown += 1
+            label = f"[frame {shown}, t={moment:.1f} s]" if numbered else f"[t={moment:.1f} s]"
+            out.append(f"{label}\n<frame {item}>")
     return out
 
 

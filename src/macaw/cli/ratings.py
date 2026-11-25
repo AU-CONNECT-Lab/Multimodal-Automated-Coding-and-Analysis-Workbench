@@ -35,8 +35,8 @@ def export(
     prompts: bool = typer.Option(False, "--prompts", help="Also write prompts.csv: the text sent to the model for each recording, segment and scale."),
 ) -> None:
     """Every score, the model's and people's, one row per recording, segment, scale and rater (scores.csv), each of the
-    model's answers with its reason and its text (answers.csv), and every line an answer cited as evidence (evidence.csv),
-    each with a data dictionary beside it."""
+    model's answers with its reason and its text (answers.csv), and every line or frame an answer cited as evidence
+    (evidence.csv), each with a data dictionary beside it."""
     from macaw.coding.ratings import (
         RATING_DICTIONARY_COLUMNS, answers_dictionary, evidence_dictionary, model_answers, model_evidence, model_prompts,
         prompts_dictionary, scores_dictionary,
@@ -61,7 +61,8 @@ def export(
     if len(cited):
         cited.to_csv(folder / "evidence.csv", index=False)
         write_dictionary(evidence_dictionary(resolved, cited, config.parent), folder / "evidence.csv", RATING_DICTIONARY_COLUMNS)
-        said = f", {len(cited)} lines they cited"
+        frames = int((cited["kind"] == "frame").sum())
+        said = f", {len(cited) - frames} lines" + (f" and {frames} frames" if frames else "") + " they cited"
     sent = ""
     if prompts:
         asked = model_prompts(resolved, chosen)

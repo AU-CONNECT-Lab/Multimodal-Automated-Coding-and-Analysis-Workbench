@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from macaw.coding.llm.evidence import EVIDENCE_COLUMNS, EVIDENCE_NAME, NO_LINE, NO_LIST, NO_QUOTE, NOT_IN_LINE, OTHER_SPEAKER, RUNS_ON
+from macaw.coding.llm.evidence import (
+    EVIDENCE_COLUMNS, EVIDENCE_NAME, FRAME, LINE, NO_FRAME, NO_LINE, NO_LIST, NO_QUOTE, NOT_IN_LINE, NOTHING_SEEN, OTHER_SPEAKER, RUNS_ON,
+)
 from macaw.coding.llm.rate import ANSWER_COLUMNS, ANSWERS_NAME, PROMPT_COLUMNS, PROMPTS_NAME, RATE_STEP, RATINGS_NAME, WHOLE
 from macaw.coding.scales import RatingScale, read_scales
 from macaw.exceptions import ConfigError, MacawError
@@ -377,35 +379,61 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
         "Empty for answers rated before the time was kept.",
     ),
     "n_evidence": (
-        "How many lines the answer cited as its evidence; evidence.csv holds each.", "count",
+        "How many lines and frames the answer cited as its evidence, together; evidence.csv holds each.", "count",
         f"Empty when the version does not ask for evidence (evidence under coding.ratings), or the answer gave {NO_LIST}. 0 means "
         "it cited none.",
     ),
+    "n_evidence_lines": (
+        "How many lines of the transcript the answer cited as its evidence.", "count",
+        f"Empty when the version does not ask for evidence, or the answer gave {NO_LIST}.",
+    ),
+    "n_evidence_frames": (
+        "How many frames of the video the answer cited as its evidence; 0 where the version shows none.", "count",
+        f"Empty when the version does not ask for evidence, or the answer gave {NO_LIST}.",
+    ),
     "evidence_problem": (
-        f"The checks the cited lines failed, each with how many lines failed it: {NO_LINE}, {OTHER_SPEAKER} than the one the scale "
-        f"rates, {NO_QUOTE}, {RUNS_ON}, or {NOT_IN_LINE}; or {NO_LIST}. The score is kept either way.", None,
-        "Empty where every cited line passed, and when the version does not ask for evidence.",
+        f"The checks the cited lines and frames failed, each with how many failed it: {NO_LINE}, {OTHER_SPEAKER} than the one the "
+        f"scale rates, {NO_QUOTE}, {RUNS_ON}, or {NOT_IN_LINE} for a line; {NO_FRAME} or {NOTHING_SEEN} for a frame; or {NO_LIST}. "
+        "The score is kept either way.", None,
+        "Empty where every cited line and frame passed, and when the version does not ask for evidence.",
     ),
 }
+_FOR_A_FRAME = f"Empty for a frame, and where the line does not exist ({NO_LINE})."
+_FOR_A_LINE = f"Empty for a line, and where the frame was not shown ({NO_FRAME})."
 EVIDENCE_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
     "segment": _SEGMENT,
     "scale": _SCALE,
     "rater": ("The version of the language model under coding.ratings that answered.", None, "Never empty."),
-    "sample": ("Which of the model's answers to this scale cited the line, as in answers.csv.", None, "Never empty."),
+    "sample": ("Which of the model's answers to this scale cited the line or frame, as in answers.csv.", None, "Never empty."),
+    "kind": (f"What the answer cited: {LINE}, a line of the transcript, or {FRAME}, a frame of the video.", None, "Never empty."),
     "line": (
         "The number of the line cited, as the transcript sent to the model numbered its lines from 1.", None,
-        "Empty where the answer gave something other than a whole number.",
+        "Empty for a frame, and where the answer gave something other than a whole number.",
     ),
-    "speaker": ("Who said the line, as the transcript named them.", None, f"Empty where the line does not exist ({NO_LINE})."),
-    "t_start": ("When the line starts, in seconds on the recording's clock.", "s", f"Empty where the line does not exist ({NO_LINE})."),
-    "t_end": ("When the line ends, in seconds on the recording's clock.", "s", f"Empty where the line does not exist ({NO_LINE})."),
-    "quote": ("The words the answer copied from the line.", None, "Empty where the answer copied none."),
-    "said": ("The line as the model was shown it.", None, f"Empty where the line does not exist ({NO_LINE})."),
+    "speaker": ("Who said the line, as the transcript named them.", None, _FOR_A_FRAME),
+    "t_start": ("When the line starts, in seconds on the recording's clock.", "s", _FOR_A_FRAME),
+    "t_end": ("When the line ends, in seconds on the recording's clock.", "s", _FOR_A_FRAME),
+    "quote": ("The words the answer copied from the line.", None, "Empty for a frame, and where the answer copied none."),
+    "said": ("The line as the model was shown it.", None, _FOR_A_FRAME),
+    "frame": (
+        "The number of the frame cited, as the request numbered the frames it showed from 1, in time order.", None,
+        "Empty for a line, and where the answer gave something other than a whole number.",
+    ),
+    "frame_t": ("The frame's time as the request gave it, in seconds on the recording's clock.", "s", _FOR_A_LINE),
+    "frame_from": (
+        "The recording whose video the frame was taken from: the one rated, or the one frames.from pairs it with.", None, _FOR_A_LINE,
+    ),
+    "frame_from_t": (
+        "When the frame was taken, in seconds on the clock of the recording in frame_from; frame_t where that is the one rated.", "s",
+        _FOR_A_LINE,
+    ),
+    "seen": ("The words the answer gave on what the frame shows.", None, "Empty for a line, and where the answer gave none."),
     "problem": (
-        f"What failed: {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; {NO_QUOTE}; "
-        f"{RUNS_ON}, the copied words found only across the line and the one before or after it, as where the transcript split "
-        f"a sentence; or {NOT_IN_LINE}, the copied words not found in the line once case, punctuation and spacing are set aside. Several are "
-        "joined by a semicolon.", None, "Empty where the line passed every check.",
+        f"What failed: for a line, {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; "
+        f"{NO_QUOTE}; {RUNS_ON}, the copied words found only across the line and the one before or after it, as where the "
+        f"transcript split a sentence; or {NOT_IN_LINE}, the copied words not found in the line once case, punctuation and "
+        f"spacing are set aside. For a frame, {NO_FRAME}, a number the request did not show; or {NOTHING_SEEN}. A frame's "
+        "people are not checked. Several are joined by a semicolon.", None, "Empty where the line or frame passed every check.",
     ),
 }
 PROMPT_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {

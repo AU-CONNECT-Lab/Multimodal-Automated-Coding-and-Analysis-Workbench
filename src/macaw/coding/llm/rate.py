@@ -16,19 +16,21 @@ import pandas as pd
 from macaw.coding.llm.backends import (
     KeptAnswers, LLMBackend, concurrency_params, request_key, resolve_llm_backend, run_in_order, seed_caveat,
 )
-from macaw.coding.llm.evidence import EVIDENCE_NAME, evidence_table, evidence_warnings
+from macaw.coding.llm.evidence import EVIDENCE_NAME, SHOWN_FRAME_COLUMNS, evidence_table, evidence_warnings
 from macaw.coding.llm.judge import prosody_rows_file, video_length, voice_figures
 from macaw.coding.llm.notes import NOTE_KEYS, given_note, notes_by_key, notes_params
 from macaw.coding.llm.parsing import parse_rating
 from macaw.coding.llm.prompts import PICTURE_MARK, VOICE, build_rating_prompt
 from macaw.coding.llm.rating_frames import (
-    CROP_NAME, FRAME_COLUMNS, FRAMES_NAME, GIVEN, NO_POSE, PEOPLE, PREVIEW_NAME, crop_for, frame_camera, frame_times,
-    picture_size, take_frames, write_preview,
+    CROP_NAME, FRAME_COLUMNS, FRAMES_NAME, GIVEN, NO_POSE, PEOPLE, PREVIEW_NAME, borrowed_moment, crop_for, frame_camera,
+    frame_times, own_crop, picture_size, read_borrowed, take_frames, write_preview,
 )
 from macaw.coding.scales import RatingScale, ScaleExample, ScaleSet, read_examples, read_scales, validate_scales
 from macaw.config.hashing import canonical
-from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingVersion
-from macaw.exceptions import BackendNotAvailableError, CodebookError, ConfigError, InputNotFoundError, LLMBackendError
+from macaw.config.schema import RUN_ONLY_KEYS, LLMSection, MacawConfig, RatingFrames, RatingVersion
+from macaw.exceptions import (
+    BackendNotAvailableError, CodebookError, ConfigError, InputNotFoundError, LLMBackendError, RecordingNotFoundError,
+)
 from macaw.extractors import register_extractor
 from macaw.extractors.audio.content.asr import (
     CORRECTED_CHECK, TRANSCRIPT_NAME, WORDS_NAME, ASRExtractor, cut_transcript, read_transcript, read_words,
@@ -36,7 +38,9 @@ from macaw.extractors.audio.content.asr import (
 from macaw.extractors.audio.content.diarization import OTHER, SHARED_MODE
 from macaw.extractors.audio.prosody.frame import FrameProsodyExtractor
 from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
-from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep
+from macaw.extractors.prep import (
+    PREP_INFO_NAME, VIDEO_INFO_NAME, MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep, load_video_prep,
+)
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
 from macaw.project.recording import Recording, build_recording
@@ -65,7 +69,7 @@ RATING_COLUMNS = [
 ]
 ANSWER_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
-    "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "evidence_problem",
+    "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "n_evidence_lines", "n_evidence_frames", "evidence_problem",
 ]
 _COUNTS = ("prompt_tokens", "completion_tokens", "reasoning_tokens")
 PROMPT_COLUMNS = ["recording_id", "segment", "scale", "rater", "system", "user"]
@@ -88,23 +92,33 @@ class Prompt(NamedTuple):
     lines: pd.DataFrame
     # the frames the user part marks, in its order
     pictures: tuple[bytes, ...] = ()
+    # with frames, those shown by number: frame, t, from_recording, from_t
+    frames: pd.DataFrame | None = None
 
 
 class Shot(NamedTuple):
-    """A rating's frames for one recording: the moments each part and scale shows, by name, and how they were cut."""
+    """A rating's frames for one recording: the moments each part and scale shows, the file shown at each (segment, moment),
+    where each was taken, and how they were cut."""
 
     wanted: dict[tuple[str, str], list[float]]
-    names: dict[float, str]
+    names: dict[tuple[str, float], str]
     pictures: dict[str, bytes]
     table: pd.DataFrame
     crop: dict
+    taken_from: dict[tuple[str, float], tuple[str, float]]
+
+    def shown(self, segment: str, scale: str) -> tuple[list[tuple[float, str]], pd.DataFrame]:
+        """(moment, file) of each frame a part and scale shows, and the same numbered as the prompt numbers them."""
+        frames = [(moment, self.names[(segment, moment)]) for moment in self.wanted.get((segment, scale), []) if (segment, moment) in self.names]
+        rows = [(number, moment, *self.taken_from[(segment, moment)]) for number, (moment, _) in enumerate(frames, 1)]
+        return frames, pd.DataFrame(rows, columns=SHOWN_FRAME_COLUMNS)
 
 
 class RatingExtractor(Extractor):
     """Never registered itself: each version under coding.ratings is a step of its own."""
 
     name = "coding.rate"
-    version = "0.4.0"
+    version = "0.5.0"
     scale = Scale.RECORDING
     group = "coding"
     requires = (ASRExtractor.name, MediaPrepExtractor.name)
@@ -143,6 +157,8 @@ class RatingExtractor(Extractor):
         self.examples()
         if own.excerpts is not None:
             read_excerpts(own.excerpts, scales)
+        if own.frames is not None and own.frames.from_ is not None:
+            read_borrowed(own.frames.from_)
         backend = resolve_llm_backend(cfg)
         if own.frames is not None and not backend.is_local:
             raise ConfigError(
@@ -169,6 +185,13 @@ class RatingExtractor(Extractor):
         rows = rows[rows["recording"] == recording_id].sort_values(["scale", "start_s", "end_s"])
         return {scale: list(zip(group["start_s"], group["end_s"])) for scale, group in rows.groupby("scale", sort=True)}
 
+    def lender(self, recording_id: str) -> str | None:
+        """The recording whose frames this one is shown, as frames.from gives; None for its own."""
+        own, _ = self.settings(self.config)
+        if own.frames is None or own.frames.from_ is None:
+            return None
+        return read_borrowed(own.frames.from_).get(recording_id)
+
     def scale_set(self) -> ScaleSet:
         own, _ = self.settings(self.config)
         scales = read_scales(own.scales)
@@ -188,13 +211,35 @@ class RatingExtractor(Extractor):
         if {"pitch", "loudness"} & set(cfg.show) and voice.is_file():
             inputs.append(voice)
         if own.frames is not None:
-            # the offset table moves every frame on the recording clock; the named bodies set the crop
-            offsets = layout.offset_table_path(rid)
-            inputs += sorted(item.path for item in recording.media if item.kind == "video")
-            inputs += [offsets] if offsets.is_file() else []
-            keypoints = layout.keypoints_path(rid) / "pose.keypoints.parquet"
-            inputs += [keypoints] if own.frames.crop == PEOPLE and keypoints.exists() else []
+            lender = self.lender(rid)
+            inputs += self._frame_inputs(recording) if lender is None else self._lender_inputs(lender, rid)
         return inputs + talk_inputs(self.config, rid, by_voices=self.timed_by_voices(rid))
+
+    def _frame_inputs(self, recording: Recording, crop=None) -> list[Path]:
+        """The videos, offsets and named bodies the frames of recording are taken and cut by."""
+        layout = layout_for(self.config, create=False)
+        rid = recording.recording_id
+        # the offset table moves every frame on the recording clock; the named bodies set the crop
+        offsets = layout.offset_table_path(rid)
+        inputs = sorted(item.path for item in recording.media if item.kind == "video")
+        inputs += [offsets] if offsets.is_file() else []
+        keypoints = layout.keypoints_path(rid) / "pose.keypoints.parquet"
+        crop = self.settings(self.config)[0].frames.crop if crop is None else crop
+        return inputs + ([keypoints] if crop == PEOPLE and keypoints.exists() else [])
+
+    def _lender_inputs(self, lender: str, recording_id: str) -> list[Path]:
+        """The other recording's files its frames are taken by, its prepared copies' records among them."""
+        layout = layout_for(self.config, create=False)
+        made = [
+            layout.artifacts_dir(lender, MediaPrepExtractor.name) / PREP_INFO_NAME, layout.artifacts_dir(lender, VideoPrepExtractor.name) / VIDEO_INFO_NAME,
+        ]
+        made = [path for path in made if path.is_file()]
+        try:
+            other = build_recording(lender, self.config)
+        except RecordingNotFoundError:
+            # the run itself says so
+            return made
+        return made + self._frame_inputs(other, self._lender_cut(lender, recording_id))
 
     def timed_by_voices(self, recording_id: str) -> bool:
         """Whether the pause or overlap before each line comes from the voices: shown, on a shared microphone, for the
@@ -226,10 +271,27 @@ class RatingExtractor(Extractor):
         # only this recording's stretches, so marking another recording rates only that one again
         if marked is not None:
             key["excerpts"] = {scale: [list(span) for span in spans] for scale, spans in marked.items()}
-        if own.frames is not None and any(item.kind == "video" for item in recording.media):
+        lender = self.lender(recording.recording_id)
+        if own.frames is not None and lender is None and any(item.kind == "video" for item in recording.media):
             # the setup's choice of camera decides the frames
             key["camera"] = frame_camera(recording).name
+        if lender is not None:
+            # only this recording's row of the table, and where the other recording's parts lie and how they are cut
+            spans = {segment.name: [segment.start_s, segment.end_s] for segment in segments_of(self.config, lender)}
+            key["frames_from"] = {
+                "recording": lender, "segments": {name: spans.get(name) for name in own.segments},
+                "crop": canonical(self._lender_cut(lender, recording.recording_id)),
+            }
         return canonical(key)
+
+    def _lender_cut(self, lender: str, recording_id: str):
+        """How the other recording's frames are cut: a crop its own settings give, else this rating's, except a crop this
+        recording's own settings give, which belongs to its own camera."""
+        frames = self.settings(self.config)[0].frames
+        given = own_crop(self.config, lender, self.rating)
+        if given is not None:
+            return given
+        return PEOPLE if own_crop(self.config, recording_id, self.rating) is not None else frames.crop
 
     def backend_info(self) -> tuple[str | None, str | None]:
         backend = resolve_llm_backend(self.settings(self.config)[1])
@@ -292,7 +354,7 @@ class RatingExtractor(Extractor):
                     if asked.empty:
                         unmarked.append(scale.scale)
                         continue
-                    frames = [(moment, shot.names[moment]) for moment in shot.wanted.get((segment, scale.scale), []) if moment in shot.names] if shot else []
+                    frames, numbered = shot.shown(segment, scale.scale) if shot else ([], None)
                     system, user = build_rating_prompt(
                         scale, asked, people=people, minutes=(end - start) / 60.0, show=cfg.show, notes=told, reasons=cfg.reasons,
                         evidence=own.evidence, examples=examples.get(scale.scale, ()), excerpts=marked is not None,
@@ -301,7 +363,7 @@ class RatingExtractor(Extractor):
                         spans=marked.get(scale.scale, []) if marked is not None else None,
                     )
                     pictures = tuple(shot.pictures[name] for name in PICTURE_MARK.findall(user)) if shot else ()
-                    prompts.append(Prompt(segment, start, end, scale, system, user, asked, pictures))
+                    prompts.append(Prompt(segment, start, end, scale, system, user, asked, pictures, numbered))
                 if unmarked:
                     skipped.append((segment, start, end, unmarked, "the excerpts table marks no stretch with a line in it"))
                     note(
@@ -324,7 +386,8 @@ class RatingExtractor(Extractor):
             paths[EVIDENCE_NAME] = workspace / EVIDENCE_NAME
             evidence.to_parquet(paths[EVIDENCE_NAME], index=False)
         else:
-            answers = answers.assign(n_evidence=pd.array([pd.NA] * len(answers), dtype="Int64"), evidence_problem=pd.NA)
+            empty = {name: pd.array([pd.NA] * len(answers), dtype="Int64") for name in ("n_evidence", "n_evidence_lines", "n_evidence_frames")}
+            answers = answers.assign(**empty, evidence_problem=pd.NA)
         if shot is not None:
             paths[FRAMES_NAME] = workspace / FRAMES_NAME
             shot.table.to_parquet(paths[FRAMES_NAME], index=False)
@@ -340,42 +403,96 @@ class RatingExtractor(Extractor):
         )
 
     def _shoot(self, recording: Recording, parts, scales: ScaleSet, marked, workspace: Path, note) -> Shot:
-        """The frames each part and scale shows, taken once each, all cut to one box found over the parts rated."""
+        """The frames each part and scale shows, taken once each, all cut to one box found over the parts rated; from the
+        recording frames.from names, at the same distance from the start of each part, where it names one."""
         settings = self.settings(self.config)[0].frames
         apply_prep_timing(self.config, recording)
-        camera = frame_camera(recording)
-        low, high = min(part[1] for part in parts), max(part[2] for part in parts)
-        crop = crop_for(self.config, recording, camera, settings, low, high, picture_size(camera.frames_path))
+        source, where, cut = self._source(recording, parts)
+        camera = frame_camera(source)
+        low, high = min(span[0] for span in where.values()), max(span[1] for span in where.values())
+        crop = crop_for(self.config, source, camera, cut, low, high, picture_size(camera.frames_path))
         wanted: dict[tuple[str, str], list[float]] = {}
+        starts = {segment: start for segment, start, _ in parts}
         for segment, start, end in parts:
             for scale in scales.scales:
                 spans = None if marked is None else marked.get(scale.scale, [])
                 if spans is None or spans:
                     wanted[(segment, scale.scale)] = frame_times(start, end, settings.every_s, spans)
-        moments = sorted({moment for times in wanted.values() for moment in times})
+        # each (segment, moment) shown: the moment it is taken at on the source's clock, and whether that went round
+        at: dict[tuple[str, float], tuple[float, bool]] = {}
+        for (segment, _), times in wanted.items():
+            for moment in times:
+                at[(segment, moment)] = (moment, False) if source is recording else borrowed_moment(moment, starts[segment], *where[segment])
+        moments = sorted({taken_at for taken_at, _ in at.values()})
         length = video_length(camera.frames_path)
         taken = take_frames(camera, moments, crop, settings.long_side, workspace / "frames", length)
-        names = {moment: path.name for moment, path in taken.items() if path is not None}
+        names = {key: taken[taken_at].name for key, (taken_at, _) in at.items() if taken[taken_at] is not None}
         pictures = {path.name: path.read_bytes() for path in taken.values() if path is not None}
         write_preview(camera, (low + high) / 2.0, crop, workspace / PREVIEW_NAME, length)
         rows = [
-            (segment, scale if marked is not None else "", names.get(moment), moment, camera.name, camera.own_time(moment), moment in names)
+            (segment, scale if marked is not None else "", pd.NA, names.get((segment, moment)), moment, source.recording_id,
+             at[(segment, moment)][0], at[(segment, moment)][1], camera.name, camera.own_time(at[(segment, moment)][0]), (segment, moment) in names)
             for (segment, scale), times in wanted.items() for moment in times
         ]
         table = pd.DataFrame(rows, columns=FRAME_COLUMNS).drop_duplicates(["segment", "scale", "t"]).reset_index(drop=True)
-        unseen = len(moments) - len(names)
+        shown = table["shown"].to_numpy(dtype=bool)
+        table["number"] = pd.array([pd.NA] * len(table), dtype="Int64")
+        table.loc[shown, "number"] = table[shown].groupby(["segment", "scale"], sort=False).cumcount().to_numpy() + 1
+        unseen = sum(key not in names for key in at)
         said = {PEOPLE: f"cut to the bodies of {', '.join(crop.people)}", GIVEN: "cut to the box the settings give", "whole": "the whole picture"}
+        lent = source is not recording
         if crop.source == NO_POSE:
+            own = f"{source.recording_id}'s own settings" if lent else "this recording's own settings"
             note(
                 "rating_frames_whole", "warn",
-                f"pose.keypoints has no named person on {camera.name} in the part rated, so the frames show the whole picture; "
-                "name the people on the camera, or give a box as frames.crop in this recording's own settings",
+                f"pose.keypoints has no named person on {camera.name} of {source.recording_id} in the part rated, so the frames show "
+                f"the whole picture; name the people on the camera, or give a box as frames.crop in {own}",
             )
         else:
-            note("rating_frames", "info", f"{len(names)} frames from {camera.name}, {said[crop.source]} {list(crop.box)}; {PREVIEW_NAME} shows it")
+            whose = f"{source.recording_id}'s {camera.name}" if lent else camera.name
+            note("rating_frames", "info", f"{len(names)} frames from {whose}, {said[crop.source]} {list(crop.box)}; {PREVIEW_NAME} shows it")
+        if lent:
+            went_round = sum(again for _, again in at.values())
+            note(
+                "rating_frames_borrowed", "info",
+                f"the frames shown are {source.recording_id}'s, as {Path(settings.from_).name} gives, taken at the same distance from "
+                "the start of each part and shown with this recording's times"
+                + (f"; {went_round} of them were taken again from the start of {source.recording_id}'s part, which is shorter" if went_round else ""),
+            )
         if unseen:
-            note("rating_frames_unseen", "info", f"{unseen} of {len(moments)} moments fall where the video does not reach and show no frame.")
-        return Shot(wanted, names, pictures, table, crop.as_dict(camera.name))
+            note("rating_frames_unseen", "info", f"{unseen} of {len(at)} moments fall where the video does not reach and show no frame.")
+        crop_said = crop.as_dict(camera.name) | ({"from_recording": source.recording_id} if lent else {})
+        taken_from = {key: (source.recording_id, taken_at) for key, (taken_at, _) in at.items()}
+        return Shot(wanted, names, pictures, table, crop_said, taken_from)
+
+    def _source(self, recording: Recording, parts) -> tuple[Recording, dict[str, tuple[float, float]], RatingFrames]:
+        """The recording the frames are taken from, where each part rated lies on its clock, and how they are cut."""
+        settings = self.settings(self.config)[0].frames
+        rid = recording.recording_id
+        lender = self.lender(rid)
+        if lender is None:
+            return recording, {segment: (start, end) for segment, start, end in parts}, settings
+        said = f"{rid} is shown the frames of {lender}, as {settings.from_} gives"
+        try:
+            other = build_recording(lender, self.config)
+        except RecordingNotFoundError as error:
+            raise ConfigError(f"{said}, which is not one of this project's recordings ({error})") from None
+        if not load_video_prep(self.config, lender):
+            raise InputNotFoundError(f"{said}, whose video is not prepared yet; run prep.video for {lender}, then this step again")
+        apply_prep_timing(self.config, other)
+        prep = load_prep(self.config, lender)
+        named = {segment.name: segment for segment in segments_of(self.config, lender)}
+        where = {}
+        for segment, _, _ in parts:
+            if segment == WHOLE:
+                where[segment] = (prep.t_origin_s, prep.t_origin_s + prep.duration_s)
+            elif segment in named:
+                where[segment] = (named[segment].start_s, named[segment].end_s)
+            else:
+                raise ConfigError(f"{said}, which has no segment {segment} to take them from")
+            if where[segment][1] - where[segment][0] <= 0:
+                raise ConfigError(f"{said}, whose {segment or 'analysed part'} has no length")
+        return other, where, settings.model_copy(update={"crop": self._lender_cut(lender, rid)})
 
     def _parts(self, recording: Recording, note, skipped: list, every: list[str]) -> list[tuple[str, float, float]]:
         """(segment, start, end) to rate: the analysed window, or each named segment inside it."""
@@ -420,7 +537,7 @@ class RatingExtractor(Extractor):
             "seed": cfg.seed, "show": list(cfg.show), "notes": cfg.notes.strip(), **notes_params(cfg, recording),
             "reasons": cfg.reasons, "think": cfg.think, "transcript": own.transcript, "segments": list(own.segments), "evidence": own.evidence,
             **_example_params(own, self.examples()), **({"excerpts": Path(own.excerpts).name} if own.excerpts is not None else {}),
-            **({"frames": own.frames.model_dump(mode="json")} if own.frames is not None else {}),
+            **({"frames": _frame_params(own.frames)} if own.frames is not None else {}),
             **concurrency_params(cfg),
         }
         return [
@@ -514,6 +631,12 @@ def read_excerpts(path: Path, scales: ScaleSet) -> pd.DataFrame:
         if not (np.isfinite(low) and np.isfinite(high) and low <= high):
             raise ConfigError(f"{path} line {line}: start_s and end_s must be seconds, the start not after the end")
     return table.assign(start_s=times["start_s"].astype(float), end_s=times["end_s"].astype(float)).loc[:, list(EXCERPT_COLUMNS)]
+
+
+def _frame_params(frames: RatingFrames) -> dict:
+    """The frame settings as the Methods read them, the frames.from table by its name only."""
+    params = frames.model_dump(mode="json", exclude={"from_"})
+    return params | ({"from": Path(frames.from_).name} if frames.from_ is not None else {})
 
 
 def _example_params(own: RatingVersion, examples: dict[str, list[ScaleExample]]) -> dict:
