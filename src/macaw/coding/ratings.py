@@ -112,6 +112,7 @@ def people_ratings(config, scales: dict[str, RatingScale], recordings: list[str]
     frame = frame.apply(lambda column: column.str.strip())
     frame = frame[(frame != "").any(axis=1)]
     versions = set(config.coding.ratings)
+    step = float(config.project.ratings_step)
     scores = []
     for index, row in frame.iterrows():
         line = index + 2   # the header is line 1
@@ -129,8 +130,8 @@ def people_ratings(config, scales: dict[str, RatingScale], recordings: list[str]
             value = float(row["score"])
         except ValueError:
             raise ConfigError(f"{where}: score '{row['score']}' is not a number") from None
-        if not value.is_integer() or not scale.low <= value <= scale.high:
-            raise ConfigError(f"{where}: {row['scale']} takes whole scores from {scale.low} to {scale.high}, not {row['score']}")
+        if not _on_step(value, step) or not scale.low <= value <= scale.high:
+            raise ConfigError(f"{where}: {row['scale']} takes {_steps_said(step)} from {scale.low} to {scale.high}, not {row['score']}")
         scores.append(value)
     twice = frame.duplicated(subset=["recording", "segment", "scale", "coder"], keep=False)
     if twice.any():
@@ -145,6 +146,14 @@ def people_ratings(config, scales: dict[str, RatingScale], recordings: list[str]
     for column in extra:
         out[column] = frame[column].to_numpy()
     return out
+
+
+def _on_step(value: float, step: float) -> bool:
+    return abs(value / step - round(value / step)) < 1e-9
+
+
+def _steps_said(step: float) -> str:
+    return "whole scores" if step == 1 else f"scores in steps of {step:g}"
 
 
 def ratings_table(config, recording_ids: list[str], all_recordings: list[str]) -> pd.DataFrame:
@@ -236,7 +245,7 @@ def rating_agreement(
             for right in names[position + 1:]:
                 both = wide[[left, right]].dropna()
                 row = {"scale": scale_name, "person": scale.person if scale else None, "rater_a": left, "rater_b": right, "n": len(both)}
-                # a model's median of an even number of answers can fall between two points, and never equals a whole score
+                # a model's median of an even number of answers, or a person's half point, never equals a whole score
                 row["n_between"] = int((both % 1 != 0).any(axis=1).sum())
                 if cluster:
                     labels = groups.reindex(both.index)
@@ -264,6 +273,12 @@ def rating_agreement(
     return pd.DataFrame(rows, columns=columns)
 
 
+BETWEEN_NOTE = (
+    "Where 'between' is above 0, one rater gave scores off the whole points, which rarely equal the other's, "
+    "so exact is low by construction; read ICC(A,1) and within 1."
+)
+
+
 def format_agreement(found: pd.DataFrame) -> str:
     if found.empty:
         return "no scale was scored by two raters on the same recordings"
@@ -274,7 +289,10 @@ def format_agreement(found: pd.DataFrame) -> str:
             shown["clusters"] = own["n_clusters"]
         for key, title in (("icc", "ICC(A,1)"), ("kappa", "kappa"), ("exact", "exact"), ("within_one", "within 1")):
             shown[title] = [_interval(*values) for values in own[[key, f"{key}_low", f"{key}_high"]].itertuples(index=False)]
-        blocks.append(f"{scale} ({own['person'].iloc[0]})\n{shown.to_string(index=False)}")
+        block = f"{scale} ({own['person'].iloc[0]})\n{shown.to_string(index=False)}"
+        if (own["n_between"] > 0).any():
+            block += f"\n{BETWEEN_NOTE}"
+        blocks.append(block)
     return "\n\n".join(blocks)
 
 
@@ -301,7 +319,7 @@ SCORE_COLUMNS: dict[str, tuple[str, str | None, str]] = {
     "rater_kind": ("Whether the rater is a version of the model or a person.", None, "Never empty."),
     "score": (
         "The score: for a version of the model, the median of its answers that gave a whole score in the scale's range; for a person, "
-        "their score.", "points",
+        "their score, a multiple of project.ratings_step.", "points",
         "Empty for a model's score where none of its answers gave a whole score in the scale's range; answers.csv holds each answer.",
     ),
     "score_sd": (

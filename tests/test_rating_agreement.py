@@ -8,7 +8,8 @@ from typer.testing import CliRunner
 
 from macaw.cli.main import app
 from macaw.coding.ratings import (
-    draws, icc_a1, known_scales, linear_kappa, pair_statistics, people_ratings, rating_agreement, ratings_table,
+    BETWEEN_NOTE, draws, format_agreement, icc_a1, known_scales, linear_kappa, pair_statistics, people_ratings, rating_agreement,
+    ratings_table,
 )
 from macaw.coding.scales import RatingScale
 from macaw.config.loader import resolve_config, scaffold_project_config
@@ -91,6 +92,15 @@ class TestAgreement:
         row = rating_agreement(table, self.SCALES, n_boot=0).iloc[0]
         assert row["n_between"] == 2 and row["exact"] == 0.5
 
+    def test_a_person_s_half_points_give_icc_and_kappa_and_a_note(self):
+        table = table_of({"anna": list(X), "lab": [*(Y[:4] + 0.5), *Y[4:]]})
+        found = rating_agreement(table, self.SCALES, n_boot=100)
+        row = found.iloc[0]
+        assert row["n_between"] == 4 and np.isfinite(row["icc"]) and np.isfinite(row["kappa"]) and np.isfinite(row["icc_low"])
+        assert BETWEEN_NOTE in format_agreement(found)
+        whole = rating_agreement(table_of({"anna": list(X), "ben": list(Y)}), self.SCALES, n_boot=0)
+        assert BETWEEN_NOTE not in format_agreement(whole)
+
     def test_a_two_point_scale_has_no_within_one(self):
         table = table_of({"anna": [1, 0, 1, 1], "ben": [1, 0, 0, 1]}, scale="on_task")
         row = rating_agreement(table, self.SCALES, n_boot=0).iloc[0]
@@ -172,6 +182,20 @@ class TestTables:
         config = resolve_config(project(tmp_path, [{**PEOPLE[0], **change}, *PEOPLE[1:]]))
         with pytest.raises(ConfigError, match=message):
             people_ratings(config, known_scales(config), ["F1_plan", "F1_play", "F2_plan", "F2_play"])
+
+    @pytest.mark.parametrize("score,accepted", [(3.5, True), (3, True), (3.3, False), (5.5, False)])
+    def test_a_step_of_half_a_point_takes_half_points(self, tmp_path, score, accepted):
+        path = project(tmp_path, [{**PEOPLE[0], "score": score}, *PEOPLE[1:]])
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data["project"]["ratings_step"] = 0.5
+        path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        config = resolve_config(path)
+        recordings = ["F1_plan", "F1_play", "F2_plan", "F2_play"]
+        if accepted:
+            assert people_ratings(config, known_scales(config), recordings)["score"].iloc[0] == score
+        else:
+            with pytest.raises(ConfigError, match="scores in steps of 0.5 from 1 to 5"):
+                people_ratings(config, known_scales(config), recordings)
 
     def test_the_same_score_twice_is_refused(self, tmp_path):
         config = resolve_config(project(tmp_path, [*PEOPLE, PEOPLE[0]]))

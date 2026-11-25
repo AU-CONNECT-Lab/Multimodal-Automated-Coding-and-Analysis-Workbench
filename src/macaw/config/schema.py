@@ -41,6 +41,8 @@ class ProjectSection(_Section):
     heights: Path = Path("heights.csv")
     # people's scores on the rating scales, for macaw ratings; no file, no people's ratings
     ratings: Path = Path("ratings.csv")
+    # people's scores are multiples of this, e.g. 0.5 where a final score is the mean of two coders
+    ratings_step: float = Field(1.0, gt=0)
     # other signals recorded alongside, such as fNIRS, one file per row; no file, no signals
     signals: Path = added(default=Path("signals.csv"))
     # spans a person marked on the recording's clock on the Signals page; no file, no marks
