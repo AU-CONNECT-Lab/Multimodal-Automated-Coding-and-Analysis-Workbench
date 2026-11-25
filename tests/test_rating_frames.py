@@ -179,6 +179,28 @@ class TestFrameEvidence:
         # with no frames shown, any frame cited is one that was not
         assert check_cited([{"frame": 1, "seen": "x"}], lines, warmth)[0]["problem"] == NO_FRAME
 
+    def test_frames_given_the_same_words_are_counted_and_reported(self):
+        from macaw.coding.llm.evidence import evidence_table, evidence_warnings
+
+        shown = pd.DataFrame({"frame": [1, 2, 3], "t": [0.0, 5.0, 10.0], "from_recording": ["r1"] * 3, "from_t": [0.0, 5.0, 10.0]})
+        lines = pd.DataFrame({"line": [1], "speaker": ["child"], "t_start": [1.0], "t_end": [2.0], "text": ["It was fine."]})
+        flow = read_scales_from(SCALES).get("flow")
+        items = [
+            {"frame": 1, "seen": "People sitting at a table."}, {"frame": 2, "seen": "people sitting at a table"},
+            {"frame": 3, "seen": "child turns away"}, {"frame": 9, "seen": "people sitting at a table"},
+            {"frame": 3, "seen": "child turns away"}, {"line": 1, "quote": "fine"},
+        ]
+        answers = pd.DataFrame({
+            "recording_id": ["r1", "r1"], "segment": ["", ""], "scale": ["flow", "flow"], "rater": ["seen", "seen"], "sample": [0, 1],
+            "answer": [json.dumps({"evidence": items, "score": 3}), json.dumps({"evidence": [{"frame": 3, "seen": "x"}], "score": 3})],
+        })
+        table, counted = evidence_table(answers, [module.Prompt("", 0.0, 60.0, flow, "", "", lines, (), shown)])
+        # the same frame cited twice, or a frame not shown, shares its words with no other frame
+        assert table[table["sample"] == 0]["seen_elsewhere"].tolist() == [True, True, False, False, False, pd.NA]
+        assert counted["n_evidence_frames_same_words"].tolist() == [2, 0] and table["problem"].tolist()[:3] == ["", "", ""]
+        [warned] = [warning for warning in evidence_warnings(table, counted, "r1") if warning.check == "rating_frames_same_words"]
+        assert "In 1 of the 2 answers that cited frames" in warned.message and "(2 of the 5 cited frames that were shown)" in warned.message
+
 
 class TestBorrowed:
     def test_a_moment_past_the_shorter_part_goes_round_to_its_start(self):
@@ -271,7 +293,7 @@ class TestRun:
         assert (seen["frame"], seen["frame_t"], seen["frame_from"], seen["frame_from_t"], seen["seen"]) == (2, 5.0, "r1", 5.0, "child looks away")
         assert evidence[evidence["scale"] == "on_task"]["problem"].iloc[0] == OTHER_SPEAKER
         answers = pd.read_parquet(result.artifacts["answers.parquet"]).set_index("scale")
-        assert answers.loc["warmth", ["n_evidence", "n_evidence_lines", "n_evidence_frames"]].tolist() == [4, 1, 3]
+        assert answers.loc["warmth", ["n_evidence", "n_evidence_lines", "n_evidence_frames", "n_evidence_frames_same_words"]].tolist() == [4, 1, 3, 0]
         assert answers.loc["warmth", "evidence_problem"] == "no such frame 1; nothing said of what was seen 1"
         [warned] = [warning for warning in result.warnings if warning.check == "rating_evidence_unchecked"]
         assert "lines and frames the model cited" in warned.message

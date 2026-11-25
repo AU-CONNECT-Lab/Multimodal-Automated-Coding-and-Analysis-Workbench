@@ -391,6 +391,11 @@ ANSWER_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
         "How many frames of the video the answer cited as its evidence; 0 where the version shows none.", "count",
         f"Empty when the version does not ask for evidence, or the answer gave {NO_LIST}.",
     ),
+    "n_evidence_frames_same_words": (
+        "How many of the frames the answer cited it gave the same words on what they show as another frame it cited, once "
+        "case and punctuation are set aside; such words may describe the scene rather than each frame.", "count",
+        f"Empty when the version does not ask for evidence, or the answer gave {NO_LIST}.",
+    ),
     "evidence_problem": (
         f"The checks the cited lines and frames failed, each with how many failed it: {NO_LINE}, {OTHER_SPEAKER} than the one the "
         f"scale rates, {NO_QUOTE}, {RUNS_ON}, or {NOT_IN_LINE} for a line; {NO_FRAME} or {NOTHING_SEEN} for a frame; or {NO_LIST}. "
@@ -428,6 +433,10 @@ EVIDENCE_COLUMNS_SAID: dict[str, tuple[str, str | None, str]] = {
         _FOR_A_LINE,
     ),
     "seen": ("The words the answer gave on what the frame shows.", None, "Empty for a line, and where the answer gave none."),
+    "seen_elsewhere": (
+        "Whether the answer gave the same words, once case and punctuation are set aside, for another frame it cited; not a "
+        "failed check.", None, f"Empty for a line; false where the frame was not shown ({NO_FRAME}) or the answer gave no words.",
+    ),
     "problem": (
         f"What failed: for a line, {NO_LINE}; {OTHER_SPEAKER}, where the scale rates one person and someone else said the line; "
         f"{NO_QUOTE}; {RUNS_ON}, the copied words found only across the line and the one before or after it, as where the "

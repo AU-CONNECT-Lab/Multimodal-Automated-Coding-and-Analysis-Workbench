@@ -69,7 +69,8 @@ RATING_COLUMNS = [
 ]
 ANSWER_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "score", "problem", "reason", "answer", "prompt_tokens",
-    "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "n_evidence_lines", "n_evidence_frames", "evidence_problem",
+    "completion_tokens", "reasoning_tokens", "seconds", "n_evidence", "n_evidence_lines", "n_evidence_frames",
+    "n_evidence_frames_same_words", "evidence_problem",
 ]
 _COUNTS = ("prompt_tokens", "completion_tokens", "reasoning_tokens")
 PROMPT_COLUMNS = ["recording_id", "segment", "scale", "rater", "system", "user"]
@@ -118,7 +119,7 @@ class RatingExtractor(Extractor):
     """Never registered itself: each version under coding.ratings is a step of its own."""
 
     name = "coding.rate"
-    version = "0.5.0"
+    version = "0.5.1"
     scale = Scale.RECORDING
     group = "coding"
     requires = (ASRExtractor.name, MediaPrepExtractor.name)
@@ -386,7 +387,7 @@ class RatingExtractor(Extractor):
             paths[EVIDENCE_NAME] = workspace / EVIDENCE_NAME
             evidence.to_parquet(paths[EVIDENCE_NAME], index=False)
         else:
-            empty = {name: pd.array([pd.NA] * len(answers), dtype="Int64") for name in ("n_evidence", "n_evidence_lines", "n_evidence_frames")}
+            empty = {name: pd.array([pd.NA] * len(answers), dtype="Int64") for name in ANSWER_COLUMNS if name.startswith("n_evidence")}
             answers = answers.assign(**empty, evidence_problem=pd.NA)
         if shot is not None:
             paths[FRAMES_NAME] = workspace / FRAMES_NAME

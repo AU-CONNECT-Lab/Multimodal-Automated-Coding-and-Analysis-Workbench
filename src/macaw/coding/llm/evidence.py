@@ -14,7 +14,7 @@ from macaw.extractors.base import QCWarning
 EVIDENCE_NAME = "evidence.parquet"
 EVIDENCE_COLUMNS = [
     "recording_id", "segment", "scale", "rater", "sample", "kind", "line", "speaker", "t_start", "t_end", "quote", "said",
-    "frame", "frame_t", "frame_from", "frame_from_t", "seen", "problem",
+    "frame", "frame_t", "frame_from", "frame_from_t", "seen", "seen_elsewhere", "problem",
 ]
 LINE, FRAME = "line", "frame"
 # the frames a prompt showed, numbered as it showed them
@@ -92,7 +92,7 @@ def check_cited(items: list, lines: pd.DataFrame, scale: RatingScale, frames: pd
 
 _EMPTY = {
     "kind": None, "line": None, "speaker": None, "t_start": np.nan, "t_end": np.nan, "quote": "", "said": None,
-    "frame": None, "frame_t": np.nan, "frame_from": None, "frame_from_t": np.nan, "seen": "",
+    "frame": None, "frame_t": np.nan, "frame_from": None, "frame_from_t": np.nan, "seen": "", "seen_elsewhere": None,
 }
 
 
@@ -133,22 +133,39 @@ def evidence_table(answers: pd.DataFrame, prompts: list) -> tuple[pd.DataFrame, 
         prompt = shown[(answer.segment, answer.scale)]
         items = cited(answer.answer)
         if items is None:
-            counts.append((pd.NA, pd.NA, pd.NA))
+            counts.append((pd.NA,) * 4)
             problems.append(NO_LIST)
             continue
-        checked = check_cited(items, prompt[6], prompt[3], getattr(prompt, "frames", None))
+        checked = mark_same_words(check_cited(items, prompt[6], prompt[3], getattr(prompt, "frames", None)))
         rows += [
             {"recording_id": answer.recording_id, "segment": answer.segment, "scale": answer.scale, "rater": answer.rater, "sample": answer.sample, **row}
             for row in checked
         ]
         framed = sum(row["kind"] == FRAME for row in checked)
-        counts.append((len(checked), len(checked) - framed, framed))
+        counts.append((len(checked), len(checked) - framed, framed, sum(row["seen_elsewhere"] is True for row in checked)))
         problems.append(_tally([row["problem"] for row in checked]))
     table = pd.DataFrame(rows, columns=EVIDENCE_COLUMNS).astype({
         "line": "Int64", "frame": "Int64", "sample": "int64", "t_start": float, "t_end": float, "frame_t": float, "frame_from_t": float,
+        "seen_elsewhere": "boolean",
     })
-    total, lines, frames = (pd.array([count[index] for count in counts], dtype="Int64") for index in range(3))
-    return table, answers.assign(n_evidence=total, n_evidence_lines=lines, n_evidence_frames=frames, evidence_problem=problems)
+    total, lines, frames, same = (pd.array([count[index] for count in counts], dtype="Int64") for index in range(4))
+    return table, answers.assign(
+        n_evidence=total, n_evidence_lines=lines, n_evidence_frames=frames, n_evidence_frames_same_words=same, evidence_problem=problems,
+    )
+
+
+def mark_same_words(rows: list[dict]) -> list[dict]:
+    """Each shown frame's seen_elsewhere: whether the answer gave the same words for another frame, as words that describe
+    the scene rather than the frame pass every check."""
+    shown = [row for row in rows if row["kind"] == FRAME and not np.isnan(row["frame_t"]) and normalised(row["seen"])]
+    frames_by_words: dict[str, set] = {}
+    for row in shown:
+        frames_by_words.setdefault(normalised(row["seen"]), set()).add(row["frame"])
+    counted = {id(row) for row in shown}
+    for row in rows:
+        if row["kind"] == FRAME:
+            row["seen_elsewhere"] = id(row) in counted and len(frames_by_words[normalised(row["seen"])]) > 1
+    return rows
 
 
 def _tally(problems: list[str]) -> str:
@@ -157,6 +174,29 @@ def _tally(problems: list[str]) -> str:
 
 
 def evidence_warnings(table: pd.DataFrame, answers: pd.DataFrame, recording_id: str) -> list[QCWarning]:
+    return _failed(table, answers, recording_id) + _same_words(table, answers, recording_id)
+
+
+def _same_words(table: pd.DataFrame, answers: pd.DataFrame, recording_id: str) -> list[QCWarning]:
+    same = table["seen_elsewhere"].fillna(False).astype(bool)
+    if not same.any():
+        return []
+    framed = answers["n_evidence_frames"].fillna(0) > 0
+    affected = answers["n_evidence_frames_same_words"].fillna(0) > 0
+    shown = table[(table["kind"] == FRAME) & table["frame_t"].notna()]
+    return [
+        QCWarning(
+            check="rating_frames_same_words", recording_id=recording_id, subject_id=None, severity="warn",
+            message=(
+                f"In {int(affected.sum())} of the {int(framed.sum())} answers that cited frames, several frames were given the same "
+                f"words on what they show ({int(same.sum())} of the {len(shown)} cited frames that were shown); such words may "
+                "describe the scene rather than each frame, and they pass every check. evidence.parquet marks them in seen_elsewhere."
+            ),
+        )
+    ]
+
+
+def _failed(table: pd.DataFrame, answers: pd.DataFrame, recording_id: str) -> list[QCWarning]:
     bad = table[table["problem"] != ""]
     missing = int((answers["evidence_problem"] == NO_LIST).sum())
     if bad.empty and not missing:

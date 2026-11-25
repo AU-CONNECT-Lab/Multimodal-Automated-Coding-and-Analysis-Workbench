@@ -1010,7 +1010,8 @@ def _rating(config, spec, names) -> str:
             "cited line was checked to exist, to have been said by the person rated where a scale rated one person, and to hold "
             "the copied words once case and punctuation were set aside, with words running on into the line before or after "
             "counted apart; each cited frame was checked to have been shown and to come with words on what it showed, whoever it "
-            "showed; answers that failed a check kept their scores, and the failures were counted."
+            "showed, and frames given the same words as another frame in the same answer were counted; answers that failed a "
+            "check kept their scores, and the failures were counted."
         )
     elif params.get("evidence"):
         text += (
