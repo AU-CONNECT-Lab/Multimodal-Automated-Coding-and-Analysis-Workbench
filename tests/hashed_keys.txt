@@ -193,6 +193,7 @@ ProjectSection.n_subjects
 ProjectSection.name
 ProjectSection.output_dir
 ProjectSection.ratings
+ProjectSection.ratings_step
 ProjectSection.raw_dir
 ProjectSection.recording_config_dir
 ProjectSection.recording_pattern
@@ -222,6 +223,10 @@ QCSection.report_downsample_px
 QCSection.review_baseline
 QCSection.review_max_candidates
 QCSection.review_seed
+RatingFrames.crop
+RatingFrames.every_s
+RatingFrames.long_side
+RatingFrames.margin
 RatingVersion.base_url
 RatingVersion.concurrency
 RatingVersion.max_tokens
