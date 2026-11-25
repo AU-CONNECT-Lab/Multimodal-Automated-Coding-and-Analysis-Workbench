@@ -987,9 +987,11 @@ def _rating(config, spec, names) -> str:
             "cropped to one box per recording around the bodies of the people named on the camera over the part rated, widened "
             f"by {frames.get('margin', 0) * 100:g}% on each side" if crop == "people" else "uncropped" if crop == "whole" else "cropped to a box given by hand"
         )
+        side = frames.get("long_side")
+        size = f"scaled to {side} pixels on the longer side" if side else "at the camera's own resolution"
         text += (
             f" Between the lines it was shown frames of the video, one every {frames.get('every_s'):g} s from the start of each part "
-            f"rated, {cut} and scaled to {frames.get('long_side')} pixels on the longer side; each frame followed a line giving "
+            f"rated, {cut} and {size}; each frame followed a line giving "
             "its time on the recording's clock, and the lines after it started before the next frame."
         )
     text += _prompt_extras({key: value for key, value in params.items() if key != "reasons"})

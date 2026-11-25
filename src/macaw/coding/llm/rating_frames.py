@@ -126,7 +126,7 @@ def picture_size(path: Path) -> tuple[int, int]:
 
 
 def take_frames(
-    camera: MediaFile, times: list[float], crop: Crop, long_side: int, directory: Path, length_s: float,
+    camera: MediaFile, times: list[float], crop: Crop, long_side: int | None, directory: Path, length_s: float,
 ) -> dict[float, Path | None]:
     """Each moment's frame, cropped and scaled, by moment; None where the video does not reach it."""
     taken: dict[float, Path | None] = {}

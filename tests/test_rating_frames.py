@@ -165,6 +165,14 @@ class TestRun:
         # the camera starts 15 s into the recording and lasts 30 s
         assert table["shown"].tolist() == [False, False, True, True, True, False]
         assert any(warning.check == "rating_frames_unseen" for warning in result.warnings)
+        # without long_side a frame goes as the camera filmed it
+        import base64
+        import io
+
+        from PIL import Image
+
+        sent = next(part for part in server.requests[0]["messages"][-1]["content"] if part["type"] == "image_url")
+        assert Image.open(io.BytesIO(base64.b64decode(sent["image_url"]["url"].split(",", 1)[1]))).size == (320, 240)
 
     def test_frames_go_to_no_company_s_servers(self, tmp_path, server):
         config = self.framed(tmp_path, server, provider="openai")
@@ -193,6 +201,8 @@ class TestReports:
         text = _rating(None, SimpleNamespace(params=params, backend_version="m"), {})
         assert "one every 2 s from the start of each part rated" in text and "widened by 10% on each side" in text
         assert "scaled to 448 pixels on the longer side" in text
+        params["frames"].pop("long_side")
+        assert "at the camera's own resolution" in _rating(None, SimpleNamespace(params=params, backend_version="m"), {})
 
     def test_the_quality_report_gives_the_box_and_where_to_change_it(self, tmp_path, server):
         from macaw.project.layout import layout_for

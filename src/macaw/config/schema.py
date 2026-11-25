@@ -678,8 +678,8 @@ class RatingFrames(_Section):
 
     # seconds between two frames, from the start of each part rated
     every_s: float = Field(default=1.0, gt=0)
-    # pixels of a frame's longer side once cropped
-    long_side: int = Field(default=448, ge=32)
+    # pixels of a frame's longer side once cropped; none sends it as the camera filmed it, for the server to scale
+    long_side: int | None = Field(default=None, ge=32)
     # people: one box round the named people's bodies over the analysed window; whole: the whole picture; or
     # [x0, y0, x1, y1] in the video's pixels, as a recording's own settings can give
     crop: Literal["people", "whole"] | tuple[float, float, float, float] = "people"
