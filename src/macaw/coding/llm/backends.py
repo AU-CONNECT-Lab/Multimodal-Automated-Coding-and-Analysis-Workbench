@@ -9,6 +9,7 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -296,6 +297,12 @@ class OpenAICompatibleBackend(LLMBackend):
     api_key_variable: str | None = None
     max_tokens_field = "max_tokens"
 
+    def __init__(self, cfg: LLMSection, *, settings: str = "coding.llm"):
+        super().__init__(cfg, settings=settings)
+        # a server's own address, as people give it, serves this protocol under /v1
+        if self.is_local and urllib.parse.urlsplit(self.base_url).path in ("", "/"):
+            self.base_url = f"{self.base_url}/v1"
+
     def _headers(self) -> dict[str, str]:
         key = os.environ.get(self.api_key_variable or "", "")
         return {"Authorization": f"Bearer {key}"} if key else {}
@@ -311,6 +318,11 @@ class OpenAICompatibleBackend(LLMBackend):
             return
         try:
             listed = _get(f"{self.base_url}/models", self._headers()).get("data") or []
+        except urllib.error.HTTPError as error:
+            raise BackendNotAvailableError(
+                f"A server answers at {self.base_url}, but not as {self.name} serves its models: {self.base_url}/models gave "
+                f"{error}. Set {self.settings}.base_url to the server's address, such as {self.default_base_url}."
+            ) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as error:
             raise BackendNotAvailableError(
                 f"No {self.name} server answering at {self.base_url} ({error}). Start it first, "

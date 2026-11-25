@@ -353,6 +353,23 @@ class TestBackends:
         with pytest.raises(BackendNotAvailableError, match="No ollama server"):
             OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/v1")).check_available()
 
+    def test_a_local_server_is_reached_at_its_own_address_and_a_wrong_route_is_told_apart(self, monkeypatch, stub):
+        import urllib.error
+
+        backend = OllamaBackend(LLMSection(model="tiny", base_url=stub.url))
+        assert backend.base_url == f"{stub.url}/v1"
+        backend.check_available()
+        assert VLLMBackend(LLMSection(provider="vllm", model="tiny", base_url=f"{stub.url}/")).base_url == f"{stub.url}/v1"
+        # an address for a company's API is kept as given
+        assert OpenAIBackend(LLMSection(provider="openai", model="m", base_url="https://proxy.example")).base_url == "https://proxy.example"
+
+        def refused(url, *args, **kwargs):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        monkeypatch.setattr(backends_module, "_get", refused)
+        with pytest.raises(BackendNotAvailableError, match="A server answers at .*/api, but not as ollama serves its models"):
+            OllamaBackend(LLMSection(model="tiny", base_url=f"{stub.url}/api")).check_available()
+
     def test_cloud_keys_come_from_the_environment_only(self, monkeypatch, stub):
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         with pytest.raises(BackendNotAvailableError, match="OPENAI_API_KEY"):
