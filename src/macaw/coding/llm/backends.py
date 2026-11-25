@@ -91,6 +91,10 @@ class LLMBackend(Backend):
         """Whether the model reads pictures; None where the server does not say."""
         return None
 
+    def loaded(self) -> bool:
+        """Whether a request would be answered without loading the model first."""
+        return False
+
     def picture_tokens(self, picture: bytes) -> int | None:
         """Tokens one such picture takes in a request; None where the server does not count them."""
         return None
@@ -360,6 +364,15 @@ class OpenAICompatibleBackend(LLMBackend):
             reasoning_tokens=reasoning_tokens(counted, usage.get("completion_tokens"), reasoning, text),
         )
 
+    def loaded(self) -> bool:
+        if not self.is_local:
+            return False
+        try:
+            listed = _get(f"{self.base_url}/models", self._headers()).get("data") or []
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+            return False
+        return self._serves([str(entry.get("id")) for entry in listed if isinstance(entry, dict) and entry.get("id")])
+
     def picture_tokens(self, picture: bytes) -> int | None:
         counted = []
         for images in ((), (picture,)):
@@ -424,6 +437,13 @@ class OllamaBackend(OpenAICompatibleBackend):
             return None
         listed = shown.get("capabilities")
         return "vision" in listed if isinstance(listed, list) else None
+
+    def loaded(self) -> bool:
+        try:
+            listed = _get(f"{self.base_url.removesuffix('/v1')}/api/ps").get("models") or []
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+            return False
+        return any(self._is_mine(entry.get("name")) or self._is_mine(entry.get("model")) for entry in listed)
 
     def context_length(self) -> int | None:
         # it cuts a longer prompt from the front without saying so; only a loaded model is listed

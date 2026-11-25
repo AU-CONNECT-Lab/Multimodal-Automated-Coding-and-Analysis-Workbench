@@ -160,7 +160,7 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         notices.append(said_by_entity(name))
     for name in sorted(node for node in dag.nodes if node.startswith("coding.rate.")):
         from macaw.coding.llm.backends import BACKEND_GROUP as LLM_BACKENDS
-        from macaw.coding.llm.rate import examples_notice, rating_notice, scales_asked
+        from macaw.coding.llm.rate import examples_notice, frame_cost_notice, rating_notice, scales_asked
 
         own, llm = get_extractor(name).settings(config)
         backend = get_backend(LLM_BACKENDS, llm.provider)(llm)
@@ -171,10 +171,11 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where}{marked} to {llm.provider}")
         notices.append(examples_notice(config, name))
         if own.frames is not None:
-            notices.append(
+            notices.append(frame_cost_notice(config, name, recording_ids) or (
                 f"{name} shows a frame of the video every {own.frames.every_s:g} s between the lines; it counts what one frame takes "
-                "on the server before asking, and stops when the longest request would not fit the server's context"
-            )
+                "on the server before asking, and stops when the longest request would not fit the server's context; with the "
+                "model loaded, the plan gives that count"
+            ))
         notices.append(concurrency_notice(name, backend, llm, config.execution.n_workers))
         notices.append(said_by_entity(name))
     if "pose.listening" in dag.nodes:

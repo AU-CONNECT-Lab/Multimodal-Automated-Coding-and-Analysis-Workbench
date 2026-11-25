@@ -39,7 +39,7 @@ from macaw.extractors.base import Backend, Extractor, ExtractorResult, QCWarning
 from macaw.extractors.prep import PREP_INFO_NAME, MediaPrepExtractor, VideoPrepExtractor, apply_prep_timing, load_prep
 from macaw.project.layout import layout_for
 from macaw.project.manifest import FeatureSpec
-from macaw.project.recording import Recording
+from macaw.project.recording import Recording, build_recording
 from macaw.project.segments import segments_of
 from macaw.store.longtable import build_long_rows
 from macaw.store.schema import Scale
@@ -613,6 +613,39 @@ def picture_cost(backend: LLMBackend, prompts: list, note) -> int:
     longest = max(len(prompt.pictures) for prompt in prompts)
     note("rating_frame_tokens", "info", f"each frame takes about {each} tokens ({how}), {each * longest} for the {longest} frames of the longest request")
     return each
+
+
+def frame_cost_notice(config: MacawConfig, step: str, recording_ids: list[str]) -> str | None:
+    """What one frame takes on the server, sent as a grey picture the size of the first recording's frames, where the
+    model is loaded already; None where it is not, so the run plan loads nothing."""
+    import io
+
+    from PIL import Image
+
+    from macaw.extractors import get_extractor
+
+    own, cfg = get_extractor(step).settings(config)
+    backend = resolve_llm_backend(cfg)
+    if own.frames is None or not recording_ids or not backend.loaded():
+        return None
+    try:
+        width, height = picture_size(frame_camera(build_recording(recording_ids[0], config)).frames_path)
+        side = own.frames.long_side
+        if side and max(width, height) > side:
+            width, height = (side, max(round(height * side / width), 1)) if width >= height else (max(round(width * side / height), 1), side)
+        picture = io.BytesIO()
+        Image.new("RGB", (width, height), (128, 128, 128)).save(picture, "JPEG")
+        each = backend.picture_tokens(picture.getvalue())
+    except Exception:
+        # the plan is printed whatever the server or the files say
+        return None
+    if not each:
+        return None
+    return (
+        f"{step}: one frame takes about {each} tokens on {cfg.model} (a grey {width}x{height} frame, the whole picture of "
+        f"{recording_ids[0]}'s camera; a cropped one takes as many or fewer), {each * 60 / own.frames.every_s:.0f} tokens a minute "
+        "of recording at its every_s; the step stops before asking when the longest request would not fit the server's context"
+    )
 
 
 def estimated_tokens(text: str) -> int:

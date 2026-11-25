@@ -218,3 +218,25 @@ class TestReports:
         row = _rating_frames(config, layout, "r1")[0]
         assert row["by"] == "software" and "cut to the bodies of child, parent, box [10, 20, 300, 220]" in row["decided"]
         assert "coding.ratings.seen.frames.crop" in row["decided"] and "r1.yaml" in row["decided"]
+
+
+class TestPlan:
+    def test_the_plan_gives_what_a_frame_takes_when_the_model_is_loaded(self, monkeypatch, tmp_path, server):
+        config = TestRun().framed(tmp_path, server, {"every_s": 5.0, "long_side": 320})
+        monkeypatch.setattr(module, "build_recording", lambda rid, config: None)
+        monkeypatch.setattr(module, "frame_camera", lambda recording: MediaFile(tmp_path / "room.mp4", "video"))
+        monkeypatch.setattr(module, "picture_size", lambda path: (640, 480))
+        asked = []
+        monkeypatch.setattr(VLLMBackend, "picture_tokens", lambda self, picture: asked.append(picture) or 1000)
+        notice = module.frame_cost_notice(config, "coding.rate.seen", ["r1"])
+        # the test server serves the model, so it counts as loaded; the frame is scaled to long_side as the step would
+        assert "about 1000 tokens" in notice and "grey 320x240 frame" in notice and "12000 tokens a minute" in notice
+        monkeypatch.setattr(VLLMBackend, "loaded", lambda self: False)
+        assert module.frame_cost_notice(config, "coding.rate.seen", ["r1"]) is None and len(asked) == 1
+
+    def test_ollama_counts_a_model_as_loaded_only_when_it_is_in_memory(self, monkeypatch):
+        backend = OllamaBackend(LLMSection(provider="ollama", model="qwen3-vl:8b"))
+        monkeypatch.setattr(backends_module, "_get", lambda url, *args, **kwargs: {"models": [{"name": "qwen3-vl:8b"}]})
+        assert backend.loaded()
+        monkeypatch.setattr(backends_module, "_get", lambda url, *args, **kwargs: {"models": []})
+        assert not backend.loaded()
