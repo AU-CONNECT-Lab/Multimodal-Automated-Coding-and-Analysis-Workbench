@@ -868,7 +868,7 @@ def _shown(show, speaker: str = "the speaker letter") -> str:
     """What the model was given for each line, as a Methods phrase."""
     parts = [speaker, "the words"]
     if "timing" in show:
-        parts += ["its start and length", "the pause or overlap before it"]
+        parts += ["its start on the recording's clock and its length", "the pause or overlap before it"]
     voice = [term for item, term in (("pitch", "pitch"), ("loudness", "loudness"), ("rate", "speech rate")) if item in show]
     if voice:
         parts.append(f"its {_listed(voice)} relative to the median of that speaker's lines")
@@ -979,6 +979,18 @@ def _rating(config, spec, names) -> str:
         text += (
             " The transcript was the speech recogniser's as it stood before a person corrected it, and only recordings with a "
             "corrected transcript were rated."
+        )
+    frames = params.get("frames")
+    if frames:
+        crop = frames.get("crop")
+        cut = (
+            "cropped to one box per recording around the bodies of the people named on the camera over the part rated, widened "
+            f"by {frames.get('margin', 0) * 100:g}% on each side" if crop == "people" else "uncropped" if crop == "whole" else "cropped to a box given by hand"
+        )
+        text += (
+            f" Between the lines it was shown frames of the video, one every {frames.get('every_s'):g} s from the start of each part "
+            f"rated, {cut} and scaled to {frames.get('long_side')} pixels on the longer side; each frame followed a line giving "
+            "its time on the recording's clock, and the lines after it started before the next frame."
         )
     text += _prompt_extras({key: value for key, value in params.items() if key != "reasons"})
     if params.get("evidence"):

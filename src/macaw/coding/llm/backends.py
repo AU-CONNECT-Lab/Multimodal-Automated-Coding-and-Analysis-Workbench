@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
+from macaw.coding.llm.prompts import PICTURE_MARK
 from macaw.config.hashing import hash_value
 from macaw.config.schema import LLMSection
 from macaw.exceptions import BackendNotAvailableError, LLMBackendError
@@ -82,8 +83,17 @@ class LLMBackend(Backend):
 
     # called from several threads at once when concurrency is above 1: nothing of one request is kept on the instance
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
-        """images are JPEG pictures sent after the text, for a model that reads them."""
+        """images are JPEG pictures for a model that reads them: each in place of a picture mark in user where it holds one
+        for each, else after the text."""
         raise NotImplementedError
+
+    def reads_pictures(self) -> bool | None:
+        """Whether the model reads pictures; None where the server does not say."""
+        return None
+
+    def picture_tokens(self, picture: bytes) -> int | None:
+        """Tokens one such picture takes in a request; None where the server does not count them."""
+        return None
 
     def _think_fields(self, think: bool) -> dict:
         """What the request carries to turn reasoning before the answer on or off; empty where the server has no switch."""
@@ -316,8 +326,9 @@ class OpenAICompatibleBackend(LLMBackend):
 
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
         content = user if not images else [
-            {"type": "text", "text": user},
-            *({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_base64(image)}"}} for image in images),
+            {"type": "text", "text": part} if isinstance(part, str)
+            else {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_base64(part)}"}}
+            for part in in_order(user, images)
         ]
         body = {
             "model": self.cfg.model,
@@ -348,6 +359,16 @@ class OpenAICompatibleBackend(LLMBackend):
             completion_tokens=usage.get("completion_tokens"),
             reasoning_tokens=reasoning_tokens(counted, usage.get("completion_tokens"), reasoning, text),
         )
+
+    def picture_tokens(self, picture: bytes) -> int | None:
+        counted = []
+        for images in ((), (picture,)):
+            content = "Say ok." if not images else [
+                {"type": "text", "text": "Say ok."}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{_base64(picture)}"}},
+            ]
+            body = {"model": self.cfg.model, "messages": [{"role": "user", "content": content}], self.max_tokens_field: 1}
+            counted.append((self._post(f"{self.base_url}/chat/completions", body, self._headers()).get("usage") or {}).get("prompt_tokens"))
+        return counted[1] - counted[0] if None not in counted else None
 
     def model_version(self) -> str:
         if not self.is_local:
@@ -395,6 +416,14 @@ class OllamaBackend(OpenAICompatibleBackend):
     def _think_fields(self, think: bool) -> dict:
         # its chat completions endpoint reads reasoning_effort and ignores a think field
         return {"reasoning_effort": "medium" if think else "none"}
+
+    def reads_pictures(self) -> bool | None:
+        try:
+            shown = self._post(f"{self.base_url.removesuffix('/v1')}/api/show", {"model": self.cfg.model}, {})
+        except LLMBackendError:
+            return None
+        listed = shown.get("capabilities")
+        return "vision" in listed if isinstance(listed, list) else None
 
     def context_length(self) -> int | None:
         # it cuts a longer prompt from the front without saying so; only a loaded model is listed
@@ -499,9 +528,11 @@ class AnthropicBackend(LLMBackend):
             )
 
     def complete(self, system: str, user: str, *, seed: int | None = None, images: Sequence[bytes] = ()) -> LLMResponse:
+        marked = len(PICTURE_MARK.findall(user)) == len(images)
         content = user if not images else [
-            *({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _base64(image)}} for image in images),
-            {"type": "text", "text": user},
+            {"type": "text", "text": part} if isinstance(part, str)
+            else {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": _base64(part)}}
+            for part in (in_order(user, images) if marked else [*images, user])
         ]
         body = {
             "model": self.cfg.model,
@@ -529,6 +560,20 @@ class AnthropicBackend(LLMBackend):
 
 def resolve_llm_backend(cfg: LLMSection, *, settings: str = "coding.llm") -> LLMBackend:
     return get_backend(BACKEND_GROUP, cfg.provider)(cfg, settings=settings)
+
+
+def in_order(user: str, images: Sequence[bytes]) -> list[str | bytes]:
+    """The text and pictures of a request in the order sent: each picture where user marks one, or all after the text."""
+    pieces = PICTURE_MARK.split(user)
+    if len(pieces) // 2 != len(images):
+        return [user, *images]
+    out: list[str | bytes] = []
+    for index, piece in enumerate(pieces):
+        if index % 2:
+            out.append(images[index // 2])
+        elif piece.strip():
+            out.append(piece)
+    return out
 
 
 def _base64(image: bytes) -> str:

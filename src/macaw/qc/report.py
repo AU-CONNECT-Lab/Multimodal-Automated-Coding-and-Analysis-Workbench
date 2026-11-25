@@ -388,6 +388,29 @@ def _object_starts(config: MacawConfig, layout, recording_id: str) -> dict | Non
     }
 
 
+def _rating_frames(config: MacawConfig, layout, recording_id: str) -> list[dict]:
+    """For each rating shown frames, the box they were cut to, where to see it and how to give another."""
+    from macaw.coding.llm.rate import RATE_STEP
+    from macaw.coding.llm.rating_frames import CROP_NAME, GIVEN, NO_POSE, PEOPLE, PREVIEW_NAME
+
+    said = {PEOPLE: "cut to the bodies of {people}", GIVEN: "cut to the box this recording's settings give", NO_POSE: "the whole picture, as no one was named on the camera"}
+    rows = []
+    for version in config.coding.ratings:
+        folder = layout.artifacts_dir(recording_id, f"{RATE_STEP}{version}")
+        if not (folder / CROP_NAME).is_file():
+            continue
+        crop = json.loads((folder / CROP_NAME).read_text(encoding="utf-8"))
+        how = said.get(crop["source"], "the whole picture").format(people=", ".join(crop.get("people", [])))
+        own = Path(config.project.recording_config_dir) / f"{recording_id}.yaml"
+        rows.append({
+            "what": f"Frames shown to rating {version}",
+            "decided": f"from {crop['camera']}, {how}, box {crop['box']}; see {folder / PREVIEW_NAME}; another box goes in {own} "
+                       f"as coding.ratings.{version}.frames.crop",
+            "by": "person" if crop["source"] == GIVEN else "software", "href": None,
+        })
+    return rows
+
+
 def _who_and_when(stamp: str | None) -> str:
     """'ann 2026-10-26T10:00:00' as 'ann, 2026-10-26'."""
     if not stamp:
@@ -508,6 +531,7 @@ def _decisions(
     coded = _model_coding(config, layout, recording_id)
     if coded is not None:
         rows.append(coded)
+    rows += _rating_frames(config, layout, recording_id)
     looked = look_summary(layout, recording_id)
     if looked is not None:
         settled = looked["flagged_checked"] == looked["flagged"] and looked["drawn_checked"] == looked["drawn"]

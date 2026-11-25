@@ -48,7 +48,7 @@ def _number(value) -> int | None:
     return int(number) if number.is_integer() else None
 
 
-def check_cited(items: list, lines: pd.DataFrame, scale: RatingScale, start: float) -> list[dict]:
+def check_cited(items: list, lines: pd.DataFrame, scale: RatingScale) -> list[dict]:
     """A row per item: the line it names with its speaker, recording-clock times and words, and what failed. A line has to
     exist, be said by the person a one-person scale rates, and hold the copied words."""
     by_number = {int(row.line): row for row in lines.itertuples(index=False)}
@@ -62,7 +62,7 @@ def check_cited(items: list, lines: pd.DataFrame, scale: RatingScale, start: flo
         if row is None:
             problems.append(NO_LINE)
         else:
-            found.update(speaker=str(row.speaker), t_start=float(row.t_start) + start, t_end=float(row.t_end) + start, said=str(row.text))
+            found.update(speaker=str(row.speaker), t_start=float(row.t_start), t_end=float(row.t_end), said=str(row.text))
             if scale.person != ALL and str(row.speaker) != scale.person:
                 problems.append(OTHER_SPEAKER)
             if not normalised(quote):
@@ -98,7 +98,7 @@ def evidence_table(answers: pd.DataFrame, prompts: list) -> tuple[pd.DataFrame, 
             counts.append(pd.NA)
             problems.append(NO_LIST)
             continue
-        checked = check_cited(items, prompt[6], prompt[3], prompt[1])
+        checked = check_cited(items, prompt[6], prompt[3])
         rows += [
             {"recording_id": answer.recording_id, "segment": answer.segment, "scale": answer.scale, "rater": answer.rater, "sample": answer.sample, **row}
             for row in checked

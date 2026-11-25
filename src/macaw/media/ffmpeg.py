@@ -149,9 +149,11 @@ def normalise_video(
 
 
 def extract_frame(
-    src: Path, at_s: float, dest: Path, *, square_pixels: bool = False, long_side: int | None = None
+    src: Path, at_s: float, dest: Path, *, square_pixels: bool = False, long_side: int | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Path:
-    """The frame nearest at_s from the first picture; square_pixels shapes it like normalise_video's copies, long_side caps its longer side."""
+    """The frame nearest at_s from the first picture; square_pixels shapes it like normalise_video's copies, crop keeps
+    x0, y0, x1, y1 of it in its own pixels, long_side caps its longer side."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     info = probe(src)
@@ -163,6 +165,9 @@ def extract_frame(
     filters = [f"select=gte(t\\,{wanted - (0.5 / stream.fps if stream.fps else 0.0):.6f})"]
     if square_pixels:
         filters += ["scale=w='trunc(iw*sar/2)*2':h='trunc(ih/2)*2'", "setsar=1"]
+    if crop is not None:
+        x0, y0, x1, y1 = (int(value) for value in crop)
+        filters.append(f"crop={x1 - x0}:{y1 - y0}:{x0}:{y0}")
     if long_side:
         filters.append(
             f"scale=w='if(gte(iw,ih),min(iw,{long_side}),-2)':h='if(gte(iw,ih),-2,min(ih,{long_side}))'"

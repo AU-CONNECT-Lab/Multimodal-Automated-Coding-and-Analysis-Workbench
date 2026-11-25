@@ -673,6 +673,27 @@ class JudgeVersion(_Section):
     think: bool | None = None
 
 
+class RatingFrames(_Section):
+    """Frames of the video shown between the lines of a rating's transcript."""
+
+    # seconds between two frames, from the start of each part rated
+    every_s: float = Field(default=1.0, gt=0)
+    # pixels of a frame's longer side once cropped
+    long_side: int = Field(default=448, ge=32)
+    # people: one box round the named people's bodies over the analysed window; whole: the whole picture; or
+    # [x0, y0, x1, y1] in the video's pixels, as a recording's own settings can give
+    crop: Literal["people", "whole"] | tuple[float, float, float, float] = "people"
+    # share of the box's width and height added on each side
+    margin: float = Field(default=0.1, ge=0)
+
+    @field_validator("crop")
+    @classmethod
+    def _box(cls, value):
+        if isinstance(value, tuple) and not (0 <= value[0] < value[2] and 0 <= value[1] < value[3]):
+            raise ValueError("crop as a box is [x0, y0, x1, y1] in pixels, x0 below x1 and y0 below y1")
+        return value
+
+
 class RatingVersion(_Section):
     """One rating of whole recordings by the language model: its scales, and what differs from coding.llm."""
 
@@ -700,6 +721,8 @@ class RatingVersion(_Section):
     examples: Path | None = added(default=None)
     # recording, scale, start_s, end_s: each scale rated from the lines in its marked stretches only
     excerpts: Path | None = added(default=None)
+    # frames of the video between the lines; only for a model on this machine or the lab's server
+    frames: RatingFrames | None = added(default=None)
 
     @field_validator("segments")
     @classmethod
@@ -752,10 +775,10 @@ class CodingSection(_Section):
 
     @field_validator("ratings")
     @classmethod
-    def _no_frames(cls, value: dict[str, RatingVersion]) -> dict[str, RatingVersion]:
+    def _frames_own_key(cls, value: dict[str, RatingVersion]) -> dict[str, RatingVersion]:
         framed = [name for name, version in value.items() if version.show and "frames" in version.show]
         if framed:
-            raise ValueError(f"{', '.join(framed)}: a rating of whole recordings is not shown frames")
+            raise ValueError(f"{', '.join(framed)}: a rating takes frames as its own key, e.g. frames: {{every_s: 1.0}}, not in show")
         return value
 
     def rating_settings(self, version: str) -> tuple[RatingVersion, LLMSection]:

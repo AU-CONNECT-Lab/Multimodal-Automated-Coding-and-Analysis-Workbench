@@ -239,7 +239,7 @@ coding:
     full_voice: {scales: scales.yaml, show: [timing, pitch, loudness, rate]}
 ```
 
-The versions run with the rest of the analysis, or alone with `macaw run -e coding.rate.full_text`. Before a run, the plan states how many requests each version sends per recording; on a server that answers several requests together, they can be sent several at a time ({ref}`llm-concurrency`). Video frames cannot be shown for whole recordings.
+The versions run with the rest of the analysis, or alone with `macaw run -e coding.rate.full_text`. Before a run, the plan states how many requests each version sends per recording; on a server that answers several requests together, they can be sent several at a time ({ref}`llm-concurrency`). A version can also be shown frames of the video ({ref}`rating-frames`).
 
 Each line of the transcript is given to the model with the role of the person speaking, as named in the project's roles. Roles that use the words of the coding manual (for example `caregiver` and `child`) therefore spare the model a translation. The roles are best chosen before the first run, since voices and cameras are named by them.
 
@@ -256,10 +256,28 @@ With `evidence: true` in a version, each line of the transcript is numbered, and
 
 A model server reads only a limited number of tokens per request, and some, Ollama among them, drop the start of a longer prompt without warning. Before rating, the step compares the longest prompt with what the server reads and stops with a message if it does not fit. For Ollama the limit is raised by starting the server with, for example, `OLLAMA_CONTEXT_LENGTH=16384`.
 
+(rating-frames)=
+### Frames of the video
+
+A version with a `frames` key is shown frames of the video between the lines of the transcript:
+
+```yaml
+coding:
+  ratings:
+    full_frames: {scales: scales.yaml, show: [timing], frames: {every_s: 1.0, long_side: 448, crop: people, margin: 0.1}}
+```
+
+From the start of each part rated, one frame is taken every `every_s` seconds. Each frame follows a line giving its time on the recording's clock, as the lines of the transcript do with `timing` shown, and the lines after it are those that started before the next frame. The scale comes after the transcript and its frames, so every scale and every repeated answer about one recording begins with the same text and pictures, which a server can reuse. With excerpts ({ref}`excerpts <rating-excerpts>`), frames are taken within each marked stretch only. Frames come from the camera the setup reads most people's bodies from, else from the recording's main video; a moment the video does not reach has no frame.
+
+With `crop: people` the frames of a recording are all cut to one box: the union of the bodies of the people named on that camera over the part rated, with the outermost 2% at each edge left out so that a stray detection does not widen it, then widened by `margin` of its width and height on each side. A person in a mirror or on a screen behind the participants then stays outside the frames. Where no one was named on the camera, the whole picture is shown and the quality report says so. `crop: whole` shows the whole picture, and `crop: [x0, y0, x1, y1]` a box in the video's pixels; a box for one recording goes in that recording's own settings (`recordings/<recording>.yaml`). The frames are scaled so that their longer side is `long_side` pixels. The quality report's Decisions table gives, for each recording, the box and a picture with the box drawn on the whole frame (`frames_crop.jpg`), and `frames.parquet` beside the ratings lists every moment shown, the video it came from and its time on that video. The frames themselves are not kept: the moments and the box take them again exactly. The saved prompts name each frame by its file name in place of the picture.
+
+Frames are sent only to a model on the user's own machine or the lab's server (Ollama, vLLM, llama.cpp); a version with frames and another provider is refused. Before the run, the step asks Ollama whether the model reads pictures. A server turns each picture into a number of tokens that depends on the model and the server, and some scale small pictures up first, so the step sends one frame on its own, counts what it took, and stops with a message giving the context the longest request needs when that exceeds what the server reads. One frame a second over a recording of several minutes amounts to hundreds of frames; where that does not fit, `every_s` is raised.
+
 ### Rating parts of a recording
 
 Without further settings, a version rates the analysed part of each recording as a whole. `segments: [first_half, second_half]` rates the named segments of the segments table one by one instead (see {ref}`segments`); recordings without such a segment are left out of that version and the quality report says so.
 
+(rating-excerpts)=
 A version with `excerpts: excerpts.csv` rates each scale from marked stretches only, for example the moments human coders noted for that scale, so that the step from single events to a score can be examined apart from finding the events. The table has one row per stretch, on the recording's clock:
 
 | recording | scale | start_s | end_s |

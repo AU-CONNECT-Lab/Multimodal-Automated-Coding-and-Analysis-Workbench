@@ -90,8 +90,14 @@ class Server:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                content = body["messages"][-1]["content"]
+                user = content if isinstance(content, str) else "".join(part.get("text", "") for part in content)
+                if "Scale: " not in user:
+                    # a request that counts what a picture takes
+                    pictures = 0 if isinstance(content, str) else sum(part["type"] == "image_url" for part in content)
+                    self._send({"model": "tiny", "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10 + 700 * pictures}})
+                    return
                 server.requests.append(body)
-                user = body["messages"][-1]["content"]
                 scale = re.search(r"^Scale: (\S+)$", user, re.MULTILINE).group(1)
                 sample = sum(1 for request in server.requests if f"Scale: {scale}\n" in request["messages"][-1]["content"]) - 1
                 text = "" if server.cut else server.score(scale, sample)
@@ -241,14 +247,18 @@ class TestPrompt:
         _, user = build_rating_prompt(read_scales_from(SCALES).get("on_task"), self.lines(), people=["parent", "child"], minutes=1.0)
         assert "0: mostly off task\n1: mostly on task" in user and "between the anchors" not in user
 
-    def test_timing_counts_from_the_start_of_what_is_rated(self):
+    def test_timing_is_on_the_recording_s_clock(self):
         frame = module.rating_lines(transcript_frame(TALK))
         cut = module.part_lines(frame, words_frame(TALK), 2.0, 21.0)
-        _, user = build_rating_prompt(read_scales_from(SCALES).get("flow"), cut, people=["parent", "child"], minutes=19 / 60, show=["timing"])
-        # the opening question is cut at the edge to its words inside, and its time starts at 0
-        assert "parent | at 0.0 s, lasts 1.0 s, opens the conversation: school today?" in user
+        system, user = build_rating_prompt(
+            read_scales_from(SCALES).get("flow"), cut, people=["parent", "child"], minutes=19 / 60, show=["timing"], start=2.0, end=21.0,
+        )
+        # the opening question is cut at the edge to its words inside
+        assert user.startswith("Transcript (0.3 minutes, 2.0 s to 21.0 s on the recording's clock):")
+        assert "parent | at 2.0 s, lasts 1.0 s, opens the conversation: school today?" in user
         assert "overlaps the talk before by 0.2 s: Just fine?" in user
-        assert "child | at 18.0 s, lasts 1.0 s, after a 13.0 s pause: We had" in user
+        assert "child | at 20.0 s, lasts 1.0 s, after a 13.0 s pause: We had" in user
+        assert "start on the recording's clock" in system
 
     def test_reasons_come_after_the_score_and_notes_go_in_as_written(self):
         system, _ = build_rating_prompt(
@@ -387,7 +397,7 @@ class TestRun:
         assert len(absent) == 3 and absent["score"].isna().all() and (absent["n_asked"] == 0).all()
         assert set(absent["not_rated"]) == {"the recording has no such segment"}
         late = next(body["messages"][-1]["content"] for body in server.requests if "We had a test." in body["messages"][-1]["content"])
-        assert "school" not in late and "child | at 5.0 s, lasts 2.0 s, opens the conversation: We had a test." in late
+        assert "school" not in late and "child | at 20.0 s, lasts 2.0 s, opens the conversation: We had a test." in late
         assert any("no segment absent" in warning.message for warning in result.warnings)
 
     def test_the_recogniser_s_transcript_is_rated_only_where_a_person_corrected_it(self, monkeypatch, tmp_path, server):
@@ -435,7 +445,7 @@ class TestVersions:
 
     @pytest.mark.parametrize("version,message", [
         ({"scales": "s.yaml", "batch_size": 4}, "batch_size"),
-        ({"scales": "s.yaml", "show": ["timing", "frames"]}, "not shown frames"),
+        ({"scales": "s.yaml", "show": ["timing", "frames"]}, "takes frames as its own key"),
         ({"show": []}, "scales"),
         ({"scales": "s.yaml", "segments": ["a", "a"]}, "twice"),
     ])
@@ -486,7 +496,7 @@ class TestVersions:
         text = " ".join(describe(manifest, resolved)["Ratings"])
         assert "In a rating named k0, the language model tiny (ollama) rated the segments opening of each recording one by one" in text
         assert "given only each scale's name, the person it rates and its range" in text
-        assert "the role of the person speaking, the words, its start and length" in text
+        assert "the role of the person speaking, the words, its start on the recording's clock and its length" in text
         assert "asked five times at temperature 0.3; the score is the median" in text
         assert "before a person corrected it" in text and "what each score rested on, after the score" in text
 
@@ -905,13 +915,13 @@ class TestEvidence:
         rows = check_cited(
             [{"line": 1, "quote": "how was SCHOOL"}, {"line": "2", "quote": "its fine"}, {"line": 9, "quote": "x"}, {"line": 1, "quote": ""},
              {"line": 1, "quote": "was school yesterday"}, {"line": 1.5}],
-            lines, warmth, 10.0,
+            lines, warmth,
         )
         assert [row["problem"] for row in rows] == ["", f"{OTHER_SPEAKER}", NO_LINE, NO_QUOTE, NOT_IN_LINE, NO_LINE]
-        assert (rows[0]["t_start"], rows[0]["t_end"], rows[0]["speaker"]) == (11.0, 13.0, "parent")
+        assert (rows[0]["t_start"], rows[0]["t_end"], rows[0]["speaker"]) == (1.0, 3.0, "parent")
         flow = module_scale(SCALES["scales"][2])
-        assert check_cited([{"line": 2, "quote": "It's fine"}], lines, flow, 0.0)[0]["problem"] == ""
-        copied = check_cited([{"line": "[line 2]", "quote": "fine"}, {"line": "Line 1", "quote": "school"}], lines, flow, 0.0)
+        assert check_cited([{"line": 2, "quote": "It's fine"}], lines, flow)[0]["problem"] == ""
+        copied = check_cited([{"line": "[line 2]", "quote": "fine"}, {"line": "Line 1", "quote": "school"}], lines, flow)
         assert [(row["line"], row["problem"]) for row in copied] == [(2, ""), (1, "")]
 
     def test_words_running_into_a_neighbouring_line_are_told_apart(self):
@@ -925,7 +935,7 @@ class TestEvidence:
         rows = check_cited(
             [{"line": 1, "quote": "put the blocks away"}, {"line": 2, "quote": "put the blocks away"}, {"line": 3, "quote": "blocks away"},
              {"line": 2, "quote": "away now no"}, {"line": 1, "quote": "now no"}],
-            lines, flow, 0.0,
+            lines, flow,
         )
         assert [row["problem"] for row in rows] == [RUNS_ON, RUNS_ON, NOT_IN_LINE, RUNS_ON, NOT_IN_LINE]
 
@@ -1087,10 +1097,10 @@ class TestExcerpts:
         return module.part_lines(frame, words_frame(TALK), 0.0, 60.0)
 
     def test_the_lines_overlapping_a_stretch_are_shown_whole_and_numbered_again(self):
-        found = module.excerpt_lines(self.shown(), [(4.0, 4.9), (21.0, 21.0)], 0.0)
+        found = module.excerpt_lines(self.shown(), [(4.0, 4.9), (21.0, 21.0)])
         assert found["text"].tolist() == ["It was fine.", "Just fine?", "We had a test."]
         assert found["line"].tolist() == [1, 2, 3] and found["opens"].tolist() == [True, False, False]
-        assert module.excerpt_lines(self.shown(), [(14.0, 15.0)], 0.0).empty
+        assert module.excerpt_lines(self.shown(), [(14.0, 15.0)]).empty
 
     def test_each_scale_is_rated_from_its_own_stretches_and_one_without_any_is_not_rated(self, monkeypatch, tmp_path, server):
         pd.DataFrame(

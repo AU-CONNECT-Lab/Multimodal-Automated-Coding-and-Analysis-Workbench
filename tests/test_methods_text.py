@@ -223,7 +223,7 @@ def test_what_the_model_was_shown_and_each_version_are_said():
         ),
     )
     text, _ = render(describe(judged, config()), load_references())
-    assert "the speaker letter, the words, its start and length, and the pause or overlap before it." in text
+    assert "the speaker letter, the words, its start on the recording's clock and its length, and the pause or overlap before it." in text
     assert "a version named words" in text and "the speaker letter and the words only." in text
     assert "a version named voice" in text and "before it, and its pitch and speech rate relative to the median of that speaker's lines" in text
     assert "lines (answers per unit 3)." in text

@@ -128,11 +128,11 @@ class TestTimingShownToTheModel:
         gaps = voice_gaps(lines, talk)
         assert gaps[1] == pytest.approx(0.0) and gaps[2] == pytest.approx(-1.5)
 
-    def test_the_rating_shows_the_overlap_from_the_start_of_the_part(self):
+    def test_the_rating_shows_the_overlap_on_the_recording_s_clock(self):
         lines = rating_lines(pd.DataFrame({"subject_id": ["parent", "child"], "t_start": [10.0, 15.6], "t_end": [15.4, 17.0], "text": ["so", "no"]}))
         talk = pd.DataFrame({"subject_id": ["parent", "child"], "t_start": [10.0, 15.2], "t_end": [16.0, 17.2]})
         shown = part_lines(lines, pd.DataFrame(), 10.0, 20.0, talk)
-        assert shown["t_start"].tolist() == [0.0, 5.6] and shown["gap_before"].iloc[1] == pytest.approx(-0.8)
+        assert shown["t_start"].tolist() == [10.0, 15.6] and shown["gap_before"].iloc[1] == pytest.approx(-0.8)
         assert part_lines(lines, pd.DataFrame(), 10.0, 20.0)["gap_before"].iloc[1] == pytest.approx(0.2)
 
 

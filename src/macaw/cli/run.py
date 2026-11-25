@@ -170,6 +170,11 @@ def _echo_reporting(config, dag, recording_ids: list[str]) -> None:
         marked = f", each scale from the stretches {own.excerpts.name} marks for it" if own.excerpts is not None else ""
         notices.append(f"{name} sends {llm.n_samples} x {scales if scales is not None else 'its'} scales requests for {where}{marked} to {llm.provider}")
         notices.append(examples_notice(config, name))
+        if own.frames is not None:
+            notices.append(
+                f"{name} shows a frame of the video every {own.frames.every_s:g} s between the lines; it counts what one frame takes "
+                "on the server before asking, and stops when the longest request would not fit the server's context"
+            )
         notices.append(concurrency_notice(name, backend, llm, config.execution.n_workers))
         notices.append(said_by_entity(name))
     if "pose.listening" in dag.nodes:

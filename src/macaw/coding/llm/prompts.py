@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Sequence
 
 import pandas as pd
@@ -14,6 +15,8 @@ from macaw.extractors.audio.content.diarization import OTHER
 ABSTAIN = "abstain"
 VOICE = ("pitch", "loudness", "rate")
 FRAMES = "frames"
+# where a picture goes in the text of a request; the saved prompt keeps the file's name, the request the picture
+PICTURE_MARK = re.compile(r"<frame ([^<>\s]+)>")
 # where in a unit its frames are taken, as shares of its length
 FRAME_AT = (1 / 6, 1 / 2, 5 / 6)
 _VOICE_TERMS = {"pitch": "pitch in semitones", "loudness": "loudness in dB", "rate": "speech rate in percent"}
@@ -146,11 +149,19 @@ def build_rating_prompt(
     evidence: bool = False,
     examples: Sequence[ScaleExample] = (),
     excerpts: bool = False,
+    start: float = 0.0,
+    end: float | None = None,
+    frames: Sequence[tuple[float, str]] = (),
+    every_s: float | None = None,
+    cropped: bool = False,
+    spans: Sequence[tuple[float, float]] | None = None,
 ) -> tuple[str, str]:
-    """Returns (system, user). lines carry speaker (a role), t_start and t_end from the start of what is rated, gap_before,
-    text and the voice items of show, with evidence the line number each is shown with, and with excerpts opens, true on
-    the first line of each excerpt. Only the end of the user part names the scale, so every scale asked about one
-    conversation starts the same and a server can reuse what it read; examples follow the scale."""
+    """Returns (system, user). lines carry speaker (a role), t_start and t_end on the recording's clock, gap_before, text
+    and the voice items of show, with evidence the line number each is shown with, and with excerpts opens, true on the
+    first line of each excerpt. frames are (moment, file name) on the same clock, each put before the lines that start
+    between it and the next, a mark in the text standing for its picture; with excerpts, spans group them with their lines.
+    Only the end of the user part names the scale, so every scale asked about one conversation starts the same and a
+    server can reuse what it read; examples follow the scale."""
     system = [
         "You rate a recorded conversation on one rating scale, as a trained observer would. The transcript gives what was "
         "said in time order; each line starts with the role of the person who said it.",
@@ -160,8 +171,8 @@ def build_rating_prompt(
         system.append(f"The speaker {OTHER} is someone besides the people recorded, such as a researcher in the room.")
     if "timing" in show:
         system.append(
-            "Each line gives its start and length in seconds from the start of the transcript, and the pause before it or "
-            "how far it overlaps the talk before."
+            "Each line gives its start on the recording's clock and its length in seconds, and the pause before it or how far "
+            "it overlaps the talk before."
         )
     voice = [item for item in VOICE if item in show]
     if voice:
@@ -170,12 +181,19 @@ def build_rating_prompt(
             f"Each line gives its {terms}, against the median of that speaker's lines in the whole recording; one that could "
             "not be measured is left out."
         )
+    if frames:
+        crop = ", cropped to the people" if cropped else ""
+        system.append(
+            f"Frames of the video come between the lines, one every {every_s:g} s{crop}. Each follows a line giving its time "
+            "on the recording's clock, and the lines after it started before the next frame."
+        )
     if notes.strip():
         system.append(f"Notes from the researchers: {notes.strip()}")
     reason = ', "reason": "<what it rests on>"' if reasons else ""
     if evidence:
         # a number after the words is cited for its own line; one in front was often taken for the line below
-        system.append("Each line ends with its number. Rate only from the transcript, and cite only the numbered lines given.")
+        source = "the transcript and the frames" if frames else "the transcript"
+        system.append(f"Each line ends with its number. Rate only from {source}, and cite only the numbered lines given.")
         entry = '{"evidence": [{"line": <number>, "quote": "<a few words copied exactly from that line>"}], "score": <score>' + reason + "}"
         system.append(
             f"Answer with one JSON object and nothing else: {entry}. First list every line the score rests on, each by its number "
@@ -188,15 +206,27 @@ def build_rating_prompt(
     if reasons:
         system.append("The reason names in a few words what the score rests on: what was said, the timing or the voice.")
 
+    clocked = "timing" in show or bool(frames)
+    span = f", {start:.1f} s to {end:.1f} s on the recording's clock" if clocked and end is not None else ""
     if excerpts:
-        user = [f"Excerpts of the transcript of a {minutes:.1f}-minute conversation, the stretches marked for this scale; ... stands between two stretches:"]
+        user = [
+            f"Excerpts of the transcript of a {minutes:.1f}-minute conversation{span}, the stretches marked for this scale; ... "
+            "stands between two stretches:"
+        ]
     else:
-        user = [f"Transcript ({minutes:.1f} minutes):"]
-    numbers = lines["line"].tolist() if "line" in lines.columns else range(1, len(lines) + 1)
-    for position, (number, row) in enumerate(zip(numbers, lines.itertuples(index=False))):
-        if excerpts and position and getattr(row, "opens", False):
-            user.append("...")
-        user.append(f"{' | '.join([str(row.speaker), *_details(row, show)])}: {row.text}" + (f" [line {number}]" if evidence else ""))
+        user = [f"Transcript ({minutes:.1f} minutes{span}):"]
+    numbers = lines["line"].tolist() if "line" in lines.columns else list(range(1, len(lines) + 1))
+    said = [
+        f"{' | '.join([str(row.speaker), *_details(row, show)])}: {row.text}" + (f" [line {number}]" if evidence else "")
+        for number, row in zip(numbers, lines.itertuples(index=False))
+    ]
+    if frames:
+        user += _with_frames(lines, said, frames, spans if excerpts else None)
+    else:
+        for position, (text, row) in enumerate(zip(said, lines.itertuples(index=False))):
+            if excerpts and position and getattr(row, "opens", False):
+                user.append("...")
+            user.append(text)
     user += ["", "Rate the conversation on this scale.", f"Scale: {scale.scale}", f"Who is rated: {_rated(scale, people)}"]
     user.append(f"Scores: whole numbers from {scale.low} to {scale.high}.")
     if scale.definition:
@@ -214,6 +244,40 @@ def build_rating_prompt(
         user.append(f"Cite lines said by the {scale.person}.")
     user.append("Answer with the JSON object.")
     return "\n".join(system), "\n".join(user)
+
+
+def _with_frames(
+    lines: pd.DataFrame, said: list[str], frames: Sequence[tuple[float, str]], spans: Sequence[tuple[float, float]] | None,
+) -> list[str]:
+    """Frames and lines in time order, a frame before the lines that start at or after it; with spans, each stretch's
+    frames and lines together, ... between two stretches."""
+    starts = lines["t_start"].to_numpy(dtype=float)
+    ends = lines["t_end"].to_numpy(dtype=float)
+    stretches = _merged(spans) if spans else [(-math.inf, math.inf)]
+    groups: list[list[tuple[float, int, str]]] = [[] for _ in stretches]
+    for moment, name in frames:
+        place = next((index for index, (low, high) in enumerate(stretches) if low <= moment <= high), None)
+        if place is not None:
+            groups[place].append((moment, 0, f"[t={moment:.1f} s]\n<frame {name}>"))
+    for index, text in enumerate(said):
+        place = next((at for at, (low, high) in enumerate(stretches) if ends[index] >= low and starts[index] <= high), len(stretches) - 1)
+        groups[place].append((starts[index], 1, text))
+    out: list[str] = []
+    for group in (sorted(found, key=lambda item: (item[0], item[1])) for found in groups if found):
+        if out:
+            out.append("...")
+        out += [text for _, _, text in group]
+    return out
+
+
+def _merged(spans: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for low, high in sorted(spans):
+        if merged and low <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], high))
+        else:
+            merged.append((low, high))
+    return merged
 
 
 def example_lines(examples: Sequence[ScaleExample]) -> list[str]:
